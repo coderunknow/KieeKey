@@ -1,0 +1,12 @@
+KieeKey — mega correctness reproducer (deterministic)
+suite: 3-backspace
+meta: bs23338 (over-backspace 2)
+init options: method=Telex table=0 spelling=1 modern=0 quickTelex=0 restore=1 freeMark=0 zfwj=0 upperFirst=0 macro=1
+ops (compact; ^=caps, +=ctrl, ' '=space, \b=backspace, \n=enter, ~=mouse, |=mode): irf[+pyn^70lpk[^c16pxmq^op
+divergence: backspaceCount > committed text length
+engine text UTF-8: iờpyn7lk[C1p
+oracle  text UTF-8: iờpyn7lk[C1p
+engine UTF-16 units: U+69 U+1edd U+70 U+79 U+6e U+37 U+6c U+6b U+5b U+43 U+31 U+70 
+oracle  UTF-16 units: U+69 U+1edd U+70 U+79 U+6e U+37 U+6c U+6b U+5b U+43 U+31 U+70 
+engine code points: CP[U+69 U+1edd U+70 U+79 U+6e U+37 U+6c U+6b U+5b U+43 U+31 U+70 ]
+oracle  code points: CP[U+69 U+1edd U+70 U+79 U+6e U+37 U+6c U+6b U+5b U+43 U+31 U+70 ]

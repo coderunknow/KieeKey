@@ -54,12 +54,15 @@ using namespace ok::wrap;
 namespace sh = okshim;
 
 static int g_failed = 0;
+// Non-constexpr helper: a plain `if (!(cond))` trips MSVC C4127 when cond is
+// a compile-time constant (e.g. ring.capacity == 1024) under /W4 /WX, while
+// `if constexpr` is a hard error (C2131) when cond is a runtime value. Passing
+// through a bool function makes the if-condition non-constant for C4127 and
+// still evaluates runtime CHECKs normally.
+[[nodiscard]] inline bool ok_check_failed(bool cond) noexcept { return !cond; }
 #define CHECK(cond)                                                        \
     do {                                                                   \
-        /* if constexpr: several CHECKs compare constexpr values */        \
-        /* (e.g. ring.capacity == 1024) — plain `if` trips C4127 under */  \
-        /* /W4 /WX. Identical runtime semantics for non-constant cond. */  \
-        if constexpr (!(cond)) {                                           \
+        if (ok_check_failed(static_cast<bool>(cond))) {                    \
             ++g_failed;                                                    \
             std::printf("  FAIL %s:%d  %s\n", __FILE__, __LINE__, #cond);  \
         }                                                                  \

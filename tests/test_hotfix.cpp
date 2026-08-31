@@ -149,10 +149,12 @@ struct Feed {
 };
 
 static int failures = 0;
+// Non-constexpr helper: `if constexpr` is C2131 for runtime conds; a plain
+// `if` is C4127 for constant conds under MSVC /W4 /WX.
+[[nodiscard]] inline bool ok_check_ok(bool cond) noexcept { return cond; }
 #define CHECK(cond, msg)                                                       \
     do {                                                                       \
-        /* if constexpr: avoids C4127 (constant condition) under /W4 /WX */    \
-        if constexpr (cond) { std::printf("  ok   %s\n", msg); }               \
+        if (ok_check_ok(static_cast<bool>(cond))) { std::printf("  ok   %s\n", msg); } \
         else { std::printf("  FAIL %s\n", msg); ++failures; }                  \
     } while (0)
 

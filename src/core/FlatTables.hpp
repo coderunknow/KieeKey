@@ -82,14 +82,19 @@ struct FlatMap {
     [[nodiscard]] constexpr std::size_t size() const noexcept { return N; }
     [[nodiscard]] constexpr const_iterator begin() const noexcept { return const_iterator(entries); }
     [[nodiscard]] constexpr const_iterator end() const noexcept { return const_iterator(entries + N); }
-    [[nodiscard]] constexpr const_iterator find(K k) const noexcept {
+    // Templated key so callers can pass char32_t (engine input identity) into
+    // uint16_t tables without an implicit narrowing conversion (MSVC C4244
+    // under /W4 /WX). Keys are BMP letters/digits — the cast is exact.
+    template <class Key>
+    [[nodiscard]] constexpr const_iterator find(Key k) const noexcept {
+        const K key = static_cast<K>(k);
         const Entry* e = entries;
         std::size_t lo = 0, hi = N;
         while (lo < hi) {
             const std::size_t mid = (lo + hi) >> 1;
-            if (e[mid].key < k) { lo = mid + 1; } else { hi = mid; }
+            if (e[mid].key < key) { lo = mid + 1; } else { hi = mid; }
         }
-        if (lo < N && e[lo].key == k) { return const_iterator(e + lo); }
+        if (lo < N && e[lo].key == key) { return const_iterator(e + lo); }
         return end();
     }
 };

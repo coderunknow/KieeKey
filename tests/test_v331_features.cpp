@@ -50,10 +50,12 @@
 using namespace ok::text;
 
 static int g_failed = 0;
+// Non-constexpr helper: `if constexpr` is C2131 for runtime conds; a plain
+// `if` is C4127 for constant conds under MSVC /W4 /WX.
+[[nodiscard]] inline bool ok_check_failed(bool cond) noexcept { return !cond; }
 #define CHECK(cond)                                                        \
     do {                                                                   \
-        /* if constexpr: avoids C4127 (constant condition) under /W4 /WX */\
-        if constexpr (!(cond)) {                                           \
+        if (ok_check_failed(static_cast<bool>(cond))) {                    \
             ++g_failed;                                                    \
             std::printf("  FAIL %s:%d  %s\n", __FILE__, __LINE__, #cond);  \
         }                                                                  \

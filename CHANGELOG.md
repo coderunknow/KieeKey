@@ -58,10 +58,13 @@ Keep a Changelog; versioning: SemVer.
   on ARM64/ARM) instead of unconditional `<immintrin.h>`/`<emmintrin.h>`
   includes (x86-family-only headers that hard-error C1189 on ARM64); the
   intentional cache-line padding warning is disabled (`/wd4324`);
-  constant-condition test assertions use `if constexpr` (C4127); the
-  foreground-HWND diagnostic stamp is explicitly truncated to its 32
-  significant bits (C4244). Added an `arm64ec-release` CMake preset
-  mirroring the CI matrix.
+  test `CHECK` macros route the condition through a non-constexpr bool
+  helper (avoids MSVC C4127 on constant conds *and* C2131 from
+  `if constexpr` on runtime conds); `FlatMap::find` takes the key by
+  template and `static_cast`s to the stored key type (C4244
+  `char32_t`→`uint16_t`); the foreground-HWND diagnostic stamp is
+  explicitly truncated to its 32 significant bits (C4244). Added an
+  `arm64ec-release` CMake preset mirroring the CI matrix.
 * Renamed remaining lineage identifiers for consistency:
   `OPENKEY_PROFILE` → `KIEEKEY_PROFILE`, target `openkey_winui3` →
   `kieekey_winui3`.

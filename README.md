@@ -1,9 +1,20 @@
+<div align="center">
+
 # KieeKey
 
+**Modern Vietnamese Input Method Engine for Windows**
+
+[![Build](https://github.com/coderunknow/KieeKey/actions/workflows/build.yml/badge.svg)](https://github.com/coderunknow/KieeKey/actions/workflows/build.yml)
+[![Latest Release](https://img.shields.io/github/v/release/coderunknow/KieeKey?display_name=tag)](https://github.com/coderunknow/KieeKey/releases)
+[![Stars](https://img.shields.io/github/stars/coderunknow/KieeKey?style=social)](https://github.com/coderunknow/KieeKey/stargazers)
+[![Forks](https://img.shields.io/github/forks/coderunknow/KieeKey?style=social)](https://github.com/coderunknow/KieeKey/network/members)
+[![Issues](https://img.shields.io/github/issues/coderunknow/KieeKey)](https://github.com/coderunknow/KieeKey/issues)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 ![Language](https://img.shields.io/badge/language-C%2B%2B20%2FC%2B%2B23-00599C.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20ARM64-0078D6.svg)
-![Build](https://img.shields.io/badge/build-CMake%20%3E%3D%203.28-064FAD.svg)
+![Build System](https://img.shields.io/badge/build-CMake%20%3E%3D%203.28-064FAD.svg)
+
+</div>
 
 **KieeKey v1.0.1** is a modern, low-latency Vietnamese input method engine
 (bộ gõ Tiếng Việt) for Windows, with a system-tray application, a TSF
@@ -20,6 +31,15 @@ text-store composer and an optional WinUI 3 Fluent settings UI.
 
 ---
 
+## Quick links
+
+- [Highlights](#highlights)
+- [Architecture](#architecture)
+- [Building](#building)
+- [Repository layout](#repository-layout)
+- [License](#license)
+- [Tóm tắt (Tiếng Việt)](#tóm-tắt-tiếng-việt)
+
 ## Highlights
 
 * **Correct Vietnamese output** — Telex, VNI and Simple-Telex, with the
@@ -33,6 +53,15 @@ text-store composer and an optional WinUI 3 Fluent settings UI.
   auto-exclusion of games/apps that dislike IMEs.
 * **Familiar tray UX** — green/gray tray icon, right-click menu, Vietnamese
   settings dialog, Ctrl+Shift global toggle (same defaults as upstream).
+
+## Tags / Keywords
+
+`vietnamese-ime` · `bo-go-tieng-viet` · `windows` · `text-services-framework` ·
+`tsf` · `cpp20` · `keyboard-hook` · `low-latency` · `lock-free` · `telex` ·
+`vni` · `open-source`
+
+> For better discoverability on GitHub, set matching **Repository Topics** in
+> the repository settings (About section).
 
 ## What KieeKey changes compared to OpenKey
 

@@ -1,0 +1,158 @@
+<!--
+KieeKey v1.0 — MainWindow.xaml
+Fluent Design (WinUI 3) settings surface. Replaces the legacy Win32 .rc
+dialog. Uses System Backdrop Mica, native dark/light sync, ToggleSwitch /
+ComboBox / NumberBox controls, and an inline latency telemetry panel fed by
+ModernKeyHook::peakLatencyUs().
+
+Backdrop notes:
+  * Mica requires the window to be on Windows 11 22000+; fall back to
+    Acrylic or solid color automatically (see App.xaml.cpp activation).
+  * Dark/light: RootTheme follows the OS theme via SystemBackdrop + the
+    RequestedTheme binding handled in MainWindow.xaml.cpp.
+-->
+<Window
+    x:Class="KieeKey.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    Title="KieeKey — Bộ gõ Tiếng Việt"
+    SystemBackdrop="MicaBackdrop"
+    Width="920" Height="640">
+
+    <Grid Padding="24" RowSpacing="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>  <!-- header -->
+            <RowDefinition Height="*"/>     <!-- content -->
+            <RowDefinition Height="Auto"/>  <!-- status bar -->
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <StackPanel Grid.Row="0" Spacing="4" Orientation="Horizontal"
+                    VerticalAlignment="Center">
+            <TextBlock Text="OpenKey" Style="{StaticResource TitleTextBlockStyle}"/>
+            <TextBlock Text="KieeKey v3.0"
+                       Style="{StaticResource CaptionTextBlockStyle}"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       VerticalAlignment="Bottom" Margin="8,0,0,4"/>
+            <ToggleSwitch x:Name="EngineToggle" Header="Bật gõ tiếng Việt"
+                          Toggled="OnEngineToggled" Margin="32,0,0,0"/>
+        </StackPanel>
+
+        <!-- Settings body -->
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <StackPanel Spacing="16" MaxWidth="720" HorizontalAlignment="Left">
+
+                <!-- Bàn phím -->
+                <Expander Header="Bàn phím / Phương thức gõ" IsExpanded="True">
+                    <StackPanel Spacing="12" Margin="0,12,0,0">
+                        <ComboBox x:Name="InputMethodBox" Header="Phương thức gõ"
+                                  SelectionChanged="OnInputMethodChanged">
+                            <ComboBoxItem Content="Telex"/>
+                            <ComboBoxItem Content="VNI"/>
+                            <ComboBoxItem Content="Simple Telex"/>
+                        </ComboBox>
+                        <ComboBox x:Name="CodeTableBox" Header="Bảng mã"
+                                  SelectionChanged="OnCodeTableChanged">
+                            <ComboBoxItem Content="Unicode"/>
+                            <ComboBoxItem Content="TCVN3 (ABC)"/>
+                            <ComboBoxItem Content="VNI Windows"/>
+                            <ComboBoxItem Content="Unicode Tổ hợp"/>
+                            <ComboBoxItem Content="Vietnamese Locale CP 1258"/>
+                        </ComboBox>
+                        <CheckBox x:Name="ModernOrthography" Content="Chính tả mới (oà / uý)"
+                                  Checked="OnOptionChanged" Unchecked="OnOptionChanged"/>
+                        <CheckBox x:Name="QuickTelex" Content="Telex nhanh (cc→ch, gg→gi, …)"
+                                  Checked="OnOptionChanged" Unchecked="OnOptionChanged"/>
+                        <CheckBox x:Name="RestoreIfWrong" Content="Tự sửa từ gõ sai khi gõ dấu câu"
+                                  Checked="OnOptionChanged" Unchecked="OnOptionChanged"/>
+                        <CheckBox x:Name="UpperCaseFirst" Content="Viết hoa đầu câu"
+                                  Checked="OnOptionChanged" Unchecked="OnOptionChanged"/>
+                    </StackPanel>
+                </Expander>
+
+                <!-- Ứng dụng / loại trừ -->
+                <Expander Header="Ứng dụng &amp; tự động loại trừ" IsExpanded="True">
+                    <StackPanel Spacing="12" Margin="0,12,0,0">
+                        <TextBlock Text="Tự động tắt khi focus vào:"
+                                   Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                        <CheckBox x:Name="ExcludeIde" Content="IDE / Editor (VS Code, Visual Studio, CLion, …)"
+                                  IsChecked="True" Checked="OnOptionChanged" Unchecked="OnOptionChanged"/>
+                        <CheckBox x:Name="ExcludeFullscreen" Content="Trò chơi toàn màn hình (DX/Vulkan/OpenGL)"
+                                  IsChecked="True" Checked="OnOptionChanged" Unchecked="OnOptionChanged"/>
+                        <CheckBox x:Name="ExcludeShell" Content="Windows Shell (Explorer, Terminal, CMD)"
+                                  Checked="OnOptionChanged" Unchecked="OnOptionChanged"/>
+                        <CheckBox x:Name="SmartSwitch" Content="Nhớ ngôn ngữ theo từng ứng dụng"
+                                  IsChecked="True" Checked="OnOptionChanged" Unchecked="OnOptionChanged"/>
+                    </StackPanel>
+                </Expander>
+
+                <!-- Hiệu năng -->
+                <Expander Header="Hiệu năng &amp; chẩn đoán" IsExpanded="True">
+                    <StackPanel Spacing="12" Margin="0,12,0,0">
+                        <TextBlock TextWrapping="Wrap"
+                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                   Text="Hàng đợi sự kiện bàn phím không khóa (lock-free SPSC ring). Không chặn hook thread; độ trễ hook→xử lý được đo bằng QPC."/>
+                        <Grid ColumnSpacing="16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="Độ trễ đỉnh (µs)"
+                                           Style="{StaticResource CaptionTextBlockStyle}"/>
+                                <TextBlock x:Name="LatencyValue" Text="—"
+                                           Style="{StaticResource TitleTextBlockStyle}"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1">
+                                <TextBlock Text="Sự kiện đã xử lý"
+                                           Style="{StaticResource CaptionTextBlockStyle}"/>
+                                <TextBlock x:Name="PushedValue" Text="0"
+                                           Style="{StaticResource TitleTextBlockStyle}"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="Sự kiện bị bỏ (overflow)"
+                                           Style="{StaticResource CaptionTextBlockStyle}"/>
+                                <TextBlock x:Name="DroppedValue" Text="0"
+                                           Style="{StaticResource TitleTextBlockStyle}"/>
+                            </StackPanel>
+                        </Grid>
+                        <ToggleSwitch x:Name="HardwareLevel" Header="Hook cấp thấp (WH_KEYBOARD_LL)"
+                                      IsOn="True" Toggled="OnHardwareLevelToggled"/>
+                    </StackPanel>
+                </Expander>
+
+                <!-- Macro -->
+                <Expander Header="Gõ tắt (Macro)" IsExpanded="False">
+                    <StackPanel Spacing="12" Margin="0,12,0,0">
+                        <CheckBox x:Name="UseMacro" Content="Bật gõ tắt"
+                                  IsChecked="True" Checked="OnOptionChanged" Unchecked="OnOptionChanged"/>
+                        <Button Content="Quản lý gõ tắt…" Click="OnManageMacros"/>
+                    </StackPanel>
+                </Expander>
+
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- Status bar -->
+        <Grid Grid.Row="2" ColumnSpacing="8" Padding="0,8,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock x:Name="StatusText"
+                       Text="Sẵn sàng — Ctrl+Shift để đổi ngôn ngữ"
+                       Style="{StaticResource CaptionTextBlockStyle}"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                <AppBarButton Icon="Setting" ToolTipService.ToolTip="Cài đặt nâng cao"
+                              Click="OnAdvancedSettings"/>
+                <AppBarButton Icon="About" ToolTipService.ToolTip="Giới thiệu"
+                              Click="OnAbout"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>

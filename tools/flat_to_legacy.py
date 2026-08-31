@@ -98,7 +98,7 @@ def fmt_vec_vv(name, rows):
 
 out = []
 out.append("//----------------------------------------------------------------------------")
-out.append("// KieeKey v1.0.1 — VietnameseTables.source.hpp (GENERATOR SOURCE ONLY)")
+out.append("// KieeKey v1.0.2 — VietnameseTables.source.hpp (GENERATOR SOURCE ONLY)")
 out.append("//")
 out.append("// Legacy std::map/vector literals reconstructed from the validated data in")
 out.append("// FlatTables.hpp (see tools/flat_to_legacy.py). This file is NOT included by")

@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.0.1 - refactored and completed logic
+//   KieeKey v1.0.2 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.0.1 — resource.h
+// KieeKey v1.0.2 — resource.h
 // Resource identifiers for the Win32 tray application (src/app/main.cpp).
 //----------------------------------------------------------------------------
 #pragma once

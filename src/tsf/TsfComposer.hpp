@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.0.1 - refactored and completed logic
+//   KieeKey v1.0.2 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.0.1 — TsfComposer.hpp
+// KieeKey v1.0.2 — TsfComposer.hpp
 // Text Services Framework (TSF) composer — the "buffer-state output" backend
 // that eliminates synthetic backspace injections and the clipboard+Shift+Insert
 // round-trip (the #1 cause of ghost/duplicate letters and cursor flicker).

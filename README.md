@@ -5,7 +5,7 @@
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20ARM64-0078D6.svg)
 ![Build](https://img.shields.io/badge/build-CMake%20%3E%3D%203.28-064FAD.svg)
 
-**KieeKey v1.0.1** is a modern, low-latency Vietnamese input method engine
+**KieeKey v1.0.2** is a modern, low-latency Vietnamese input method engine
 (bộ gõ Tiếng Việt) for Windows, with a system-tray application, a TSF
 text-store composer and an optional WinUI 3 Fluent settings UI.
 
@@ -36,7 +36,7 @@ text-store composer and an optional WinUI 3 Fluent settings UI.
 
 ## What KieeKey changes compared to OpenKey
 
-| Area | OpenKey 2.0.5 (upstream) | KieeKey v1.0.1 |
+| Area | OpenKey 2.0.5 (upstream) | KieeKey v1.0.2 |
 |---|---|---|
 | Language level | C++11 / Win32 | C++20/23 (per-instance state machine, constexpr, RAII) |
 | Input pipeline | Synchronous processing in hook callbacks | Async hook thread → lock-free ring → consumer thread |
@@ -157,7 +157,7 @@ original licenses — see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 ## Tóm tắt (Tiếng Việt)
 
-**KieeKey v1.0.1** là bộ gõ Tiếng Việt cho Windows, được xây dựng dựa trên
+**KieeKey v1.0.2** là bộ gõ Tiếng Việt cho Windows, được xây dựng dựa trên
 dự án **[OpenKey](https://github.com/tuyenvm/OpenKey)** (GPL-3.0) của tác
 giả Tuyen Mai. Toàn bộ engine gốc đã được port sang C++ hiện đại, refactor
 và hoàn thiện logic: pipeline hook bất đồng bộ với hàng đợi lock-free,

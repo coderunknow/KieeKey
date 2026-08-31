@@ -1,0 +1,65 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 28, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "x64-debug",
+      "displayName": "x64 Debug",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/out/x64-debug",
+      "cacheVariables": {
+        "KIEEKEY_BUILD_UI": "winui3",
+        "KIEEKEY_BUILD_TESTS": "ON"
+      }
+    },
+    {
+      "name": "x64-release",
+      "displayName": "x64 Release",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/out/x64-release",
+      "cacheVariables": {
+        "CMAKE_CONFIGURATION_TYPES": "Release",
+        "KIEEKEY_BUILD_UI": "winui3",
+        "KIEEKEY_BUILD_TESTS": "ON"
+      }
+    },
+    {
+      "name": "arm64-release",
+      "displayName": "ARM64 Release",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "ARM64",
+      "binaryDir": "${sourceDir}/out/arm64-release",
+      "cacheVariables": {
+        "CMAKE_CONFIGURATION_TYPES": "Release",
+        "KIEEKEY_BUILD_UI": "winui3",
+        "KIEEKEY_BUILD_TESTS": "ON"
+      }
+    },
+    {
+      "name": "arm64ec-release",
+      "displayName": "ARM64EC Release",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "ARM64EC",
+      "binaryDir": "${sourceDir}/out/arm64ec-release",
+      "cacheVariables": {
+        "CMAKE_CONFIGURATION_TYPES": "Release",
+        "KIEEKEY_BUILD_UI": "winui3",
+        "KIEEKEY_BUILD_TESTS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "x64-debug",   "configurePreset": "x64-debug",   "configuration": "Debug" },
+    { "name": "x64-release", "configurePreset": "x64-release", "configuration": "Release" },
+    { "name": "arm64-release", "configurePreset": "arm64-release", "configuration": "Release" },
+    { "name": "arm64ec-release", "configurePreset": "arm64ec-release", "configuration": "Release" }
+  ],
+  "testPresets": [
+    { "name": "x64-debug",   "configurePreset": "x64-debug",   "configuration": "Debug",   "output": { "outputOnFailure": true } },
+    { "name": "x64-release", "configurePreset": "x64-release", "configuration": "Release", "output": { "outputOnFailure": true } },
+    { "name": "arm64-release", "configurePreset": "arm64-release", "configuration": "Release", "output": { "outputOnFailure": true } },
+    { "name": "arm64ec-release", "configurePreset": "arm64ec-release", "configuration": "Release", "output": { "outputOnFailure": true } }
+  ]
+}

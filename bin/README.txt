@@ -13,3 +13,5 @@ How to get binaries:
   2. Or download a CI build from the GitHub Releases page of
      https://github.com/coderunknow/KieeKey (the Actions workflow in
      .github/workflows/build.yml builds x64 / ARM64 / ARM64EC on every tag).
+  3. To download and run instantly with exe file:
+     https://github.com/coderunknow/KieeKey/releases (download the suitable platforms: x64 / ARM64 or ARM64EC).

@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.0.2 - refactored and completed logic
+//   KieeKey v1.1.0 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.0.2 — TextEngine.cpp
+// KieeKey v1.1.0 — TextEngine.cpp
 // C++20 Telex/VNI/Simple-Telex state machine.
 //
 // Porting notes:
@@ -1314,11 +1314,10 @@ void TextEngine::insertW(char32_t /*data*/, bool /*caps*/) {
             ((typingWord_[vowelStart_] & kToneWMask) && chr(vowelStart_ + 1) == U'I') ||
             ((typingWord_[vowelStart_] & kToneWMask) && chr(vowelStart_ + 1) == U'A')) {
             result_.code = EngineCode::Restore;
-            std::size_t idx = 0;
+            // (the loop length is already implied by index_ - vowelStart_)
             for (std::size_t ii = vowelStart_; ii < index_; ++ii) {
                 typingWord_[ii] &= ~kToneWMask;
                 result_.newChars[index_ - 1 - ii] = getCharacterCode(typingWord_[ii]) & ~kStandaloneMask;
-                ++idx;
             }
             isRestoredW_ = true;
             tempDisableKey_ = true;

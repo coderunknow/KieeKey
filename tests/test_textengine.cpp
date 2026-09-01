@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.0.2 - refactored and completed logic
+//   KieeKey v1.1.0 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.0.2 — test_textengine.cpp
+// KieeKey v1.1.0 — test_textengine.cpp
 // Golden Telex / VNI vectors. Simulates what the composer thread does:
 //   1. feed a key;
 //   2. if the engine consumed it → erase backspaceCount chars from the tail

@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.0.2 - refactored and completed logic
+//   KieeKey v1.1.0 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.0.2 — MainWindow.xaml.cpp
+// KieeKey v1.1.0 — MainWindow.xaml.cpp
 // WinUI 3 settings surface. Owns the SAME production pipeline as the console
 // app (src/app/main.cpp): ModernKeyHook → TextEngine → TsfComposer, with
 // ProcessMonitor auto-exclusion. Toggling "Bật gõ tiếng Việt" starts/stops
@@ -411,7 +411,7 @@ void MainWindow::OnAdvancedSettings(IInspectable const&, RoutedEventArgs const&)
 }
 
 void MainWindow::OnAbout(IInspectable const&, RoutedEventArgs const&) {
-    StatusText().Text(L"KieeKey v1.0.2 — engine C++23, hook lock-free, TSF, WinUI 3");
+    StatusText().Text(L"KieeKey v1.1.0 — engine C++23, hook lock-free, TSF, WinUI 3");
 }
 
 } // namespace KieeKey

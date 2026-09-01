@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.0.2 - refactored and completed logic
+//   KieeKey v1.1.0 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.0.2 — tests/e2e_bench.cpp
+// KieeKey v1.1.0 — tests/e2e_bench.cpp
 // End-to-end latency harness for the Win32 wrapper pipeline.
 //
 // Measures the FULL software chain per keystroke, exactly as the shipped
@@ -323,7 +323,7 @@ int main(int argc, char** argv) {
         else if (!std::strncmp(argv[i], "--spin=", 7)) { spinCapOpt = std::strtoul(argv[i] + 7, nullptr, 10); }
     }
 
-    std::printf("[e2e] KieeKey v1.0.2 — Win32 wrapper E2E latency\n");
+    std::printf("[e2e] KieeKey v1.1.0 — Win32 wrapper E2E latency\n");
     std::printf("[e2e] workload: %ld keys, %s, spin-cap=%llu us\n", keys,
                 paced ? "150 WPM paced"
                       : (rateHz > 0 ? "constant-rate injection probe"

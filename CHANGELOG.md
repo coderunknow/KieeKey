@@ -3,6 +3,97 @@
 All notable changes to KieeKey are documented here. Format based on
 Keep a Changelog; versioning: SemVer.
 
+## [1.1.0] — 2026-09-01
+
+A UX- and correctness-focused release: the tray app becomes properly
+discoverable and HiDPI-correct, two latent engine/transport defects found by
+UBSan and by a randomized differential harness are fixed, and the edge-case
+test surface grows to cover them.
+
+### Added
+* **Tray app** — a plain left click on the tray icon now opens the status
+  menu (previously it did nothing at all, which read as a dead icon; only
+  double-click was wired up).
+* **Tray menu** — two new items: **Khởi động cùng Windows** (writes/removes
+  the `HKCU\…\Run` entry, and is reconciled with the real Run key at
+  startup so it can never disagree with Task Manager) and **Giới thiệu
+  KieeKey…**.
+* **Toggle confirmation** — optional balloon on every Ctrl+Shift toggle
+  (default **on**; the tray icon alone is easy to miss on a dark taskbar, and
+  "did it switch?" is the most common confusion). Also exposed in Cài đặt →
+  Bàn phím.
+* **Settings dialog** — **Khôi phục mặc định** restores the shipped defaults
+  (deliberately leaving the startup entry alone — it is the one setting with
+  an effect outside KieeKey), plus a version footer.
+* **Diagnostics** — two new rows in Cài đặt → Chẩn đoán:
+  *Lần nghẽn hàng đợi* and *Nghẽn lâu nhất*, fed by the new queue-saturation
+  watchdog.
+* **Tests** — two new ctest targets: `ok_chord_tests`
+  (`tests/test_hotkey_chord.cpp`, the Ctrl+Shift chord state machine) and
+  `ok_edge_tests` (`tests/test_engine_edge_cases.cpp`, engine boundaries).
+  The native suite is now **5/5**.
+
+### Changed
+* **HiDPI settings dialog.** Every coordinate now lives on a 96-dpi design
+  grid that is scaled through `S()` at creation and again on
+  `WM_DPICHANGED`, and the frame is sized and centred in `WM_CREATE` once the
+  real monitor DPI is known. Previously the layout was hard-coded 96-dpi
+  pixels under a PerMonitorV2 manifest, so at 150 %/200 % the OS scaled the
+  frame but nothing inside it — a postage-stamp window with clipped
+  Vietnamese text.
+* **Tray toggle wording.** The toggle item now says what the click *will do*
+  ("Tắt gõ tiếng Việt" while the IME is on) and carries a checkmark for the
+  current state, instead of a permanently-labelled "Bật" item.
+* **Diagnostics plumbing** — `Win32Wrapper` forwards the new
+  `saturationRuns()` / `peakSaturationUs()` accessors.
+* Version bumped to **1.1.0** everywhere: CMake `project()`, `.rc`
+  VERSIONINFO (`FILEVERSION`/`PRODUCTVERSION 1,1,0,0`, strings `1.1.0.0`),
+  the manifest `assemblyIdentity`, `KieeKey v1.1.0` titles, file banners,
+  demo console title/output, README. Historical documents under
+  `docs/reports/` and the 1.0.2/1.0.0 changelog sections are intentionally
+  left verbatim (lineage record).
+
+### Fixed
+* **Core — out-of-bounds read on the first keystroke of a word.** UBSan
+  flagged `checkForStandaloneChar()` reading `buffer[index_ - 1]` with
+  `index_ == 0` (size_t wraparound): `… index 18446744073709551615 out of
+  bounds for 'unsigned int [32]'`. Guarded with `index_ > 0`. The guard is
+  behaviour-preserving (with `index_ == 0` the garbage read could never equal
+  `keyWillReverse`, so control reached the `index_ == 0` branch anyway) —
+  verified against 240k randomized streams plus the 149 curated cases.
+* **Core — `ProcessMonitor` no longer uses `std::atomic<std::shared_ptr<T>>`,**
+  which is deprecated in C++20, *removed* in C++26 and already gone from
+  libc++ (hard `static_assert`). Replaced with a mutex-guarded `shared_ptr`
+  published through `publishSnapshot()`. Snapshot traffic happens on
+  foreground changes only, never on the per-key hot path, so this is
+  cost-neutral and unblocks clang/libc++ toolchains.
+* **Transport — the queue-saturation budget is now live.**
+  `kMaxAcceptableHookLatencyNs` was declared but never consulted; a wedged
+  consumer only nudged the "dropped" counter. A queue that stays full past
+  200 ms is now recorded as a distinct saturation run with a peak duration.
+* **App — KieeKey no longer processes keys typed into KieeKey.** The
+  exclusion cache now also excludes our own windows by PID. An IME that eats
+  the keys you type into its own settings dialog is unusable, and any future
+  text field would have been corrupted.
+* **App — the Ctrl+Shift chord state is reset on every foreground change.**
+  A key-up delivered to *another* window (Alt+Tab away, a UAC prompt, an RDP
+  grab) never reaches the hook, so a stuck Ctrl/Shift made the next bare
+  Shift press look like a completed chord and silently switched the IME off.
+* **App — the singleton names no longer embed the version.** They used to be
+  `KieeKey_1.0.2_Singleton`, so an upgraded build could not see a live 1.0.2
+  and installed a **second** low-level keyboard hook over the same
+  keystrokes (doubled or swallowed characters). The names are now stable, and
+  the legacy names are still *probed* so an in-place upgrade is reported
+  ("a KieeKey cũ đang chạy") instead of double-hooking.
+* **App — word-break coverage.** `Ctrl+Break` (VK_CANCEL), the
+  context-menu key (VK_APPS) and VK_SLEEP were missing from the word-break VK
+  set, so a pending composition could survive them.
+* **App — the classic Win32 tray-menu bug.** A `WM_NULL` round-trip is now
+  posted after `TrackPopupMenu`, so the popup always finishes its modal loop;
+  without it the menu can stick open and swallow the next click.
+* **App** — removed the dead `kMaxInlineInputs` constant (the inline emitter
+  owns that budget now).
+
 ## [1.0.2] — 2026-08-31
 
 ### Changed
@@ -148,3 +239,25 @@ Code comments and CMake targets may reference internal lineage milestones
 of the engineering lineage that produced KieeKey v1.0 (the pre-release
 working name was "OpenKey NextGen") — they are historical engineering
 annotations, not release versions. The first public release is **v1.0**.
+
+## Release checklist
+
+The version string appears in five places; all of them must agree before a
+tag is pushed (`grep -rn "1\.1\.0" --include=*.{txt,md,hpp,cpp,rc,manifest} .`
+is a quick sanity check):
+
+1. `CMakeLists.txt` — `project(KieeKey VERSION …)`
+2. `src/app/KieeKeyApp.rc` — `FILEVERSION`, `PRODUCTVERSION`, `FileVersion`,
+   `ProductVersion`
+3. `src/app/KieeKeyApp.manifest` — `<assemblyIdentity version="…">`
+4. `src/app/main.cpp` — `kAppVersion[]`
+5. `README.md` / `CHANGELOG.md` / file banners / `demo/main.cpp`
+
+Then, as the LAST step before tagging (the manifest covers every tracked file
+except itself, so it must be regenerated after all other edits):
+
+```sh
+./tools/make_sha256sums.sh && git add SHA256SUMS.txt
+```
+
+Consumers verify a download with `sha256sum -c SHA256SUMS.txt`.

@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.0.2 - refactored and completed logic
+//   KieeKey v1.1.0 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.0.2 — tests/stress_engine.cpp
+// KieeKey v1.1.0 — tests/stress_engine.cpp
 // EXTREME engine test: fuzz + invariants + determinism + allocation counting
 // + edge-case battery. Run with any C++23 compiler; optionally with
 // -fsanitize=address,undefined (recommended) or -fsanitize=thread.

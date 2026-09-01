@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.0.2 - refactored and completed logic
+//   KieeKey v1.1.0 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.0.2 — tests/uk_driver.cpp
+// KieeKey v1.1.0 — tests/uk_driver.cpp
 // Minimal Linux harness for the VENDORED UNMODIFIED UniKey engine
 // (tests/reference/unikey — the authentic UKEngine from the UniKey 4.x
 // GPL source). Feeds a key stream and produces the UTF-16 output + backspace

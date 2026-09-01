@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.0.2 - refactored and completed logic
+//   KieeKey v1.1.0 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.0.2 — tests/stress_queue.cpp
+// KieeKey v1.1.0 — tests/stress_queue.cpp
 // EXTREME lock-free queue test: SPSC correctness under random pauses,
 // MPMC multi-producer integrity, overflow edge, throughput measurement.
 // Recommended: run under -fsanitize=thread for the concurrency checks.

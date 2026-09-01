@@ -5,7 +5,7 @@
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20ARM64-0078D6.svg)
 ![Build](https://img.shields.io/badge/build-CMake%20%3E%3D%203.28-064FAD.svg)
 
-**KieeKey v1.0.2** is a modern, low-latency Vietnamese input method engine
+**KieeKey v1.1.0** is a modern, low-latency Vietnamese input method engine
 (bộ gõ Tiếng Việt) for Windows, with a system-tray application, a TSF
 text-store composer and an optional WinUI 3 Fluent settings UI.
 
@@ -30,13 +30,22 @@ text-store composer and an optional WinUI 3 Fluent settings UI.
 * **Modern TSF composer** — commits text through the Text Services Framework
   text store, no synthetic backspaces.
 * **Event-driven app awareness** — foreground-process monitor with
-  auto-exclusion of games/apps that dislike IMEs.
-* **Familiar tray UX** — green/gray tray icon, right-click menu, Vietnamese
-  settings dialog, Ctrl+Shift global toggle (same defaults as upstream).
+  auto-exclusion of games/apps that dislike IMEs (and of KieeKey's own
+  windows, so it never eats the keys you type into its own settings).
+* **Familiar tray UX** — green/gray tray icon, left-click status menu,
+  Vietnamese settings dialog, Ctrl+Shift global toggle with an optional
+  on/off confirmation balloon (same defaults as upstream).
+* **Per-app output policy** — TSF for browsers and Office/WPS (no character
+  flicker), inline `SendInput` everywhere else (lowest latency); the
+  foreground app's responsiveness is probed before TSF is trusted, so a hung
+  target can never stall the hook.
+* **HiDPI-ready** — PerMonitorV2-aware settings dialog laid out on a 96-dpi
+  design grid and re-scaled on `WM_DPICHANGED`, so it is crisp and unclipped
+  at 125/150/200 %.
 
 ## What KieeKey changes compared to OpenKey
 
-| Area | OpenKey 2.0.5 (upstream) | KieeKey v1.0.2 |
+| Area | OpenKey 2.0.5 (upstream) | KieeKey v1.1.0 |
 |---|---|---|
 | Language level | C++11 / Win32 | C++20/23 (per-instance state machine, constexpr, RAII) |
 | Input pipeline | Synchronous processing in hook callbacks | Async hook thread → lock-free ring → consumer thread |
@@ -157,7 +166,7 @@ original licenses — see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 ## Tóm tắt (Tiếng Việt)
 
-**KieeKey v1.0.2** là bộ gõ Tiếng Việt cho Windows, được xây dựng dựa trên
+**KieeKey v1.1.0** là bộ gõ Tiếng Việt cho Windows, được xây dựng dựa trên
 dự án **[OpenKey](https://github.com/tuyenvm/OpenKey)** (GPL-3.0) của tác
 giả Tuyen Mai. Toàn bộ engine gốc đã được port sang C++ hiện đại, refactor
 và hoàn thiện logic: pipeline hook bất đồng bộ với hàng đợi lock-free,

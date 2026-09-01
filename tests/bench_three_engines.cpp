@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.0.2 - refactored and completed logic
+//   KieeKey v1.1.0 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.0.2 — tests/bench_three_engines.cpp
+// KieeKey v1.1.0 — tests/bench_three_engines.cpp
 // COMPREHENSIVE differential + latency benchmark:
 //   KieeKey (shipped TextEngine)
 //   vs OpenKey 2.0.5 (vendored, unmodified legacy engine)
@@ -641,7 +641,7 @@ static void writeReport(const std::vector<Stream>& streams,
     line("");
     line("**Date:** 2026-08-29 · **Method:** Telex · deterministic byte-identical key streams.");
     line("");
-    line("- **KieeKey v1.0.2** — shipped `TextEngine` (this repository).");
+    line("- **KieeKey v1.1.0** — shipped `TextEngine` (this repository).");
     line("- **OpenKey 2.0.5** — vendored, unmodified legacy engine (`tests/reference/openkey-2.0.5`, compiled `-DLINUX`).");
     line("- **UniKey 4.x** — vendored, unmodified `UKEngine` from the official GPL source"
          " (`tests/reference/unikey`); the engine behind the current UniKey release line"

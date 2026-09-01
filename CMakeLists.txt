@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------------
-# KieeKey v1.0.2 — CMake build (modern replacement for the .sln/.vcxproj)
+# KieeKey v1.1.0 — CMake build (modern replacement for the .sln/.vcxproj)
 #
 #   * C++23, /W4 + /WX (warnings as errors) for release-grade hygiene (MSVC)
 #   * x64 + ARM64 out of the box (ARM64EC possible: -A ARM64EC, VS 17.4+)
@@ -33,7 +33,7 @@
 cmake_minimum_required(VERSION 3.28)
 
 project(KieeKey
-        VERSION 1.0.2
+        VERSION 1.1.0
         DESCRIPTION "KieeKey — Vietnamese input method (modern core)"
         LANGUAGES CXX)
 

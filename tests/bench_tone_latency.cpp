@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.0.2 - refactored and completed logic
+//   KieeKey v1.1.0 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.0.2 — tests/bench_tone_latency.cpp
+// KieeKey v1.1.0 — tests/bench_tone_latency.cpp
 // TONE-POPULATION LATENCY BENCHMARK (Phase 2 of the latency audit).
 //
 // WHY: the frozen v3.3.1 E2E workload (tests/e2e_bench.cpp) is 99.9%
@@ -609,7 +609,7 @@ int main(int argc, char** argv) {
     else if (commitSel == "1ms") { commitNs = 1'000'000; }
     else { commitNs = std::strtoull(commitSel.c_str(), nullptr, 10); }
 
-    std::printf("[tone] KieeKey v1.0.2 — tone-population latency benchmark\n");
+    std::printf("[tone] KieeKey v1.1.0 — tone-population latency benchmark\n");
 
     EngineOptions o;
     o.restoreIfWrongSpelling = true;

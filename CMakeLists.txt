@@ -243,10 +243,24 @@ else()
         target_compile_features(ok_ring_tests PRIVATE cxx_std_23)
         add_test(NAME ok_ring_tests COMMAND ok_ring_tests)
 
+        # v1.1.0: global Ctrl+Shift chord state machine + the engine
+        # edge-case suite. Both are platform-independent (no Win32 surface),
+        # so they run on this host too.
+        add_executable(ok_chord_tests tests/test_hotkey_chord.cpp)
+        target_include_directories(ok_chord_tests PRIVATE src/core)
+        target_compile_features(ok_chord_tests PRIVATE cxx_std_23)
+        add_test(NAME ok_chord_tests COMMAND ok_chord_tests)
+
+        add_executable(ok_edge_tests tests/test_engine_edge_cases.cpp)
+        target_include_directories(ok_edge_tests PRIVATE src/core)
+        target_compile_features(ok_edge_tests PRIVATE cxx_std_23)
+        add_test(NAME ok_edge_tests COMMAND ok_edge_tests)
+
         # Hard per-test caps: a future regression that turns a barrier/wait
         # path into an infinite block must fail CI in minutes, not hang the
         # job until GitHub's hour-level limit kills it.
         set_tests_properties(ok_tests ok_ring_tests ok_wrap_tests
+                             ok_chord_tests ok_edge_tests
                              PROPERTIES TIMEOUT 120)
 
         # E2E latency benchmark through the shim (run manually):
@@ -274,8 +288,9 @@ else()
         target_compile_features(ok_tone_bench PRIVATE cxx_std_23)
 
         message(STATUS "Non-Windows host: building the shim-based test suite only "
-                       "(ok_tests, ok_ring_tests, ok_wrap_tests). The Windows product "
-                       "targets (ok_core, ok_tsf, KieeKeyApp.exe) require WIN32.")
+                       "(ok_tests, ok_ring_tests, ok_wrap_tests, ok_chord_tests, "
+                       "ok_edge_tests). The Windows product targets (ok_core, ok_tsf, "
+                       "KieeKeyApp.exe) require WIN32.")
     endif()
 
 endif()
@@ -297,6 +312,17 @@ if(WIN32 AND KIEEKEY_BUILD_TESTS)
     target_link_libraries(ok_ring_tests PRIVATE ok_core)
     add_test(NAME ok_ring_tests COMMAND ok_ring_tests)
 
+    # v1.1.0: global Ctrl+Shift chord state machine (platform-independent).
+    add_executable(ok_chord_tests tests/test_hotkey_chord.cpp)
+    target_link_libraries(ok_chord_tests PRIVATE ok_core)
+    add_test(NAME ok_chord_tests COMMAND ok_chord_tests)
+
+    # v1.1.0: engine edge-case suite (long words, backspace storms, restore
+    # semantics, D2 over-backspace invariant, resumeFromText, code tables).
+    add_executable(ok_edge_tests tests/test_engine_edge_cases.cpp)
+    target_link_libraries(ok_edge_tests PRIVATE ok_core)
+    add_test(NAME ok_edge_tests COMMAND ok_edge_tests)
+
     # wrapper logic tests (batched emitter, watchdog state machine,
     # Vyukov Ring 1024). The assertions inspect the RECORDED SendInput calls
     # and a controlled fake clock — that only exists in the deterministic
@@ -313,6 +339,7 @@ if(WIN32 AND KIEEKEY_BUILD_TESTS)
     # Same hang protection for the Windows-compiled test suite (these run
     # on the native x64 CI job — the barrier/wait paths live here).
     set_tests_properties(ok_tests ok_ring_tests ok_wrap_tests
+                         ok_chord_tests ok_edge_tests
                          PROPERTIES TIMEOUT 120)
 
     # Performance / E2E benchmarks (not part of ctest — run manually).

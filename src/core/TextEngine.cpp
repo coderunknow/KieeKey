@@ -1420,7 +1420,20 @@ void TextEngine::reverseLastStandaloneChar(char32_t keyCode, bool caps) {
 }
 
 void TextEngine::checkForStandaloneChar(char32_t c, bool caps, char32_t keyWillReverse) {
-    if (chr(index_ - 1) == keyWillReverse && typingWord_[index_ - 1] & kToneWMask) {
+    // v1.1.0 BUGFIX (undefined behaviour): the original condition read
+    // chr(index_ - 1) / typingWord_[index_ - 1] without testing index_ first.
+    // checkForStandaloneChar() is reached with index_ == 0 -- typing 'w' (or
+    // '[' / ']') as the FIRST key of a word goes straight here -- so the
+    // expression evaluated typingWord_[SIZE_MAX]: an out-of-bounds read of
+    // std::array (caught by UBSan as
+    //   "index 18446744073709551615 out of bounds for type 'unsigned int [32]'"
+    // on the very first keystroke). It "worked" only because that address
+    // happens to alias the preceding EngineOptions member on the two ABIs we
+    // shipped. The guard is behaviour-preserving: with index_ == 0 the read
+    // was garbage that could never equal keyWillReverse, so control fell
+    // through to the `index_ == 0` branch below either way.
+    if (index_ > 0 && chr(index_ - 1) == keyWillReverse &&
+        (typingWord_[index_ - 1] & kToneWMask)) {
         result_.code = EngineCode::WillProcess;
         result_.backspaceCount = 1;
         result_.newCharCount = 1;

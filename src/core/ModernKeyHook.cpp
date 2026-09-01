@@ -423,12 +423,14 @@ bool ModernKeyHook::enqueue(const KeyEvent& ev) noexcept {
         if (consumerParked_.load(std::memory_order_acquire)) {
             ::SetEvent(wakeEvent_.get());
         }
+        clearSaturation();
         return true;
     }
 
     // Saturated. Policy: never block the hook; drop oldest by draining one
     // slot (keeps newest, preserves order), or drop this event.
     stats_.droppedOverflow.fetch_add(1, std::memory_order_relaxed);
+    noteSaturation();
     if (overflowPolicy_.load(std::memory_order_relaxed) == OverflowPolicy::DropOldest) {
         KeyEvent discard;
         static_cast<void>(queue_.try_pop(discard));   // remove oldest, then retry once
@@ -440,6 +442,47 @@ bool ModernKeyHook::enqueue(const KeyEvent& ev) noexcept {
         }
     }
     return false;                  // DropNewest (default): input dropped, counted
+}
+
+//---------------------------------------------------------------------------
+// v1.1.0 saturation watchdog.
+//
+// `kMaxAcceptableHookLatencyNs` above documents the budget: the input ring may
+// fill up for a keystroke or two under a burst (the consumer catches up within
+// microseconds and nothing is lost beyond the counted drop), but a queue that
+// stays full for a fifth of a second means the consumer is genuinely stuck —
+// e.g. a synchronous TSF edit session inside an application that stopped
+// pumping. That is exactly the condition that used to be invisible in the
+// diagnostics (only a slowly growing "dropped" counter). It is now measured as
+// a distinct run with its own worst-case duration.
+//---------------------------------------------------------------------------
+void ModernKeyHook::noteSaturation() noexcept {
+    const std::uint64_t now = qpcNow();
+    const std::uint64_t start = satStartQpc_.load(std::memory_order_relaxed);
+    if (start == 0) {                       // first drop of a new window
+        satStartQpc_.store(now, std::memory_order_relaxed);
+        return;
+    }
+    // Saturating arithmetic: (now - start) is correct across any QPC wrap
+    // within the 64-bit counter, and the division cannot overflow because the
+    // elapsed ticks of a real stall are orders of magnitude below 2^64/1e9.
+    const std::uint64_t elapsedNs =
+        (now - start) * 1'000'000'000ULL / (qpcFreq() != 0 ? qpcFreq() : 1);
+    if (elapsedNs < kMaxAcceptableHookLatencyNs) { return; }
+
+    saturationRuns_.fetch_add(1, std::memory_order_relaxed);
+    const std::int64_t us = static_cast<std::int64_t>(elapsedNs / 1'000ULL);
+    std::int64_t peak = peakSaturationUs_.load(std::memory_order_relaxed);
+    while (us > peak &&
+           !peakSaturationUs_.compare_exchange_weak(peak, us, std::memory_order_relaxed)) {}
+    satStartQpc_.store(0, std::memory_order_relaxed);   // next run counts fresh
+}
+
+void ModernKeyHook::clearSaturation() noexcept {
+    // Hot path: one relaxed load, and a store only when a window is open.
+    if (satStartQpc_.load(std::memory_order_relaxed) != 0) {
+        satStartQpc_.store(0, std::memory_order_relaxed);
+    }
 }
 
 void ModernKeyHook::applyModifierDelta(const KeyEvent& ev) noexcept {

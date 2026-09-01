@@ -248,7 +248,7 @@ void ProcessMonitor::updateFromWindow(HWND fg) noexcept {
         info->exeNameUtf8 = "unknown";
         info->exeNameLower = "unknown";
         info->kind = ProcessClass::Normal;
-        std::atomic_store(&snapshot_, std::move(info));
+        publishSnapshot(std::move(info));
         return;
     }
 
@@ -270,7 +270,12 @@ void ProcessMonitor::updateFromWindow(HWND fg) noexcept {
     info->kind = classify(info->exeNameLower, info->fullscreen,
                           info->exeNameLower == "explorer.exe");
 
-    std::atomic_store(&snapshot_, std::move(info));   // single atomic publish
+    publishSnapshot(std::move(info));   // single swap publish
+}
+
+void ProcessMonitor::publishSnapshot(std::shared_ptr<const ForegroundInfo> info) noexcept {
+    std::lock_guard<std::mutex> lk(snapshotMtx_);
+    snapshot_ = std::move(info);
 }
 
 //---------------------------------------------------------------------------

@@ -52,6 +52,7 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <span>
 #include <string>
 #include <string_view>
@@ -112,9 +113,23 @@ public:
     // Unregisters; joins the pump thread. Safe from any thread.
     void stop() noexcept;
 
-    // Lock-free snapshot access (copy a shared_ptr — one atomic load).
+    // Snapshot access: copies a shared_ptr under a short critical section.
+    //
+    // v1.1.0 portability fix — this used to be
+    // `std::atomic<std::shared_ptr<const ForegroundInfo>>` read with
+    // std::atomic_load(). That partial specialization of std::atomic was
+    // deprecated in C++20 and REMOVED in C++26, and libc++ (the standard
+    // library used by clang/LLVM toolchains, including every
+    // MinGW/Windows-clang configuration) already dropped it: instantiating
+    // it is a hard `static_assert` failure rather than a warning. A mutex-
+    // guarded shared_ptr is the portable equivalent here, and it costs
+    // nothing measurable — the snapshot is written on foreground changes only
+    // and read by the policy code on the same rare events (never on the
+    // per-keystroke hot path, which consults the cached fgExcluded_/fgUseTsf_
+    // atomics instead).
     [[nodiscard]] std::shared_ptr<const ForegroundInfo> snapshot() const noexcept {
-        return std::atomic_load(&snapshot_);
+        std::lock_guard<std::mutex> lk(snapshotMtx_);
+        return snapshot_;
     }
 
     // Convenience: does the CURRENT foreground app require auto-exclusion?
@@ -150,12 +165,20 @@ public:
 private:
     void pumpThreadMain() noexcept;
     void updateFromWindow(HWND fg) noexcept;   // builds a new snapshot
+    // Publishes a freshly built snapshot (mutex-guarded swap — see snapshot()).
+    // noexcept: a mutex lock can only throw if the OS is out of resources; the
+    // monitor runs on a background pump thread where an exception would
+    // terminate the process, and the caller has no recovery path anyway.
+    void publishSnapshot(std::shared_ptr<const ForegroundInfo> info) noexcept;
 
     static void CALLBACK winEventProc(HWINEVENTHOOK, DWORD, HWND, LONG, LONG, DWORD, DWORD);
     inline static ProcessMonitor* g_current = nullptr;   // trampoline target
 
     std::atomic<bool> running_{false};
-    std::atomic<std::shared_ptr<const ForegroundInfo>> snapshot_{};
+    // v1.1.0: mutex-guarded instead of std::atomic<std::shared_ptr<...>>
+    // (that specialization is gone in C++26 / libc++ — see snapshot()).
+    mutable std::mutex             snapshotMtx_;
+    std::shared_ptr<const ForegroundInfo> snapshot_{};
     ok::win32::WinEventHook fgEvent_;
     std::thread pumpThread_;
     // Pump thread id, captured INSIDE pumpThreadMain before the hook install

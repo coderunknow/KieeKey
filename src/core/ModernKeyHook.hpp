@@ -186,6 +186,16 @@ public:
     // Exponential moving average of hook→consumer latency (single writer on
     // the consumer thread; relaxed load is fine for telemetry).
     [[nodiscard]] std::int64_t  avgLatencyUs() const noexcept { return avgLatencyUs_.load(std::memory_order_relaxed); }
+    // v1.1.0 — queue-saturation watchdog. A *continuous* queue-full condition
+    // longer than kMaxAcceptableHookLatencyNs (200 ms) is what the old comment
+    // called "something pathological"; it is now actually measured instead of
+    // only being counted as N individual drops:
+    //   * saturationRuns()   — how many such stalls happened since start()
+    //   * peakSaturationUs() — the longest one, in microseconds
+    // Both are pure diagnostics (surface them in the Chẩn đoán tab); the drop
+    // policy itself is unchanged — the hook still never blocks.
+    [[nodiscard]] std::uint64_t saturationRuns()  const noexcept { return saturationRuns_.load(std::memory_order_relaxed); }
+    [[nodiscard]] std::int64_t  peakSaturationUs() const noexcept { return peakSaturationUs_.load(std::memory_order_relaxed); }
 
     //-------------------------------------------------------------------------
     // v3.3.1 — Hook Self-Healing support.
@@ -254,6 +264,10 @@ private:
     void clearSuppressedDown(std::uint32_t vk) noexcept;
 
     bool enqueue(const KeyEvent& ev) noexcept;   // applies overflow policy
+    // v1.1.0 saturation watchdog (hook thread only). noteSaturation() runs
+    // when a push fails; clearSaturation() when the queue accepts again.
+    void noteSaturation() noexcept;
+    void clearSaturation() noexcept;
     // Count an event that produced no consumer work (never queued): keeps the
     // pushed() diagnostics counter accurate without a SetEvent syscall.
     void countPassThrough(const KeyEvent& ev) noexcept {
@@ -272,6 +286,10 @@ private:
     // producer skip the SetEvent syscall for every key that arrives while
     // the consumer is spinning (the entire hot-burst population).
     std::atomic<bool> consumerParked_{false};
+    // v1.1.0 saturation watchdog state (hook thread is the only writer).
+    std::atomic<std::uint64_t> satStartQpc_{0};   // 0 = not currently saturated
+    std::atomic<std::uint64_t> saturationRuns_{0};
+    std::atomic<std::int64_t>  peakSaturationUs_{0};
 
     ok::win32::EventHandle wakeEvent_;           // signaled to wake consumer
     ok::win32::HookHandle   keyboardHook_;

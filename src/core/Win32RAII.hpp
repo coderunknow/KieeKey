@@ -113,6 +113,13 @@ public:
         return *this;
     }
 
+    // v1.1.0: adopt an ALREADY-OPEN key so every registry path in the app can
+    // use this RAII type (the app key below is just the common case).
+    // Takes ownership — the key is closed when the wrapper dies. A null
+    // handle yields an empty (no-op) wrapper, so an "open failed" path
+    // needs no special case at the call site.
+    static RegistryKey adopt(HKEY h) noexcept { return RegistryKey(h); }
+
     // Opens (creating if needed) HKCU\Software\TuyenMai\OpenKey — same key as v2.0.5.
     static RegistryKey openAppKey(bool createIfMissing = true) {
         // NOTE: std::wstring_view::data() is NOT guaranteed NUL-terminated,

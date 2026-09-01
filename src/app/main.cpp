@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.0.2 - refactored and completed logic
+//   KieeKey v1.1.0 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.0.2 — src/app/main.cpp
+// KieeKey v1.1.0 — src/app/main.cpp
 // The OpenKey-style Windows tray application (replaces the pre-tray console host):
 //
 //   * System tray icon (green = Vietnamese ON, gray = OFF) with the classic
@@ -199,6 +199,16 @@ struct AppState {
     bool exclIde   = true;
     bool exclGame  = true;
     bool exclShell = false;
+    // v1.1.0 UX:
+    //   runAtStartup   — HKCU\\...\\Run entry (the #1 requested tray-app
+    //                    setting; previously it required editing the registry
+    //                    or the Startup folder by hand).
+    //   notifyOnToggle — a short balloon on every Ctrl+Shift toggle. The
+    //                    tray icon alone is easy to miss on a dark taskbar,
+    //                    and "did it switch?" is the most common confusion
+    //                    when the hotkey fires.
+    bool runAtStartup   = false;
+    bool notifyOnToggle = true;
 };
 AppState g;
 
@@ -206,6 +216,93 @@ AppState g;
 // Settings persistence (HKCU\Software\TuyenMai\OpenKey — same key as 2.0.5)
 //===========================================================================
 ok::win32::RegistryKey settingsKey() { return ok::win32::RegistryKey::openAppKey(true); }
+
+//---------------------------------------------------------------------------
+// v1.1.0 — "start with Windows" (HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run)
+//
+// Deliberately NOT using a Startup-folder shortcut: a shortcut needs the .lnk
+// COM plumbing (IShellLink) and breaks if the exe is moved, while the Run
+// value is a single registry string that Task Manager also shows/edits — so
+// the state the user sees in Task Manager and the state KieeKey reports are
+// the same thing.
+//
+// The value is (re)written with the CURRENT module path every time it is
+// enabled, so a portable/moved install keeps working.
+//---------------------------------------------------------------------------
+//---------------------------------------------------------------------------
+// v1.1.0 — one place for the user-visible version string.
+// Kept in sync with CMake project(KieeKey VERSION ...), KieeKeyApp.rc
+// (FILEVERSION/PRODUCTVERSION + the manifest assemblyIdentity) and
+// CHANGELOG.md; the release checklist in CHANGELOG.md lists all of them.
+//---------------------------------------------------------------------------
+constexpr wchar_t kAppVersion[] = L"1.1.0";
+[[nodiscard]] std::wstring appTitle() { return std::wstring(L"KieeKey v") + kAppVersion; }
+[[nodiscard]] std::wstring settingsTitle() { return appTitle() + L" — Cài đặt"; }
+
+// Defined below (the tray menu is built before its helpers).
+void updateTrayIcon() noexcept;
+void showTrayBalloon(const wchar_t* title, const wchar_t* text) noexcept;
+void openSettingsDialog() noexcept;
+void showAbout() noexcept;
+void saveSettings();
+void applyEngineEnabled(bool on) noexcept;   // hook-thread-safe half
+void setEngineEnabled(bool on) noexcept;     // UI-thread half
+
+void saveSettings();   // defined below (syncRunAtStartupState may persist the fix)
+
+constexpr wchar_t kRunKeyPath[]  = L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run";
+constexpr wchar_t kRunValueName[] = L"KieeKey";
+
+[[nodiscard]] bool runAtStartupEnabled() noexcept {
+    HKEY h = nullptr;
+    if (::RegOpenKeyExW(HKEY_CURRENT_USER, kRunKeyPath, 0, KEY_READ, &h) != ERROR_SUCCESS) {
+        return false;
+    }
+    auto key = ok::win32::RegistryKey::adopt(h);
+    DWORD type = 0;
+    wchar_t buf[1024]{};
+    DWORD size = sizeof(buf);
+    const LONG rc = ::RegQueryValueExW(key.get(), kRunValueName, nullptr, &type,
+                                       reinterpret_cast<LPBYTE>(buf), &size);
+    if (rc != ERROR_SUCCESS) { return false; }
+    // An empty value is as good as absent (some cleaners "disable" entries by
+    // blanking them instead of deleting them).
+    return buf[0] != L'\0';
+}
+
+bool setRunAtStartup(bool on) noexcept {
+    HKEY h = nullptr;
+    if (::RegCreateKeyExW(HKEY_CURRENT_USER, kRunKeyPath, 0, nullptr,
+                          REG_OPTION_NON_VOLATILE, KEY_READ | KEY_WRITE, nullptr,
+                          &h, nullptr) != ERROR_SUCCESS) {
+        return false;
+    }
+    auto key = ok::win32::RegistryKey::adopt(h);
+    if (!on) {
+        return ::RegDeleteValueW(key.get(), kRunValueName) == ERROR_SUCCESS ||
+               ::GetLastError() == ERROR_FILE_NOT_FOUND;
+    }
+    wchar_t self[MAX_PATH + 1]{};
+    if (::GetModuleFileNameW(nullptr, self, MAX_PATH + 1) == 0) { return false; }
+    // Quote the path: the Run command line is parsed like a shell command.
+    std::wstring cmd(L"\"");
+    cmd += self;
+    cmd += L"\"";
+    return ::RegSetValueExW(key.get(), kRunValueName, 0, REG_SZ,
+                            reinterpret_cast<const BYTE*>(cmd.c_str()),
+                            static_cast<DWORD>((cmd.size() + 1) * sizeof(wchar_t))) == ERROR_SUCCESS;
+}
+
+// Reconcile the in-memory flag with the real Run key. Runs once at startup:
+// the registry mirror can be stale (KieeKey was not running when the user
+// disabled the entry in Task Manager), and the Run key is the authority.
+void syncRunAtStartupState() noexcept {
+    const bool actual = runAtStartupEnabled();
+    if (actual != g.runAtStartup) {
+        g.runAtStartup = actual;
+        saveSettings();
+    }
+}
 
 void loadSettings() {
     if (auto key = settingsKey(); key) {
@@ -224,6 +321,12 @@ void loadSettings() {
         g.exclShell                        = key.getDword(L"ExcludeShell", 0) != 0;
         const DWORD om = key.getDword(L"OutputMode", 0);
         if (om <= 2) { g.outputMode.store(static_cast<int>(om), std::memory_order_relaxed); }
+        // v1.1.0. The registry is the fallback view of these two; the
+        // authoritative state is the Run key itself (a user may have removed
+        // it in Task Manager while KieeKey was not running), so loadSettings()
+        // is immediately reconciled by syncRunAtStartupState() in wWinMain.
+        g.runAtStartup   = key.getDword(L"RunAtStartup", 0) != 0;
+        g.notifyOnToggle = key.getDword(L"NotifyOnToggle", 1) != 0;
     }
 }
 
@@ -241,6 +344,8 @@ void saveSettings() {
         key.setDword(L"ExcludeGame",       g.exclGame ? 1 : 0);
         key.setDword(L"ExcludeShell",      g.exclShell ? 1 : 0);
         key.setDword(L"OutputMode",        static_cast<DWORD>(g.outputMode.load(std::memory_order_relaxed)));
+        key.setDword(L"RunAtStartup",      g.runAtStartup ? 1 : 0);
+        key.setDword(L"NotifyOnToggle",    g.notifyOnToggle ? 1 : 0);
     }
 }
 
@@ -282,6 +387,12 @@ bool isWordBreakVk(std::uint32_t vk) noexcept {
         case 0x21: case 0x22:
         case 0x2C: case 0x2A: case 0x29: case 0x2F:
         case 0x2B: case 0x90: case 0x91:
+            return true;
+        // v1.1.0: three that were missing.
+        //   0x03 VK_CANCEL  — Ctrl+Break: the composition must not survive it
+        //   0x5D VK_APPS    — the context-menu key (a menu is about to open)
+        //   0x5F VK_SLEEP   — the machine is going to sleep mid-word
+        case 0x03: case 0x5D: case 0x5F:
             return true;
         default: return false;
     }
@@ -374,12 +485,9 @@ void updateForegroundPolicy() noexcept {
 
 // Inline zero-latency output (hook thread). Exactly what original OpenKey
 // did: backspaces + Unicode text queued straight into the input stream.
-// Normal edits fit one SendInput call (backspace ≤ kMaxBuff=32 — the D2
-// engine policy — and replacement ≤ 2*kMaxBuff wchar_t): 32*2 + 64*2 INPUTs
-// ≈ 5.4 KiB on the stack, zero heap. Macro expansions (D3) can be longer —
-// the loop below flushes the batch and keeps going, so ANY payload size is
-// safe (chunked, still ordered, still self-tagged).
-inline constexpr std::size_t kMaxInlineInputs = kMaxBuff * 2 + 2 * kMaxBuff * 2 + 4;
+// That stack budget now lives in ok::wrap::InlineEmitter (see
+// win32_wrapper.hpp), which owns the batching and the chunking of oversized
+// payloads such as macro expansions (D3); this layer only forwards.
 void sendBackspaces(std::size_t n) noexcept;    // defined below (fallback output)
 void sendUnicodeText(const std::wstring& text) noexcept;
 
@@ -414,8 +522,34 @@ void sendUnicodeText(const std::wstring& text) noexcept {
 // PRODUCER — runs on the hook pump thread (serialized; must be fast).
 // Returns true to SUPPRESS the key (the app never receives it).
 //===========================================================================
+//---------------------------------------------------------------------------
+// v1.1.0 — KieeKey must never process keys typed into KieeKey.
+//
+// Until now the exclusion engine only classified OTHER processes, so a key
+// pressed while one of our own windows had focus was still fed to the engine
+// and, when it looked like Telex/VNI, rewritten. That is invisible while the
+// only window is a modal-free settings dialog made of checkboxes, but it
+// corrupts any text field we add (and it is plain wrong: an IME that eats the
+// keys you type into its own settings is unusable).
+//
+// Cheap and event-driven: the answer is computed on foreground changes only
+// and cached into fgExcluded_, exactly like the other exclusion rules, so the
+// per-keystroke cost stays a single relaxed atomic load.
+//---------------------------------------------------------------------------
+[[nodiscard]] bool ownWindowHasFocus() noexcept {
+    const HWND fg = ::GetForegroundWindow();
+    if (fg == nullptr) { return false; }
+    // A window belongs to us iff its thread's process is this process. Also
+    // covers the hidden main window (which can briefly own the focus) and the
+    // tray pop-up menu (owned by the main window).
+    DWORD pid = 0;
+    if (::GetWindowThreadProcessId(fg, &pid) == 0) { return false; }
+    return pid == ::GetCurrentProcessId();
+}
+
 void updateExclusionCache() noexcept {
-    g.fgExcluded_.store(g.monitor.currentAppAutoExcluded(), std::memory_order_relaxed);
+    g.fgExcluded_.store(g.monitor.currentAppAutoExcluded() || ownWindowHasFocus(),
+                        std::memory_order_relaxed);
 }
 
 // True for keys that move the caret or edit text WITHOUT the engine being
@@ -509,12 +643,10 @@ PD onHookEvent(const KeyEvent& ev) noexcept {
                                  ev.action == KeyAction::SysKeyDown);
         if (g.ctrlShiftChord.onKey(isCtrlKey, isShiftKey, !isCtrlKey && !isShiftKey && keyDown,
                                    keyDown) == ok::hotkey::CtrlShiftChord::Action::Toggle) {
-            g.engineEnabled.store(!g.engineEnabled.load(std::memory_order_relaxed),
-                                  std::memory_order_relaxed);
-            {
-                std::lock_guard<std::mutex> lk(g.engineMtx);
-                g.engine.startNewSession();   // drop stale word state
-            }
+            // applyEngineEnabled() not setEngineEnabled(): this runs on the
+            // HOOK pump thread, which must never call into the UI. The tray
+            // icon + balloon are posted to the UI thread (WM_APP_TOGGLE).
+            applyEngineEnabled(!g.engineEnabled.load(std::memory_order_relaxed));
             if (g.hMain) { ::PostMessageW(g.hMain, WM_APP_TOGGLE, 0, 0); }
         }
     }
@@ -572,6 +704,14 @@ PD onHookEvent(const KeyEvent& ev) noexcept {
 
     // ---- bookkeeping / environment events ----
     if (ev.source == EventSource::ForegroundChanged) {
+        // v1.1.0: the chord state machine tracks held modifiers from the key
+        // stream. A key-up that lands on another window (Alt+Tab away, UAC
+        // prompt, RDP grab) never reaches this hook, so Ctrl/Shift can stay
+        // "held" forever — and the next bare Shift press+release then looks
+        // like a completed Ctrl+Shift chord and silently switches the IME
+        // OFF. A focus change is exactly the moment that state stops being
+        // trustworthy; drop it.
+        g.ctrlShiftChord.reset();
         g.monitor.refreshNow();          // refresh the snapshot (rare — not typing path)
         updateExclusionCache();          // cache for the per-key hot path
         updateForegroundPolicy();        // TSF-vs-inline + keyboard layout cache
@@ -981,7 +1121,7 @@ void addTrayIcon() noexcept {
         nid.dwInfoFlags = NIIF_INFO;
         std::wstring info = L"Bộ gõ tiếng Việt đã sẵn sàng.\n"
                             L"Nhấn Ctrl+Shift để bật/tắt, nhấp đúp vào biểu tượng để mở Cài đặt.";
-        std::wstring title = L"KieeKey v1.0.2";
+        std::wstring title = appTitle();
         if (info.size() >= std::size(nid.szInfo))  { info.resize(std::size(nid.szInfo) - 1); }
         if (title.size() >= std::size(nid.szInfoTitle)) { title.resize(std::size(nid.szInfoTitle) - 1); }
         std::copy(info.begin(), info.end(), nid.szInfo);
@@ -1010,52 +1150,69 @@ void updateTrayIcon() noexcept {
     ::Shell_NotifyIconW(NIM_MODIFY, &nid);
 }
 
+// v1.1.0: build + track the tray context menu in one place so the item state
+// (checked / enabled / label) is never duplicated between the menu and the
+// settings dialog.
 void showTrayMenu() noexcept {
     HMENU menu = ::CreatePopupMenu();
+    if (menu == nullptr) { return; }
     HMENU methodMenu = ::CreatePopupMenu();
+    if (methodMenu == nullptr) { ::DestroyMenu(menu); return; }
 
-    // static_cast<UINT>: MF_STRING is `long` in the MinGW headers, and the
-    // `long | UINT` fold then narrowed to the UINT parameter trips GCC
-    // -Wsign-conversion (MSVC /W4 is silent here). Same value either way.
-    ::AppendMenuW(menu,
-                  static_cast<UINT>(MF_STRING)
-                      | (g.engineEnabled.load() ? MF_CHECKED : 0u),
-                  IDM_TOGGLE, L"Bật gõ tiếng Việt");
+    const bool on = g.engineEnabled.load(std::memory_order_relaxed);
+
+    // The label has to say what the click WILL do, not what the current state
+    // is: "Bat gập" + a checkmark reads as a status toggle to some users and as
+    // an action to others, and the wrong reading silently disables the IME.
+    ::AppendMenuW(menu, MF_STRING, IDM_TOGGLE,
+                  on ? L"Tắt gõ tiếng Việt" : L"Bật gõ tiếng Việt");
+    // ...and the checkmark keeps the current state visible at a glance.
+    ::CheckMenuItem(menu, IDM_TOGGLE,
+                    static_cast<UINT>(on ? MF_CHECKED : MF_UNCHECKED));
     ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+
     ::AppendMenuW(methodMenu,
-                  static_cast<UINT>(MF_STRING)
-                      | (g.options.inputMethod == InputMethod::Telex ? MF_CHECKED : 0u),
+                  static_cast<UINT>(MF_STRING) |
+                      (g.options.inputMethod == InputMethod::Telex ? MF_CHECKED : 0u),
                   IDM_METHOD_TELEX, L"Telex");
     ::AppendMenuW(methodMenu,
-                  static_cast<UINT>(MF_STRING)
-                      | (g.options.inputMethod == InputMethod::Vni ? MF_CHECKED : 0u),
+                  static_cast<UINT>(MF_STRING) |
+                      (g.options.inputMethod == InputMethod::Vni ? MF_CHECKED : 0u),
                   IDM_METHOD_VNI, L"VNI");
     ::AppendMenuW(methodMenu,
-                  static_cast<UINT>(MF_STRING)
-                      | (g.options.inputMethod == InputMethod::SimpleTelex ? MF_CHECKED : 0u),
+                  static_cast<UINT>(MF_STRING) |
+                      (g.options.inputMethod == InputMethod::SimpleTelex ? MF_CHECKED : 0u),
                   IDM_METHOD_SIMPLETELEX, L"Simple Telex");
     ::AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(methodMenu), L"Phương thức gõ");
     ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+
+    ::AppendMenuW(menu,
+                  static_cast<UINT>(MF_STRING) | (g.runAtStartup ? MF_CHECKED : 0u),
+                  IDM_RUN_AT_STARTUP, L"Khởi động cùng Windows");
     ::AppendMenuW(menu, MF_STRING, IDM_SETTINGS, L"Cài đặt…");
+    ::AppendMenuW(menu, MF_STRING, IDM_ABOUT, L"Giới thiệu KieeKey…");
     ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     ::AppendMenuW(menu, MF_STRING, IDM_EXIT, L"Thoát");
 
     POINT pt;
     ::GetCursorPos(&pt);
+    // Required before TrackPopupMenu: the menu is owned by a HIDDEN window, so
+    // without this the shell cannot dismiss the popup when the user clicks
+    // elsewhere (the classic "tray menu sticks open" bug).
     ::SetForegroundWindow(g.hMain);
-    const UINT cmd = static_cast<UINT>(::TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY,
-                                                        pt.x, pt.y, 0, g.hMain, nullptr));
-    ::DestroyMenu(menu);
+    const UINT cmd = static_cast<UINT>(
+        ::TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY,
+                         pt.x, pt.y, 0, g.hMain, nullptr));
+    ::DestroyMenu(menu);   // owned by us; the submenu dies with it
+    // And required after TrackPopupMenu: a WM_NULL round-trip lets the window
+    // manager finish the menu's modal loop. Without it the next click on this
+    // window can be swallowed on some Windows versions.
+    ::PostMessageW(g.hMain, WM_NULL, 0, 0);
 
     switch (cmd) {
-        case IDM_TOGGLE: {
-            g.engineEnabled.store(!g.engineEnabled.load(std::memory_order_relaxed),
-                                  std::memory_order_relaxed);
-            std::lock_guard<std::mutex> lk(g.engineMtx);
-            g.engine.startNewSession();
-            updateTrayIcon();
+        case IDM_TOGGLE:
+            setEngineEnabled(!on);
             break;
-        }
         case IDM_METHOD_TELEX: case IDM_METHOD_VNI: case IDM_METHOD_SIMPLETELEX: {
             const auto m = static_cast<InputMethod>(cmd - IDM_METHOD_TELEX);
             {
@@ -1068,17 +1225,22 @@ void showTrayMenu() noexcept {
             updateTrayIcon();
             break;
         }
-        case IDM_SETTINGS:
-            if (g.hSettings) { ::SetForegroundWindow(g.hSettings); }
-            else if (g.hInst) {
-                g.hSettings = ::CreateWindowExW(0, L"KieeKeySettings",
-                                                L"KieeKey — Cài đặt",
-                                                WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU |
-                                                WS_MINIMIZEBOX,
-                                                CW_USEDEFAULT, CW_USEDEFAULT, 480, 470,
-                                                nullptr, nullptr, g.hInst, nullptr);
-                ::ShowWindow(g.hSettings, SW_SHOW);
+        case IDM_RUN_AT_STARTUP: {
+            const bool want = !g.runAtStartup;
+            if (setRunAtStartup(want)) {
+                g.runAtStartup = want;
+                saveSettings();
+            } else {
+                showTrayBalloon(L"KieeKey",
+                                L"Không thể thay đổi cài đặt khởi động cùng Windows.");
             }
+            break;
+        }
+        case IDM_SETTINGS:
+            openSettingsDialog();
+            break;
+        case IDM_ABOUT:
+            showAbout();
             break;
         case IDM_EXIT:
             ::PostMessageW(g.hMain, WM_CLOSE, 0, 0);
@@ -1108,8 +1270,17 @@ void showTrayMenu() noexcept {
 //      line of defense, terminateStaleInstance() below takes over a zombie
 //      so a relaunch NEVER requires a reboot or Task Manager.
 //===========================================================================
-constexpr wchar_t kSingletonMutexName[] = L"KieeKey_1.0.2_Singleton";
-constexpr wchar_t kWakeEventName[]      = L"KieeKey_1.0.2_Wake";
+// v1.1.0: the singleton names no longer carry the version. Up to v1.0.2 they
+// did (KieeKey_1.0.2_Singleton), which meant an upgraded build could not see
+// an older build that was still running — launching KieeKey 1.1.0 next to a
+// live 1.0.2 gave you TWO keyboard hooks fighting over the same keystrokes.
+// The names are now stable, and the legacy 1.0.2 names are still probed below
+// so an in-place upgrade is reported instead of silently double-hooking.
+constexpr wchar_t kSingletonMutexName[] = L"KieeKey_Singleton";
+constexpr wchar_t kWakeEventName[]      = L"KieeKey_Wake";
+// Names used by KieeKey 1.0.2 and earlier — probed at startup, never owned.
+constexpr wchar_t kLegacySingletonMutexName[] = L"KieeKey_1.0.2_Singleton";
+constexpr wchar_t kLegacyWakeEventName[]      = L"KieeKey_1.0.2_Wake";
 
 UINT      g_msgTaskbarCreated = 0;    // RegisterWindowMessageW("TaskbarCreated")
 HANDLE    g_wakeExitEvent     = nullptr;   // manual-reset; stops the watcher
@@ -1179,6 +1350,32 @@ bool runningInstanceResponsive() noexcept {
     return ::SendMessageTimeoutW(prev, WM_NULL, 0, 0, SMTO_ABORTIFHUNG, 2000, &res) != 0;
 }
 
+//---------------------------------------------------------------------------
+// v1.1.0 — coexistence with a PRE-1.1.0 KieeKey.
+//
+// The legacy build owns a different mutex name, so the normal single-instance
+// check cannot see it. Two low-level keyboard hooks over the same keystrokes
+// mean doubled or swallowed characters, so this build refuses to start while
+// an older one is alive and tells the user how to finish the upgrade.
+// The mutex is only PROBED (never owned and never waited on).
+//---------------------------------------------------------------------------
+[[nodiscard]] bool legacyInstanceRunning() noexcept {
+    if (HANDLE h = ::OpenMutexW(SYNCHRONIZE, FALSE, kLegacySingletonMutexName)) {
+        ::CloseHandle(h);
+        return true;
+    }
+    return false;
+}
+
+// Ask the older instance to bring its tray icon back so the user can find it
+// and quit it. Best effort — the legacy build may not even be listening.
+void signalLegacyInstance() noexcept {
+    if (HANDLE ev = ::OpenEventW(EVENT_MODIFY_STATE, FALSE, kLegacyWakeEventName)) {
+        ::SetEvent(ev);
+        ::CloseHandle(ev);
+    }
+}
+
 // Takeover of a HUNG earlier instance (its UI thread just failed the ping).
 // The PID was published in the registry at startup and is validated against
 // our own executable image name, so an unrelated recycled PID can never be
@@ -1233,6 +1430,50 @@ void clearRunningPid() noexcept {
     }
 }
 
+//---------------------------------------------------------------------------
+// v1.1.0 — the one place that turns Vietnamese input on/off.
+//
+// Both entry points (the Ctrl+Shift hotkey and the tray menu) must do the
+// same three things, and forgetting one of them is how the icon ends up
+// disagreeing with the engine:
+//   1. flip the flag the hook thread reads,
+//   2. drop the pending word (a half-composed syllable must not survive the
+//      switch — it would be emitted as raw ASCII later, or composed onto the
+//      next word),
+//   3. refresh the tray icon and, if the user asked for it, confirm with a
+//      balloon.
+//---------------------------------------------------------------------------
+// Thread-safe half of the toggle: safe from ANY thread, including the hook
+// pump thread (no Win32 UI calls).
+void applyEngineEnabled(bool on) noexcept {
+    g.engineEnabled.store(on, std::memory_order_relaxed);
+    std::lock_guard<std::mutex> lk(g.engineMtx);
+    g.engine.startNewSession();   // a half-composed syllable must not survive
+}
+
+// UI-thread half: the tray icon and the confirmation balloon.
+void setEngineEnabled(bool on) noexcept {
+    applyEngineEnabled(on);
+    updateTrayIcon();
+    if (g.notifyOnToggle) {
+        showTrayBalloon(L"KieeKey",
+                        on ? L"Đã bật gõ tiếng Việt."
+                           : L"Đã tắt gõ tiếng Việt.");
+    }
+}
+
+void showAbout() noexcept {
+    const std::wstring text =
+        std::wstring(L"KieeKey v") + kAppVersion + L" — Bộ gõ tiếng Việt cho Windows\n\n"
+        L"Bản quyền (C) 2026 coderunknow — https://github.com/coderunknow\n"
+        L"KieeKey là một phiên bản cải tiến dựa trên OpenKey "
+        L"(bản quyền (C) 2019 Tuyen Mai),\n"
+        L"được phát hành theo Giấy phép GNU GPL v3.\n\n"
+        L"Phím tắt: Ctrl+Shift — bật/tắt bộ gõ  ·  F9 — "
+        L"đổi kiểu đặt dấu (hoá / hóa)";
+    ::MessageBoxW(g.hMain, text.c_str(), appTitle().c_str(), MB_OK | MB_ICONINFORMATION);
+}
+
 // UI thread (posted as WM_APP_FGPROBE from the hook pump after a foreground
 // switch that selected the TSF policy): a bounded WM_NULL ping decides
 // whether the new foreground may receive synchronous TSF edit sessions.
@@ -1258,21 +1499,113 @@ void probeForegroundResponsiveness() noexcept {
 
 //===========================================================================
 // Settings window (Win32, Vietnamese UI — built in code for pixel control)
+//
+// v1.1.0: the whole dialog is DPI-aware. It used to be laid out in hard-coded
+// 96-dpi pixels, which on a 150%/200% display produced a postage-stamp window
+// with clipped Vietnamese text (the manifest declares PerMonitorV2, so the OS
+// was scaling the frame but nothing inside it). Every coordinate now lives in
+// a 96-dpi design grid in `g_ctlBoxes` and is scaled through S() at creation
+// time and again on WM_DPICHANGED, so dragging the dialog between monitors
+// re-lays it out instead of blurring or clipping it.
 //===========================================================================
 void showTab(int tab);   // fwd (defined below; used by settingsToControls)
 
-HFONT uiFont() noexcept {
-    static HFONT f = ::CreateFontW(-13, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                                   DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                                   CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-    return f;
+// ---- 96-dpi design grid ---------------------------------------------------
+constexpr int kSettingsClientW = 480;
+constexpr int kSettingsClientH = 486;
+
+struct CtlBox { int id; int x; int y; int w; int h; };
+std::vector<CtlBox> g_ctlBoxes;    // design coordinates (96 dpi)
+int   g_uiDpi  = 96;               // current dialog DPI
+HFONT g_uiFont = nullptr;          // current dialog font (scaled with the DPI)
+
+// Scale one 96-dpi design coordinate to the current DPI.
+[[nodiscard]] int S(int v) noexcept { return ::MulDiv(v, g_uiDpi, 96); }
+
+// PerMonitorV2 is declared in KieeKeyApp.manifest, so GetDpiForWindow() is
+// available on every OS this app supports (Windows 10 1607+). The range check
+// keeps a nonsense value (some remote-desktop/VDI stacks report 0) from
+// collapsing the whole layout.
+[[nodiscard]] int dpiForWindow(HWND hwnd) noexcept {
+    const UINT dpi = ::GetDpiForWindow(hwnd);
+    return (dpi >= 96u && dpi <= 480u) ? static_cast<int>(dpi) : 96;
 }
 
+void ensureUiFont() noexcept {
+    if (g_uiFont != nullptr) { ::DeleteObject(g_uiFont); g_uiFont = nullptr; }
+    g_uiFont = ::CreateFontW(-S(13), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                             CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+}
+
+// Font + geometry in one pass, so a DPI change can never leave the dialog
+// half-updated (scaled positions with an unscaled font is the visible failure).
+void applyUiScaling() noexcept {
+    if (g.hSettings == nullptr) { return; }
+    ensureUiFont();
+    if (g_uiFont != nullptr) {
+        ::SendMessageW(g.hSettings, WM_SETFONT, reinterpret_cast<WPARAM>(g_uiFont), TRUE);
+    }
+    for (const CtlBox& b : g_ctlBoxes) {
+        HWND c = ::GetDlgItem(g.hSettings, b.id);
+        if (c == nullptr) { continue; }
+        if (g_uiFont != nullptr) {
+            ::SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(g_uiFont), TRUE);
+        }
+        ::SetWindowPos(c, nullptr, S(b.x), S(b.y), S(b.w), S(b.h),
+                       SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+    ::InvalidateRect(g.hSettings, nullptr, TRUE);
+}
+
+// Size the frame for the scaled client area and centre it on the work area.
+// The window is created with a zero size and sized here, where the real DPI of
+// the monitor it landed on is already known.
+void resizeAndCenter(HWND hwnd) noexcept {
+    RECT rc{0, 0, S(kSettingsClientW), S(kSettingsClientH)};
+    const DWORD style   = static_cast<DWORD>(::GetWindowLongPtrW(hwnd, GWL_STYLE));
+    const DWORD exStyle = static_cast<DWORD>(::GetWindowLongPtrW(hwnd, GWL_EXSTYLE));
+    ::AdjustWindowRectEx(&rc, style, FALSE, exStyle);
+
+    RECT wa{};
+    if (::SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa, 0) == FALSE) {
+        ::SetRect(&wa, 0, 0, ::GetSystemMetrics(SM_CXSCREEN),
+                  ::GetSystemMetrics(SM_CYSCREEN));
+    }
+    const int w = rc.right - rc.left;
+    const int h = rc.bottom - rc.top;
+    const int availW = wa.right - wa.left;
+    const int availH = wa.bottom - wa.top;
+    // Never taller/wider than the work area — on a 200% laptop panel the
+    // scaled dialog can exceed it, and a centred window larger than the screen
+    // loses its caption bar off the top.
+    const int fw = (w < availW) ? w : availW;
+    const int fh = (h < availH) ? h : availH;
+    int x = wa.left + (availW - fw) / 2;
+    int y = wa.top + (availH - fh) / 2;
+    if (x < wa.left) { x = wa.left; }
+    if (y < wa.top)  { y = wa.top; }
+    ::SetWindowPos(hwnd, nullptr, x, y, fw, fh,
+                   SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+}
+
+// INT_PTR round-trip for control ids (see the v1.0.2 note): reinterpret_cast
+// straight from `int` to HMENU is a 32→64-bit widening that MSVC flags as
+// C4312 under /W4 /WX.
+[[nodiscard]] HMENU ctlId(int id) noexcept {
+    return reinterpret_cast<HMENU>(static_cast<INT_PTR>(id));
+}
+
+// Creates a control, records its design box, and applies the current scale.
 HWND mkCtl(HWND parent, LPCWSTR cls, LPCWSTR text, DWORD style, int x, int y,
-           int w, int h, HMENU id) {
+           int w, int h, int id) {
+    g_ctlBoxes.push_back(CtlBox{id, x, y, w, h});
     HWND c = ::CreateWindowExW(0, cls, text, style | WS_CHILD | WS_VISIBLE,
-                               x, y, w, h, parent, id, g.hInst, nullptr);
-    if (c) { ::SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont()), TRUE); }
+                               S(x), S(y), S(w), S(h), parent, ctlId(id),
+                               g.hInst, nullptr);
+    if (c != nullptr && g_uiFont != nullptr) {
+        ::SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(g_uiFont), TRUE);
+    }
     return c;
 }
 
@@ -1303,6 +1636,10 @@ void settingsFromControls() {
     const bool outTsf  = (::SendMessageW(::GetDlgItem(g.hSettings, IDC_RADIO_OUT_TSF),
                                          BM_GETCHECK, 0, 0) == BST_CHECKED);
     g.outputMode.store(outAuto ? 0 : outTsf ? 1 : 2, std::memory_order_relaxed);
+    // v1.1.0: the Run key is the authority, so push the checkbox straight
+    // through instead of mirroring it (the tray menu does the same).
+    g.runAtStartup   = ::IsDlgButtonChecked(g.hSettings, IDC_CHK_RUN_AT_STARTUP) == BST_CHECKED;
+    g.notifyOnToggle = ::IsDlgButtonChecked(g.hSettings, IDC_CHK_NOTIFY_TOGGLE) == BST_CHECKED;
     g.engine.setOptions(g.options);
     g.engine.startNewSession();
     g.monitor.setExcludeIde(g.exclIde);
@@ -1310,6 +1647,22 @@ void settingsFromControls() {
     g.monitor.setExcludeShell(g.exclShell);
     updateExclusionCache();
     updateForegroundPolicy();   // output mode affects the TSF-vs-inline decision
+}
+
+// v1.1.0: push the "start with Windows" checkbox into the real Run key.
+// settingsFromControls() only mirrors it into g.runAtStartup; the side effect
+// lives here so a failure can be reported (and corrected) instead of leaving
+// the checkbox, the registry mirror and the Run key all disagreeing.
+void applyRunAtStartupFromControls() {
+    if (g.runAtStartup == runAtStartupEnabled()) { return; }
+    if (!setRunAtStartup(g.runAtStartup)) {
+        g.runAtStartup = runAtStartupEnabled();   // stay truthful about reality
+        if (g.hSettings != nullptr) {
+            ::MessageBoxW(g.hSettings,
+                          L"Không thể thay đổi cài đặt khởi động cùng Windows.",
+                          appTitle().c_str(), MB_OK | MB_ICONWARNING);
+        }
+    }
 }
 
 void settingsToControls() {
@@ -1329,7 +1682,37 @@ void settingsToControls() {
     const int outMode = g.outputMode.load(std::memory_order_relaxed);
     ::CheckRadioButton(g.hSettings, IDC_RADIO_OUT_AUTO, IDC_RADIO_OUT_SEND,
                        IDC_RADIO_OUT_AUTO + outMode);
+    ::CheckDlgButton(g.hSettings, IDC_CHK_RUN_AT_STARTUP, g.runAtStartup ? BST_CHECKED : BST_UNCHECKED);
+    ::CheckDlgButton(g.hSettings, IDC_CHK_NOTIFY_TOGGLE,  g.notifyOnToggle ? BST_CHECKED : BST_UNCHECKED);
     showTab(0);
+}
+
+// v1.1.0: restore the shipped defaults (engine options + app switches). The
+// engine's own defaults come from a default-constructed EngineOptions; the app
+// switches are the ones KieeKey adds on top.
+void restoreDefaultSettings() {
+    const EngineOptions defaults{};
+    {
+        std::lock_guard<std::mutex> lk(g.engineMtx);
+        g.options = defaults;
+        g.engine.setOptions(g.options);
+        g.engine.startNewSession();
+    }
+    g.exclIde         = true;
+    g.exclGame        = true;
+    g.exclShell       = false;
+    g.outputMode.store(0, std::memory_order_relaxed);
+    g.notifyOnToggle  = true;
+    // "Run at startup" is deliberately left alone: resetting it would silently
+    // remove a Windows-level entry the user set on purpose (and it is the one
+    // setting here with an effect outside KieeKey).
+    g.monitor.setExcludeIde(g.exclIde);
+    g.monitor.setExcludeGame(g.exclGame);
+    g.monitor.setExcludeShell(g.exclShell);
+    updateExclusionCache();
+    updateForegroundPolicy();
+    settingsToControls();
+    updateTrayIcon();
 }
 
 void showTab(int tab) {
@@ -1342,7 +1725,8 @@ void showTab(int tab) {
         IDC_RADIO_TELEX, IDC_RADIO_VNI, IDC_RADIO_SIMPLETELEX,
         IDC_RADIO_OUT_AUTO, IDC_RADIO_OUT_TSF, IDC_RADIO_OUT_SEND,
         IDC_COMBO_CODETABLE, IDC_CHK_MACRO, IDC_CHK_SPELL, IDC_CHK_RESTORE,
-        IDC_CHK_UPPER, IDC_CHK_MODERN, IDC_CHK_QUICK, 0
+        IDC_CHK_UPPER, IDC_CHK_MODERN, IDC_CHK_QUICK,
+        IDC_CHK_RUN_AT_STARTUP, IDC_CHK_NOTIFY_TOGGLE, 0
     };
     static constexpr int kTab1[] = {
         IDC_STAT_APPS_TITLE, IDC_STAT_APPS_NOTE,
@@ -1352,7 +1736,8 @@ void showTab(int tab) {
         IDC_STAT_LATLAB, IDC_STAT_AVGLAB, IDC_STAT_PUSHLAB, IDC_STAT_DROPLAB,
         IDC_STAT_WPMLAB, IDC_STAT_DESC,
         IDC_STAT_LATVAL, IDC_STAT_AVGVAL, IDC_STAT_PUSHV, IDC_STAT_DROPV,
-        IDC_STAT_WPMVAL, 0
+        IDC_STAT_WPMVAL,
+        IDC_STAT_SATLAB, IDC_STAT_SATVAL, IDC_STAT_SATPPLAB, IDC_STAT_SATPPVAL, 0
     };
     if (!g.hSettings) { return; }
     for (const int* p = kTab0; *p; ++p) { ::ShowWindow(::GetDlgItem(g.hSettings, *p), tab == 0 ? SW_SHOW : SW_HIDE); }
@@ -1360,132 +1745,158 @@ void showTab(int tab) {
     for (const int* p = kTab2; *p; ++p) { ::ShowWindow(::GetDlgItem(g.hSettings, *p), tab == 2 ? SW_SHOW : SW_HIDE); }
 }
 
+//---------------------------------------------------------------------------
+// Control creation — one function so the WM_CREATE handler stays readable and
+// the design grid is visible at a glance.
+//---------------------------------------------------------------------------
+void buildSettingsControls(HWND hwnd) {
+    // ---- tab control ----
+    HWND tab = mkCtl(hwnd, WC_TABCONTROLW, L"", WS_TABSTOP,
+                     12, 12, 456, 382, IDC_TAB);
+    TCITEMW item{};
+    item.mask = TCIF_TEXT;
+    wchar_t t0[] = L"Bàn phím";
+    wchar_t t1[] = L"Ứng dụng";
+    wchar_t t2[] = L"Chẩn đoán";
+    item.pszText = t0; ::SendMessageW(tab, TCM_INSERTITEMW, 0, reinterpret_cast<LPARAM>(&item));
+    item.pszText = t1; ::SendMessageW(tab, TCM_INSERTITEMW, 1, reinterpret_cast<LPARAM>(&item));
+    item.pszText = t2; ::SendMessageW(tab, TCM_INSERTITEMW, 2, reinterpret_cast<LPARAM>(&item));
+
+    // ---- tab 0: Bàn phím ----
+    mkCtl(hwnd, L"STATIC", L"Phương thức gõ:", 0, 28, 52, 110, 18, IDC_STAT_METHOD);
+    // WS_GROUP on the first radio of each group: without it the arrow keys
+    // walk through ALL radios of the dialog as one big group, so ←/→ on the
+    // method radios would also change the output mode.
+    mkCtl(hwnd, L"BUTTON", L"Telex", BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP,
+          150, 50, 80, 20, IDC_RADIO_TELEX);
+    mkCtl(hwnd, L"BUTTON", L"VNI", BS_AUTORADIOBUTTON,
+          235, 50, 80, 20, IDC_RADIO_VNI);
+    mkCtl(hwnd, L"BUTTON", L"Simple Telex", BS_AUTORADIOBUTTON,
+          320, 50, 130, 20, IDC_RADIO_SIMPLETELEX);
+
+    mkCtl(hwnd, L"STATIC", L"Bảng mã:", 0, 28, 82, 110, 18, IDC_STAT_CODETABLE);
+    HWND combo = mkCtl(hwnd, WC_COMBOBOXW, L"", WS_TABSTOP | CBS_DROPDOWNLIST,
+                       150, 80, 200, 200, IDC_COMBO_CODETABLE);
+    for (const wchar_t* s : {L"Unicode", L"TCVN3 (ABC)", L"VNI Windows",
+                             L"Unicode tổ hợp", L"CP 1258"}) {
+        ::SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(s));
+    }
+
+    const wchar_t* kOpts[] = {
+        L"Gõ tắt (macro)",
+        L"Kiểm tra chính tả",
+        L"Tự sửa từ gõ sai",
+        L"Viết hoa đầu câu",
+        L"Chính tả mới (oà / uý)",
+        L"Telex nhanh (cc→ch, gg→gi)",
+    };
+    const int kIds[] = {IDC_CHK_MACRO, IDC_CHK_SPELL, IDC_CHK_RESTORE,
+                        IDC_CHK_UPPER, IDC_CHK_MODERN, IDC_CHK_QUICK};
+    for (int i = 0; i < 6; ++i) {
+        mkCtl(hwnd, L"BUTTON", kOpts[i], BS_AUTOCHECKBOX | WS_TABSTOP,
+              28, 112 + i * 26, 320, 20, kIds[i]);
+    }
+
+    // Chế độ xuất (WPM: inline SendInput is the zero-latency path)
+    mkCtl(hwnd, L"STATIC", L"Chế độ xuất:", 0, 28, 276, 110, 18, IDC_STAT_OUT_LAB);
+    mkCtl(hwnd, L"BUTTON", L"Auto", BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP,
+          150, 274, 70, 20, IDC_RADIO_OUT_AUTO);
+    mkCtl(hwnd, L"BUTTON", L"Luôn TSF (chống nháy)", BS_AUTORADIOBUTTON,
+          225, 274, 170, 20, IDC_RADIO_OUT_TSF);
+    mkCtl(hwnd, L"BUTTON", L"Luôn SendInput (nhanh nhất)", BS_AUTORADIOBUTTON,
+          225, 296, 200, 20, IDC_RADIO_OUT_SEND);
+    mkCtl(hwnd, L"STATIC",
+          L"Auto: TSF cho trình duyệt & Office (không nháy chữ), SendInput trực tiếp "
+          L"cho các ứng dụng khác (nhanh nhất, không qua thread phụ).",
+          0, 28, 320, 440, 32, IDC_STAT_OUT_NOTE);
+
+    // v1.1.0 — the two switches users used to need the registry for.
+    mkCtl(hwnd, L"BUTTON", L"Khởi động cùng Windows", BS_AUTOCHECKBOX | WS_TABSTOP,
+          28, 356, 420, 20, IDC_CHK_RUN_AT_STARTUP);
+    mkCtl(hwnd, L"BUTTON", L"Hiện thông báo khi bật/tắt bộ gõ (Ctrl+Shift)",
+          BS_AUTOCHECKBOX | WS_TABSTOP, 28, 378, 420, 20, IDC_CHK_NOTIFY_TOGGLE);
+
+    // ---- tab 1: Ứng dụng ----
+    mkCtl(hwnd, L"STATIC", L"Tự động tắt bộ gõ khi cửa sổ đang chạy là:",
+          0, 28, 52, 420, 18, IDC_STAT_APPS_TITLE);
+    mkCtl(hwnd, L"BUTTON", L"IDE / Editor (VS Code, Visual Studio, CLion…)",
+          BS_AUTOCHECKBOX | WS_TABSTOP, 28, 80, 420, 20, IDC_CHK_EXCLUDE_IDE);
+    mkCtl(hwnd, L"BUTTON", L"Trò chơi toàn màn hình (DirectX / Vulkan / OpenGL)",
+          BS_AUTOCHECKBOX | WS_TABSTOP, 28, 104, 420, 20, IDC_CHK_EXCLUDE_GAME);
+    mkCtl(hwnd, L"BUTTON", L"Windows Shell (Explorer, Terminal, CMD)",
+          BS_AUTOCHECKBOX | WS_TABSTOP, 28, 128, 420, 20, IDC_CHK_EXCLUDE_SHELL);
+    mkCtl(hwnd, L"STATIC",
+          L"Lưu ý: tắt loại trừ Shell để gõ tên file tiếng Việt trong "
+          L"Explorer. Việc phát hiện cửa sổ là theo sự kiện (WinEvent), "
+          L"không tốn CPU khi rảnh.",
+          0, 28, 160, 420, 60, IDC_STAT_APPS_NOTE);
+
+    // ---- tab 2: Chẩn đoán ----
+    struct Row { const wchar_t* label; int labId; int valId; };
+    const Row kRows[] = {
+        {L"Độ trễ đỉnh hook → xử lý (µs):", IDC_STAT_LATLAB,   IDC_STAT_LATVAL},
+        {L"Độ trễ trung bình (µs):",         IDC_STAT_AVGLAB,   IDC_STAT_AVGVAL},
+        {L"Sự kiện bàn phím đã xử lý:",      IDC_STAT_PUSHLAB,  IDC_STAT_PUSHV},
+        {L"Sự kiện bị bỏ (hàng đợi đầy):",   IDC_STAT_DROPLAB,  IDC_STAT_DROPV},
+        {L"Tốc độ gõ (ký tự/phút, ≈ WPM × 5):", IDC_STAT_WPMLAB, IDC_STAT_WPMVAL},
+        // v1.1.0: a queue that stayed full for > 200 ms means the consumer was
+        // genuinely stuck (the old build only showed it as a rising drop count).
+        {L"Lần nghẽn hàng đợi (> 200 ms):",   IDC_STAT_SATLAB,   IDC_STAT_SATVAL},
+        {L"Nghẽn lâu nhất (µs):",             IDC_STAT_SATPPLAB, IDC_STAT_SATPPVAL},
+    };
+    int y = 52;
+    for (const Row& r : kRows) {
+        mkCtl(hwnd, L"STATIC", r.label, 0, 28, y, 230, 18, r.labId);
+        mkCtl(hwnd, L"STATIC", L"—", 0, 266, y, 180, 18, r.valId);
+        y += 26;
+    }
+    mkCtl(hwnd, L"STATIC",
+          L"Kiến trúc: hàng đợi lock-free SPSC; hook thread không bao giờ bị chặn; "
+          L"quyết định bộ gõ chạy ngay trên hook thread; xuất qua TSF hoặc SendInput "
+          L"trực tiếp (không Backspace giả, không clipboard).",
+          0, 28, 240, 440, 90, IDC_STAT_DESC);
+
+    // ---- footer + buttons ----
+    mkCtl(hwnd, L"STATIC", appTitle().c_str(), 0, 12, 420, 300, 18, IDC_STAT_VERSION);
+    mkCtl(hwnd, L"BUTTON", L"Khôi phục mặc định", WS_TABSTOP,
+          12, 444, 140, 26, IDC_BTN_DEFAULTS);
+    mkCtl(hwnd, L"BUTTON", L"Áp dụng", WS_TABSTOP,
+          160, 444, 80, 26, IDC_BTN_APPLY);
+    mkCtl(hwnd, L"BUTTON", L"OK", WS_TABSTOP | BS_DEFPUSHBUTTON,
+          330, 444, 70, 26, IDOK);
+    mkCtl(hwnd, L"BUTTON", L"Hủy", WS_TABSTOP,
+          408, 444, 70, 26, IDCANCEL);
+}
+
 LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
         case WM_CREATE: {
             g.hSettings = hwnd;
-            // Tab control
-            HWND tab = mkCtl(hwnd, WC_TABCONTROLW, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                             12, 12, 456, 350, reinterpret_cast<HMENU>(IDC_TAB));
-            TCITEMW item{};
-            item.mask = TCIF_TEXT;
-            wchar_t t0[] = L"Bàn phím";
-            wchar_t t1[] = L"Ứng dụng";
-            wchar_t t2[] = L"Chẩn đoán";
-            item.pszText = t0; ::SendMessageW(tab, TCM_INSERTITEMW, 0, reinterpret_cast<LPARAM>(&item));
-            item.pszText = t1; ::SendMessageW(tab, TCM_INSERTITEMW, 1, reinterpret_cast<LPARAM>(&item));
-            item.pszText = t2; ::SendMessageW(tab, TCM_INSERTITEMW, 2, reinterpret_cast<LPARAM>(&item));
-
-            // ---- tab 0: Bàn phím ----
-            mkCtl(hwnd, L"STATIC", L"Phương thức gõ:", WS_CHILD | WS_VISIBLE, 28, 52, 110, 18,
-                  reinterpret_cast<HMENU>(IDC_STAT_METHOD));
-            mkCtl(hwnd, L"BUTTON", L"Telex", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
-                  150, 50, 80, 20, reinterpret_cast<HMENU>(IDC_RADIO_TELEX));
-            mkCtl(hwnd, L"BUTTON", L"VNI", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
-                  235, 50, 80, 20, reinterpret_cast<HMENU>(IDC_RADIO_VNI));
-            mkCtl(hwnd, L"BUTTON", L"Simple Telex", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
-                  320, 50, 130, 20, reinterpret_cast<HMENU>(IDC_RADIO_SIMPLETELEX));
-            mkCtl(hwnd, L"STATIC", L"Bảng mã:", WS_CHILD | WS_VISIBLE, 28, 82, 110, 18,
-                  reinterpret_cast<HMENU>(IDC_STAT_CODETABLE));
-            HWND combo = mkCtl(hwnd, WC_COMBOBOXW, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP |
-                               CBS_DROPDOWNLIST, 150, 80, 200, 200, reinterpret_cast<HMENU>(IDC_COMBO_CODETABLE));
-            for (const wchar_t* s : {L"Unicode", L"TCVN3 (ABC)", L"VNI Windows",
-                                     L"Unicode tổ hợp", L"CP 1258"}) {
-                ::SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(s));
-            }
-            const wchar_t* kOpts[] = {
-                L"Gõ tắt (macro)",
-                L"Kiểm tra chính tả",
-                L"Tự sửa từ gõ sai",
-                L"Viết hoa đầu câu",
-                L"Chính tả mới (oà / uý)",
-                L"Telex nhanh (cc→ch, gg→gi)",
-            };
-            const int kIds[] = {IDC_CHK_MACRO, IDC_CHK_SPELL, IDC_CHK_RESTORE,
-                                IDC_CHK_UPPER, IDC_CHK_MODERN, IDC_CHK_QUICK};
-            for (int i = 0; i < 6; ++i) {
-                // INT_PTR round-trip: reinterpret_cast<HMENU>(int) directly is
-                // a 32→64-bit pointer widening that MSVC flags as C4312 under
-                // /W4 /WX (HMENU is pointer-sized). Casting through INT_PTR is
-                // the canonical control-id idiom and is warning-free.
-                mkCtl(hwnd, L"BUTTON", kOpts[i], WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-                      28, 118 + i * 26, 320, 20,
-                      reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIds[i])));
-            }
-
-            // Chế độ xuất (WPM: inline SendInput is the zero-latency path)
-            mkCtl(hwnd, L"STATIC", L"Chế độ xuất:", WS_CHILD | WS_VISIBLE, 28, 290, 110, 18,
-                  reinterpret_cast<HMENU>(IDC_STAT_OUT_LAB));
-            mkCtl(hwnd, L"BUTTON", L"Auto", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
-                  150, 288, 60, 20, reinterpret_cast<HMENU>(IDC_RADIO_OUT_AUTO));
-            mkCtl(hwnd, L"BUTTON", L"Luôn TSF (chống nháy)", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
-                  215, 288, 170, 20, reinterpret_cast<HMENU>(IDC_RADIO_OUT_TSF));
-            mkCtl(hwnd, L"BUTTON", L"Luôn SendInput (nhanh nhất)", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
-                  390, 288, 200, 20, reinterpret_cast<HMENU>(IDC_RADIO_OUT_SEND));
-            mkCtl(hwnd, L"STATIC",
-                  L"Auto: TSF cho trình duyệt & Office (không nháy chữ), SendInput trực tiếp "
-                  L"cho các ứng dụng khác (nhanh nhất, không qua thread phụ).",
-                  WS_CHILD | WS_VISIBLE, 28, 314, 440, 32,
-                  reinterpret_cast<HMENU>(IDC_STAT_OUT_NOTE));
-
-            // ---- tab 1: Ứng dụng ----
-            mkCtl(hwnd, L"STATIC", L"Tự động tắt bộ gõ khi cửa sổ đang chạy là:",
-                  WS_CHILD | WS_VISIBLE, 28, 52, 420, 18,
-                  reinterpret_cast<HMENU>(IDC_STAT_APPS_TITLE));
-            mkCtl(hwnd, L"BUTTON", L"IDE / Editor (VS Code, Visual Studio, CLion…)",
-                  WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 28, 80, 420, 20,
-                  reinterpret_cast<HMENU>(IDC_CHK_EXCLUDE_IDE));
-            mkCtl(hwnd, L"BUTTON", L"Trò chơi toàn màn hình (DirectX / Vulkan / OpenGL)",
-                  WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 28, 104, 420, 20,
-                  reinterpret_cast<HMENU>(IDC_CHK_EXCLUDE_GAME));
-            mkCtl(hwnd, L"BUTTON", L"Windows Shell (Explorer, Terminal, CMD)",
-                  WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 28, 128, 420, 20,
-                  reinterpret_cast<HMENU>(IDC_CHK_EXCLUDE_SHELL));
-            mkCtl(hwnd, L"STATIC",
-                  L"Lưu ý: tắt loại trừ Shell để gõ tên file tiếng Việt trong "
-                  L"Explorer. Việc phát hiện cửa sổ là theo sự kiện (WinEvent), "
-                  L"không tốn CPU khi rảnh.",
-                  WS_CHILD | WS_VISIBLE, 28, 160, 420, 60,
-                  reinterpret_cast<HMENU>(IDC_STAT_APPS_NOTE));
-
-            // ---- tab 2: Chẩn đoán ----
-            mkCtl(hwnd, L"STATIC", L"Độ trễ đỉnh hook → xử lý (µs):", WS_CHILD | WS_VISIBLE,
-                  28, 52, 220, 18, reinterpret_cast<HMENU>(IDC_STAT_LATLAB));
-            mkCtl(hwnd, L"STATIC", L"—", WS_CHILD | WS_VISIBLE, 260, 52, 180, 18,
-                  reinterpret_cast<HMENU>(IDC_STAT_LATVAL));
-            mkCtl(hwnd, L"STATIC", L"Độ trễ trung bình (µs):", WS_CHILD | WS_VISIBLE,
-                  28, 78, 220, 18, reinterpret_cast<HMENU>(IDC_STAT_AVGLAB));
-            mkCtl(hwnd, L"STATIC", L"—", WS_CHILD | WS_VISIBLE, 260, 78, 180, 18,
-                  reinterpret_cast<HMENU>(IDC_STAT_AVGVAL));
-            mkCtl(hwnd, L"STATIC", L"Sự kiện bàn phím đã xử lý:", WS_CHILD | WS_VISIBLE,
-                  28, 104, 220, 18, reinterpret_cast<HMENU>(IDC_STAT_PUSHLAB));
-            mkCtl(hwnd, L"STATIC", L"0", WS_CHILD | WS_VISIBLE, 260, 104, 180, 18,
-                  reinterpret_cast<HMENU>(IDC_STAT_PUSHV));
-            mkCtl(hwnd, L"STATIC", L"Sự kiện bị bỏ (hàng đợi đầy):", WS_CHILD | WS_VISIBLE,
-                  28, 130, 220, 18, reinterpret_cast<HMENU>(IDC_STAT_DROPLAB));
-            mkCtl(hwnd, L"STATIC", L"0", WS_CHILD | WS_VISIBLE, 260, 130, 180, 18,
-                  reinterpret_cast<HMENU>(IDC_STAT_DROPV));
-            mkCtl(hwnd, L"STATIC", L"Tốc độ gõ (ký tự/phút, ≈ WPM × 5):", WS_CHILD | WS_VISIBLE,
-                  28, 156, 230, 18, reinterpret_cast<HMENU>(IDC_STAT_WPMLAB));
-            mkCtl(hwnd, L"STATIC", L"—", WS_CHILD | WS_VISIBLE, 260, 156, 180, 18,
-                  reinterpret_cast<HMENU>(IDC_STAT_WPMVAL));
-            mkCtl(hwnd, L"STATIC",
-                  L"Kiến trúc: hàng đợi lock-free SPSC; hook thread không bao giờ bị chặn; "
-                  L"quyết định bộ gõ chạy ngay trên hook thread; xuất qua TSF hoặc SendInput "
-                  L"trực tiếp (không Backspace giả, không clipboard).",
-                  WS_CHILD | WS_VISIBLE, 28, 188, 420, 110,
-                  reinterpret_cast<HMENU>(IDC_STAT_DESC));
-
-            // ---- buttons ----
-            mkCtl(hwnd, L"BUTTON", L"OK", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
-                  250, 400, 70, 26, reinterpret_cast<HMENU>(IDOK));
-            mkCtl(hwnd, L"BUTTON", L"Hủy", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                  328, 400, 70, 26, reinterpret_cast<HMENU>(IDCANCEL));
-            mkCtl(hwnd, L"BUTTON", L"Áp dụng", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                  406, 400, 70, 26, reinterpret_cast<HMENU>(IDC_BTN_APPLY));
-
+            g_ctlBoxes.clear();
+            g_uiDpi = dpiForWindow(hwnd);
+            // applyUiScaling() creates the DPI-scaled font and hands it to
+            // every control, so it must run after the controls exist.
+            buildSettingsControls(hwnd);
+            applyUiScaling();
+            resizeAndCenter(hwnd);
             settingsToControls();
             ::SetTimer(hwnd, 1, 500, nullptr);   // live telemetry
+            return 0;
+        }
+
+        // v1.1.0: dragged to a monitor with a different DPI (or the display
+        // scaling changed) — Windows sends the suggested window rect in
+        // lParam. Take it, then re-scale font + geometry.
+        case WM_DPICHANGED: {
+            g_uiDpi = static_cast<int>(LOWORD(wParam));
+            if (g_uiDpi < 96 || g_uiDpi > 480) { g_uiDpi = 96; }
+            if (lParam != 0) {
+                const RECT* pr = reinterpret_cast<const RECT*>(lParam);
+                ::SetWindowPos(hwnd, nullptr, pr->left, pr->top,
+                               pr->right - pr->left, pr->bottom - pr->top,
+                               SWP_NOZORDER | SWP_NOACTIVATE);
+            }
+            applyUiScaling();
             return 0;
         }
 
@@ -1513,6 +1924,14 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             std::swprintf(buf, std::size(buf), L"%llu",
                           static_cast<unsigned long long>(g.hook.dropped()));
             ::SetWindowTextW(::GetDlgItem(hwnd, IDC_STAT_DROPV), buf);
+
+            // v1.1.0: queue-saturation watchdog.
+            std::swprintf(buf, std::size(buf), L"%llu",
+                          static_cast<unsigned long long>(g.hook.saturationRuns()));
+            ::SetWindowTextW(::GetDlgItem(hwnd, IDC_STAT_SATVAL), buf);
+            std::swprintf(buf, std::size(buf), L"%lld",
+                          static_cast<long long>(g.hook.peakSaturationUs()));
+            ::SetWindowTextW(::GetDlgItem(hwnd, IDC_STAT_SATPPVAL), buf);
 
             // WPM gauge: EMA of printable-characters-per-minute.
             static std::uint64_t s_lastKeys = 0;
@@ -1545,6 +1964,7 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 ::SendMessageW(::GetDlgItem(hwnd, IDC_COMBO_CODETABLE),
                                CB_GETDROPPEDSTATE, 0, 0) == FALSE) {
                 settingsFromControls();
+                applyRunAtStartupFromControls();
                 saveSettings();
                 updateTrayIcon();
                 ::PostMessageW(hwnd, WM_CLOSE, 0, 0);
@@ -1556,6 +1976,7 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             switch (LOWORD(wParam)) {
                 case IDOK:
                     settingsFromControls();
+                    applyRunAtStartupFromControls();
                     saveSettings();
                     updateTrayIcon();
                     [[fallthrough]];
@@ -1566,8 +1987,19 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     return 0;
                 case IDC_BTN_APPLY:
                     settingsFromControls();
+                    applyRunAtStartupFromControls();
                     saveSettings();
                     updateTrayIcon();
+                    return 0;
+                case IDC_BTN_DEFAULTS:
+                    if (::MessageBoxW(hwnd,
+                            L"Khôi phục toàn bộ cài đặt về mặc định?\n\n"
+                            L"(Cài đặt “Khởi động cùng Windows” được giữ nguyên.)",
+                            appTitle().c_str(),
+                            MB_YESNO | MB_ICONQUESTION) == IDYES) {
+                        restoreDefaultSettings();
+                        saveSettings();
+                    }
                     return 0;
                 default: break;
             }
@@ -1582,9 +2014,34 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
         case WM_DESTROY:
             g.hSettings = nullptr;
+            g_ctlBoxes.clear();
+            if (g_uiFont != nullptr) { ::DeleteObject(g_uiFont); g_uiFont = nullptr; }
             return 0;
     }
     return ::DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
+//---------------------------------------------------------------------------
+// v1.1.0: open (or raise) the settings dialog.
+//---------------------------------------------------------------------------
+void openSettingsDialog() noexcept {
+    if (g.hSettings != nullptr) {
+        if (::IsIconic(g.hSettings)) { ::ShowWindow(g.hSettings, SW_RESTORE); }
+        ::SetForegroundWindow(g.hSettings);
+        return;
+    }
+    if (g.hInst == nullptr) { return; }
+    // Created at zero size: WM_CREATE measures the real DPI, builds the
+    // controls on the design grid and then sizes + centres the frame (see
+    // resizeAndCenter). Passing a fixed size here would bake in the wrong DPI
+    // on a secondary monitor.
+    HWND hw = ::CreateWindowExW(0, L"KieeKeySettings", settingsTitle().c_str(),
+                                WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
+                                CW_USEDEFAULT, CW_USEDEFAULT, 0, 0,
+                                nullptr, nullptr, g.hInst, nullptr);
+    if (hw == nullptr) { return; }
+    ::ShowWindow(hw, SW_SHOW);
+    ::SetForegroundWindow(hw);
 }
 
 //===========================================================================
@@ -1610,24 +2067,28 @@ LRESULT CALLBACK mainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             probeForegroundResponsiveness();
             return 0;
         case WM_APP_TRAY:
+            // v1.1.0: a plain left click used to do NOTHING, which reads as
+            // "the icon is dead". It now opens the same status menu as the
+            // right click (double click still jumps straight to the settings).
             if (lParam == WM_LBUTTONDBLCLK) {
-                if (g.hSettings) { ::SetForegroundWindow(g.hSettings); }
-                else if (g.hInst) {
-                    g.hSettings = ::CreateWindowExW(0, L"KieeKeySettings",
-                                                    L"KieeKey — Cài đặt",
-                                                    WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU |
-                                                    WS_MINIMIZEBOX,
-                                                    CW_USEDEFAULT, CW_USEDEFAULT, 480, 470,
-                                                    nullptr, nullptr, g.hInst, nullptr);
-                    ::ShowWindow(g.hSettings, SW_SHOW);
-                }
-            } else if (lParam == WM_RBUTTONUP || lParam == WM_CONTEXTMENU) {
+                openSettingsDialog();
+            } else if (lParam == WM_LBUTTONUP || lParam == WM_RBUTTONUP ||
+                       lParam == WM_CONTEXTMENU) {
                 showTrayMenu();
             }
             return 0;
 
         case WM_APP_TOGGLE:
+            // The hotkey path: the engine flag was already flipped on the hook
+            // thread (setEngineEnabled runs there); refresh the icon here and
+            // confirm with a balloon when the user asked for one.
             updateTrayIcon();
+            if (g.notifyOnToggle) {
+                showTrayBalloon(L"KieeKey",
+                                g.engineEnabled.load(std::memory_order_relaxed)
+                                    ? L"Đã bật gõ tiếng Việt."
+                                    : L"Đã tắt gõ tiếng Việt.");
+            }
             return 0;
 
         case WM_ENDSESSION:
@@ -1668,6 +2129,25 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     //   2) if its UI thread answers a bounded ping → it is healthy, done;
     //   3) if NOT → it is a hung zombie: terminate it (PID + image-name
     //      validated) and acquire the singleton ourselves.
+    // v1.1.0: an OLDER KieeKey (1.0.2 and earlier) that is still running owns
+    // a differently-named mutex, so the check below cannot see it — and two
+    // low-level keyboard hooks over the same keystrokes produce doubled or
+    // swallowed characters. Probe the legacy name explicitly and refuse to
+    // start while it is alive, telling the user exactly what to do.
+    if (legacyInstanceRunning()) {
+        signalLegacyInstance();
+        if (runningInstanceResponsive()) {
+            ::MessageBoxW(nullptr,
+                L"Một phiên bản KieeKey cũ đang chạy.\n\n"
+                L"Hãy thoát KieeKey cũ (nhấp phải vào biểu tượng khay → Thoát) "
+                L"rồi mở lại phiên bản này.",
+                appTitle().c_str(), MB_OK | MB_ICONINFORMATION);
+            return 0;
+        }
+        // The old instance is hung: take it over (PID + image-name validated).
+        terminateStaleInstance();
+    }
+
     HANDLE mutex = ::CreateMutexW(nullptr, TRUE, kSingletonMutexName);
     if (mutex && ::GetLastError() == ERROR_ALREADY_EXISTS) {
         signalRunningInstance();
@@ -1680,7 +2160,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         mutex = ::CreateMutexW(nullptr, TRUE, kSingletonMutexName);
         if (mutex && ::GetLastError() == ERROR_ALREADY_EXISTS) {
             ::MessageBoxW(nullptr, L"KieeKey đang chạy (xem khay hệ thống).",
-                          L"KieeKey", MB_OK | MB_ICONINFORMATION);
+                          appTitle().c_str(), MB_OK | MB_ICONINFORMATION);
             return 0;
         }
     }
@@ -1715,6 +2195,10 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
 
     // Settings from registry
     loadSettings();
+    // The Run key is the authority for "start with Windows" (the user may
+    // have disabled it in Task Manager while KieeKey was not running), so
+    // reconcile the cached flag with reality before anything reads it.
+    syncRunAtStartupState();
     {
         std::lock_guard<std::mutex> lk(g.engineMtx);
         g.engine.setOptions(g.options);

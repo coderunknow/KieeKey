@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.0.2 — resource.h
+// KieeKey v1.1.0 — resource.h
 // Resource identifiers for the Win32 tray application (src/app/main.cpp).
 //----------------------------------------------------------------------------
 #pragma once
@@ -45,6 +45,9 @@
 #define IDM_METHOD_SIMPLETELEX    403
 #define IDM_SETTINGS              404
 #define IDM_EXIT                  405
+// v1.1.0 — quick actions that used to require opening the settings dialog
+#define IDM_RUN_AT_STARTUP        406   // toggle "start with Windows"
+#define IDM_ABOUT                 407   // about / version box
 
 // ---- settings dialog controls ----
 #define IDC_TAB                   500
@@ -92,9 +95,22 @@
 #define IDC_STAT_WPMLAB           533
 #define IDC_STAT_WPMVAL           534
 
+// ---- v1.1.0 — general tab (Bàn phím) additions ----
+#define IDC_CHK_RUN_AT_STARTUP    535   // start KieeKey with Windows
+#define IDC_CHK_NOTIFY_TOGGLE     536   // balloon when the IME is toggled
+#define IDC_BTN_DEFAULTS          537   // restore the shipped defaults
+#define IDC_STAT_VERSION          538   // "KieeKey v1.1.0" footer
+
+// ---- v1.1.0 — diagnostics tab additions ----
+#define IDC_STAT_SATLAB           539   // queue saturation runs
+#define IDC_STAT_SATVAL           540
+#define IDC_STAT_SATPPLAB         541   // longest saturation window
+#define IDC_STAT_SATPPVAL         542
+
 // ---- app messages ----
 #define WM_APP_TRAY               (WM_APP + 1)   // tray icon notification
 #define WM_APP_TOGGLE             (WM_APP + 2)   // engine on/off changed (hook thread)
 #define WM_APP_UPDATE_TIP         (WM_APP + 3)   // refresh tray tooltip/balloon
 #define WM_APP_RESTORE            (WM_APP + 4)   // 2nd-instance wake: restore tray icon
 #define WM_APP_FGPROBE            (WM_APP + 5)   // probe foreground responsiveness (UI thread)
+#define WM_APP_TOGGLE_NOTIFY      (WM_APP + 6)   // v1.1.0: show the on/off balloon

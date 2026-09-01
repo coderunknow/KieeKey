@@ -450,6 +450,7 @@ public:
     }
 
     [[nodiscard]] std::uint64_t rehookCount() const noexcept { return rehookCount_.load(std::memory_order_relaxed); }
+
     [[nodiscard]] std::uint32_t lastRehookTickMs() const noexcept { return lastRehookTickMs_.load(std::memory_order_relaxed); }
 
 private:
@@ -530,6 +531,11 @@ public:
     [[nodiscard]] std::int64_t  peakLatencyUs() const noexcept { return hook_.peakLatencyUs(); }
     [[nodiscard]] std::int64_t  avgLatencyUs()  const noexcept { return hook_.avgLatencyUs(); }
     [[nodiscard]] std::uint64_t rehookCount() const noexcept { return rehookCount_.load(std::memory_order_relaxed); }
+    // v1.1.0: queue-saturation watchdog — see ModernKeyHook::noteSaturation().
+    // A queue that stayed full for > 200 ms means the consumer was genuinely
+    // stuck; the old build only showed it as a slowly rising "dropped" count.
+    [[nodiscard]] std::uint64_t saturationRuns()   const noexcept { return hook_.saturationRuns(); }
+    [[nodiscard]] std::int64_t  peakSaturationUs() const noexcept { return hook_.peakSaturationUs(); }
 
 private:
     // Watchdog environment bound to the Win32 APIs + the owned hook.

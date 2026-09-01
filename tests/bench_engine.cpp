@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.0.1 - refactored and completed logic
+//   KieeKey v1.0.2 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.0.1 — tests/bench_engine.cpp
+// KieeKey v1.0.2 — tests/bench_engine.cpp
 // TextEngine hot-path benchmark (ns/key). Build & run:
 //   g++ -std=c++23 -O2 -I src/core tests/bench_engine.cpp src/core/TextEngine.cpp -o bench && ./bench
 //

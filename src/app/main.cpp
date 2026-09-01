@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.0.1 - refactored and completed logic
+//   KieeKey v1.0.2 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.0.1 — src/app/main.cpp
+// KieeKey v1.0.2 — src/app/main.cpp
 // The OpenKey-style Windows tray application (replaces the pre-tray console host):
 //
 //   * System tray icon (green = Vietnamese ON, gray = OFF) with the classic
@@ -981,7 +981,7 @@ void addTrayIcon() noexcept {
         nid.dwInfoFlags = NIIF_INFO;
         std::wstring info = L"Bộ gõ tiếng Việt đã sẵn sàng.\n"
                             L"Nhấn Ctrl+Shift để bật/tắt, nhấp đúp vào biểu tượng để mở Cài đặt.";
-        std::wstring title = L"KieeKey v1.0.1";
+        std::wstring title = L"KieeKey v1.0.2";
         if (info.size() >= std::size(nid.szInfo))  { info.resize(std::size(nid.szInfo) - 1); }
         if (title.size() >= std::size(nid.szInfoTitle)) { title.resize(std::size(nid.szInfoTitle) - 1); }
         std::copy(info.begin(), info.end(), nid.szInfo);
@@ -1108,8 +1108,8 @@ void showTrayMenu() noexcept {
 //      line of defense, terminateStaleInstance() below takes over a zombie
 //      so a relaunch NEVER requires a reboot or Task Manager.
 //===========================================================================
-constexpr wchar_t kSingletonMutexName[] = L"KieeKey_1.0.1_Singleton";
-constexpr wchar_t kWakeEventName[]      = L"KieeKey_1.0.1_Wake";
+constexpr wchar_t kSingletonMutexName[] = L"KieeKey_1.0.2_Singleton";
+constexpr wchar_t kWakeEventName[]      = L"KieeKey_1.0.2_Wake";
 
 UINT      g_msgTaskbarCreated = 0;    // RegisterWindowMessageW("TaskbarCreated")
 HANDLE    g_wakeExitEvent     = nullptr;   // manual-reset; stops the watcher

@@ -3,7 +3,7 @@
 All notable changes to KieeKey are documented here. Format based on
 Keep a Changelog; versioning: SemVer.
 
-## [1.0.1] — 2026-08-31
+## [1.0.2] — 2026-08-31
 
 ### Changed
 * Official logo refresh: the color "kie" keycap mark (uploaded 500×500 alpha
@@ -18,10 +18,10 @@ Keep a Changelog; versioning: SemVer.
   maximally compatible layout for Explorer/shortcuts/taskbar); the OFF icon
   artwork is alpha-trimmed and centered with a small margin so its keycaps
   fill the canvas at tray size.
-* Version bumped to **1.0.1** everywhere it appears: CMake `project()`,
-  `.rc` VERSIONINFO (`FILEVERSION`/`PRODUCTVERSION 1,0,1,0`, version
-  strings `1.0.1.0`), first-run balloon + settings-dialog title, singleton
-  mutex (`KieeKey_1.0.1_Singleton`), file banners, demo console title and
+* Version bumped to **1.0.2** everywhere it appears: CMake `project()`,
+  `.rc` VERSIONINFO (`FILEVERSION`/`PRODUCTVERSION 1,0,2,0`, version
+  strings `1.0.2.0`), first-run balloon + settings-dialog title, singleton
+  mutex (`KieeKey_1.0.2_Singleton`), file banners, demo console title and
   output, README. Historical documents under `docs/reports/` and the 1.0.0
   changelog section above are intentionally left verbatim (lineage record).
 

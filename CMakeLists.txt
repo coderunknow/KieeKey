@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------------
-# KieeKey v1.0.1 — CMake build (modern replacement for the .sln/.vcxproj)
+# KieeKey v1.0.2 — CMake build (modern replacement for the .sln/.vcxproj)
 #
 #   * C++23, /W4 + /WX (warnings as errors) for release-grade hygiene (MSVC)
 #   * x64 + ARM64 out of the box (ARM64EC possible: -A ARM64EC, VS 17.4+)
@@ -33,7 +33,7 @@
 cmake_minimum_required(VERSION 3.28)
 
 project(KieeKey
-        VERSION 1.0.1
+        VERSION 1.0.2
         DESCRIPTION "KieeKey — Vietnamese input method (modern core)"
         LANGUAGES CXX)
 
@@ -152,7 +152,7 @@ if(WIN32)
     # .ico files at COMPILE time, but CMake's RC rule only tracks the .rc
     # itself — editing the manifest or icons alone produced NO recompile and
     # silently shipped STALE resources in the exe (caught by the PE audit
-    # during the v1.0.1 logo refresh). Declare them as object dependencies
+    # during the v1.0.2 logo refresh). Declare them as object dependencies
     # so any of the three inputs rebuilds the resource object.
     set_source_files_properties(src/app/KieeKeyApp.rc PROPERTIES
         OBJECT_DEPENDS

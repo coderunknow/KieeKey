@@ -251,7 +251,10 @@ else()
         target_compile_features(ok_chord_tests PRIVATE cxx_std_23)
         add_test(NAME ok_chord_tests COMMAND ok_chord_tests)
 
-        add_executable(ok_edge_tests tests/test_engine_edge_cases.cpp)
+        add_executable(ok_edge_tests
+            tests/test_engine_edge_cases.cpp
+            src/core/TextEngine.cpp
+        )
         target_include_directories(ok_edge_tests PRIVATE src/core)
         target_compile_features(ok_edge_tests PRIVATE cxx_std_23)
         add_test(NAME ok_edge_tests COMMAND ok_edge_tests)

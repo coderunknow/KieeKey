@@ -770,7 +770,7 @@ int main() {
         opts.digitsAreLiteral = false;
         opts.useMacro = true;
         AppSim sim(opts);
-        static const std::vector<std::pair<std::wstring, std::wstring>>
+        const std::vector<std::pair<std::wstring, std::wstring>>
             kMacros{{L"ok", L"\u0111\u01B0\u1EE3c"}};   // ok -> được
         bool called = false;
         sim.engine.setMacroResolver(

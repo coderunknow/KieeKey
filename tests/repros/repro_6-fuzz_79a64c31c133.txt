@@ -1,0 +1,40 @@
+KieeKey — mega correctness reproducer (deterministic)
+suite: 6-fuzz
+meta: seed1122
+init options: method=Telex table=0 spelling=1 modern=1 quickTelex=1 restore=1 freeMark=0 zfwj=0 upperFirst=0 macro=1
+ops (compact; ^=caps, +=ctrl, ' '=space, \b=backspace, \n=enter, ~=mouse, |=mode): 3pt^inb e[s2p^vzg~^v~-y ^9[2u ]3 a
+b e|V|V.t|S]uy+a ~0.^1g3ywevk,aq4[+d^y
+5^+c5pz,.^gc^c2.^0
+-7|S^j~
+~bbk72wl9su0
+5d|S8ae.1i aw |T, ayaeqh^l^wxpcy+[0|S^9|Tz  407
+f
+zvr[o^gz,4.4[rsz
+a b+gs9s068zl1v,1r 5[u^0^.|T4dq]-  9|S|T43 +07pprr,1^86|T6d0a-h ,o1j^x
+
+3z~|S o|Vltf,k^kv [8^6^h^gd ,bf^5r7o^cp|Sez988-ja^p|Tkri|S ,7921dm0y82^,^gw6k^j |Vu6
+divergence: pos=227 engine=6 U+36  oracle=<end>
+engine text UTF-8: [k7zpf w3ptInb es2pVzV-y 9[2u  a
+b .tưuya0.1g3ywevk,aq4dY
+5C5pz,.GCH2.0
+-7J
+bbk7l9ud8ae.1i ă, âyeLWpcy09z  407
+f
+zvroG,4.4z
+a bgs9068zl1v,1r 5u0.4dư- 43 07phrr,1866d0a-h ,õ
+
+oltf,KHv 86HGd,bf5r7oCpez988-aPkr ,7921dm0y82,Gw6kJ u6
+oracle  text UTF-8: [k7zpf w3ptInb es2pVzV-y 9[2u  a
+b .tưuya0.1g3ywevk,aq4dY
+5C5pz,.GCH2.0
+-7J
+bbk7l9ud8ae.1i ă, âyeLWpcy09z  407
+f
+zvroG,4.4z
+a bgs9068zl1v,1r 5u0.4dư- 43 07phrr,1866d0a-h ,õ
+
+oltf,KHv 86HGd,bf5r7oCpez988-aPkr ,7921dm0y82,Gw6kJ u
+engine UTF-16 units: U+5b U+6b U+37 U+7a U+70 U+66 U+20 U+77 U+33 U+70 U+74 U+49 U+6e U+62 U+20 U+65 U+73 U+32 U+70 U+56 U+7a U+56 U+2d U+79 U+20 U+39 U+5b U+32 U+75 U+20 U+20 U+61 U+a U+62 U+20 U+2e U+74 U+1b0 U+75 U+79 U+61 U+30 U+2e U+31 U+67 U+33 U+79 U+77 U+65 U+76 U+6b U+2c U+61 U+71 U+34 U+64 U+59 U+a U+35 U+43 U+35 U+70 U+7a U+2c U+2e U+47 U+43 U+48 U+32 U+2e U+30 U+a U+2d U+37 U+4a U+a U+62 U+62 U+6b U+37 U+6c U+39 U+75 U+64 U+38 U+61 U+65 U+2e U+31 U+69 U+20 U+103 U+2c U+20 U+e2 U+79 U+65 U+4c U+57 U+70 U+63 U+79 U+30 U+39 U+7a U+20 U+20 U+34 U+30 U+37 U+a U+66 U+a U+7a U+76 U+72 U+6f U+47 U+2c U+34 U+2e U+34 U+7a U+a U+61 U+20 U+62 U+67 U+73 U+39 U+30 U+36 U+38 U+7a U+6c U+31 U+76 U+2c U+31 U+72 U+20 U+35 U+75 U+30 U+2e U+34 U+64 U+1b0 U+2d U+20 U+34 U+33 U+20 U+30 U+37 U+70 U+68 U+72 U+72 U+2c U+31 U+38 U+36 U+36 U+64 U+30 U+61 U+2d U+68 U+20 U+2c U+f5 U+a U+a U+6f U+6c U+74 U+66 U+2c U+4b U+48 U+76 U+20 U+38 U+36 U+48 U+47 U+64 U+2c U+62 U+66 U+35 U+72 U+37 U+6f U+43 U+70 U+65 U+7a U+39 U+38 U+38 U+2d U+61 U+50 U+6b U+72 U+20 U+2c U+37 U+39 U+32 U+31 U+64 U+6d U+30 U+79 U+38 U+32 U+2c U+47 U+77 U+36 U+6b U+4a U+20 U+75 U+36 
+oracle  UTF-16 units: U+5b U+6b U+37 U+7a U+70 U+66 U+20 U+77 U+33 U+70 U+74 U+49 U+6e U+62 U+20 U+65 U+73 U+32 U+70 U+56 U+7a U+56 U+2d U+79 U+20 U+39 U+5b U+32 U+75 U+20 U+20 U+61 U+a U+62 U+20 U+2e U+74 U+1b0 U+75 U+79 U+61 U+30 U+2e U+31 U+67 U+33 U+79 U+77 U+65 U+76 U+6b U+2c U+61 U+71 U+34 U+64 U+59 U+a U+35 U+43 U+35 U+70 U+7a U+2c U+2e U+47 U+43 U+48 U+32 U+2e U+30 U+a U+2d U+37 U+4a U+a U+62 U+62 U+6b U+37 U+6c U+39 U+75 U+64 U+38 U+61 U+65 U+2e U+31 U+69 U+20 U+103 U+2c U+20 U+e2 U+79 U+65 U+4c U+57 U+70 U+63 U+79 U+30 U+39 U+7a U+20 U+20 U+34 U+30 U+37 U+a U+66 U+a U+7a U+76 U+72 U+6f U+47 U+2c U+34 U+2e U+34 U+7a U+a U+61 U+20 U+62 U+67 U+73 U+39 U+30 U+36 U+38 U+7a U+6c U+31 U+76 U+2c U+31 U+72 U+20 U+35 U+75 U+30 U+2e U+34 U+64 U+1b0 U+2d U+20 U+34 U+33 U+20 U+30 U+37 U+70 U+68 U+72 U+72 U+2c U+31 U+38 U+36 U+36 U+64 U+30 U+61 U+2d U+68 U+20 U+2c U+f5 U+a U+a U+6f U+6c U+74 U+66 U+2c U+4b U+48 U+76 U+20 U+38 U+36 U+48 U+47 U+64 U+2c U+62 U+66 U+35 U+72 U+37 U+6f U+43 U+70 U+65 U+7a U+39 U+38 U+38 U+2d U+61 U+50 U+6b U+72 U+20 U+2c U+37 U+39 U+32 U+31 U+64 U+6d U+30 U+79 U+38 U+32 U+2c U+47 U+77 U+36 U+6b U+4a U+20 U+75 
+engine code points: CP[U+5b U+6b U+37 U+7a U+70 U+66 U+20 U+77 U+33 U+70 U+74 U+49 U+6e U+62 U+20 U+65 U+73 U+32 U+70 U+56 U+7a U+56 U+2d U+79 U+20 U+39 U+5b U+32 U+75 U+20 U+20 U+61 U+a U+62 U+20 U+2e U+74 U+1b0 U+75 U+79 U+61 U+30 U+2e U+31 U+67 U+33 U+79 U+77 U+65 U+76 U+6b U+2c U+61 U+71 U+34 U+64 U+59 U+a U+35 U+43 U+35 U+70 U+7a U+2c U+2e U+47 U+43 U+48 U+32 U+2e U+30 U+a U+2d U+37 U+4a U+a U+62 U+62 U+6b U+37 U+6c U+39 U+75 U+64 U+38 U+61 U+65 U+2e U+31 U+69 U+20 U+103 U+2c U+20 U+e2 U+79 U+65 U+4c U+57 U+70 U+63 U+79 U+30 U+39 U+7a U+20 U+20 U+34 U+30 U+37 U+a U+66 U+a U+7a U+76 U+72 U+6f U+47 U+2c U+34 U+2e U+34 U+7a U+a U+61 U+20 U+62 U+67 U+73 U+39 U+30 U+36 U+38 U+7a U+6c U+31 U+76 U+2c U+31 U+72 U+20 U+35 U+75 U+30 U+2e U+34 U+64 U+1b0 U+2d U+20 U+34 U+33 U+20 U+30 U+37 U+70 U+68 U+72 U+72 U+2c U+31 U+38 U+36 U+36 U+64 U+30 U+61 U+2d U+68 U+20 U+2c U+f5 U+a U+a U+6f U+6c U+74 U+66 U+2c U+4b U+48 U+76 U+20 U+38 U+36 U+48 U+47 U+64 U+2c U+62 U+66 U+35 U+72 U+37 U+6f U+43 U+70 U+65 U+7a U+39 U+38 U+38 U+2d U+61 U+50 U+6b U+72 U+20 U+2c U+37 U+39 U+32 U+31 U+64 U+6d U+30 U+79 U+38 U+32 U+2c U+47 U+77 U+36 U+6b U+4a U+20 U+75 U+36 ]
+oracle  code points: CP[U+5b U+6b U+37 U+7a U+70 U+66 U+20 U+77 U+33 U+70 U+74 U+49 U+6e U+62 U+20 U+65 U+73 U+32 U+70 U+56 U+7a U+56 U+2d U+79 U+20 U+39 U+5b U+32 U+75 U+20 U+20 U+61 U+a U+62 U+20 U+2e U+74 U+1b0 U+75 U+79 U+61 U+30 U+2e U+31 U+67 U+33 U+79 U+77 U+65 U+76 U+6b U+2c U+61 U+71 U+34 U+64 U+59 U+a U+35 U+43 U+35 U+70 U+7a U+2c U+2e U+47 U+43 U+48 U+32 U+2e U+30 U+a U+2d U+37 U+4a U+a U+62 U+62 U+6b U+37 U+6c U+39 U+75 U+64 U+38 U+61 U+65 U+2e U+31 U+69 U+20 U+103 U+2c U+20 U+e2 U+79 U+65 U+4c U+57 U+70 U+63 U+79 U+30 U+39 U+7a U+20 U+20 U+34 U+30 U+37 U+a U+66 U+a U+7a U+76 U+72 U+6f U+47 U+2c U+34 U+2e U+34 U+7a U+a U+61 U+20 U+62 U+67 U+73 U+39 U+30 U+36 U+38 U+7a U+6c U+31 U+76 U+2c U+31 U+72 U+20 U+35 U+75 U+30 U+2e U+34 U+64 U+1b0 U+2d U+20 U+34 U+33 U+20 U+30 U+37 U+70 U+68 U+72 U+72 U+2c U+31 U+38 U+36 U+36 U+64 U+30 U+61 U+2d U+68 U+20 U+2c U+f5 U+a U+a U+6f U+6c U+74 U+66 U+2c U+4b U+48 U+76 U+20 U+38 U+36 U+48 U+47 U+64 U+2c U+62 U+66 U+35 U+72 U+37 U+6f U+43 U+70 U+65 U+7a U+39 U+38 U+38 U+2d U+61 U+50 U+6b U+72 U+20 U+2c U+37 U+39 U+32 U+31 U+64 U+6d U+30 U+79 U+38 U+32 U+2c U+47 U+77 U+36 U+6b U+4a U+20 U+75 ]

@@ -1,0 +1,18 @@
+<!--
+KieeKey v1.1.2 — App.xaml
+WinUI 3 application definition. Activation (including the Mica/Acrylic
+backdrop fallback logic for Windows 10) lives in App.xaml.cpp.
+-->
+<Application
+    x:Class="KieeKey.App"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <!-- WinUI default styles (Fluent) -->
+                <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls"/>
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

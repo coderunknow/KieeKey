@@ -1,0 +1,12 @@
+KieeKey — mega correctness reproducer (deterministic)
+suite: 10-macros
+meta: mac444 (over-backspace 4)
+init options: method=Telex table=0 spelling=1 modern=0 quickTelex=0 restore=1 freeMark=0 zfwj=0 upperFirst=0 macro=1
+ops (compact; ^=caps, +=ctrl, ' '=space, \b=backspace, \n=enter, ~=mouse, |=mode): weereww 
+divergence: backspaceCount > committed text length
+engine text UTF-8: weerww
+oracle  text UTF-8: weerww
+engine UTF-16 units: U+77 U+65 U+65 U+72 U+77 U+77 
+oracle  UTF-16 units: U+77 U+65 U+65 U+72 U+77 U+77 
+engine code points: CP[U+77 U+65 U+65 U+72 U+77 U+77 ]
+oracle  code points: CP[U+77 U+65 U+65 U+72 U+77 U+77 ]

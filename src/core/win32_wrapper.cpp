@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.1.1 - refactored and completed logic
+//   KieeKey v1.1.3 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -40,6 +40,7 @@
 #include "win32_wrapper.hpp"
 
 #include <cstring>
+#include <mutex>
 
 namespace ok::wrap {
 
@@ -57,6 +58,14 @@ namespace ok::wrap {
 //===========================================================================
 void InlineEmitter::sendEdit(std::size_t backspace, const wchar_t* text,
                              std::size_t len) noexcept {
+    // v1.1.3: the hook thread's ring-full fallback and the consumer's
+    // fallback/deferred path can both emit here. SendInput is atomic PER
+    // call, not across calls — two concurrent emitters could interleave
+    // their backspace/insert batches at the target. Only cold paths take
+    // this concurrently, so the mutex adds nothing to the hot single-caller
+    // inline path.
+    static std::mutex emitMtx;
+    std::lock_guard<std::mutex> lk(emitMtx);
     // NOTE: intentionally NOT zero-initialized as a whole — every pushed
     // INPUT field is assigned explicitly below, and SendInput only reads the
     // first `c` entries. On the hot path this saves a ~7.8 KB memset per
@@ -66,10 +75,17 @@ void InlineEmitter::sendEdit(std::size_t backspace, const wchar_t* text,
 
     const auto flush = [&inputs, &c, this]() {
         if (c != 0) {
-            stampInjected();
-            ::SendInput(static_cast<UINT>(c), inputs, sizeof(INPUT));
+            // v1.1.3: SendInput can fail under UIPI/job limits/input storms —
+            // silently. Stamping the self-heal tick BEFORE the call fed the
+            // watchdog heartbeat with input that never reached the system
+            // (masking a dead hook), and a failed batch DROPPED the user's
+            // edit with no diagnostic. Stamp only accepted input and count
+            // the failures.
+            const UINT sent = ::SendInput(static_cast<UINT>(c), inputs, sizeof(INPUT));
+            if (sent > 0) { stampInjected(); }
             sendInputCalls_.fetch_add(1, std::memory_order_relaxed);
-            inputsInjected_.fetch_add(c, std::memory_order_relaxed);
+            inputsInjected_.fetch_add(sent, std::memory_order_relaxed);
+            sendInputFailed_.fetch_add(c - sent, std::memory_order_relaxed);
             c = 0;
         }
     };
@@ -125,6 +141,11 @@ void InlineEmitter::sendEdit(std::size_t backspace, const wchar_t* text,
 //===========================================================================
 void Win32Wrapper::enableSelfHealing() noexcept {
     if (watchdog_) { return; }   // idempotent
+    // v1.1.3 OOM hardening: the two make_unique allocations run under
+    // noexcept (called during app startup) — an OOM would std::terminate.
+    // Degrade instead: the watchdog simply stays off (the fallback 1 s pump
+    // timer still keeps the pump wakeable), exactly like a failed start.
+    try {
     watchdogEnv_ = std::make_unique<PumpEnv>(hook_);
     // Bind the watchdog to the hook's heartbeat atomics through the PUBLIC
     // const-reference accessors (kbEventTickRef / mouseEventTickRef) — the
@@ -142,6 +163,13 @@ void Win32Wrapper::enableSelfHealing() noexcept {
             rehookCount_.store(wd->rehookCount(), std::memory_order_relaxed);
         }
     });
+    } catch (const std::bad_alloc&) {
+        watchdog_.reset();
+        watchdogEnv_.reset();
+    } catch (...) {
+        watchdog_.reset();
+        watchdogEnv_.reset();
+    }
 }
 #endif // OK_WRAP_HAS_WIN32
 

@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.1.1 - refactored and completed logic
+//   KieeKey v1.1.3 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.1.1 — TextEngine.hpp
+// KieeKey v1.1.3 — TextEngine.hpp
 // C++20 string_view based Telex / VNI / Simple-Telex state machine.
 //
 // Modernization vs. the 2.0.5 engine (Engine.cpp):
@@ -170,6 +170,24 @@ struct EngineOptions {
     // P3 (v3.1): user-defined keymap enabled (the map itself is installed
     // via setKeymapOverride — UniKey-parity feature).
     bool useUserKeymap = false;
+    // v1.1.2 — "numbers are numbers": when TRUE, digits 0-9 NEVER act as
+    // Vietnamese composition keys (VNI tone/vowel/d-bar/tone-removal keys)
+    // and always type the literal digit — even mid-word, in every input
+    // method. This kills the whole "I typed a number and the previous word
+    // got a tone mark / turned into đ" bug class for users who do NOT type
+    // Vietnamese by the VNI digit convention. Telex / Simple Telex are
+    // unaffected either way: digits already pass through there.
+    //
+    // v1.1.2-r3 ROOT CAUSE FIX: the LIBRARY default is now TRUE — it must
+    // match the product promise. The r1/r2 releases shipped the fix only in
+    // the Win32 tray app while EngineOptions{} still meant "digits compose"
+    // (legacy OpenKey parity): the WinUI 3 front-end (and ANY future
+    // TextEngine consumer) silently constructed the legacy behavior and
+    // re-introduced the exact reported bug. Library default = shipping
+    // default; classic VNI digit composition stays available by setting
+    // this flag to FALSE explicitly (the Win32 dialog checkbox and the
+    // legacy-parity test harnesses do exactly that).
+    bool digitsAreLiteral = true;    // library default = the product default
 };
 
 //---------------------------------------------------------------------------
@@ -350,7 +368,9 @@ private:
                    c == U']' || c == U'A' || c == U'S' || c == U'D' || c == U'F' ||
                    c == U'J' || c == U'Z' || c == U'X' || c == U'W';
         }
-        return isNumberKey(c);
+        // v1.1.2: with digitsAreLiteral the VNI digit keys (1-0: tones,
+        // vowel marks, đ, tone removal) are disabled — a digit is a digit.
+        return !opts_.digitsAreLiteral && isNumberKey(c);
     }
     constexpr char32_t PCH(std::size_t col) const noexcept {
         return kProcessingChar[static_cast<std::size_t>(opts_.inputMethod)][col];

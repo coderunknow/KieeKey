@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.1.1 - refactored and completed logic
+//   KieeKey v1.1.3 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -150,8 +150,10 @@ struct Feed {
 static int failures = 0;
 #define CHECK(cond, msg)                                                       \
     do {                                                                       \
-        /* if constexpr: avoids C4127 (constant condition) under /W4 /WX */    \
-        if constexpr (cond) { std::printf("  ok   %s\n", msg); }               \
+        /* Plain `if`: runtime conditions are legal here. The constant-        \
+           condition MSVC warning (C4127) is disabled project-wide (/wd4127);  \
+           `if constexpr` would hard-error on GCC/clang (non-constant cond). */\
+        if (cond) { std::printf("  ok   %s\n", msg); }                         \
         else { std::printf("  FAIL %s\n", msg); ++failures; }                  \
     } while (0)
 

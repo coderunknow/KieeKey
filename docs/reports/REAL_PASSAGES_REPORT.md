@@ -1,14 +1,7 @@
-> **Lineage note (KieeKey v1.0 packaging):** Historical engineering
-> document from the refactor lineage that produced KieeKey v1.0 (a fork of
-> OpenKey, GPL-3.0). Written before the v1.0 release unification, it uses the
-> pre-release working name "OpenKey NextGen" and internal milestone numbers
-> (v3.0-v3.4). Published verbatim for traceability - see
-> [docs/reports/README.md](README.md).
-
 # Real mixed English–Vietnamese passages — results
 
 Every passage is typed key-by-key with the Telex input method ACTIVE (the realistic
-'user types both languages' case), through the NextGen engine, the clean-room oracle,
+'user types both languages' case), through the KieeKey engine, the clean-room oracle,
 and the vendored OpenKey 2.0.5 engine. Consumer semantics identical to the main benchmark.
 
 | # | kind | passage | eng==ora | eng==2.0.5 | eng==intended |
@@ -57,7 +50,7 @@ and the vendored OpenKey 2.0.5 engine. Consumer semantics identical to the main 
 
 One cause remains. Passages 12–14, 16–17, 19, 25–28 are the DOCUMENTED real-IME
 behavior for English words typed with the Telex IME on (engine == oracle == 2.0.5, so
-NextGen reproduces the legacy engine byte-for-byte). Passage 5 was the user-reported
+KieeKey reproduces the legacy engine byte-for-byte). Passage 5 was the user-reported
 shifted-symbol data loss; it is **fixed** (see below) and now matches 2.0.5.
 
 | # | intended (what the user wanted) | actual output (engine) | 2.0.5 agrees? | cause |
@@ -79,7 +72,7 @@ Telex tone keys hit English words (`see`→`sê`, `is`→`í`, `w`→`ư`), and 
 wrong-spelling restore then reverts the word on Space and consumes the Space key
 (win32 OpenKey.cpp returns -1 on a consumed key), gluing the next word
 (`confirm` → `confirmlại`). This is the documented real-IME behavior — the
-user should toggle the IME off for pure-English segments. NextGen reproduces it
+user should toggle the IME off for pure-English segments. KieeKey reproduces it
 byte-for-byte (engine == 2.0.5).
 
 ### Engine defect (passage 5) — FIXED

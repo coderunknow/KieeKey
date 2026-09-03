@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.1.1 - refactored and completed logic
+//   KieeKey v1.1.3 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.1.1 — tests/stress_engine.cpp
+// KieeKey v1.1.3 — tests/stress_engine.cpp
 // EXTREME engine test: fuzz + invariants + determinism + allocation counting
 // + edge-case battery. Run with any C++23 compiler; optionally with
 // -fsanitize=address,undefined (recommended) or -fsanitize=thread.
@@ -338,6 +338,10 @@ void goldenRegression() {
     int ok = 0;
         for (const auto& c : cases) {
         EngineOptions o; o.inputMethod = c.m; o.codeTable = CodeTable::Unicode;
+        // v1.1.2-r3: these are LEGACY golden vectors (a1→á, d9→đ …) — pin
+        // classic VNI digit composition explicitly; the library default is
+        // now digits-literal.
+        o.digitsAreLiteral = false;
         TextEngine e(o);
         std::wstring out, scratch;
         for (const char* p = c.seq; *p; ++p) {
@@ -488,6 +492,11 @@ int main(int argc, char** argv) {
             threads.emplace_back([&, t] {
                 EngineOptions o; o.inputMethod = (t == 0) ? InputMethod::Telex : InputMethod::Vni;
                 o.codeTable = CodeTable::Unicode;
+                // v1.1.2-r3: the random sequence contains digits — pin the
+                // LEGACY VNI composition so this thread keeps exercising the
+                // digit-composition code paths under concurrency (the
+                // digits-literal default now has its own dedicated tests).
+                o.digitsAreLiteral = false;
                 TextEngine e(o);
                 outs[t] = runSequence(e, seq);
             });

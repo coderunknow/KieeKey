@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.1.1 - refactored and completed logic
+//   KieeKey v1.1.3 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.1.1 — MainWindow.xaml.h
+// KieeKey v1.1.3 — MainWindow.xaml.h
 // Hand-written part of the MainWindow partial class (the XAML compiler
 // generates MainWindow.g.h — included below — with the x:Name'd controls and
 // event-handler stubs).
@@ -82,6 +82,12 @@ private:
     winrt::Microsoft::UI::Xaml::DispatcherTimer m_timer{nullptr};
 
     bool m_running = false;
+
+    // v1.1.2-r3: true while the constructor mirrors persisted settings into
+    // the UI controls. SelectionChanged/Checked handlers must not treat
+    // those programmatic changes as user input (they would write back to the
+    // registry and re-apply options mid-construction).
+    bool m_uiInitializing = false;
 };
 
 } // namespace KieeKey

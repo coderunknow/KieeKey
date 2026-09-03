@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------------
-# KieeKey v1.1.1 — CMake build (modern replacement for the .sln/.vcxproj)
+# KieeKey v1.1.3 — CMake build (modern replacement for the .sln/.vcxproj)
 #
 #   * C++23, /W4 + /WX (warnings as errors) for release-grade hygiene (MSVC)
 #   * x64 + ARM64 out of the box (ARM64EC possible: -A ARM64EC, VS 17.4+)
@@ -33,7 +33,7 @@
 cmake_minimum_required(VERSION 3.28)
 
 project(KieeKey
-        VERSION 1.1.1
+        VERSION 1.1.3
         DESCRIPTION "KieeKey — Vietnamese input method (modern core)"
         LANGUAGES CXX)
 
@@ -82,6 +82,11 @@ endif()
 # full -static additionally drops libwinpthread-1.dll.
 if(WIN32 AND NOT MSVC)
     add_link_options(-static -static-libgcc -static-libstdc++)
+    # GCC 14 (MinGW-w64 posix) emits a strong definition of
+    # std::type_info::operator== in every TU while libstdc++'s tinfo.o
+    # carries the same symbol — the linker errors out with "multiple
+    # definition". The two definitions are identical; keep the first.
+    add_link_options(-Wl,--allow-multiple-definition)
 endif()
 
 set(CMAKE_CXX_STANDARD 23)
@@ -130,7 +135,8 @@ if(WIN32)
     target_compile_features(ok_core PUBLIC cxx_std_23)
     # Bare names — CMake maps them per toolchain (user32.lib / -luser32).
     target_link_libraries(ok_core PUBLIC
-        user32 gdi32 shell32 ole32 dwmapi psapi version urlmon winmm)
+        user32 gdi32 shell32 ole32 dwmapi psapi version urlmon winmm
+        advapi32)   # v1.1.3: OpenProcessToken / GetTokenInformation (elevation probe)
 
     # TSF composer
     add_library(ok_tsf STATIC

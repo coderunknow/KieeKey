@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.1.1 - refactored and completed logic
+//   KieeKey v1.1.3 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.1.1 — tests/bench_tone_latency.cpp
+// KieeKey v1.1.3 — tests/bench_tone_latency.cpp
 // TONE-POPULATION LATENCY BENCHMARK (Phase 2 of the latency audit).
 //
 // WHY: the frozen v3.3.1 E2E workload (tests/e2e_bench.cpp) is 99.9%

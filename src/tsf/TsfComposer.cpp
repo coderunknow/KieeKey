@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.1.1 - refactored and completed logic
+//   KieeKey v1.1.3 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.1.1 — TsfComposer.cpp
+// KieeKey v1.1.3 — TsfComposer.cpp
 // See TsfComposer.hpp. External TSF client (ITfThreadMgrEx + edit session).
 //
 // commit() flow (all inside the focused app's text store — no VK_BACK):
@@ -196,15 +196,25 @@ public:
         HRESULT hr = S_OK;
         if (isSingle_) {
             hr = applyDelta(ctx_, inserter_, ec, single_);
+            applied_ = SUCCEEDED(hr) ? 1u : 0u;
         } else {
             for (const EditDelta& d : deltas_) {
                 hr = applyDelta(ctx_, inserter_, ec, d);
                 if (FAILED(hr)) { break; }
+                ++applied_;
             }
         }
         if (resultOut_) { *resultOut_ = hr; }
         return hr;
     }
+
+    // v1.1.3 — how many deltas were COMMITTED before the session stopped
+    // (or deltas_.size()/1 on success). TSF sessions are NOT transactional:
+    // deltas applied before a failing one persist in the document, so the
+    // app-side SendInput fallback must re-emit only the UNAPPLIED suffix —
+    // re-emitting the whole batch duplicated word-initial pure-insert deltas
+    // ("t" + "to" came out as "tto") whenever a mid-batch delta failed.
+    [[nodiscard]] std::uint32_t appliedCount() const noexcept { return applied_; }
 
 private:
     ITfContext* ctx_;
@@ -212,6 +222,7 @@ private:
     std::vector<EditDelta> deltas_;   // copied — the session may outlive the caller
     EditDelta single_{};
     bool isSingle_ = false;
+    std::uint32_t applied_ = 0;
     HRESULT* resultOut_;
     ULONG refs_ = 1;
 };
@@ -276,6 +287,26 @@ public:
                     if ((c >= L'a' && c <= L'z') || (c >= L'A' && c <= L'Z')) { --i; }
                     else { break; }
                 }
+                // v1.1.3 — TRUNCATED-READBACK GUARD (output-corruption fix).
+                // The raw replay can only mirror ASCII Telex/VNI keystrokes.
+                // When a letter that is NOT plain ASCII (composed Vietnamese
+                // such as the à of "chào", or any digit/punctuation word
+                // character) sits directly before the ASCII run, the visible
+                // word continues beyond what this read can represent:
+                // replaying just the ASCII tail ("o" for "chào|") seeded the
+                // engine with a TRUNCATED word, and the next tone key then
+                // computed its backspace count against the wrong length —
+                // deleting the wrong characters at the caret. Strictly worse
+                // than not resyncing (an empty buffer degrades safely).
+                // Fail the session: the caller keeps the empty-buffer model
+                // (startNewSession — the safe degradation).
+                if (i > 0) {
+                    const wchar_t prev = buf[i - 1];
+                    if (prev > 0x7F || (prev >= L'0' && prev <= L'9')) {
+                        if (resultOut_) { *resultOut_ = S_FALSE; }
+                        return S_FALSE;
+                    }
+                }
                 own_.assign(buf + i, buf + got);
                 hr = S_OK;
             }
@@ -305,7 +336,13 @@ bool TsfComposer::attach() noexcept {
     if (attached_) { return true; }
 
     const HRESULT coHr = ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    if (FAILED(coHr) && coHr != RPC_E_CHANGED_MODE && coHr != S_FALSE) {
+    // v1.1.3: RPC_E_CHANGED_MODE (thread already MTA) previously CONTINUED
+    // attaching. TSF's focus/edit machinery is apartment-threaded and
+    // message-window based; created from an MTA thread it proxies into a
+    // host STA nobody pumps and edit sessions degrade unpredictably. Attach
+    // fails cleanly instead — the caller falls back to inline SendInput.
+    if (coHr == RPC_E_CHANGED_MODE) { return false; }
+    if (FAILED(coHr) && coHr != S_FALSE) {
         return false;
     }
     // v1.1.0-audit fix: S_OK and S_FALSE both take a COM init reference we
@@ -394,6 +431,33 @@ void TsfComposer::onForegroundChanged() noexcept {
 // commit()
 //===========================================================================
 bool TsfComposer::ensureContext() noexcept {
+    // v1.1.3 — stale-focus defense (cross-app text-injection fix). The
+    // cached context is now verified against the CURRENT thread focus on
+    // every commit. GetFocus on OUR OWN thread manager is an in-process
+    // read (msctf-local state, no marshaling into the target app), so the
+    // check is a few nanoseconds per batch. This closes three known holes
+    // at once:
+    //   1. The v3.5 FGPROBE gate: while a foreground switch is gated, the
+    //      consumer skips onForegroundChanged(); a non-null context from
+    //      the PREVIOUS app survived and the first commit after the probe
+    //      re-armed TSF landed in the OLD app's document.
+    //   2. Same-window focus changes (browser tab switch, page <-> omnibox,
+    //      document <-> task pane) — never observable via foreground events.
+    //   3. A popped document (tab closed) — previously detected only by the
+    //      session failing later.
+    // ITfThreadMgrEx derives from ITfThreadMgr, so GetFocus is callable
+    // directly — no per-commit QueryInterface churn.
+    if (context_ != nullptr && threadMgr_ != nullptr) {
+        ITfDocumentMgr* focus = nullptr;
+        if (SUCCEEDED(threadMgr_->GetFocus(&focus))) {
+            if (focus != docMgr_) {
+                if (focus) { focus->Release(); }
+                onForegroundChanged();   // stale — re-resolve from real focus
+            } else if (focus) {
+                focus->Release();
+            }
+        }
+    }
     if (context_ != nullptr) { return true; }
     onForegroundChanged();   // focus may have moved since the last event
     return context_ != nullptr;
@@ -460,10 +524,16 @@ bool TsfComposer::commitOne(std::size_t backspaceCount,
     return true;
 }
 
-bool TsfComposer::commitBatch(const std::vector<EditDelta>& deltas) noexcept {
+bool TsfComposer::commitBatch(const std::vector<EditDelta>& deltas,
+                              std::size_t* appliedOut) noexcept {
+    if (appliedOut) { *appliedOut = 0; }
     if (!attached_ || threadMgr_ == nullptr || !ensureContext()) { return false; }
     if (deltas.empty()) { return true; }
-    if (deltas.size() == 1) { return commitOne(deltas[0].backspace, deltas[0].text); }
+    if (deltas.size() == 1) {
+        const bool okR = commitOne(deltas[0].backspace, deltas[0].text);
+        if (appliedOut) { *appliedOut = okR ? 1u : 0u; }
+        return okR;
+    }
 
     // v1.1.0 — slow-commit watchdog (same instrumentation as commitOne).
     LARGE_INTEGER t0{};
@@ -495,6 +565,7 @@ bool TsfComposer::commitBatch(const std::vector<EditDelta>& deltas) noexcept {
         lastCommitSlow_.store(true, std::memory_order_relaxed);
     }
 
+    if (appliedOut) { *appliedOut = session->appliedCount(); }
     if (FAILED(hr) || FAILED(sessionHr)) {
         return false;
     }

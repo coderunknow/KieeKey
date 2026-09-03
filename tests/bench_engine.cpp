@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.1.1 - refactored and completed logic
+//   KieeKey v1.1.3 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.1.1 — tests/bench_engine.cpp
+// KieeKey v1.1.3 — tests/bench_engine.cpp
 // TextEngine hot-path benchmark (ns/key). Build & run:
 //   g++ -std=c++23 -O2 -I src/core tests/bench_engine.cpp src/core/TextEngine.cpp -o bench && ./bench
 //
@@ -52,6 +52,10 @@ std::uint64_t bench(const char* corpus, InputMethod m) {
     EngineOptions o;
     o.inputMethod = m;
     o.codeTable = CodeTable::Unicode;
+    // v1.1.2-r3: pin legacy digit composition — the "a1 a2 … o6 u7" VNI
+    // corpus exists to measure the composition hot path (the literal-digit
+    // path has its own benchmark, tests/bench_digits.cpp).
+    o.digitsAreLiteral = false;
     TextEngine e(o);
     std::wstring scratch;
     volatile std::uint64_t sink = 0;

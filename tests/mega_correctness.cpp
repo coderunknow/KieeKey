@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.1.1 - refactored and completed logic
+//   KieeKey v1.1.3 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.1.1 — tests/mega_correctness.cpp
+// KieeKey v1.1.3 — tests/mega_correctness.cpp
 // MASSIVE differential correctness benchmark.
 //
 // Three independent models, fed byte-identical deterministic event streams:
@@ -148,6 +148,11 @@ EngineOptions toEngine(const orel::Options& o) {
     EngineOptions e;
     e.inputMethod = static_cast<InputMethod>(static_cast<int>(o.method));
     e.codeTable = static_cast<CodeTable>(static_cast<int>(o.table));
+    // v1.1.2-r3: the oracle models the LEGACY 2.0.5 engine (digits compose
+    // in VNI) — pin the flag explicitly. The library default flipped to
+    // digits-literal in r3; without this pin every VNI differential case
+    // containing digits would diverge for the wrong reason.
+    e.digitsAreLiteral = false;
     e.checkSpelling = o.checkSpelling;
     e.useModernOrthography = o.modernOrthography;
     e.quickTelex = o.quickTelex;
@@ -2308,7 +2313,23 @@ void writeReport(const std::vector<Stats>& all, bool fast, std::size_t wordCount
 //============================================================================
 // MAIN
 //============================================================================
+// v1.1.3 hardening: deterministic repro replay mode.
+// Usage: mega_correctness --repro <file.txt> [--trace]
+// Parses a saved repro (init options + compact ops), replays it through the
+// exact harness Pair, prints per-event engine/oracle decisions and the final
+// texts. Returns 0 when engine==oracle (divergence fixed), 1 when not.
+int runReproFile(const std::string& path, bool trace);
+
 int main(int argc, char** argv) {
+    std::string reproPath;
+    bool reproTrace = false;
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) == "--repro" && i + 1 < argc) { reproPath = argv[++i]; }
+        else if (std::string(argv[i]) == "--trace") { reproTrace = true; }
+    }
+    if (!reproPath.empty()) {
+        return runReproFile(reproPath, reproTrace);
+    }
     bool fast = false;
     for (int i = 1; i < argc; ++i) {
         if (std::string(argv[i]) == "--fast") fast = true;
@@ -2330,21 +2351,30 @@ int main(int argc, char** argv) {
     ds = &diffStats;
 #endif
 
-    { Stats st; suiteExhaustive(st, fast); all.push_back(st); }
-    { Stats st; suiteCorpus(st, words, fast); all.push_back(st); }
-    { Stats st; suiteBackspace(st, fast); all.push_back(st); }
-    { Stats st; suiteModeSwitch(st, fast); all.push_back(st); }
-    { Stats st; suiteModifiers(st, fast); all.push_back(st); }
-    { Stats st; suiteFuzz(st, fast); all.push_back(st); }
-    { Stats st; suiteLongSession(st, fast); all.push_back(st); }
-    { Stats st; suiteSentences(st, words, fast); all.push_back(st); }
-    { Stats st; suiteRapid(st, words, fast); all.push_back(st); }
-    { Stats st; suiteMacros(st, fast); all.push_back(st); }
-    { Stats st; suiteMetamorphic(st, words, fast); all.push_back(st); }
-    { Stats st; suiteEdgePunctCore(st, fast); all.push_back(st); }
+    // v1.1.3: KIEEKEY_SUITES=<ids> (comma-separated 1..13) runs a subset —
+    // lets CI split the ~11 min full run into chunks. Empty = all suites.
+    const char* only = std::getenv("KIEEKEY_SUITES");
+    auto want = [&](int id) {
+        if (only == nullptr || only[0] == '\0') { return true; }
+        return std::strstr(only, (std::to_string(id) + ",").c_str()) != nullptr ||
+               std::strstr(only, ("," + std::to_string(id)).c_str()) != nullptr ||
+               std::strcmp(only, std::to_string(id).c_str()) == 0;
+    };
+    if (want(1))  { Stats st; suiteExhaustive(st, fast); all.push_back(st); }
+    if (want(2))  { Stats st; suiteCorpus(st, words, fast); all.push_back(st); }
+    if (want(3))  { Stats st; suiteBackspace(st, fast); all.push_back(st); }
+    if (want(4))  { Stats st; suiteModeSwitch(st, fast); all.push_back(st); }
+    if (want(5))  { Stats st; suiteModifiers(st, fast); all.push_back(st); }
+    if (want(6))  { Stats st; suiteFuzz(st, fast); all.push_back(st); }
+    if (want(7))  { Stats st; suiteLongSession(st, fast); all.push_back(st); }
+    if (want(8))  { Stats st; suiteSentences(st, words, fast); all.push_back(st); }
+    if (want(9))  { Stats st; suiteRapid(st, words, fast); all.push_back(st); }
+    if (want(10)) { Stats st; suiteMacros(st, fast); all.push_back(st); }
+    if (want(11)) { Stats st; suiteMetamorphic(st, words, fast); all.push_back(st); }
+    if (want(13)) { Stats st; suiteEdgePunctCore(st, fast); all.push_back(st); }
 #ifndef NO_205
-    { Stats st; suiteDifferential205(st, diffStats, fast); all.push_back(st); }
-    { Stats st; suiteEdgePunct205(st, diffStats, fast); all.push_back(st); }
+    if (want(12)) { Stats st; suiteDifferential205(st, diffStats, fast); all.push_back(st); }
+    if (want(13)) { Stats st; suiteEdgePunct205(st, diffStats, fast); all.push_back(st); }
 #endif
 
     writeReport(all, fast, words.size(), ds);
@@ -2368,3 +2398,137 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "[bench] VERDICT: PASS (0 text divergences)\n");
     return 0;
 }
+
+
+//============================================================================
+// v1.1.3 — repro replay mode implementation
+//===========================================================================
+#ifndef MEGA_REPRO_IMPL
+#define MEGA_REPRO_IMPL
+#include <cstring>
+namespace {
+
+// A traced Pair: records one line per op with the engine/oracle result codes
+// and the visible-text delta each side produced.
+struct TracePair {
+    Pair p;
+    std::string line;
+    explicit TracePair(const orel::Options& o) : p(o) {}
+};
+
+std::string utf8Of(const std::wstring& w) {
+    std::string s;
+    for (wchar_t c : w) {
+        char32_t cp = static_cast<char32_t>(c);
+        if (cp < 0x80) s.push_back(static_cast<char>(cp));
+        else if (cp < 0x800) { s.push_back(static_cast<char>(0xC0 | (cp >> 6))); s.push_back(static_cast<char>(0x80 | (cp & 0x3F))); }
+        else { s.push_back(static_cast<char>(0xE0 | (cp >> 12))); s.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F))); s.push_back(static_cast<char>(0x80 | (cp & 0x3F))); }
+    }
+    return s;
+}
+
+std::string reproEscapeOps(const std::string& ops) {
+    std::string s;
+    for (char c : ops) {
+        if (c == '\b') { s += "\\b"; }
+        else if (c == '\n') { s += "\\n"; }
+        else { s += c; }
+    }
+    return s;
+}
+
+} // namespace
+
+int runReproFile(const std::string& path, bool trace) {
+    std::ifstream f(path);
+    if (!f) { std::fprintf(stderr, "repro: cannot open %s\n", path.c_str()); return 2; }
+    std::string line, ops, meta;
+    orel::Options init = baseOptions();
+    while (std::getline(f, line)) {
+        if (line.rfind("meta: ", 0) == 0) { meta = line.substr(6); }
+        else if (line.rfind("init options:", 0) == 0) {
+            std::istringstream ss(line.substr(13));
+            std::string tok;
+            while (ss >> tok) {
+                const auto eq = tok.find('=');
+                if (eq == std::string::npos) continue;
+                const std::string k = tok.substr(0, eq), v = tok.substr(eq + 1);
+                if (k == "method") { init.method = v == "VNI" ? orel::Method::Vni : (v == "SimpleTelex" ? orel::Method::SimpleTelex : orel::Method::Telex); }
+                else if (k == "table") { init.table = static_cast<orel::CodeTable>(std::atoi(v.c_str())); }
+                else if (k == "spelling") { init.checkSpelling = v == "1"; }
+                else if (k == "modern") { init.modernOrthography = v == "1"; }
+                else if (k == "quickTelex") { init.quickTelex = v == "1"; }
+                else if (k == "restore") { init.restoreIfWrongSpelling = v == "1"; }
+                else if (k == "freeMark") { init.freeMark = v == "1"; }
+                else if (k == "zfwj") { init.allowConsonantZfwj = v == "1"; }
+                else if (k == "upperFirst") { init.upperCaseFirstChar = v == "1"; }
+            }
+        } else if (line.rfind("ops (compact", 0) == 0) {
+            const std::size_t cp = line.find("): ");
+            if (cp != std::string::npos) ops = line.substr(cp + 3);
+            break;
+        }
+    }
+    // Unescape \b \n in the saved ops.
+    std::string raw;
+    for (std::size_t i = 0; i < ops.size(); ++i) {
+        if (ops[i] == '\\' && i + 1 < ops.size()) {
+            raw.push_back(ops[i + 1] == 'b' ? '\b' : (ops[i + 1] == 'n' ? '\n' : ops[i + 1]));
+            ++i;
+        } else { raw.push_back(ops[i]); }
+    }
+    ops = raw;
+    std::fprintf(stderr, "repro: meta=%s init(method=%d modern=%d quickTelex=%d) ops='%s'\n",
+                 meta.c_str(), (int)init.method, (int)init.modernOrthography, (int)init.quickTelex,
+                 reproEscapeOps(ops).c_str());
+    Pair p(init);
+    for (std::size_t i = 0; i < ops.size(); ++i) {
+        const char c = ops[i];
+        const std::wstring ePrev = p.et, oPrev = p.ot;
+        bool stop = false;
+        char label[8] = {0};
+        switch (c) {
+            case '^': { const char32_t ch = static_cast<unsigned char>(ops[++i]); stop = p.feedChar(ch, true, false); std::snprintf(label, sizeof label, "^%c", (char)ch); break; }
+            case '+': { const char32_t ch = static_cast<unsigned char>(ops[++i]); stop = p.feedChar(ch, false, true); std::snprintf(label, sizeof label, "+%c", (char)ch); break; }
+            case '|': {
+                const char m = ops[++i];
+                orel::Options o = init;
+                o.method = m == 'V' ? orel::Method::Vni : (m == 'S' ? orel::Method::SimpleTelex : orel::Method::Telex);
+                p.setMode(o);
+                std::snprintf(label, sizeof label, "|%c", m);
+                break;
+            }
+            case ' ':  stop = p.space(); std::snprintf(label, sizeof label, "<sp>"); break;
+            case '\b': stop = p.backspace(); std::snprintf(label, sizeof label, "<bs>"); break;
+            case '\n': stop = p.wordBreak(0x0D); std::snprintf(label, sizeof label, "<en>"); break;
+            case '~':  stop = p.mouseDown(); std::snprintf(label, sizeof label, "<ms>"); break;
+            default:   stop = p.feedChar(static_cast<unsigned char>(c), false, false); std::snprintf(label, sizeof label, "%c", c); break;
+        }
+        if (trace) {
+            auto deltaOf = [](const std::wstring& before, const std::wstring& after) {
+                if (after.size() >= before.size() && after.compare(0, before.size(), before) == 0) {
+                    return L"+" + after.substr(before.size());
+                }
+                return L"->" + after;
+            };
+            const std::string ed = utf8Of(deltaOf(ePrev, p.et));
+            const std::string od = utf8Of(deltaOf(oPrev, p.ot));
+            const auto& er = p.eng.lastResult();
+            const auto& orr = p.ora.lastResult();
+            std::printf("ev[%02zu] %-5s engine{code=%d bs=%u nc=%u}='%s' oracle{code=%d bs=%u nc=%u}='%s'%s\n",
+                        i, label, (int)er.code, (unsigned)er.backspaceCount, (unsigned)er.newCharCount, ed.c_str(),
+                        (int)orr.code, (unsigned)orr.backspaceCount, (unsigned)orr.newCharCount, od.c_str(),
+                        (ed != od) ? "   <<<< DIVERGE" : "");
+        }
+        if (stop) { std::fprintf(stderr, "repro: stale/overflow stop\n"); return 1; }
+        if (!p.checksEqual() || !p.textsEqual()) {
+            std::fprintf(stderr, "repro: DIVERGES at event %zu ('%s')\nengine: %s\noracle: %s\n",
+                         i, label, utf8Of(p.et).c_str(), utf8Of(p.ot).c_str());
+            return 1;
+        }
+    }
+    std::fprintf(stderr, "repro: FIXED (engine == oracle)\nengine: %s\noracle: %s\n",
+                 utf8Of(p.et).c_str(), utf8Of(p.ot).c_str());
+    return 0;
+}
+#endif

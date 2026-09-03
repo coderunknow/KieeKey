@@ -1,5 +1,5 @@
 <!--
-KieeKey v1.1.1 — App.xaml
+KieeKey v1.1.2 — App.xaml
 WinUI 3 application definition. Activation (including the Mica/Acrylic
 backdrop fallback logic for Windows 10) lives in App.xaml.cpp.
 -->

@@ -3,6 +3,303 @@
 All notable changes to KieeKey are documented here. Format based on
 Keep a Changelog; versioning: SemVer.
 
+## [1.1.3] — 2026-09-03
+
+### Quality/performance hardening release — accuracy, latency, stability,
+### robustness of the core typing pipeline (no new features)
+
+> Scope: audit the entire input pipeline (LL hook → lock-free ring →
+> engine → TSF composer) for root causes, fix them without trading away
+> correctness, and close the differential suite at 0 divergences.
+
+### Fixed — accuracy (P1)
+
+* **CapsLock/NumLock/ScrollLock toggle tracker desynchronized by
+  auto-repeat** (`ModernKeyHook.cpp`). The tracker XORed the toggle bit on
+  EVERY KeyDown, but the low-level hook receives auto-repeat key-downs while
+  the key is held: holding CapsLock for half a second XORed the tracked bit
+  15–30× and left it OUT OF PHASE with the OS — every later tone-mark / đ /
+  â transform re-emitted its word with the wrong case ("vợ" → "vỢ"). The
+  tracker now flips on the up→down EDGE only (256-bit edge bitmap, hook-
+  thread-affine), re-arms on modifier resync, and uses atomic RMW so a
+  concurrent resync can no longer clobber it.
+* **36 engine↔oracle divergences closed (mega differential: 36 → 0 at the
+  full 268M-event budget; Cat C "KieeKey regression" count 77 → 0).** The
+  independent oracle (`tests/vi_oracle.hpp`) had missed the documented
+  v1.1.0 engine contracts and was re-aligned to them: (1) the
+  `vniVowelEndValid_` validity-tracked VNI vowel scan (a digit 6 with no
+  O/A/E in the word used to compose onto a STALE vowel from a previous
+  word — the engine already refused it, matching upstream 2.0.5); (2) the
+  D3 macro-visibility model (expansion replaces raw keys, backspaces walk
+  the expansion down, a fresh letter re-arms the macro bookkeeping);
+  (3) the `checkQuickConsonant` buffer-limit guard. Arbitration for every
+  class was done against the vendored upstream 2.0.5 engine, not by taste.
+* **Quick-consonant transform at the buffer limit** (`TextEngine.cpp`):
+  at `index_ == kMaxBuff-1` the transform computed `newCharCount = 32`
+  while the guarded insert no longer ran, emitting a stale 32nd character
+  and a backspace/insert count mismatch. It now refuses the transform
+  beyond the bound (mirrored in the oracle; unit test added).
+* **TSF stale-focus commits** (`TsfComposer::ensureContext`): the cached
+  `ITfContext` is now verified against the thread manager's CURRENT focus
+  on every commit (in-process read, ~ns). This closes the cross-app text
+  injection hole where the first commit after the v3.5 hang-probe gate
+  re-used the PREVIOUS application's document, plus same-window focus
+  changes (browser tab switch, page ↔ omnibox) that no foreground event
+  observes.
+* **Truncated context re-sync** (`ReadBeforeCaretSession`): the caret
+  read-back replays raw ASCII keystrokes; when a composed Vietnamese
+  letter (or digit) sits directly before the ASCII run, the visible word
+  continues beyond what the read can represent. Replaying the truncated
+  tail seeded the engine with a SHORT word and the next tone key then
+  deleted the WRONG characters at the caret. The session now fails and
+  the safe empty-buffer degradation applies.
+* **Toggling OFF now drains queued edits** (`main.cpp`): with TSF edits
+  still pending against a slow foreground, disabled-mode letters reached
+  the app immediately while the stale edit committed later and deleted
+  the wrong characters. OFF is now a clean cut-off point (bounded drain),
+  and an in-flight keystroke re-checks the enabled flag under the engine
+  lock so a decision cannot emit after the OFF transition.
+
+### Fixed — latency (P2)
+
+* **Phantom pending-edit race removed** (`main.cpp`): the producer
+  incremented `pendingEdits` AFTER publishing the item (relaxed) while the
+  consumer's "reached zero" test compared against the fetch_sub previous
+  value. A preemption in that window left a PHANTOM pending count armed
+  forever — every later pass-through keystroke then paid the full 1 ms
+  barrier wait. The count is now published BEFORE the push (acq_rel) and
+  the zero-test re-reads the counter.
+* **Wheel events no longer take the ordering barrier** (`main.cpp`): a
+  wheel notch does not move the caret, but the wait ran on the SHARED hook
+  pump thread — scrolling while edits were in flight stalled keystrokes
+  for up to the 1 ms budget per notch.
+* **Settings dialog no longer holds the engine lock across control
+  reads** (`main.cpp`): all ~25 cross-thread control reads are hoisted
+  above `engineMtx`; only the state swap remains in the critical section.
+  Typing during OK/Apply no longer blocks on dialog controls.
+* **Foreground-change cache staleness**: the in-window keyboard-layout
+  cache now re-reads the foreground thread's HKL on Space/WordBreak
+  (two user-mode reads, no syscall), so Win+Space / Ctrl+Shift layout
+  switches WITHIN one window compose correctly by the next word instead
+  of after the next app switch.
+
+### Fixed — stability (P3)
+
+* **Elevated foreground passes keystrokes through** (`ProcessMonitor` +
+  `main.cpp`): a non-elevated IME can never reach an elevated target —
+  TSF cannot marshal across UIPI and SendInput fails SILENTLY; composing
+  "á" swallowed the user's letters outright in elevated cmd/PowerShell/
+  Task Manager. The foreground's integrity level is now probed on app
+  switch and an elevated target joins the auto-exclusion set (raw
+  pass-through + engine reset) instead of eating keystrokes.
+* **Hook watchdog per-hook detection + active probe** (`win32_wrapper`):
+  the old fast path collapsed keyboard/mouse/self stamps into one max, so
+  a silently-removed WH_KEYBOARD_LL stayed invisible while the mouse was
+  in use. The keyboard stamp is now evaluated INDEPENDENTLY and the
+  ambiguous "system input fresh, keyboard stamp stale" state is resolved
+  by an ACTIVE PROBE (self-tagged VK 0xFF down+up — a live hook stamps and
+  filters it, the app never sees it). Dead-hook detection now works during
+  mouse-only sessions; the missed stamp scenario self-heals in ~10–25 ms.
+* **`SendInput` failures are counted and no longer mask the watchdog**:
+  the emitter stamped the self-heal tick BEFORE the call, feeding the
+  heartbeat with input that never reached the system; failed batches also
+  dropped the user's edit silently. Only accepted input stamps now, and
+  rejections are counted for diagnostics.
+* **Inline emission serialized** (`InlineEmitter::sendEdit`): the hook
+  thread's ring-full fallback and the consumer's fallback could emit two
+  interleaved SendInput streams; SendInput is atomic per call, not across
+  calls. Cold paths only — no cost on the hot inline path.
+* **`ProcessMonitor::start()` refuses restart after a stuck-detach**
+  (mirrors `ModernKeyHook`): the wedged pump's fallback timer re-observed
+  `running_ == true` and resumed, giving two pumps fighting over one hook.
+* **OOM hardening at `noexcept` boundaries** (`ProcessMonitor::
+  updateFromWindow`, `Win32Wrapper::enableSelfHealing`, the consumer drain
+  loop): an allocation failure previously `std::terminate`d the whole IME
+  mid-keystroke ("suddenly stops"). The monitor keeps the previous
+  snapshot and retries on the next event; self-healing starts disabled;
+  the drain loop degrades to the SendInput fallback.
+* **Composer attach latch resets on failure** — a failed
+  `TsfComposer::attach()` no longer keeps TSF dead for the whole process
+  lifetime.
+* **`RPC_E_CHANGED_MODE` now fails the composer attach** cleanly (MTA
+  thread cannot host TSF focus machinery) — the caller falls back to
+  inline SendInput instead of unpredictable degradation.
+* **Mid-session TSF failure no longer duplicates pure-insert deltas**:
+  the edit session records how many deltas were committed; the SendInput
+  fallback delivers only the unapplied suffix (previously "t" + "to" came
+  out as "tto" when a mid-batch delta failed).
+* **`WM_ENDSESSION` quits cleanly** — previously the teardown left a live
+  tray icon over a dead IME with no restart path.
+* **Settings-dialog exception safety** — `WM_CREATE` wraps its body (a
+  `bad_alloc` unwinding through `CreateWindowExW` is UB), the handle is
+  published only for a real window, and `GetMessageW(-1)` no longer runs
+  the full shutdown path.
+* **Stuck-detach pump callback nulled** — the detached pump's WM_TIMER
+  tick can no longer reach the watchdog after owner teardown begins.
+* **`DropOldest` overflow policy removed** — the producer-side `try_pop`
+  violated the SPSC contract (the tail is consumer-owned); the app never
+  selected it, and the policy is now unconditionally DropNewest.
+
+### Tests
+
+* Watchdog: new regression test for the dead-keyboard-hook-during-mouse
+  case; the two immunity tests re-modeled for per-hook detection.
+* Engine: new golden vectors pinning the VNI no-vowel digit pass-through,
+  the macro D3 backspace model (expansion walk-down + fresh-letter
+  re-arm), standalone-bracket composition, and the quick-consonant
+  buffer-limit guard.
+* Harness: deterministic `--repro <file>` replay mode with per-event
+  engine/oracle tracing, plus `KIEEKEY_SUITES` chunked runs for CI.
+* Mega differential re-verified at the FULL budget (13 suites, ~268M
+  events): **0 text mismatches, 0 stale-buffer defects, 0 over-backspace,
+  0 macro gaps, Cat C = 0**.
+
+### Performance
+
+* Engine micro-benchmark unchanged vs 1.1.2 (99–101 ns/key vs 99–105
+  ns/key on the same host); E2E burst latency unchanged (p50 ≈ 9.8 µs,
+  p99 ≈ 52 µs through the shim, host-bound). The barrier and lock fixes
+  only remove wait time from paths that USED to block.
+
+## [1.1.2] — 2026-09-03## [1.1.2] — 2026-09-03
+
+### Fixed — "typing a number produced a tone mark or changed the word"
+### (the digits-are-numbers fix)
+
+> v1.1.2-r3 root-cause closure (same version, re-verified build): the
+> report STILL came back after r2, so every remaining place the bug could
+> hide — including outside the fixed binary — was hunted down and closed:
+> - **The WinUI 3 front-end (`src/ui`) had none of the fix.** It created
+>   its own `TextEngine` with legacy options (digits compose in VNI),
+>   never read `DigitsLiteral`, and never even applied the saved input
+>   method to the engine at startup. Any VNI user of that build kept
+>   seeing digits → tone marks no matter what the Win32 app fixed. The
+>   engine is now created FROM the persisted options (digits policy +
+>   the same one-time `SettingsMigration` self-heal — the front-ends
+>   share one registry key), the saved method/table actually reach the
+>   engine, and a "Số 0–9 luôn là chữ số" checkbox was added.
+> - **The library default contradicted the product promise.**
+>   `EngineOptions::digitsAreLiteral` now defaults to TRUE — every
+>   `TextEngine{}` consumer gets digits-are-numbers out of the box; the
+>   legacy-parity harnesses pin `false` explicitly, and new test vectors
+>   fail if the default is ever flipped back.
+> - **Hook-layer NUMBER-SAFETY GUARD (defense in depth):** when the
+>   digits policy is ON, the Win32 hook discards any engine decision for
+>   a bare digit Char event and passes the digit through untouched
+>   (counted for diagnostics — expected to stay 0). No engine path,
+>   current or future, can edit text on a digit again.
+> - **External causes are now detected and surfaced** — the two reasons
+>   the symptom survives even a perfect patch: (1) another Vietnamese
+>   IME running alongside (EVKey/UniKey/OpenKey/GoTiengViet/LabanKey)
+>   converts digits itself; (2) the Windows 10/11 built-in "Vietnamese -
+>   Telex" / "Vietnamese - Number Key-Based" keyboard layouts convert
+>   digits at OS level. KieeKey scans for both at startup and on every
+>   settings open, and names the culprit in the welcome balloon and on
+>   the Information tab.
+> - **Build proof:** the welcome balloon and the new live diagnostics
+>   block (Information tab) state the exact running version + engine
+>   state + digits policy + conflict verdict — a machine still
+>   auto-starting an old pre-fix exe is now immediately identifiable.
+>
+> v1.1.2-r2 hardening (same version, re-verified build): the report kept
+> coming back on machines that had run earlier builds, so the fix is now
+> armored at every layer that could silently lose it:
+> - The APP default for "Số 0–9 luôn là chữ số" is now ON in the app layer
+>   itself (`AppState`), not only in the registry read — a denied/corrupted
+>   HKCU key can no longer ship digits-as-composition out of the box.
+> - One-time settings self-heal (`SettingsMigration` registry marker): any
+>   install that never ran this release gets the digits policy re-asserted
+>   to ON and persisted once; afterwards the user's own checkbox choice is
+>   respected forever.
+> - Fail-safe settings-dialog reads (`dlgChecked` + guarded radio/combo
+>   groups): a missing or half-built control can never silently flip a
+>   persisted option (the silent-zero class that could re-enable digit
+>   composition through a plain OK click).
+> - `scripts/audit_controls.py` regression guard: every settings control
+>   id read by the dialog code is verified to be created in WM_CREATE.
+> - New exhaustive digit battery in `tests/test_textengine.cpp` (every
+>   digit × every context × every mode, restore/macro/policy-switch
+>   interplay) — ASan/UBSan clean; digit-path benchmark
+>   `tests/bench_digits.cpp` shows 36–40 ns/key, no regression.
+
+The reported fatal bug: typing a number mid-word composed Vietnamese
+instead of typing the digit — "nhan5" became "nhạn", "d9" became "đ",
+"xong<1" (backspace then 1) became "xón", an identifier like "1a2b3"
+became "1àb3". Root cause: in **VNI mode every digit 1–0 is a composition
+key** (1–5 = tones, 6/7/8 = vowel marks, 9 = đ, 0 = tone removal) and the
+engine treats a mid-word digit as a mark/vowel key. That is correct
+classic-VNI behavior — and exactly wrong for everyone who does not type
+Vietnamese by the digit convention.
+
+* New `EngineOptions::digitsAreLiteral` (engine): when TRUE, digits 0–9
+  are never special keys in any input method — `isSpecialKey()` no longer
+  reports VNI digit keys, so every digit inserts literally (word-start
+  digits and Shift+digit symbols already passed through unchanged).
+* New registry value `HKCU\Software\TuyenMai\OpenKey\DigitsLiteral`
+  (DWORD, **default 1**) persisted at every change point, wired to a new
+  always-visible checkbox on the Bàn phím tab: "Số 0–9 luôn là chữ số —
+  không dùng số để gõ dấu tiếng Việt (VNI)". Turning it OFF restores
+  classic VNI digit composition for VNI typists.
+* Telex and Simple Telex are byte-identical to v1.1.1 (digits already
+  passed through there); with the option OFF the VNI path is byte-identical
+  to the legacy engine (verified by the mega differential below).
+* Regression tests: literal-digit goldens for Telex and VNI, session-health
+  (a digit-bearing word cannot poison the next word), word-break restore
+  re-emitting raw keys with digits, and legacy VNI composition kept when
+  the option is off (`a1`→á, `d9`→đ, `a10`→a).
+
+### Added — Information tab (in-app introduction)
+
+The settings dialog gained a fifth tab, "Thông tin", introducing the app
+inside the app: a display-size name + version, tagline, an about paragraph
+(what KieeKey is, what the modernized core does differently), the feature
+list, a quick-start guide (how to toggle, how to switch methods, what F9
+does, how macros expand), origin & GPLv3 licensing text, and a SysLink
+control opening the repository in the browser.
+
+* Tray menu gained "Thông tin & giới thiệu" (`IDM_ABOUT`) opening the
+  dialog straight on the Information tab.
+* The settings window now has ONE creation path (`openSettingsDialog(tab)`)
+  used by the tray menu (Cài đặt… and Thông tin), the tray double-click and
+  the second-instance wake — the requested tab is selected before the
+  window is created (no post-create flicker).
+
+### Changed — modernized settings dialog
+
+* Always-visible header on top of the tabs: application icon, app name +
+  version (display-size font) and a live status line — engine on/off,
+  input method and the digits policy at a glance, refreshed with the
+  existing 500 ms timer.
+* The Bàn phím tab is grouped into "Phương thức gõ" (with a one-line
+  explainer of how each method types marks), "Tùy chọn gõ" (the digits
+  option first) and "Chế độ xuất" group boxes; every tab gained the wider
+  layout that fits the new 560×608 dialog.
+* The in-app ON/OFF button is rendered in a semibold font and its label is
+  only rewritten when it actually changes (fewer needless SetWindowText
+  flushes on the 500 ms tick).
+* Bold/display font variants of the dialog font are DPI-cached exactly
+  like the regular face (no clipped text on mixed-DPI setups).
+
+### Changed — consistency, correctness hygiene, performance
+
+* Test CHECK macros in `tests/test_hotfix.cpp` / `tests/test_v331_features.cpp`
+  no longer use `if constexpr` with runtime conditions — non-conforming
+  C++ (a constexpr-if condition must be a constant expression) and a hard
+  error on GCC/clang. Plain `if` + the project-wide `/wd4127` is correct
+  on every compiler.
+* All release-identity strings bumped to 1.1.2 (`kAppVersion`/`kAppTitle`,
+  `.rc` VERSIONINFO 1,1,2,0, manifest assemblyIdentity, CMake
+  `project(VERSION 1.1.2)`, `OPENKEY_KIEEKEY_VERSION_STRING`, WinUI banner);
+  the v1.1.1 Windows `WM_APP+2`/singleton naming and historical fix
+  annotations are intentionally preserved.
+* Re-verified with the full harness: unit suites (textengine, hotfix,
+  ringbuffer, outputitem, win32wrapper, v3.3.1 features), the mega
+  differential against the 2.0.5 engine (~4.7M events, **0 divergences**),
+  edge-behavior determinism (byte-identical across typing speeds), steady-
+  state stress (**zero heap allocations per keystroke**) and the latency
+  benchmark (~100 ns/key — the digitsAreLiteral check is a single bool
+  test off the special-key path).
+
 ## [1.1.1] — 2026-09-03
 
 ### Removed — the global Ctrl+Shift toggle hotkey (root cause of "the IME

@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.1.1 - refactored and completed logic
+//   KieeKey v1.1.3 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.1.1 — ProcessMonitor.cpp
+// KieeKey v1.1.3 — ProcessMonitor.cpp
 // See ProcessMonitor.hpp. Event-driven foreground tracking.
 //----------------------------------------------------------------------------
 #include "ProcessMonitor.hpp"
@@ -140,6 +140,15 @@ ProcessClass classify(const std::string& exeLower, bool fullscreen, bool isShell
 //===========================================================================
 bool ProcessMonitor::start() {
     if (running_.exchange(true, std::memory_order_acq_rel)) { return true; }
+    // v1.1.3: mirror ModernKeyHook::start — a previous stop() that DETACHED a
+    // wedged pump leaves that pump running against this same object (its
+    // 1 s fallback timer re-checks running_, which the exchange above just
+    // set true again). Spawning a second pump would give two pumps and let
+    // the old one's unwind unhook the new one's WinEvent hook. Refuse.
+    if (stuckDetached_.load(std::memory_order_acquire)) {
+        running_.store(false, std::memory_order_release);
+        return false;
+    }
 
     pumpExited_.store(false, std::memory_order_release);
     stuckDetached_.store(false, std::memory_order_release);   // v1.1.0 re-arm
@@ -263,9 +272,43 @@ void ProcessMonitor::pumpThreadMain() noexcept {
 }
 
 //===========================================================================
+// v1.1.3 — elevation probe for the foreground process. UIPI: a non-elevated
+// process can neither marshal TSF edit sessions into an elevated target nor
+// SendInput to it (SendInput fails SILENTLY per MSDN). Detecting the
+// integrity level lets the app pass keystrokes through untouched instead of
+// swallowing them. Runs only on foreground-change events (rare); an
+// ACCESS_DENIED OpenProcess is itself the answer (we are lower integrity).
+//===========================================================================
+static bool isElevatedProcess(DWORD pid) noexcept {
+    if (pid == 0) { return false; }
+    ok::win32::ProcessHandle proc(::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,
+                                                FALSE, pid));
+    if (!proc.get()) {
+        // Cannot even query: the target outranks us (or is protected).
+        return true;
+    }
+    HANDLE token = nullptr;
+    if (!::OpenProcessToken(proc.get(), TOKEN_QUERY, &token)) {
+        return true;   // same reasoning as above
+    }
+    DWORD elevation = 0;
+    DWORD retLen = 0;
+    const BOOL ok = ::GetTokenInformation(token, TokenElevation, &elevation,
+                                          sizeof(elevation), &retLen);
+    ::CloseHandle(token);
+    return ok && elevation != 0;
+}
+
+//===========================================================================
 // Snapshot builder — O(1)-ish; runs only on foreground-change events.
 //===========================================================================
 void ProcessMonitor::updateFromWindow(HWND fg) noexcept {
+    // v1.1.3 OOM hardening: this builds strings/shared_ptr under noexcept
+    // and runs on the hook thread (refreshNow) and a C callback (pump) —
+    // an escaping bad_alloc would std::terminate the process mid-typing.
+    // Degrade instead: keep the previous snapshot (stale by one switch,
+    // harmless) and let the next event retry.
+    try {
     DWORD pid = 0;
     if (fg == nullptr || ::GetWindowThreadProcessId(fg, &pid) == 0 || pid == 0) {
         return;
@@ -276,6 +319,7 @@ void ProcessMonitor::updateFromWindow(HWND fg) noexcept {
     info->pid  = pid;
     info->fullscreen = isFullscreenOnPrimary(fg);
     info->cloaked    = isCloaked(fg);
+    info->elevated   = isElevatedProcess(pid);
 
     if (!getImagePathAndStartTime(pid, info->exePath, info->processStartTime)) {
         info->exeNameUtf8 = "unknown";
@@ -309,6 +353,12 @@ void ProcessMonitor::updateFromWindow(HWND fg) noexcept {
     {
         std::unique_lock<std::shared_mutex> lk(snapshotMtx_);
         snapshot_ = std::move(info);   // single publish (readers keep the old object)
+    }
+    } catch (const std::bad_alloc&) {
+        // Memory pressure: keep the previous snapshot; retry on the next
+        // foreground event. Never let OOM kill the IME process.
+    } catch (...) {
+        // Same policy for any unexpected exception from string conversion.
     }
 }
 

@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.1.1 - refactored and completed logic
+//   KieeKey v1.1.3 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -41,6 +41,7 @@
 //            tests/test_win32wrapper.cpp src/core/win32_wrapper.cpp
 //----------------------------------------------------------------------------
 #include <atomic>
+#include <functional>
 #include <cassert>
 #include <chrono>
 #include <thread>
@@ -139,12 +140,22 @@ struct FakeEnv final : HookWatchdog::Env {
     std::uint32_t nowMs = 10'000;
     std::uint32_t lastInputMs = 10'000;
     std::uint64_t rehookCalls = 0;
+    std::uint64_t probeCalls = 0;
+    bool probeAlive = false;   // true: probe refreshes the keyboard stamp
     std::uint32_t tickNow() const noexcept override { return nowMs; }
     std::uint32_t systemLastInputTick() const noexcept override { return lastInputMs; }
     bool reinstallHooks() noexcept override {
         ++rehookCalls;
         return !okshim::g_state.failRehook;
     }
+    // v1.1.3 active-probe hook: the TEST wires the effect (a live keyboard
+    // hook stamps kbSeen) via the callback, so each scenario stays explicit.
+    bool probeKeyboard() noexcept override {
+        ++probeCalls;
+        if (onProbe) { onProbe(); }
+        return true;
+    }
+    std::function<void()> onProbe;
 };
 } // namespace
 
@@ -202,15 +213,46 @@ static void testWatchdogSelfInjectionImmunity() {
     std::atomic<std::uint32_t> kb{0}, mouse{0}, self{0};
     kb.store(env.nowMs, std::memory_order_relaxed);
     HookWatchdog wd(env, HookWatchdog::Config{}, kb, mouse, self);
-    // our injected edits keep landing; the (filtered) hook stamps happen via
-    // the emitter → self tick fresh; system input is fully accounted for.
+    // v1.1.3 model update: our injected edits land (self stamp fresh) and —
+    // because the LL callback stamps EVERY event BEFORE the extra-info
+    // filter — a live hook refreshes the keyboard stamp for them too. The
+    // system input is therefore fully explained by OUR OWN hook stamp and
+    // no probe/rehook may ever fire.
     for (int i = 0; i < 100; ++i) {
         env.nowMs += 5;
         env.lastInputMs = env.nowMs;
         self.store(env.nowMs, std::memory_order_relaxed);   // emitter stamp
+        kb.store(env.nowMs, std::memory_order_relaxed);     // hook saw the event
         CHECK(!wd.check());
     }
     CHECK(wd.rehookCount() == 0);
+}
+
+static void testWatchdogKeyboardHookDeadWhileMouseActive() {
+    std::printf("== watchdog: dead keyboard hook detected while mouse busy (v1.1.3 F2) ==\n");
+    sh::resetState();
+    FakeEnv env;
+    std::atomic<std::uint32_t> kb{0}, mouse{0}, self{0};
+    kb.store(env.nowMs, std::memory_order_relaxed);
+    HookWatchdog wd(env, HookWatchdog::Config{}, kb, mouse, self);
+    // The keyboard hook was silently removed; the user keeps scrolling.
+    // The probe CANNOT refresh the keyboard stamp (hook dead) and the miss
+    // counter must walk to the rehook within a few ticks. This exact state
+    // was undetectable before v1.1.3 (the max() fast path hid behind the
+    // fresh mouse stamp).
+    env.onProbe = [] { };   // dead hook: no stamp lands
+    std::uint64_t ticks = 0;
+    bool rehooked = false;
+    for (int i = 0; i < 40; ++i) {
+        env.nowMs += 5;
+        env.lastInputMs = env.nowMs;
+        mouse.store(env.nowMs, std::memory_order_relaxed);
+        ++ticks;
+        if (wd.check()) { rehooked = true; break; }
+    }
+    CHECK(rehooked);
+    CHECK(env.probeCalls >= 1);
+    CHECK(wd.rehookCount() == 1);
 }
 
 static void testWatchdogMouseOnlyImmunity() {
@@ -220,12 +262,19 @@ static void testWatchdogMouseOnlyImmunity() {
     std::atomic<std::uint32_t> kb{0}, mouse{0}, self{0};
     kb.store(env.nowMs, std::memory_order_relaxed);
     HookWatchdog wd(env, HookWatchdog::Config{}, kb, mouse, self);
+    // v1.1.3: the ambiguity (system input fresh, keyboard stamp stale) is
+    // resolved by the ACTIVE PROBE — model a live hook that stamps the
+    // probe event; the first probe clears the state and no rehook fires.
+    env.onProbe = [&]() {
+        kb.store(env.nowMs, std::memory_order_relaxed);
+    };
     for (int i = 0; i < 100; ++i) {
         env.nowMs += 5;
         env.lastInputMs = env.nowMs;
         mouse.store(env.nowMs, std::memory_order_relaxed);   // moves keep it fresh
         CHECK(!wd.check());
     }
+    CHECK(env.probeCalls >= 1);
     CHECK(wd.rehookCount() == 0);
 }
 
@@ -421,6 +470,7 @@ int main() {
     testWatchdogHealthy();
     testWatchdogSilentUnhookRecovers();
     testWatchdogSelfInjectionImmunity();
+    testWatchdogKeyboardHookDeadWhileMouseActive();
     testWatchdogMouseOnlyImmunity();
     testWatchdogRehookFailureRetries();
     testWatchdogTickWrap();

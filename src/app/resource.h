@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.1.1 - refactored and completed logic
+//   KieeKey v1.1.3 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.1.1 — resource.h
+// KieeKey v1.1.3 — resource.h
 // Resource identifiers for the Win32 tray application (src/app/main.cpp).
 //----------------------------------------------------------------------------
 #pragma once
@@ -45,6 +45,7 @@
 #define IDM_METHOD_SIMPLETELEX    403
 #define IDM_SETTINGS              404
 #define IDM_EXIT                  405
+#define IDM_ABOUT                 406   // v1.1.2: open the Information tab
 
 // ---- settings dialog controls ----
 #define IDC_TAB                   500
@@ -106,6 +107,23 @@
 
 // v1.1.1 — the in-app ON/OFF switch (replaces the removed Ctrl+Shift hotkey)
 #define IDC_BTN_TOGGLE            550   // settings dialog: always-visible toggle button
+
+// v1.1.2 — digits-are-numbers option + modernized dialog chrome + info tab
+#define IDC_CHK_DIGITS            551   // tab 0: "Số 0–9 luôn là chữ số"
+#define IDC_STAT_HEAD_ICON        552   // header: app icon (static w/ icon)
+#define IDC_STAT_HEAD_TITLE       553   // header: "KieeKey v1.1.3" (bold)
+#define IDC_STAT_HEAD_STATUS      554   // header: engine status + method line
+#define IDC_GRP_METHOD            555   // tab 0: group box "Phương thức gõ"
+#define IDC_GRP_OPTIONS           556   // tab 0: group box "Tùy chọn gõ"
+#define IDC_GRP_OUTPUT            557   // tab 0: group box "Chế độ xuất"
+#define IDC_STAT_INFO_NAME        558   // tab 4: big app name + version
+#define IDC_STAT_INFO_STATUS      559   // tab 4: v1.1.2-r3 live diagnostics + conflict verdict
+#define IDC_STAT_INFO_ABOUT       560   // tab 4: about paragraph
+#define IDC_STAT_INFO_FEAT        561   // tab 4: feature list
+#define IDC_STAT_INFO_GUIDE       562   // tab 4: quick-start guide
+#define IDC_STAT_INFO_LICENSE     563   // tab 4: origin & license
+#define IDC_LNK_REPO              564   // tab 4: source repository (SysLink)
+#define IDC_STAT_METHOD_HINT      565   // tab 0: input-method explainer line
 
 // ---- app messages ----
 #define WM_APP_TRAY               (WM_APP + 1)   // tray icon notification

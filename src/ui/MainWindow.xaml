@@ -1,5 +1,5 @@
 <!--
-KieeKey v1.1.1 — MainWindow.xaml
+KieeKey v1.1.2 — MainWindow.xaml
 Fluent Design (WinUI 3) settings surface. Replaces the legacy Win32 .rc
 dialog. Uses System Backdrop Mica, native dark/light sync, ToggleSwitch /
 ComboBox / NumberBox controls, and an inline latency telemetry panel fed by
@@ -33,7 +33,7 @@ Backdrop notes:
         <StackPanel Grid.Row="0" Spacing="4" Orientation="Horizontal"
                     VerticalAlignment="Center">
             <TextBlock Text="OpenKey" Style="{StaticResource TitleTextBlockStyle}"/>
-            <TextBlock Text="KieeKey v1.1.1"
+            <TextBlock Text="KieeKey v1.1.2"
                        Style="{StaticResource CaptionTextBlockStyle}"
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                        VerticalAlignment="Bottom" Margin="8,0,0,4"/>
@@ -62,6 +62,8 @@ Backdrop notes:
                             <ComboBoxItem Content="Unicode Tổ hợp"/>
                             <ComboBoxItem Content="Vietnamese Locale CP 1258"/>
                         </ComboBox>
+                        <CheckBox x:Name="DigitsLiteral" Content="Số 0–9 luôn là chữ số — không dùng số để gõ dấu tiếng Việt (VNI)"
+                                  IsChecked="True" Checked="OnOptionChanged" Unchecked="OnOptionChanged"/>
                         <CheckBox x:Name="ModernOrthography" Content="Chính tả mới (oà / uý)"
                                   Checked="OnOptionChanged" Unchecked="OnOptionChanged"/>
                         <CheckBox x:Name="QuickTelex" Content="Telex nhanh (cc→ch, gg→gi, …)"

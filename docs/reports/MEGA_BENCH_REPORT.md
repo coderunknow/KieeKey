@@ -1,21 +1,14 @@
-> **Lineage note (KieeKey v1.0 packaging):** Historical engineering
-> document from the refactor lineage that produced KieeKey v1.0 (a fork of
-> OpenKey, GPL-3.0). Written before the v1.0 release unification, it uses the
-> pre-release working name "OpenKey NextGen" and internal milestone numbers
-> (v3.0-v3.4). Published verbatim for traceability - see
-> [docs/reports/README.md](README.md).
-
-# OpenKey NextGen — Massive Vietnamese Text Correctness Benchmark Report
+# KieeKey — Massive Vietnamese Text Correctness Benchmark Report
 
 Date: 2026-08-29 · Phase: massive correctness benchmark (source frozen; no engine changes made during this phase)
 
-**Primary verdict: `TextEngine` (NextGen v3) vs the clean-room oracle — the shipped engine must match its
+**Primary verdict: `TextEngine` (KieeKey v3) vs the clean-room oracle — the shipped engine must match its
 own specification on every event.** The OpenKey 2.0.5 differential below is an OPTIONAL compatibility
 reference (the legacy engine is vendored unmodified and compiled only into the test binary; run with
 `--no-205` to disable it).
 
 Models under test (fed byte-identical deterministic event streams):
-1. `TextEngine` — shipped NextGen implementation (`src/core/TextEngine.{hpp,cpp}`), **unmodified**.
+1. `TextEngine` — shipped KieeKey implementation (`src/core/TextEngine.{hpp,cpp}`), **unmodified**.
 2. `vi_oracle.hpp` — clean-room reference oracle (independent state machine; never calls TextEngine).
 3. `tests/reference/openkey-2.0.5` — the REAL OpenKey 2.0.5 engine, unmodified upstream sources, compiled via its Linux platform path.
 
@@ -27,27 +20,27 @@ first-diverging position is reported with UTF-16 units, code points and UTF-8.
 
 | Suite | Cases | Events | Text mismatches | Stale-buffer defects | Over-backspace | ReplaceMacro events |
 |---|---|---|---|---|---|---|
-| 1-exhaustive-compose | 430591 | 2498202 | 0 | 0 | 0 | 0 |
-| 2-corpus | 819240 | 12893595 | 0 | 0 | 0 | 0 |
-| 3-backspace | 1100000 | 12399937 | 0 | 0 | 0 | 29 |
-| 4-mode-switch | 1000000 | 9500000 | 0 | 0 | 0 | 527 |
-| 5-modifiers | 500000 | 6999980 | 0 | 0 | 0 | 0 |
-| 6-fuzz | 10000 | 10000000 | 0 | 0 | 0 | 437 |
-| 7-long-session | 10 | 100000000 | 0 | 0 | 0 | 1445 |
-| 8-sentences | 1 | 100708469 | 0 | 0 | 0 | 2318 |
-| 9-rapid | 1 | 10000004 | 0 | 0 | 0 | 307 |
-| 10-macros | 1000000 | 71180475 | 0 | 0 | 0 | 458334 |
-| 11-metamorphic | 100000 | 10356556 | 0 | 0 | 0 | 0 |
+| 1-exhaustive-compose | 6671 | 26090 | 0 | 0 | 0 | 0 |
+| 2-corpus | 24090 | 423091 | 0 | 0 | 0 | 0 |
+| 3-backspace | 32000 | 345466 | 0 | 0 | 0 | 0 |
+| 4-mode-switch | 20000 | 190000 | 0 | 0 | 0 | 9 |
+| 5-modifiers | 10000 | 89982 | 0 | 0 | 0 | 0 |
+| 6-fuzz | 200 | 60000 | 0 | 0 | 0 | 6 |
+| 7-long-session | 1 | 100000 | 0 | 0 | 0 | 3 |
+| 8-sentences | 1 | 2014200 | 0 | 0 | 0 | 65 |
+| 9-rapid | 1 | 200001 | 0 | 0 | 0 | 6 |
+| 10-macros | 20000 | 1423465 | 0 | 0 | 0 | 9167 |
+| 11-metamorphic | 1500 | 154654 | 0 | 0 | 0 | 0 |
 | 13-edge-punct | 3702 | 14589 | 0 | 0 | 0 | 0 |
-| 12-diff-openkey205 | 1000000 | 12499976 | 0 | 0 | 0 | 673 |
+| 12-diff-openkey205 | 20000 | 249976 | 0 | 0 | 0 | 18 |
 | 13-edge-punct-205 | 3342 | 12762 | 0 | 0 | 0 | 0 |
-Suite 2 (`2-corpus`) note: 39417 corpus entries contain characters outside the Telex alphabet (uppercase Đ, commas, parentheses, ...) and are skipped; 215815 composition targets are untypeable because the generated keys re-type to a different valid Vietnamese string (concentrated in the doubled-word variant, e.g. junction 'a'+'a'->'â'). Both are scheme/corpus properties, not engine defects — every mappable target was typed with 0 text mismatches.
-| **TOTAL** | **5966887** | **359064545** | **0** | **0** | **0** | **464070** |
+Suite 2 (`2-corpus`) note: 2820 corpus entries contain characters outside the Telex alphabet (uppercase Đ, commas, parentheses, ...) and are skipped; 6993 composition targets are untypeable because the generated keys re-type to a different valid Vietnamese string (concentrated in the doubled-word variant, e.g. junction 'a'+'a'->'â'). Both are scheme/corpus properties, not engine defects — every mappable target was typed with 0 text mismatches.
+| **TOTAL** | **141508** | **5304276** | **0** | **0** | **0** | **9274** |
 
 ## Statistical summary
 
-- Total deterministic cases: 5966887
-- Total events (key/space/backspace/break/mouse/mode ops): 359064545
+- Total deterministic cases: 141508
+- Total events (key/space/backspace/break/mouse/mode ops): 5304276
 - Word corpus: 73901 real Vietnamese words (expanded to ≥500k composition cases; every vowel, every tone, unusual clusters, repeated vowels)
 - Text mismatches (engine vs oracle): 0
 - Failure rate per million events: 0
@@ -56,9 +49,9 @@ Suite 2 (`2-corpus`) note: 39417 corpus entries contain characters outside the T
 - Minimized reproducers saved: 0 (tests/repros/)
 - Stale-buffer defect events (engine history overflow, pre-empted by oracle mirror): 0
 - Over-backspace events (engine backspaceCount > committed text length, post-clamp contract): 0
-- ReplaceMacro events (engine results carrying an in-result expansion; the consumer applies it — v3.1 D3 contract): 464070
+- ReplaceMacro events (engine results carrying an in-result expansion; the consumer applies it — v3.1 D3 contract): 9274
 - ReplaceMacro gap events (expansion missing from the result — consumer could not apply it): 0
-- Run mode: FULL (all mandated budgets)
+- Run mode: FAST (1% budgets, CI smoke)
 
 ## Known defects found
 
@@ -66,8 +59,8 @@ Suite 2 (`2-corpus`) note: 39417 corpus entries contain characters outside the T
 ## Compatibility reference — differential vs OpenKey 2.0.5 (optional)
 
 - Cases compared: see suite 12 row (counted in suite 12)
-- Agree with ideal (engine==oracle==2.0.5): 12075271
-- **Cat A** — 2.0.5 tone-mark placement differences (same letters, mark on a different vowel): 675
+- Agree with ideal (engine==oracle==2.0.5): 244024
+- **Cat A** — 2.0.5 tone-mark placement differences (same letters, mark on a different vowel): 4
   - sample: catA: ops='\n\n^-wjy|Vuo\b' method=VNI 2.0.5='
 
 -ưỵu' ideal='
@@ -88,18 +81,14 @@ Suite 2 (`2-corpus`) note: 39417 corpus entries contain characters outside the T
 -ưyu]' ideal='
 
 -ựyu]'
-  - sample: catA: ops='1uomx\b' method=Telex 2.0.5='1ũo' ideal='1uõ'
-  - sample: catA: ops='1uomx\b\b' method=Telex 2.0.5='1ũ' ideal='1u'
-  - sample: catA: ops='1uomx\b\by' method=Telex 2.0.5='1ũy' ideal='1uy'
-  - sample: catA: ops='1uomx\b\by|S' method=SimpleTelex 2.0.5='1ũy' ideal='1uy'
-- **Cat B** — targeted documented 2.0.5 bugs (NextGen fixed them): 1
+- **Cat B** — targeted documented 2.0.5 bugs (KieeKey fixed them): 1
   - vector 'hoas': not reproduced (205='hóa' ideal='hóa')
   - vector 'quan': not reproduced (205='quan' ideal='quan')
   - vector 'hoai': not reproduced (205='hoai' ideal='hoai')
   - vector 'nguy': not reproduced (205='nguy' ideal='nguy')
-  - vector 'a{s': 2.0.5=aỚ ideal=a{s — 2.0.5 brace bug: '{' (Shift+[) is treated as standalone ơ with caps -> 'Ớ' instead of a literal brace; NextGen passes it through
-- **Cat C** — NextGen regression (engine output differs from ideal oracle): 0
-- **Cat D** — other 2.0.5-specific behavior differences (no NextGen defect): 427324
+  - vector 'a{s': 2.0.5=aỚ ideal=a{s — 2.0.5 brace bug: '{' (Shift+[) is treated as standalone ơ with caps -> 'Ớ' instead of a literal brace; KieeKey passes it through
+- **Cat C** — KieeKey regression (engine output differs from ideal oracle): 0
+- **Cat D** — other 2.0.5-specific behavior differences (no KieeKey defect): 9242
   - sample: catD: ops='\br|Tee u^4 \b|S]' method=SimpleTelex 2.0.5='rê u4]' ideal='rê u4ư'
   - sample: catD: ops='\br|Tee u^4 \b|S]|S' method=SimpleTelex 2.0.5='rê u4]' ideal='rê u4ư'
   - sample: catD: ops='\br|Tee u^4 \b|S]|Sc' method=SimpleTelex 2.0.5='rê u4]c' ideal='rê u4ưc'
@@ -206,75 +195,48 @@ it
 
 4n 4l'
 - Cat D families (method:trigger; ~=tone key #=digit ]=bracket @=caps-key a=letter /space/enter/mouse/modeswitch):
-  - ST:: 13130
+  - ST:: 274
   - ST:
-: 10175
-  - ST: : 20579
-  - ST:#: 22175
+: 199
+  - ST: : 445
+  - ST:#: 513
   - ST:P: 74
   - ST:S: 2
-  - ST:]: 40555
-  - ST:a: 51087
-  - ST:w: 2196
-  - ST:|: 17867
-  - ST:~: 19285
-  - Telex:: 12793
+  - ST:]: 895
+  - ST:a: 1135
+  - ST:w: 44
+  - ST:|: 405
+  - ST:~: 416
+  - Telex:: 249
   - Telex:
-: 14326
-  - Telex: : 28758
-  - Telex:#: 17238
+: 268
+  - Telex: : 616
+  - Telex:#: 358
   - Telex:P: 26
   - Telex:S: 16
-  - Telex:]: 3532
-  - Telex:a: 39543
-  - Telex:w: 1762
-  - Telex:|: 17950
-  - Telex:~: 15152
-  - VNI:: 6263
+  - Telex:]: 69
+  - Telex:a: 807
+  - Telex:w: 39
+  - Telex:|: 396
+  - Telex:~: 318
+  - VNI:: 145
   - VNI:
-: 5228
-  - VNI: : 10866
-  - VNI:#: 8667
-  - VNI:]: 1719
-  - VNI:a: 20062
-  - VNI:w: 898
-  - VNI:|: 17885
-  - VNI:~: 7515
+: 99
+  - VNI: : 229
+  - VNI:#: 199
+  - VNI:]: 43
+  - VNI:a: 406
+  - VNI:w: 19
+  - VNI:|: 409
+  - VNI:~: 129
 - Cat A families (same scheme):
-  - ST:: 45
-  - ST:
-: 4
-  - ST: : 12
-  - ST:#: 12
-  - ST:]: 2
-  - ST:a: 30
-  - ST:w: 2
-  - ST:|: 26
-  - ST:~: 15
-  - Telex:: 112
-  - Telex:
-: 7
-  - Telex: : 17
-  - Telex:#: 23
-  - Telex:]: 7
-  - Telex:a: 90
-  - Telex:w: 1
-  - Telex:|: 26
-  - Telex:~: 31
-  - VNI:: 65
-  - VNI:
-: 2
-  - VNI: : 17
-  - VNI:#: 25
-  - VNI:]: 4
-  - VNI:a: 47
-  - VNI:w: 2
-  - VNI:|: 29
-  - VNI:~: 22
+  - VNI:: 2
+  - VNI:#: 1
+  - VNI:]: 1
 - **Edge-case suite (13-punct)** — punctuation & shifted-symbol battery (parentheses, braces, quotes, break chars, caps, mode switches) across Telex/VNI/SimpleTelex and both orthographies, fed as plain characters and as realistic key events. Findings:
   - Plain-char symbols ('(' ')' '{' ...) are absorbed into the pending composition buffer: a later tone key never composes across them (no wrong text), but composition begun before them is suppressed ('(aos)' -> '(aos)', not '(aos)' with tone). Engine and oracle agree exactly on this path (0 mismatches).
   - Fed as realistic key events (shift+digit etc. = word break; Pair::symbolBreak / ok205::processSymbol), both engines reproduce '(aos)' -> '(áo)' — the real-IME key path is fully consistent.
-  - 2.0.5 legacy defect: '[' and ']' are Telex special keys, so Shift+[ and Shift+] ('{' / '}') are treated as standalone 'ơ'/'ư' with caps and emit 'Ớ'/'Ứ' instead of literal braces; NextGen passes them through (counted in Cat B).
+  - 2.0.5 legacy defect: '[' and ']' are Telex special keys, so Shift+[ and Shift+] ('{' / '}') are treated as standalone 'ơ'/'ư' with caps and emit 'Ớ'/'Ứ' instead of literal braces; KieeKey passes them through (counted in Cat B).
   - Suite-13 Cat D samples (real-event path):
     - ops='a[ ' method=Telex 2.0.5='a[' ideal='a[ '
     - ops='a] ' method=Telex 2.0.5='a]' ideal='a] '
@@ -292,7 +254,7 @@ in UTF-8, UTF-16 units and code points.
 
 ## Verdict
 
-**PASS** — zero text divergences between the shipped engine and the clean-room oracle across 5966887 cases / 359064545 events.
+**PASS** — zero text divergences between the shipped engine and the clean-room oracle across 141508 cases / 5304276 events.
 
 ---
 Deterministic seeds only; no timing/OS nondeterminism in the model. Per-event checksum gate has negligible collision probability and every flagged event is confirmed with an exact comparison, so the mismatch counts above are exact.

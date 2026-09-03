@@ -1,18 +1,11 @@
-> **Lineage note (KieeKey v1.0 packaging):** Historical engineering
-> document from the refactor lineage that produced KieeKey v1.0 (a fork of
-> OpenKey, GPL-3.0). Written before the v1.0 release unification, it uses the
-> pre-release working name "OpenKey NextGen" and internal milestone numbers
-> (v3.0-v3.4). Published verbatim for traceability - see
-> [docs/reports/README.md](README.md).
-
 # Real-input dirty differential test — results
 
-Symbol keys are fed **exactly like the shipped NextGen app** (`MainWindow::produceChar`):
+Symbol keys are fed **exactly like the shipped KieeKey app** (`MainWindow::produceChar`):
 an `InputKind::Char` event carrying the **symbol character** with the shift flag set —
 NOT an artificial `WordBreak` event. Consumers use the real hook semantics
 (consumed = suppressed + backspace/replacement; not consumed = key reaches the app).
 
-Models: **NextGen TextEngine** (shipped) vs **oracle** (clean-room state machine) vs
+Models: **KieeKey TextEngine** (shipped) vs **oracle** (clean-room state machine) vs
 **OpenKey 2.0.5** (vendored legacy engine). Every case carries the intended text.
 
 **Verdict classes:** PASS (engine==intended and 2.0.5==intended) ·
@@ -107,7 +100,7 @@ engine correct) · BOTH-DIFF (both differ).
 ## Totals
 
 - **PASS: 77 / 80**
-- **ENGINE-DEFECT: 0** — NextGen loses the composed word and/or the symbol
+- **ENGINE-DEFECT: 0** — KieeKey loses the composed word and/or the symbol
 - 205-QUIRK: 3 — legacy 2.0.5 loses data, engine correct
 - BOTH-DIFF: 0
 - engine == oracle: 80 / 80 (the oracle mirrors the engine)
@@ -134,10 +127,10 @@ right after a composed Vietnamese word, then pressing Space, deleted the symbol 
 reverted the composed word to its raw keystrokes:
 
     keys:  t h o o i ! <space>      (intent: "thôi! ")
-    NextGen engine (before fix)  ->  "thooi"   (composed word reverted, symbol deleted)
+    KieeKey engine (before fix)  ->  "thooi"   (composed word reverted, symbol deleted)
     oracle (before fix)          ->  "thooi"   (mirrored the engine)
     OpenKey 2.0.5                ->  "thôi! "  (correct)
-    NextGen engine (after fix)   ->  "thôi! "  (correct)
+    KieeKey engine (after fix)   ->  "thôi! "  (correct)
 
 **Scope (before fix):** all 21 shifted-symbol characters (`! @ # $ % ^ & * ( ) _ + { } | : \" < > ? ~`)
 typed after a word that actually composed (has tone marks), when a Space follows — plus

@@ -5,7 +5,7 @@
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20ARM64-0078D6.svg)
 ![Build](https://img.shields.io/badge/build-CMake%20%3E%3D%203.28-064FAD.svg)
 
-**KieeKey v1.1.1** is a modern, low-latency Vietnamese input method engine
+**KieeKey v1.1.3** is a modern, low-latency Vietnamese input method engine
 (bộ gõ Tiếng Việt) for Windows, with a system-tray application, a TSF
 text-store composer and an optional WinUI 3 Fluent settings UI.
 
@@ -20,22 +20,99 @@ text-store composer and an optional WinUI 3 Fluent settings UI.
 
 ---
 
-## What's new in v1.1.1
+## What's new in v1.1.3
 
-**The Ctrl+Shift global hotkey is GONE — on purpose.** It was the root cause
-of the recurring "the IME suddenly turns off for no reason / I don't know
-why, nothing shows up" report: a bare Ctrl+Shift press+release is also the
-Windows language-switch chord and the prefix of dozens of application
+**A quality/performance hardening pass over the whole input pipeline —
+accuracy, latency, stability, robustness — with no behavior changes beyond
+the fixes.** Headlines: the CapsLock toggle tracker no longer desyncs under
+auto-repeat (the real root cause of the "tone marks make letters uppercase"
+family), a phantom pending-edit race that could put a 1 ms stall on every
+keystroke is gone, Vietnamese keystrokes are passed through untouched in
+ELEVATED applications instead of silently vanishing, the self-heal watchdog
+can now detect a dead keyboard hook even while the mouse is in use, and the
+mega differential suite closed at **0 divergences across ~268M events**
+(the independent oracle was re-aligned to the documented v1.1.0 contracts).
+Full engineering detail in
+[docs/reports/V1.1.3_HARDENING_REPORT.md](docs/reports/V1.1.3_HARDENING_REPORT.md)
+and the [CHANGELOG](CHANGELOG.md).
+
+### What was in v1.1.2
+
+**Numbers are numbers — the digit bug is fixed.** The fatal report: typing
+a number mid-word applied a Vietnamese tone mark to the word before it
+("nhan5" → "nhạn") or turned it into another word ("d9" → "đ"). In VNI
+mode every digit 1–0 is a composition key (tones, vowel marks, đ, tone
+removal) — correct for classic VNI typists, but a trap for everyone else.
+v1.1.2 ships the **"Số 0–9 luôn là chữ số"** option, ON by default: digits
+ALWAYS type the literal digit in every input method, and the old behavior
+is one checkbox away for VNI purists. Telex and Simple Telex are
+byte-identical to before (digits already passed through there).
+
+**v1.1.2-r3 root-cause closure (re-verified build, same version):** the
+report still came back after r2, so every remaining hiding place was
+closed. The **WinUI 3 front-end** (`src/ui`) turned out to have none of
+the fix — it built its engine with legacy options (digits compose in VNI)
+and never even applied the saved input method; it now constructs the
+engine from the persisted options (digits policy + the same
+`SettingsMigration` self-heal — both front-ends share one registry key)
+and gained the digits checkbox. The **library default flipped**: 
+`EngineOptions::digitsAreLiteral` is now TRUE so every `TextEngine{}` 
+consumer gets digits-are-numbers by construction (legacy-parity harnesses
+pin `false` explicitly; new vectors fail if the default ever flips back).
+The Win32 hook gained a **NUMBER-SAFETY GUARD** — with the policy ON, no
+engine path can ever edit text on a bare digit (discarded + counted,
+expected 0). And because the symptom also survives a perfect patch when
+**another IME (EVKey/UniKey/…) or the Windows built-in Vietnamese
+Telex/VNI keyboard layout** converts digits instead, KieeKey now detects
+both and names the culprit in the welcome balloon and in a new live
+diagnostics block on the Information tab (running version + engine state +
+digits policy + conflict verdict — instant proof of which build you run).
+
+**v1.1.2-r2 hardening (re-verified build, same version):** the safe
+default now lives in the app layer itself (a denied/corrupted registry can
+no longer ship digits-as-composition), a one-time `SettingsMigration`
+self-heal re-asserts the digits policy on upgrade, every settings-dialog
+read is fail-safe (`dlgChecked` — a half-built control can never silently
+flip a persisted option), and `scripts/audit_controls.py` guards the
+control-id set. The exhaustive digit battery in `tests/test_textengine.cpp`
+and the digit-path benchmark (`tests/bench_digits.cpp`, 36–40 ns/key)
+close the loop; full-budget verification reports are in `docs/reports/`.
+
+Also in v1.1.2:
+
+* **Information tab** — the settings dialog gained a fifth tab,
+  "Thông tin", introducing the app: what it is, its feature list, a
+  quick-start guide, origin & GPLv3 licensing, and a clickable link to the
+  repository. The tray menu gained a matching "Thông tin & giới thiệu"
+  item that opens the dialog straight on that tab.
+* **Modernized settings dialog** — an always-visible header (icon, app
+  name, version, live status line: engine on/off + method + digits policy),
+  grouped "Phương thức gõ / Tùy chọn gõ / Chế độ xuất" boxes, a wider
+  layout for every tab, and the in-app ON/OFF button promoted to a bold,
+  easier-to-hit control.
+* **Consistency & test hygiene** — the test CHECK macros no longer use
+  non-conforming `if constexpr` with runtime conditions (they hard-error
+  on GCC/clang; plain `if` + the project-wide `/wd4127` is correct on every
+  compiler), the mega differential vs the 2.0.5 engine re-verified at
+  ~4.7M events with **0 divergences**, the engine still allocates **zero
+  heap memory per keystroke** in steady state, and the hot path stays at
+  ~100 ns/key.
+
+### What was new in v1.1.1
+
+**The Ctrl+Shift global hotkey was removed — on purpose.** It was the root
+cause of the recurring "the IME suddenly turns off for no reason / I don't
+know why, nothing shows up" report: a bare Ctrl+Shift press+release is also
+the Windows language-switch chord and the prefix of dozens of application
 shortcuts, third-party tools inject it, and a missed key-up made unrelated
 chords fire — silently switching the input method OFF mid-work with no
 visible feedback. In v1.1.1 the keyboard hook can no longer toggle the IME
 at all. Instead, on/off is an explicit, always-visible in-app control:
 
-* **Tray menu** — the first item now states the action it performs:
+* **Tray menu** — the first item states the action it performs:
   "Tắt gõ tiếng Việt" while running, "Bật gõ tiếng Việt" while stopped.
-* **Settings dialog** — an always-visible toggle button on the button row
-  ("Bộ gõ: ĐANG BẬT — bấm để TẮT" / "ĐANG TẮT — bấm để BẬT"), reachable from
-  every tab and refreshed live.
+* **Settings dialog** — an always-visible toggle button on the button row,
+  reachable from every tab and refreshed live.
 * **Feedback** — every on/off change shows a tray balloon confirming the new
   state; the tray icon (green/gray) and tooltip mirror it.
 * **Persistence** — the state is written to the registry at every change
@@ -112,7 +189,7 @@ A broad reliability, correctness and UX release. Highlights:
 
 ## What KieeKey changes compared to OpenKey
 
-| Area | OpenKey 2.0.5 (upstream) | KieeKey v1.1.1 |
+| Area | OpenKey 2.0.5 (upstream) | KieeKey v1.1.2 |
 |---|---|---|
 | Language level | C++11 / Win32 | C++20/23 (per-instance state machine, constexpr, RAII) |
 | Input pipeline | Synchronous processing in hook callbacks | Async hook thread → lock-free ring → consumer thread |
@@ -233,7 +310,7 @@ original licenses — see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 ## Tóm tắt (Tiếng Việt)
 
-**KieeKey v1.1.1** là bộ gõ Tiếng Việt cho Windows, được xây dựng dựa trên
+**KieeKey v1.1.3** là bộ gõ Tiếng Việt cho Windows, được xây dựng dựa trên
 dự án **[OpenKey](https://github.com/tuyenvm/OpenKey)** (GPL-3.0) của tác
 giả Tuyen Mai. Toàn bộ engine gốc đã được port sang C++ hiện đại, refactor
 và hoàn thiện logic: pipeline hook bất đồng bộ với hàng đợi lock-free,
@@ -241,6 +318,10 @@ composer TSF không dùng backspace ảo, bảng âm tiết dạng flat tối ư
 cùng bộ test vi mô + đo hiệu năng + đối chiếu sai khác quy mô hàng triệu
 trường hợp. Từ v1.1.1, bật/tắt bộ gõ được thực hiện hoàn toàn trong ứng
 dụng (trình đơn khay + nút trong Cài đặt) — không còn tổ hợp Ctrl+Shift.
+Từ v1.1.2, số 0–9 luôn gõ ra chữ số (hết cảnh gõ số bị thành dấu tiếng
+Việt — tùy chọn, mặc định BẬT), hộp thoại Cài đặt có thêm tab **Thông tin**
+(giới thiệu ứng dụng, tính năng, hướng dẫn, bản quyền) cùng giao diện mới
+gọn gàng, hiện đại hơn.
 
 KieeKey phát hành mã nguồn mở theo **Giấy phép GNU GPLv3** (kế thừa trọn
 vẹn từ OpenKey). Thông tin bản quyền của tác giả gốc được giữ lại trong

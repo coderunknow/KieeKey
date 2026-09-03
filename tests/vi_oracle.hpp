@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.1.1 - refactored and completed logic
+//   KieeKey v1.1.3 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.1.1 — tests/vi_oracle.hpp
+// KieeKey v1.1.3 — tests/vi_oracle.hpp
 // CLEAN-ROOM REFERENCE ORACLE for the Vietnamese composition algorithm.
 //
 // This is an INDEPENDENT implementation of the published Telex / VNI /
@@ -281,6 +281,7 @@ public:
         return res_;
     }
 
+    [[nodiscard]] const Result& lastResult() const noexcept { return res_; }
     void setOptions(Options o) noexcept { opts_ = o; useSpellingBefore_ = opts_.checkSpelling; }
     void setMacroResolver(MacroResolver r) noexcept { macroResolver_ = std::move(r); }
     // P1 mirror of the engine's DictionaryResolver.
@@ -297,6 +298,7 @@ public:
         hasHandledMacro_ = false;
         hasHandleQuickConsonant_ = false;
         midWordToggle_ = false;   // v3.3.1 mirror
+        macroExpandLen_ = 0;      // v1.1.0 D3 mirror: no expansion on screen
         longWordHelper_.clear();
     }
     [[nodiscard]] const Options& options() const noexcept { return opts_; }
@@ -1266,6 +1268,9 @@ private:
 
     bool checkQuickConsonant() {
         if (index_ <= 1) { return false; }
+        // v1.1.3 mirror: no quick-consonant insert at the buffer limit (the
+        // engine skips the transform there; see TextEngine::checkQuickConsonant).
+        if (index_ >= kMaxBuff - 1) { return false; }
         int l = 0;
         if (index_ > 0) {
             if (opts_.quickStartConsonant) {
@@ -1587,9 +1592,14 @@ private:
 
         // ---- vowel keys ----
         if (opts_.method == Method::Vni) {
+            // v1.1.0 mirror: validity-tracked scan — no O/A/E in the buffer
+            // must leave the PREVIOUS word's index in vowelEnd_ (stale →
+            // digit 6 composed onto a phantom vowel). Guarded again below.
+            vniVowelEndValid_ = false;
             for (std::uint32_t i = index_ - 1; i != std::uint32_t(-1); --i) {
                 if (chr(i) == U'O' || chr(i) == U'A' || chr(i) == U'E') {
                     vowelEnd_ = i;
+                    vniVowelEndValid_ = true;
                     break;
                 }
             }
@@ -1599,7 +1609,10 @@ private:
             (opts_.method != Method::Vni)
                 ? c
                 : ((c == U'7' || c == U'8') ? U'W'
-                                            : (c == U'6' ? chr(vowelEnd_) : c));
+                                            : (c == U'6' ? (vniVowelEndValid_
+                                                              ? chr(vowelEnd_)
+                                                              : U'\0')
+                                                         : c));
 
         const auto vowelIt = kVowel.find(keyForAEO);
         static const FlatVec<FlatVec<std::uint16_t>> kEmpty{};
@@ -1619,16 +1632,19 @@ private:
                     insertAOE(keyForAEO, caps);
                 } else if (isKeyW(c)) {
                     if (opts_.method == Method::Vni) {
+                        vniVowelEndValid_ = false;
                         for (std::uint32_t j = index_ - 1; j != std::uint32_t(-1); --j) {
                             if (chr(j) == U'O' || chr(j) == U'U' || chr(j) == U'A' ||
                                 chr(j) == U'E') {
                                 vowelEnd_ = j;
+                                vniVowelEndValid_ = true;
                                 break;
                             }
                         }
-                        if ((c == U'7' && chr(vowelEnd_) == U'A' &&
-                             (vowelEnd_ >= 1 ? chr(vowelEnd_ - 1) != U'U' : true)) ||
-                            (c == U'8' && (chr(vowelEnd_) == U'O' || chr(vowelEnd_) == U'U'))) {
+                        if (vniVowelEndValid_ &&
+                            ((c == U'7' && chr(vowelEnd_) == U'A' &&
+                              (vowelEnd_ >= 1 ? chr(vowelEnd_ - 1) != U'U' : true)) ||
+                             (c == U'8' && (chr(vowelEnd_) == U'O' || chr(vowelEnd_) == U'U')))) {
                             break;
                         }
                     }
@@ -1662,9 +1678,10 @@ private:
         // "dứngkhos" instead of restoring the raw keys, diverging from the
         // legacy engine's own behavior for the same stream without the
         // preceding macro).
-        if (hasHandledMacro_ && index_ == 0 && specialChar_.empty() &&
-            spaceCount_ == 0) {
+        if ((hasHandledMacro_ || macroExpandLen_ != 0) &&
+            index_ == 0 && specialChar_.empty() && spaceCount_ == 0) {
             hasHandledMacro_ = false;
+            macroExpandLen_ = 0;
         }
         if (spaceCount_ > 0) {
             res_.backspaceCount = 0;
@@ -1818,6 +1835,13 @@ private:
                 specialChar_.clear();
                 spaceCount_ = 0;
                 longWordHelper_.clear();
+                // v1.1.0 D3 mirror: track the expansion's visible length so
+                // backspaceBranch walks it down instead of restoring keys
+                // that were never displayed.
+                macroExpandLen_ = 0;
+                for (const std::uint32_t v : res_.macroExpansion) {
+                    macroExpandLen_ += (v >= 0x10000u) ? 2u : 1u;
+                }
             }
         }
 
@@ -1848,8 +1872,22 @@ private:
             res_.code = Code::ReplaceMacro;
             res_.backspaceCount = static_cast<std::uint32_t>(macroKey_.size());
             setMacroExpansionFromResolver();
-            ++spaceCount_;
+            // v1.1.0 D3 mirror (engine spaceBranch): the space key is CONSUMED
+            // by the expansion — the screen shows the expansion, no space.
+            // The expansion becomes the tracked visible word (macroExpandLen_)
+            // that backspaceBranch walks down, and the next word starts from a
+            // clean session (no phantom raw keys).
+            spaceCount_ = 0;
+            specialChar_.clear();
+            macroExpandLen_ = 0;
+            for (const std::uint32_t v : res_.macroExpansion) {
+                macroExpandLen_ += (v >= 0x10000u) ? 2u : 1u;   // UTF-16 units
+            }
             hasHandledMacro_ = true;
+            index_ = 0;
+            stateIndex_ = 0;
+            tempDisableKey_ = false;
+            longWordHelper_.clear();
         } else if ((opts_.quickStartConsonant || opts_.quickEndConsonant) &&
                    !tempDisableKey_ && checkQuickConsonant()) {
             ++spaceCount_;
@@ -1900,6 +1938,21 @@ private:
             if (spaceCount_ == 0) {
                 restoreLastTypingState();
             }
+        } else if (macroExpandLen_ > 0) {
+            // v1.1.0 D3 mirror (engine backspaceBranch): backspacing into a
+            // macro expansion deletes one of ITS characters; the raw-key
+            // history must NOT be restored. When the expansion is fully
+            // deleted the whole session resets (the replaced raw keys are
+            // gone from the screen as well).
+            --macroExpandLen_;
+            if (macroExpandLen_ == 0) {
+                startNewSession();
+                specialChar_.clear();
+                typingStates_.clear();
+                typingStatesLen_.clear();
+            }
+            res_.backspaceCount = 0;
+            res_.newCharCount = 0;
         } else {
             if (stateIndex_ > 0) { --stateIndex_; }
             if (index_ > 0) {
@@ -2127,6 +2180,10 @@ private:
     bool tempDisableKey_ = false;
     bool hasHandledMacro_ = false;
     bool hasHandleQuickConsonant_ = false;
+    // v1.1.0 D3 mirror: visible UTF-16 length of a pending macro expansion.
+    std::size_t macroExpandLen_ = 0;
+    // v1.1.0 mirror: VNI vowel-scan validity (no stale vowelEnd_ across words).
+    bool vniVowelEndValid_ = false;
     bool isChanged_ = false;
     bool isCorect_ = false;
     bool isRestoredW_ = false;

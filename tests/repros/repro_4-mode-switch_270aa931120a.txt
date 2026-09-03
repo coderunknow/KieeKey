@@ -1,0 +1,12 @@
+KieeKey — mega correctness reproducer (deterministic)
+suite: 4-mode-switch
+meta: ms435627
+init options: method=VNI table=0 spelling=1 modern=1 quickTelex=0 restore=1 freeMark=0 zfwj=0 upperFirst=0 macro=1
+ops (compact; ^=caps, +=ctrl, ' '=space, \b=backspace, \n=enter, ~=mouse, |=mode): ^uw6
+divergence: pos=1 engine=6 U+36  oracle=<end>
+engine text UTF-8: U6
+oracle  text UTF-8: U
+engine UTF-16 units: U+55 U+36 
+oracle  UTF-16 units: U+55 
+engine code points: CP[U+55 U+36 ]
+oracle  code points: CP[U+55 ]

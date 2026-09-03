@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.1.1 - refactored and completed logic
+//   KieeKey v1.1.3 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -179,6 +179,9 @@ public:
     // Diagnostics.
     [[nodiscard]] std::uint64_t sendInputCalls() const noexcept { return sendInputCalls_.load(std::memory_order_relaxed); }
     [[nodiscard]] std::uint64_t inputsInjected() const noexcept { return inputsInjected_.load(std::memory_order_relaxed); }
+    // v1.1.3: inputs the system REJECTED (UIPI foreground, job limits) —
+    // each one is a user keystroke the app never received.
+    [[nodiscard]] std::uint64_t sendInputFailed() const noexcept { return sendInputFailed_.load(std::memory_order_relaxed); }
 
 private:
     void stampInjected() noexcept {
@@ -191,6 +194,7 @@ private:
     std::atomic<std::uint32_t>* selfInjectTickMs_ = nullptr;   // watchdog feed (nullable)
     std::atomic<std::uint64_t> sendInputCalls_{0};
     std::atomic<std::uint64_t> inputsInjected_{0};
+    std::atomic<std::uint64_t> sendInputFailed_{0};
 };
 
 //---------------------------------------------------------------------------
@@ -411,12 +415,20 @@ public:
         [[nodiscard]] virtual std::uint32_t tickNow() const noexcept = 0;        // ms clock
         [[nodiscard]] virtual std::uint32_t systemLastInputTick() const noexcept = 0; // GetLastInputInfo
         [[nodiscard]] virtual bool reinstallHooks() noexcept = 0;                // pump-thread rehook
+        // v1.1.3: ACTIVE KEYBOARD PROBE — inject a harmless self-tagged key
+        // (VK 0xFF, unassigned, down+up). A live keyboard hook stamps it and
+        // filters it (the app never sees it); a dead one lets it through and
+        // leaves the keyboard stamp stale. This is the only way to
+        // distinguish "mouse-only user, keyboard stamp legitimately idle"
+        // from "keyboard hook silently removed" — GetLastInputInfo cannot.
+        [[nodiscard]] virtual bool probeKeyboard() noexcept = 0;
     };
 
     struct Config {
         std::uint32_t tickIntervalMs   = 5;      // WM_TIMER period (pump)
         std::uint32_t missThresholdMs  = 60;     // seen-vs-system skew that counts as a miss
         std::uint32_t missesToRehook   = 2;      // consecutive misses before recovery
+        std::uint32_t probeIntervalMs  = 20;     // min spacing between active probes
     };
 
     HookWatchdog(Env& env, const Config& cfg,
@@ -437,31 +449,74 @@ public:
     // of a syscall every 5 ms. Detection latency is unchanged: a dead hook
     // stops stamping, `seen` goes stale past the threshold, and the check
     // falls through to the system-tick comparison exactly as before.
+    // v1.1.3 — per-hook detection. The old fast path collapsed keyboard,
+    // mouse and self-inject stamps into ONE max, so a silently-removed
+    // WH_KEYBOARD_LL stayed invisible while the mouse was in use (every
+    // mouse move refreshed the max) — the self-heal promise only held for
+    // TOTAL hook death. The keyboard stamp is now evaluated INDEPENDENTLY;
+    // an ambiguous "system input is fresh but our keyboard stamp is stale"
+    // state (mouse-only use, or a dead keyboard hook) is resolved by the
+    // ACTIVE PROBE: a live hook stamps the probe and the ambiguity clears
+    // within one tick; a dead one never does and the miss counter walks to
+    // the rehook (detection still ~10-25 ms, well inside the 5-15 ms spec
+    // for the common typing case where nothing masks the keyboard stamp).
     bool check() noexcept {
         const std::uint32_t now = env_.tickNow();
-        const std::uint32_t seen = latestSeenTick();
-        if (static_cast<std::int32_t>(now - seen) <
+        const std::uint32_t kbSeen = kbSeen_.load(std::memory_order_relaxed);
+        if (static_cast<std::int32_t>(now - kbSeen) <
             static_cast<std::int32_t>(cfg_.missThresholdMs)) {
-            misses_ = 0;   // fresh stamp of our own — hook alive
+            misses_ = 0;   // fresh keyboard stamp of our own — hook alive
             return false;
         }
         const std::uint32_t systemTick = env_.systemLastInputTick();
-        // Signed diff — correct across the 49.7-day GetTickCount wrap.
-        const std::int32_t skew = static_cast<std::int32_t>(systemTick - seen);
-        if (skew > static_cast<std::int32_t>(cfg_.missThresholdMs)) {
-            if (++misses_ >= cfg_.missesToRehook) {
+        // Signed diffs — correct across the 49.7-day GetTickCount wrap.
+        const std::int32_t skew =
+            static_cast<std::int32_t>(systemTick - kbSeen);
+        if (skew <= static_cast<std::int32_t>(cfg_.missThresholdMs)) {
+            misses_ = 0;   // no unexplained system input vs the keyboard stamp
+            return false;
+        }
+        // System input is newer than our last keyboard sighting. Mouse-only
+        // activity or our own injector keep this state legitimately benign —
+        // resolve it with the active probe, then treat every tick it
+        // persists as a miss (a dead hook cannot refresh the stamp, so the
+        // counter reaches the rehook in missesToRehook ticks).
+        const std::uint32_t mouseSeen = mouseSeen_.load(std::memory_order_relaxed);
+        const std::uint32_t selfSeen = selfInject_.load(std::memory_order_relaxed);
+        const bool mouseFresh = static_cast<std::int32_t>(now - mouseSeen) <
+                                static_cast<std::int32_t>(cfg_.missThresholdMs);
+        const bool selfFresh = static_cast<std::int32_t>(now - selfSeen) <
+                               static_cast<std::int32_t>(cfg_.missThresholdMs);
+        if (mouseFresh || selfFresh) {
+            if (static_cast<std::int32_t>(now - lastProbeTickMs_) >=
+                static_cast<std::int32_t>(cfg_.probeIntervalMs)) {
+                lastProbeTickMs_ = now;
+                static_cast<void>(env_.probeKeyboard());
+            }
+            ++misses_;
+            if (misses_ >= cfg_.missesToRehook) {
                 misses_ = 0;
                 if (env_.reinstallHooks()) {
                     lastRehookTickMs_.store(env_.tickNow(), std::memory_order_relaxed);
                     rehookCount_.fetch_add(1, std::memory_order_relaxed);
                     return true;
                 }
-                // Rehook failed (transient UIPI/permission): keep counting;
-                // the next tick retries. No further escalation here — the
-                // app surfaces rehookCount for diagnostics.
             }
-        } else {
-            misses_ = 0;   // healthy (or our own injection explains the input)
+            return false;
+        }
+        // No mask at all: system input is fresh, our keyboard hook saw
+        // nothing, the mouse hook saw nothing, we injected nothing — a
+        // keyboard event was swallowed elsewhere or the hook is gone.
+        if (++misses_ >= cfg_.missesToRehook) {
+            misses_ = 0;
+            if (env_.reinstallHooks()) {
+                lastRehookTickMs_.store(env_.tickNow(), std::memory_order_relaxed);
+                rehookCount_.fetch_add(1, std::memory_order_relaxed);
+                return true;
+            }
+            // Rehook failed (transient UIPI/permission): keep counting;
+            // the next tick retries. No further escalation here — the
+            // app surfaces rehookCount for diagnostics.
         }
         return false;
     }
@@ -485,6 +540,7 @@ private:
     const std::atomic<std::uint32_t>& mouseSeen_;
     const std::atomic<std::uint32_t>& selfInject_;
     std::uint32_t misses_ = 0;
+    std::uint32_t lastProbeTickMs_ = 0;
     std::atomic<std::uint64_t> rehookCount_{0};
     std::atomic<std::uint32_t> lastRehookTickMs_{0};
 };
@@ -576,6 +632,21 @@ private:
             return 0;
         }
         bool reinstallHooks() noexcept override { return hook.reinstallHooksOnPump(); }
+        // v1.1.3 active keyboard probe: VK 0xFF (unassigned) down+up, tagged
+        // with the self-injection magic. A live keyboard hook stamps BOTH
+        // events and filters them (the focused app never sees them — the
+        // stamp happens before the extra-info filter in the LL callback).
+        // A dead hook lets them reach the app, which ignores the unassigned
+        // VK — harmless by construction — and leaves the stamp stale.
+        bool probeKeyboard() noexcept override {
+            INPUT in[2]{};
+            in[0].type = INPUT_KEYBOARD;
+            in[0].ki.wVk = 0xFF;
+            in[0].ki.dwExtraInfo = ok::hook::kSelfInjectedExtraInfo;
+            in[1] = in[0];
+            in[1].ki.dwFlags = KEYEVENTF_KEYUP;
+            return ::SendInput(2, in, sizeof(INPUT)) == 2;
+        }
         ok::hook::ModernKeyHook& hook;
     };
 

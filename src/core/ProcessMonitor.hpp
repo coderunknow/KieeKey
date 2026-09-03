@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.1.1 - refactored and completed logic
+//   KieeKey v1.1.3 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.1.1 — ProcessMonitor.hpp
+// KieeKey v1.1.3 — ProcessMonitor.hpp
 // Zero-cost foreground-window detector + auto-exclusion engine.
 //
 // Design:
@@ -97,6 +97,15 @@ struct ForegroundInfo {
     ProcessClass       kind      = ProcessClass::Normal;
     bool               fullscreen = false;
     bool               cloaked    = false;   // DWMWA_CLOAKED (virtual desktops)
+    // v1.1.3 — the foreground process runs ELEVATED (high-integrity level).
+    // Both output paths fail silently there for a non-elevated IME: the TSF
+    // edit session cannot marshal across the UIPI boundary and SendInput is
+    // blocked with NO error indication — composing "á" swallowed the user's
+    // letters outright in elevated cmd/PowerShell/Task Manager/registry
+    // editors (the worst failure mode an IME has). The app treats an
+    // elevated foreground like an auto-excluded one: raw pass-through plus
+    // an engine-buffer reset, so keystrokes are NEVER lost.
+    bool               elevated  = false;
 
     // Auto-bypass set: IDEs/editors and immersive (fullscreen) game titles.
     // Shell (Explorer, Terminal…) is intentionally NOT auto-excluded —
@@ -136,6 +145,14 @@ public:
     [[nodiscard]] std::shared_ptr<const ForegroundInfo> snapshot() const noexcept {
         std::shared_lock<std::shared_mutex> lk(snapshotMtx_);
         return snapshot_;
+    }
+
+    // v1.1.3 — is the CURRENT foreground process elevated? Hard UIPI
+    // constraint (not user-configurable): a non-elevated IME can never reach
+    // it, so the app passes keystrokes through instead of swallowing them.
+    [[nodiscard]] bool currentAppElevated() const noexcept {
+        auto s = snapshot();
+        return s && s->elevated;
     }
 
     // Convenience: does the CURRENT foreground app require auto-exclusion?

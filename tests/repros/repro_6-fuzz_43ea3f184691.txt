@@ -1,0 +1,40 @@
+KieeKey — mega correctness reproducer (deterministic)
+suite: 6-fuzz
+meta: seed3829
+init options: method=SimpleTelex table=0 spelling=1 modern=0 quickTelex=0 restore=1 freeMark=0 zfwj=0 upperFirst=0 macro=1
+ops (compact; ^=caps, +=ctrl, ' '=space, \b=backspace, \n=enter, ~=mouse, |=mode): f
+|T]
+ w,|T t6 1  [eht~|Stg^8ov|V^z-[  ^59
+8 mww13g[tu2t^y^.qk |Vp
+v [ lg.w |T~q
+.kkg^h9
+^rn[^z7~~59 d
+]6~~
++c+j3-z |V|V^z49|Trq,zrm~d
+b
+ecl1cc3^]2 4q [w0g5z|S1ayob^y5~jaw.+q8|V+g~~u6
+divergence: pos=119 engine=6 U+36  oracle=<end>
+engine text UTF-8: 3fm53sf
+ư ư, t6   ehtg8ovZ-[  5
+8 mww13g[tu2tk p
+ [ lgq
+.kkgH9
+Rn[Z759 
+ư6
+cj3-z Z4rqzr
+b
+ecl1cc3]2 4q ow0g5z1aybY5.q8u6
+oracle  text UTF-8: 3fm53sf
+ư ư, t6   ehtg8ovZ-[  5
+8 mww13g[tu2tk p
+ [ lgq
+.kkgH9
+Rn[Z759 
+ư6
+cj3-z Z4rqzr
+b
+ecl1cc3]2 4q ow0g5z1aybY5.q8u
+engine UTF-16 units: U+33 U+66 U+6d U+35 U+33 U+73 U+66 U+a U+1b0 U+20 U+1b0 U+2c U+20 U+74 U+36 U+20 U+20 U+20 U+65 U+68 U+74 U+67 U+38 U+6f U+76 U+5a U+2d U+5b U+20 U+20 U+35 U+a U+38 U+20 U+6d U+77 U+77 U+31 U+33 U+67 U+5b U+74 U+75 U+32 U+74 U+6b U+20 U+70 U+a U+20 U+5b U+20 U+6c U+67 U+71 U+a U+2e U+6b U+6b U+67 U+48 U+39 U+a U+52 U+6e U+5b U+5a U+37 U+35 U+39 U+20 U+a U+1b0 U+36 U+a U+63 U+6a U+33 U+2d U+7a U+20 U+5a U+34 U+72 U+71 U+7a U+72 U+a U+62 U+a U+65 U+63 U+6c U+31 U+63 U+63 U+33 U+5d U+32 U+20 U+34 U+71 U+20 U+6f U+77 U+30 U+67 U+35 U+7a U+31 U+61 U+79 U+62 U+59 U+35 U+2e U+71 U+38 U+75 U+36 
+oracle  UTF-16 units: U+33 U+66 U+6d U+35 U+33 U+73 U+66 U+a U+1b0 U+20 U+1b0 U+2c U+20 U+74 U+36 U+20 U+20 U+20 U+65 U+68 U+74 U+67 U+38 U+6f U+76 U+5a U+2d U+5b U+20 U+20 U+35 U+a U+38 U+20 U+6d U+77 U+77 U+31 U+33 U+67 U+5b U+74 U+75 U+32 U+74 U+6b U+20 U+70 U+a U+20 U+5b U+20 U+6c U+67 U+71 U+a U+2e U+6b U+6b U+67 U+48 U+39 U+a U+52 U+6e U+5b U+5a U+37 U+35 U+39 U+20 U+a U+1b0 U+36 U+a U+63 U+6a U+33 U+2d U+7a U+20 U+5a U+34 U+72 U+71 U+7a U+72 U+a U+62 U+a U+65 U+63 U+6c U+31 U+63 U+63 U+33 U+5d U+32 U+20 U+34 U+71 U+20 U+6f U+77 U+30 U+67 U+35 U+7a U+31 U+61 U+79 U+62 U+59 U+35 U+2e U+71 U+38 U+75 
+engine code points: CP[U+33 U+66 U+6d U+35 U+33 U+73 U+66 U+a U+1b0 U+20 U+1b0 U+2c U+20 U+74 U+36 U+20 U+20 U+20 U+65 U+68 U+74 U+67 U+38 U+6f U+76 U+5a U+2d U+5b U+20 U+20 U+35 U+a U+38 U+20 U+6d U+77 U+77 U+31 U+33 U+67 U+5b U+74 U+75 U+32 U+74 U+6b U+20 U+70 U+a U+20 U+5b U+20 U+6c U+67 U+71 U+a U+2e U+6b U+6b U+67 U+48 U+39 U+a U+52 U+6e U+5b U+5a U+37 U+35 U+39 U+20 U+a U+1b0 U+36 U+a U+63 U+6a U+33 U+2d U+7a U+20 U+5a U+34 U+72 U+71 U+7a U+72 U+a U+62 U+a U+65 U+63 U+6c U+31 U+63 U+63 U+33 U+5d U+32 U+20 U+34 U+71 U+20 U+6f U+77 U+30 U+67 U+35 U+7a U+31 U+61 U+79 U+62 U+59 U+35 U+2e U+71 U+38 U+75 U+36 ]
+oracle  code points: CP[U+33 U+66 U+6d U+35 U+33 U+73 U+66 U+a U+1b0 U+20 U+1b0 U+2c U+20 U+74 U+36 U+20 U+20 U+20 U+65 U+68 U+74 U+67 U+38 U+6f U+76 U+5a U+2d U+5b U+20 U+20 U+35 U+a U+38 U+20 U+6d U+77 U+77 U+31 U+33 U+67 U+5b U+74 U+75 U+32 U+74 U+6b U+20 U+70 U+a U+20 U+5b U+20 U+6c U+67 U+71 U+a U+2e U+6b U+6b U+67 U+48 U+39 U+a U+52 U+6e U+5b U+5a U+37 U+35 U+39 U+20 U+a U+1b0 U+36 U+a U+63 U+6a U+33 U+2d U+7a U+20 U+5a U+34 U+72 U+71 U+7a U+72 U+a U+62 U+a U+65 U+63 U+6c U+31 U+63 U+63 U+33 U+5d U+32 U+20 U+34 U+71 U+20 U+6f U+77 U+30 U+67 U+35 U+7a U+31 U+61 U+79 U+62 U+59 U+35 U+2e U+71 U+38 U+75 ]

@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.1.1 - refactored and completed logic
+//   KieeKey v1.1.3 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.1.1 — ModernKeyHook.hpp
+// KieeKey v1.1.3 — ModernKeyHook.hpp
 // Asynchronous, non-blocking low-level keyboard/mouse hook engine.
 //
 // Architecture (fixes every latency/ghosting flaw of the legacy OpenKey.cpp):
@@ -355,6 +355,21 @@ private:
     // symptom. Hook-thread-affine (LL hooks fire only on the installing
     // thread): no atomics needed.
     std::array<std::uint32_t, 8> suppressedDown_{};   // 256-bit bitmap (vk 0..255)
+
+    // v1.1.3 — EDGE-DETECT state for the toggle keys (CapsLock/NumLock/
+    // ScrollLock). The tracker previously XORed the toggle bit on EVERY
+    // KeyDown, but a low-level hook receives auto-repeat WM_KEYDOWNs while
+    // the key is held (KBDLLHOOKSTRUCT carries no repeat flag): holding
+    // CapsLock for half a second XORed the tracked bit ~15-30 times and left
+    // it OUT OF PHASE with the real OS toggle state — every subsequent tone
+    // mark / đ / â transform then re-emitted its word with the wrong case
+    // ("vợ" rendering as "vỢ"). The bitmap (hook-thread-affine, same trick
+    // as suppressedDown_) flips the bit only on the up→down TRANSITION, so
+    // repeats are ignored and the tracked level always matches the OS.
+    std::array<std::uint32_t, 8> toggleKeyDown_{};    // 256-bit bitmap (vk 0..255)
+    [[nodiscard]] bool wasToggleKeyDown(std::uint32_t vk) const noexcept;
+    void setToggleKeyDown(std::uint32_t vk) noexcept;
+    void clearToggleKeyDown(std::uint32_t vk) noexcept;
 
     // v3.3.1 self-healing state. The event stamps are written by the LL
     // callbacks (hook thread) and read by the watchdog (pump tick — same

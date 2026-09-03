@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.1.1 - refactored and completed logic
+//   KieeKey v1.1.3 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -52,8 +52,10 @@ using namespace ok::text;
 static int g_failed = 0;
 #define CHECK(cond)                                                        \
     do {                                                                   \
-        /* if constexpr: avoids C4127 (constant condition) under /W4 /WX */\
-        if constexpr (!(cond)) {                                           \
+        /* Plain `if`: runtime conditions are legal here. The constant-    \
+           condition MSVC warning (C4127) is disabled project-wide         \
+           (/wd4127); `if constexpr` hard-errors on GCC/clang. */          \
+        if (!(cond)) {                                                     \
             ++g_failed;                                                    \
             std::printf("  FAIL %s:%d  %s\n", __FILE__, __LINE__, #cond);  \
         }                                                                  \

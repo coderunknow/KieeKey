@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.1.1 - refactored and completed logic
+//   KieeKey v1.1.3 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.1.1 — tests/bench_latency.cpp
+// KieeKey v1.1.3 — tests/bench_latency.cpp
 // Latency DISTRIBUTION (p50/p90/p99/p999/max/min), not just averages:
 //   1. engine decision + UTF-16 encode per key
 //   2. full pipeline simulation: capture → SPSC ring → consumer → engine

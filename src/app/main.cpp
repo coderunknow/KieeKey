@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.1.1 - refactored and completed logic
+//   KieeKey v1.1.3 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.1.1 — src/app/main.cpp
+// KieeKey v1.1.3 — src/app/main.cpp
 // The OpenKey-style Windows tray application (replaces the pre-tray console host):
 //
 //   * System tray icon (green = Vietnamese ON, gray = OFF) with the classic
@@ -84,6 +84,7 @@
 #include <commctrl.h>
 #include <shellapi.h>   // Shell_NotifyIcon / NOTIFYICONDATA (excluded by LEAN_AND_MEAN)
 #include <timeapi.h>    // timeBeginPeriod/timeEndPeriod (winmm — already linked)
+#include <tlhelp32.h>   // v1.1.2-r3: CreateToolhelp32Snapshot (conflict detector)
 
 #include <algorithm>
 #include <atomic>
@@ -126,10 +127,10 @@ namespace {
 //===========================================================================
 // v1.1.1 — single source of truth for the user-visible version string.
 // (The .rc VERSIONINFO, the manifest and the CMake project() carry their own
-// copies — all kept at 1.1.1; CHANGELOG documents the release.)
+// copies — all kept at 1.1.3; CHANGELOG documents the release.)
 //===========================================================================
-constexpr wchar_t kAppVersion[] = L"1.1.1";
-constexpr wchar_t kAppTitle[]   = L"KieeKey v1.1.1";   // keep in sync with kAppVersion
+constexpr wchar_t kAppVersion[] = L"1.1.3";
+constexpr wchar_t kAppTitle[]   = L"KieeKey v1.1.3";   // keep in sync with kAppVersion
 
 //===========================================================================
 // Output item: what the consumer thread must emit (trivially copyable → can
@@ -188,6 +189,16 @@ struct AppState {
     std::atomic<std::uint64_t> tsfSlowCount{0};
     // WPM gauge: printable keydowns the engine actually processed.
     std::atomic<std::uint64_t> keysTyped{0};
+    // v1.1.2-r3 diagnostics: times the hook-layer NUMBER-SAFETY GUARD had to
+    // discard an engine decision for a digit event (expected to stay 0 —
+    // the engine's own digitsAreLiteral tests already pin inertness; a
+    // non-zero count means a future engine path regressed and the guard
+    // held the line). Surfaced on the Information tab.
+    std::atomic<std::uint64_t> digitGuardHits{0};
+    // v1.1.2-r3 conflict detector cache (scanConflicts result). UI-thread
+    // only: refreshed at startup and on every settings-dialog open.
+    std::wstring conflictWarning;   // empty when clean
+    std::wstring conflictDetail;
 
     // Number of Edit items currently sitting in outRing that the consumer has
     // not yet applied. Incremented by the producer (TSF path, after a
@@ -219,10 +230,29 @@ struct AppState {
 
     // Hook-thread-affine scratch (never touched from other threads):
     std::atomic<HKL> currentHkl{nullptr};  // cached foreground keyboard layout
+    // v1.1.3: foreground HWND mirror for the cheap in-stroke HKL re-check —
+    // Win+Space / Ctrl+Shift layout switches WITHIN one window fire no
+    // EVENT_SYSTEM_FOREGROUND, so the cached layout used to go stale and
+    // layoutChar() decoded keys under the previous layout (wrong base chars
+    // composed until the next app switch). Refreshed on Space/WordBreak
+    // (a few events per word — negligible cost, always fresh within a word).
+    std::atomic<void*> fgHwnd{nullptr};
     std::wstring repScratch;               // replacementUtf16 scratch (engineMtx-guarded)
 
     // settings (GUI mirror; engine holds its own copy under engineMtx)
-    EngineOptions options;
+    // v1.1.2-r2 ROOT-CAUSE HARDENING: the APP default for "digits are
+    // literal" is ON. EngineOptions' own default is false (legacy VNI parity
+    // for library users), so a plain `EngineOptions options;` member meant
+    // that ANY path where loadSettings() never ran — HKCU denied, corrupted
+    // registry, sandboxed launch — silently shipped digits-as-composition,
+    // i.e. the reported "typing a number applies a tone mark / changes the
+    // word" bug, out of the box. The safe shipping default must live in the
+    // app layer, not in a registry read that can fail.
+    EngineOptions options = []() {
+        EngineOptions o{};
+        o.digitsAreLiteral = true;
+        return o;
+    }();
     bool exclIde   = true;
     bool exclGame  = true;
     bool exclShell = false;
@@ -467,6 +497,24 @@ void loadSettings() {
         // v1.1.0: persisted Vietnamese on/off (OpenKey parity — the old
         // build forgot the toggle on every restart).
         g.enabledOnStart                   = key.getDword(L"Enabled", 1) != 0;
+        // v1.1.2-r2 ONE-TIME SETTINGS MIGRATION (self-heal).
+        //
+        // SettingsMigration < 2 identifies any install that has not yet run
+        // this release's migration: a fresh machine (no DigitsLiteral value
+        // at all) OR a machine touched by the first v1.1.2 build. On those
+        // the digits policy is re-asserted to the shipping default ON and
+        // persisted immediately — so a poisoned DigitsLiteral=0 (written by
+        // any earlier defect rather than by a deliberate user choice) can
+        // never survive the upgrade. After the marker is set, the user's
+        // own checkbox choice is loaded as-is and respected forever.
+        const DWORD mig = key.getDword(L"SettingsMigration", 0);
+        if (mig < 2) {
+            g.options.digitsAreLiteral     = true;
+            key.setDword(L"DigitsLiteral", 1);
+            key.setDword(L"SettingsMigration", 2);
+        } else {
+            g.options.digitsAreLiteral     = key.getDword(L"DigitsLiteral", 1) != 0;
+        }
     }
 }
 
@@ -486,6 +534,13 @@ void saveSettings() {
         key.setDword(L"OutputMode",        static_cast<DWORD>(g.outputMode.load(std::memory_order_relaxed)));
         // v1.1.0: persist the Vietnamese on/off state at every change point.
         key.setDword(L"Enabled",           g.engineEnabled.load(std::memory_order_relaxed) ? 1 : 0);
+        // v1.1.2: digits-are-numbers option (the fix for "typing a number
+        // produced a tone mark / changed the word").
+        key.setDword(L"DigitsLiteral",     g.options.digitsAreLiteral ? 1 : 0);
+        // v1.1.2-r2: keep the settings-schema version self-maintaining (the
+        // migration in loadSettings() has always run first at startup; this
+        // makes the marker explicit on every persist anyway).
+        key.setDword(L"SettingsMigration", 2);
     }
 }
 
@@ -626,6 +681,19 @@ void updateForegroundPolicy() noexcept {
     g.currentHkl.store((s && s->hwnd)
         ? ::GetKeyboardLayout(::GetWindowThreadProcessId(s->hwnd, nullptr))
         : ::GetKeyboardLayout(0), std::memory_order_relaxed);
+    g.fgHwnd.store(s ? static_cast<void*>(s->hwnd) : nullptr,
+                   std::memory_order_relaxed);
+}
+
+// v1.1.3 — re-read the foreground thread's keyboard layout. GetKeyboardLayout
+// and GetWindowThreadProcessId are user-mode reads (no syscall); calling this
+// on Space / WordBreak keystrokes keeps the layout fresh across in-window
+// language switches at zero measurable cost.
+void refreshLayoutCache() noexcept {
+    const HWND fg = static_cast<HWND>(g.fgHwnd.load(std::memory_order_relaxed));
+    g.currentHkl.store(fg ? ::GetKeyboardLayout(::GetWindowThreadProcessId(fg, nullptr))
+                          : ::GetKeyboardLayout(0),
+                       std::memory_order_relaxed);
 }
 
 // Inline zero-latency output (hook thread). Exactly what original OpenKey
@@ -671,7 +739,13 @@ void sendUnicodeText(const std::wstring& text) noexcept {
 // Returns true to SUPPRESS the key (the app never receives it).
 //===========================================================================
 void updateExclusionCache() noexcept {
-    g.fgExcluded_.store(g.monitor.currentAppAutoExcluded(), std::memory_order_relaxed);
+    // v1.1.3: an ELEVATED foreground joins the auto-exclusion set (hard UIPI
+    // constraint — see ForegroundInfo::elevated). Both output paths fail
+    // silently there; passing keystrokes through untouched is the only safe
+    // behavior, and it matches how the app already treats IDEs/games.
+    const bool excluded = g.monitor.currentAppAutoExcluded() ||
+                          g.monitor.currentAppElevated();
+    g.fgExcluded_.store(excluded, std::memory_order_relaxed);
 }
 
 // True for keys that move the caret or edit text WITHOUT the engine being
@@ -803,11 +877,13 @@ PD onHookEvent(const KeyEvent& ev) noexcept {
                                                             std::size(it.text));
                 it.textLen = static_cast<std::uint32_t>(n);
                 for (std::size_t i = 0; i < n; ++i) { it.text[i] = g.repScratch[i]; }
+                // v1.1.3 (see main edit site): count published BEFORE push.
+                g.pendingEdits.fetch_add(1, std::memory_order_acq_rel);
                 if (!g.outRing.try_push(it)) {
+                    g.pendingEdits.fetch_sub(1, std::memory_order_acq_rel);
                     emitInline(bs, g.repScratch);   // ring full — inline fallback
                     return PD{true, false};
                 }
-                g.pendingEdits.fetch_add(1, std::memory_order_relaxed);
                 return PD{true, true};
             }
             emitInline(bs, g.repScratch);
@@ -818,6 +894,13 @@ PD onHookEvent(const KeyEvent& ev) noexcept {
 
     // ---- bookkeeping / environment events ----
     if (ev.source == EventSource::ForegroundChanged) {
+        // v1.1.3: refreshNow() is KEPT deliberately (correctness before
+        // micro-optimization). The monitor's own WinEvent pump publishes the
+        // new snapshot on ITS thread, but WinEvent delivery across two pump
+        // threads is unordered — without the synchronous refresh here the
+        // exclusion cache could briefly describe the PREVIOUS foreground and
+        // mis-apply the per-app policy to the first keystrokes after Alt-Tab.
+        // The duplicate work is bounded (once per app switch, not per key).
         g.monitor.refreshNow();          // refresh the snapshot (rare — not typing path)
         updateExclusionCache();          // cache for the per-key hot path
         updateForegroundPolicy();        // TSF-vs-inline + keyboard layout cache
@@ -875,7 +958,14 @@ PD onHookEvent(const KeyEvent& ev) noexcept {
         // Apply any pending edits BEFORE the click is delivered: the click
         // moves the caret, and an edit applied at the new caret position
         // would insert into the wrong place (a ghost).
-        waitPendingEditsDrained();
+        //
+        // v1.1.3 latency fix: a WHEEL notch does NOT move the caret, so it
+        // gains nothing from the ordering barrier — yet the wait ran on the
+        // SHARED hook pump thread (the keyboard hook lives there too), so
+        // scrolling while edits were in flight stalled keystrokes for up to
+        // the 1 ms barrier budget per notch. Buttons still take the barrier.
+        const bool isWheel = (ev.wParam == WM_MOUSEWHEEL || ev.wParam == WM_MOUSEHWHEEL);
+        if (!isWheel) { waitPendingEditsDrained(); }
         const bool queued = requestContextResync();
         return PD{false, queued};
     }
@@ -937,6 +1027,11 @@ PD onHookEvent(const KeyEvent& ev) noexcept {
     }
 
     g.keysTyped.fetch_add(1, std::memory_order_relaxed);   // WPM gauge
+    // v1.1.3: pick up in-window layout switches (Win+Space etc.) between
+    // words — a space or navigation key always precedes the next word.
+    if (in.kind == InputKind::Space || in.kind == InputKind::WordBreak) {
+        refreshLayoutCache();
+    }
 
     // ---- engine decision (fast, deterministic — safe on the hook thread).
     //      process() returns a const ref to engine-internal state; everything
@@ -951,8 +1046,40 @@ PD onHookEvent(const KeyEvent& ev) noexcept {
 #endif
     {
         std::lock_guard<std::mutex> lk(g.engineMtx);
+        // v1.1.3 double-check: the enabled flag is re-read under the lock so
+        // a toggle that lands between the early-return and this point cannot
+        // emit an edit AFTER the OFF transition's drain (the drain above sees
+        // a quiesced queue; an in-flight decision must not re-arm it).
+        if (!g.engineEnabled.load(std::memory_order_relaxed)) {
+            waitPendingEditsDrained();
+            return PD{false, false};   // disabled mid-stroke — pass through
+        }
         const EngineResult& r = g.engine.process(in);
-        g.engine.replacementUtf16(r, g.repScratch);   // scratch — no per-key alloc
+        // v1.1.2-r3 NUMBER-SAFETY GUARD (defense in depth, the LAST layer
+        // before output). The engine promise is: with digitsAreLiteral ON, a
+        // digit Char event is inert (DoNothing — the tests assert zero
+        // backspaces in every context). This hook-level guard makes the
+        // app-layer guarantee independent of the engine: if ANY engine path
+        // (current or future) ever returns a consumed/Restore decision for a
+        // bare digit while the shipped policy says "digits are numbers", the
+        // decision is discarded and the digit passes through untouched.
+        // The engine buffer is re-synced to the raw screen (the digit WAS
+        // delivered literally), so no phantom state can compose afterward.
+        // Macro expansions are NOT affected: they fire on Space/Enter break
+        // events, never on the digit Char event itself.
+        const bool digitLiteralEvent =
+            g.options.digitsAreLiteral &&
+            in.kind == InputKind::Char &&
+            in.ch >= U'0' && in.ch <= U'9' &&
+            r.code != EngineCode::DoNothing &&
+            r.code != EngineCode::ReplaceMacro;
+        if (digitLiteralEvent) {
+            g.digitGuardHits.fetch_add(1, std::memory_order_relaxed);
+            g.engine.startNewSession();   // screen now shows the raw digit
+            g.repScratch.clear();         // guarded: no replacement to apply
+        } else {
+            g.engine.replacementUtf16(r, g.repScratch);   // scratch — no per-key alloc
+        }
         // Restore re-issue contracts (the app-visible semantics the legacy
         // hooks deliver and the user expects):
         //   * CHAR restore (hotfix §3): after reverting the word to its bare
@@ -962,10 +1089,15 @@ PD onHookEvent(const KeyEvent& ev) noexcept {
         //     space was eaten ('arbit hối đoái' rendered 'arbithối đoái').
         // Backspace / word-break / mouse Restores keep their no-re-issue
         // semantics (verified against 2.0.5).
-        reissueTyped = (r.code == EngineCode::Restore ||
+        reissueTyped = !digitLiteralEvent &&
+                       (r.code == EngineCode::Restore ||
                         r.code == EngineCode::RestoreAndStartNewSession) &&
                        (in.kind == InputKind::Char || in.kind == InputKind::Space);
-        if (r.code == EngineCode::ReplaceMacro) {
+        if (digitLiteralEvent) {
+            // Guarded: force the pass-through contract (suppress stays false,
+            // repScratch is not consumed by the output path below).
+            g.repScratch.clear();
+        } else if (r.code == EngineCode::ReplaceMacro) {
             // D3 (v3.1): the expansion rides in the result as final Unicode
             // code points — the hook applies it: delete backspaceCount chars
             // at the caret, then type the expansion, and CONSUME the break
@@ -1040,13 +1172,20 @@ PD onHookEvent(const KeyEvent& ev) noexcept {
         // Push BEFORE the hook enqueues the KeyEvent (ordering guarantee).
         // If the ring is ever full, fall back to inline rather than lose
         // the user's character.
+        // v1.1.3 race fix: publish the pending count BEFORE the item becomes
+        // visible to the consumer (acq_rel). Incrementing AFTER the push
+        // allowed a preemption window where the consumer applied the edit and
+        // read prev == 0 — the "reached zero" notification was then skipped
+        // and a PHANTOM pending count stayed armed forever, degrading every
+        // later pass-through keystroke to the full 1 ms barrier wait.
+        g.pendingEdits.fetch_add(1, std::memory_order_acq_rel);
         if (!g.outRing.try_push(it)) {
+            g.pendingEdits.fetch_sub(1, std::memory_order_acq_rel);   // roll back
             emitInline(bs, g.repScratch);
             return PD{true, false};
         }
         // One more pending edit the consumer must apply before any
         // pass-through key may reach the app (see waitPendingEditsDrained).
-        g.pendingEdits.fetch_add(1, std::memory_order_relaxed);
 #if KIEEKEY_PROFILE
         if (profOn) {
             profRec.stageNs[1] = ok::prof::nsSince(profT0);   // t2: pushed
@@ -1073,10 +1212,12 @@ PD onHookEvent(const KeyEvent& ev) noexcept {
                                                         std::size(it.text));
             it.textLen = static_cast<std::uint32_t>(n);
             for (std::size_t i = 0; i < n; ++i) { it.text[i] = g.repScratch[i]; }
+            // v1.1.3 (see main edit site): count published BEFORE the push.
+            g.pendingEdits.fetch_add(1, std::memory_order_acq_rel);
             if (g.outRing.try_push(it)) {
-                g.pendingEdits.fetch_add(1, std::memory_order_relaxed);
                 return PD{true, true};
             }
+            g.pendingEdits.fetch_sub(1, std::memory_order_acq_rel);   // roll back
             // ring full — degrade to in-callback emit (never drop a char)
         }
         emitInline(bs, g.repScratch);
@@ -1101,8 +1242,14 @@ thread_local std::uint64_t g_editBatchSeq = 0;
 } // namespace
 
 void onConsumerEvent(const KeyEvent& /*ev*/) noexcept {
-    if (!g.composerAttached.exchange(true)) {
-        static_cast<void>(g.composer.attach());   // CoInitializeEx on this thread
+    // v1.1.3: a failed attach() now RESETS the latch so a later foreground
+    // can retry, instead of TSF staying dead for the whole process lifetime
+    // with no diagnostic.
+    bool expected = false;
+    if (g.composerAttached.compare_exchange_strong(expected, true)) {
+        if (!g.composer.attach()) {
+            g.composerAttached.store(false, std::memory_order_relaxed);
+        }
     }
 #if KIEEKEY_PROFILE
     const bool profOn = ok::prof::enabled();
@@ -1125,7 +1272,19 @@ void onConsumerEvent(const KeyEvent& /*ev*/) noexcept {
             g_consumerSink.push(r);
         }
 #endif
-        if (g.composer.commitBatch(g_editBatch)) {
+        // v1.1.3 OOM hardening: the commit path copies wstring payloads; a
+        // bad_alloc here previously escaped the noexcept drain loop and
+        // std::terminate'd the whole IME mid-keystroke ("suddenly stops").
+        // Degrade to the SendInput fallback for the unapplied suffix instead.
+        std::size_t appliedCountRead = 0;
+        bool batchOk = false;
+        try {
+            batchOk = g.composer.commitBatch(g_editBatch, &appliedCountRead);
+        } catch (...) {
+            batchOk = false;
+            appliedCountRead = 0;   // unknown progress — re-deliver the batch
+        }
+        if (batchOk) {
             // v1.1.0 — TSF slow-commit watchdog: a synchronous commit that
             // took ≥ 100 ms means the foreground app's STA is starving (the
             // pre-hang symptom of "KieeKey suddenly stops"). Degrade THIS
@@ -1136,8 +1295,15 @@ void onConsumerEvent(const KeyEvent& /*ev*/) noexcept {
                 g.tsfSlowCount.fetch_add(1, std::memory_order_relaxed);
             }
         } else {
-            // last-resort fallback: synthetic backspaces + Unicode text
-            for (const ok::tsf::EditDelta& d : g_editBatch) {
+            // Last-resort fallback: synthetic backspaces + Unicode text.
+            // v1.1.3 (T3): TSF sessions are NOT transactional — deltas the
+            // session already applied are IN the document. Re-emitting the
+            // whole batch duplicated word-initial pure-insert deltas ("t",
+            // then "to" over it -> "tto"). Deliver only the UNAPPLIED suffix.
+            std::size_t applied = 0;
+            if (appliedCountRead) { applied = appliedCountRead; }
+            for (std::size_t i = applied; i < g_editBatch.size(); ++i) {
+                const ok::tsf::EditDelta& d = g_editBatch[i];
                 sendBackspaces(d.backspace);
                 sendUnicodeText(d.text);
             }
@@ -1160,9 +1326,14 @@ void onConsumerEvent(const KeyEvent& /*ev*/) noexcept {
         // v3.4 (S1): signal the ordering barrier when the pending count hits
         // zero — pass-through keys waiting on the hook thread wake on this
         // event instead of burning CPU in a spin loop.
-        const std::uint32_t prev =
-            g.pendingEdits.fetch_sub(g_editBatchCount, std::memory_order_relaxed);
-        if (prev == g_editBatchCount) { g.drainBarrier.notifyDrained(); }
+        // v1.1.3: the "reached zero" test re-READS the counter after an
+        // acq_rel subtract instead of trusting the fetch_sub previous value —
+        // a late producer fetch_add (the race fixed above) could slip between
+        // the two and leave the barrier armed forever.
+        g.pendingEdits.fetch_sub(g_editBatchCount, std::memory_order_acq_rel);
+        if (g.pendingEdits.load(std::memory_order_acquire) == 0) {
+            g.drainBarrier.notifyDrained();
+        }
         g_editBatch.clear();
         g_editBatchCount = 0;
     };
@@ -1205,9 +1376,10 @@ void onConsumerEvent(const KeyEvent& /*ev*/) noexcept {
                 g_consumerSink.push(r);
             }
 #endif
-            const std::uint32_t prev =
-                g.pendingEdits.fetch_sub(1, std::memory_order_relaxed);
-            if (prev == 1) { g.drainBarrier.notifyDrained(); }
+            g.pendingEdits.fetch_sub(1, std::memory_order_acq_rel);
+            if (g.pendingEdits.load(std::memory_order_acquire) == 0) {
+                g.drainBarrier.notifyDrained();
+            }
             continue;
         }
         // Non-edit item: apply any pending edits FIRST (ring order), then the
@@ -1234,6 +1406,163 @@ void onConsumerEvent(const KeyEvent& /*ev*/) noexcept {
         }
     }
     flushEditBatch();
+}
+
+//===========================================================================
+// v1.1.2-r3 CONFLICT DETECTOR — the root causes OUTSIDE KieeKey.
+//
+// Symptom reported by users: "typing a number produces a tone mark or a
+// word" — persisting even after every in-app fix. Two external causes
+// produce EXACTLY that symptom while KieeKey is doing everything right:
+//
+//   1. Another Vietnamese input method is running in the same session
+//      (EVKey, UniKey, OpenKey, GoTiengViet, LabanKey…). Its VNI mode
+//      converts digits to tone marks regardless of KieeKey's state.
+//
+//   2. Windows 10/11 ships built-in "Vietnamese - Telex" and
+//      "Vietnamese - Number Key-Based" keyboard LAYOUTS (KLID 0x0002042A,
+//      0x0003042A — any 0x…042A sub-layout other than the plain 0x0000042A
+//      "Vietnamese" base, whose layout file is the digit-neutral one).
+//      These convert digits at the OS level, even with every IME app off.
+//
+// Neither can be fixed from inside KieeKey — but both MUST be surfaced,
+// otherwise the user concludes (rationally, and wrongly) that the KieeKey
+// patch "didn't work". The scan result is shown on the Information tab and
+// folded into the startup balloon. UI-thread only, run at startup + each
+// settings-dialog open (~1–2 ms: one Toolhelp snapshot + a few registry
+// reads — never on the hook thread).
+//===========================================================================
+struct ConflictScan {
+    std::wstring warning;    // user-facing multi-line warning (empty = clean)
+    std::wstring detail;     // short one-line summary for diagnostics view
+};
+
+[[nodiscard]] ConflictScan scanConflicts() {
+    ConflictScan out;
+    std::wstring imes;    // comma-joined running IME names
+    std::wstring layouts; // comma-joined Vietnamese variant layout names
+
+    // ---- 1. running IME processes (Toolhelp snapshot) -------------------
+    static constexpr std::wstring_view kImeProcs[] = {
+        L"evkey.exe", L"evkeyagent.exe", L"evkeyplayer.exe", L"evkey64.exe",
+        L"unikey.exe", L"unikeynt.exe", L"openkey.exe",
+        L"gotiengviet.exe", L"labankey.exe",
+    };
+    {
+        HANDLE snap = ::CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if (snap != INVALID_HANDLE_VALUE) {
+            PROCESSENTRY32W pe{};
+            pe.dwSize = sizeof(pe);
+            if (::Process32FirstW(snap, &pe)) {
+                do {
+                    // Lowercase the image name in place.
+                    wchar_t* p = pe.szExeFile;
+                    for (; *p; ++p) {
+                        if (*p >= L'A' && *p <= L'Z') { *p = static_cast<wchar_t>(*p - L'A' + L'a'); }
+                    }
+                    const std::wstring_view exe{pe.szExeFile};
+                    for (const std::wstring_view known : kImeProcs) {
+                        if (exe == known) {
+                            if (!imes.empty()) { imes += L", "; }
+                            imes += exe;
+                            break;
+                        }
+                    }
+                } while (::Process32NextW(snap, &pe));
+            }
+            ::CloseHandle(snap);
+        }
+    }
+
+    // ---- 2. installed Windows Vietnamese variant keyboard layouts -------
+    // Enumerate the user's enabled layouts (HKCU\Keyboard Layout\Preload,
+    // values "1".."9" = KLID strings) and flag every 0x…042A KLID that is
+    // NOT the plain base layout 0000042A — on real Windows those are the
+    // Telex / Number Key-Based variants which rewrite digits.
+    {
+        HKEY hk = nullptr;
+        if (::RegOpenKeyExW(HKEY_CURRENT_USER, L"Keyboard Layout\\Preload", 0,
+                            KEY_READ, &hk) == ERROR_SUCCESS) {
+            for (DWORD i = 1; i <= 9; ++i) {
+                const std::wstring val = std::to_wstring(static_cast<unsigned long long>(i));
+                wchar_t klid[16] = {};
+                DWORD size = sizeof(klid);
+                DWORD type = 0;
+                if (::RegQueryValueExW(hk, val.c_str(), nullptr, &type,
+                                       reinterpret_cast<LPBYTE>(klid), &size) != ERROR_SUCCESS ||
+                    type != REG_SZ) {
+                    continue;
+                }
+                // Normalize: lowercase, keep the 8-hex KLID.
+                std::wstring k{klid};
+                for (wchar_t& c : k) {
+                    if (c >= L'A' && c <= L'Z') { c = static_cast<wchar_t>(c - L'A' + L'a'); }
+                }
+                if (k.size() < 8) { continue; }
+                k.resize(8);
+                if (k != L"0000042a" && k.substr(4) == L"042a") {
+                    if (!layouts.empty()) { layouts += L", "; }
+                    if (k == L"0002042a")      { layouts += L"Vietnamese - Telex (Windows)"; }
+                    else if (k == L"0003042a") { layouts += L"Vietnamese - Number Key-Based (Windows)"; }
+                    else                       { layouts += (L"Vietnamese layout " + k); }
+                }
+            }
+            ::RegCloseKey(hk);
+        }
+    }
+
+    // ---- 3. user-facing summary -----------------------------------------
+    if (!imes.empty() && !layouts.empty()) {
+        out.detail = L"Bộ gõ khác đang chạy: " + imes +
+                     L" · Bàn phím hệ thống: " + layouts;
+    } else if (!imes.empty()) {
+        out.detail = L"Bộ gõ khác đang chạy: " + imes;
+    } else if (!layouts.empty()) {
+        out.detail = L"Bàn phím hệ thống: " + layouts;
+    } else {
+        out.detail = L"Không phát hiện bộ gõ / bàn phím tiếng Việt nào khác";
+        return out;   // clean
+    }
+
+    out.warning = L"⚠ PHÁT HIỆN NGUYÊN NHÂN GÂY LỖI SỐ → DẤU:\n" + out.detail +
+                  L".\nCác bộ gõ / bàn phím này chuyển số thành dấu tiếng Việt "
+                  L"NGAY CẢ KHI KieeKey đang hoạt động đúng — chúng cùng gõ với "
+                  L"KieeKey sẽ xung đột. Hãy THOÁT (hoặc gỡ) bộ gõ đó, và xóa bàn "
+                  L"phím tiếng Việt kiểu Telex/VNI trong Cài đặt Windows → "
+                  L"Time & language → Language & region, rồi khởi động lại máy.";
+    return out;
+}
+
+// v1.1.2-r3: one-glance diagnostics block for the Information tab — the
+// RUNNING build + live engine state + the conflict verdict. This is what
+// makes "which exe am I actually running, and what is converting my
+// digits" answerable on the user's machine without external tooling.
+std::wstring infoDiagnosticsText() {
+    std::wstring s = L"Bản đang chạy: KieeKey v";
+    s += kAppVersion;
+    s += g.engineEnabled.load(std::memory_order_relaxed) ? L" · Bộ gõ: BẬT"
+                                                         : L" · Bộ gõ: TẮT";
+    s += L" · Phương thức: ";
+    s += g.options.inputMethod == InputMethod::Telex ? L"Telex"
+         : g.options.inputMethod == InputMethod::Vni ? L"VNI"
+                                                     : L"Simple Telex";
+    s += L" · Số 0–9: ";
+    s += g.options.digitsAreLiteral ? L"chữ số (bật)" : L"gõ dấu VNI (tắt)";
+    if (!g.conflictWarning.empty()) {
+        s += L"\n⚠ ";
+        s += g.conflictDetail;
+        s += L".\nHãy thoát/gỡ bộ gõ đó (hoặc xóa bàn phím Telex/VNI của "
+             L"Windows) — nó chuyển số thành dấu ngay cả khi KieeKey đúng.";
+    } else {
+        s += L"\nKhông có bộ gõ / bàn phím tiếng Việt nào khác xung đột — "
+             L"chữ số 0–9 do KieeKey bảo đảm.";
+    }
+    const std::uint64_t hits = g.digitGuardHits.load(std::memory_order_relaxed);
+    if (hits != 0) {
+        s += L"\nLớp bảo vệ số đã chặn " + std::to_wstring(hits) +
+             L" lần (bất thường — vui lòng cập nhật KieeKey).";
+    }
+    return s;
 }
 
 //===========================================================================
@@ -1267,6 +1596,11 @@ std::wstring trayTipText() {
 // confirming balloon on every on/off change (v1.1.1).
 void showTrayBalloon(const wchar_t* title, const wchar_t* text) noexcept;
 
+// v1.1.2 — single creation path for the settings window (used by the tray
+// menu's Cài đặt… and Thông tin items and by the double-click action).
+// `tab` selects the initially shown tab (0..4; 4 = Information).
+void openSettingsDialog(int tab);
+
 void addTrayIcon() noexcept {
     NOTIFYICONDATAW nid{};
     nid.cbSize           = sizeof(nid);
@@ -1289,11 +1623,19 @@ void addTrayIcon() noexcept {
         // could silently start DISABLED while the welcome text still claimed
         // the IME was "ready". The balloon states the ACTUAL startup state
         // and points at the in-app switch (v1.1.1: no more hotkey).
+        // v1.1.2-r3: the balloon is also the BUILD PROOF — it states the
+        // exact running version + the digits policy, so a machine still
+        // auto-starting an old pre-fix exe is immediately identifiable.
         std::wstring info = g.engineEnabled.load(std::memory_order_relaxed)
-            ? L"Bộ gõ tiếng Việt đã sẵn sàng (đang BẬT).\n"
-              L"Bật/tắt bằng trình đơn biểu tượng khay hoặc nút trong Cài đặt."
-            : L"Bộ gõ tiếng Việt đang TẮT (lưu từ phiên trước).\n"
-              L"Nhấp phải chuột biểu tượng khay và chọn “Bật gõ tiếng Việt”.";
+            ? L"Đã sẵn sàng (đang BẬT). "
+            : L"Đang TẮT (lưu từ phiên trước). ";
+        info += (g.options.digitsAreLiteral ? L"Số 0–9: CHỮ SỐ (bật). "
+                                            : L"Số 0–9: gõ dấu VNI (tắt). ");
+        if (!g.conflictWarning.empty()) {
+            info += L"CẢNH BÁO: phát hiện bộ gõ khác — mở Thông tin để xem.";
+        } else {
+            info += L"Không có bộ gõ nào khác xung đột.";
+        }
         std::wstring title = kAppTitle;
         if (info.size() >= std::size(nid.szInfo))  { info.resize(std::size(nid.szInfo) - 1); }
         if (title.size() >= std::size(nid.szInfoTitle)) { title.resize(std::size(nid.szInfoTitle) - 1); }
@@ -1345,6 +1687,13 @@ void toggleEngineFromUi() {
         // can compose with a stale shift/caps bit (same rationale as the
         // ForegroundChanged resync; atomic — safe from the UI thread).
         g.hook.resyncModifiersFromOs();
+    } else {
+        // v1.1.3 ordering fix: with edits still queued (pendingEdits > 0 —
+        // realistic against a slow STA foreground), disabled-mode letters
+        // reached the app immediately while the stale edit committed later
+        // and deleted the WRONG characters. Drain the queue (bounded by the
+        // barrier budget) so OFF is a clean cut-off point.
+        waitPendingEditsDrained();
     }
     updateTrayIcon();
     saveSettings();   // persist at every change point (restart-proof)
@@ -1390,6 +1739,7 @@ void showTrayMenu() noexcept {
     ::AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(methodMenu), L"Phương thức gõ");
     ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     ::AppendMenuW(menu, MF_STRING, IDM_SETTINGS, L"Cài đặt…");
+    ::AppendMenuW(menu, MF_STRING, IDM_ABOUT, L"Thông tin & giới thiệu");
     ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     ::AppendMenuW(menu, MF_STRING, IDM_EXIT, L"Thoát");
 
@@ -1424,16 +1774,11 @@ void showTrayMenu() noexcept {
             break;
         }
         case IDM_SETTINGS:
-            if (g.hSettings) { ::SetForegroundWindow(g.hSettings); }
-            else if (g.hInst) {
-                g.hSettings = ::CreateWindowExW(0, L"KieeKeySettings",
-                                                L"KieeKey — Cài đặt",
-                                                WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU |
-                                                WS_MINIMIZEBOX,
-                                                CW_USEDEFAULT, CW_USEDEFAULT, 480, 470,
-                                                nullptr, nullptr, g.hInst, nullptr);
-                ::ShowWindow(g.hSettings, SW_SHOW);
-            }
+            openSettingsDialog(0);
+            break;
+        case IDM_ABOUT:
+            // v1.1.2: the in-app introduction (Information tab).
+            openSettingsDialog(4);
             break;
         case IDM_EXIT:
             ::PostMessageW(g.hMain, WM_CLOSE, 0, 0);
@@ -1660,6 +2005,10 @@ UINT windowDpi(HWND hwnd) noexcept {
 // built; uiFont() scales the face height to match).
 UINT g_settingsDpi = 96;
 
+// v1.1.2 — the tab the settings window shows on creation (0..4; 4 = the
+// Information tab, used by the tray menu's “Thông tin & giới thiệu”).
+int g_settingsOpenTab = 0;
+
 HFONT uiFont() noexcept {
     // v1.1.0-audit fix: cache PER DPI. The single static font was created at
     // the FIRST settings-dialog DPI and never re-created — reopening the
@@ -1695,6 +2044,81 @@ HWND mkCtl(HWND parent, LPCWSTR cls, LPCWSTR text, DWORD style, int x, int y,
     return c;
 }
 
+// v1.1.2 — bold + display-size variants of uiFont() for the header and the
+// Information tab. Same per-DPI caching discipline as uiFont() (the font
+// must match the monitor DPI or text clips on mixed-DPI setups).
+HFONT uiFontBold() noexcept {
+    static HFONT cache[4] = {};
+    static UINT  cacheDpi[4] = {};
+    const UINT dpi = g_settingsDpi ? g_settingsDpi : 96;
+    for (std::size_t i = 0; i < std::size(cache); ++i) {
+        if (cacheDpi[i] == dpi && cache[i] != nullptr) { return cache[i]; }
+    }
+    std::size_t slot = 0;
+    for (std::size_t i = 0; i < std::size(cache); ++i) { if (cache[i] == nullptr) { slot = i; break; } }
+    const int px = -::MulDiv(13, static_cast<int>(dpi), 96);
+    HFONT f = ::CreateFontW(px, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+                            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                            CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+    if (f != nullptr) {
+        if (cache[slot] != nullptr) { ::DeleteObject(cache[slot]); }
+        cache[slot] = f;
+        cacheDpi[slot] = dpi;
+    }
+    return f;
+}
+
+HFONT uiFontTitle() noexcept {
+    static HFONT cache[4] = {};
+    static UINT  cacheDpi[4] = {};
+    const UINT dpi = g_settingsDpi ? g_settingsDpi : 96;
+    for (std::size_t i = 0; i < std::size(cache); ++i) {
+        if (cacheDpi[i] == dpi && cache[i] != nullptr) { return cache[i]; }
+    }
+    std::size_t slot = 0;
+    for (std::size_t i = 0; i < std::size(cache); ++i) { if (cache[i] == nullptr) { slot = i; break; } }
+    const int px = -::MulDiv(20, static_cast<int>(dpi), 96);
+    HFONT f = ::CreateFontW(px, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+                            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                            CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+    if (f != nullptr) {
+        if (cache[slot] != nullptr) { ::DeleteObject(cache[slot]); }
+        cache[slot] = f;
+        cacheDpi[slot] = dpi;
+    }
+    return f;
+}
+
+// v1.1.2 — refresh the always-visible header status line: engine state,
+// input method, code table and the digits policy at a glance.
+void updateHeaderStatus() {
+    if (!g.hSettings) { return; }
+    const wchar_t* method = g.options.inputMethod == InputMethod::Telex ? L"Telex"
+                          : g.options.inputMethod == InputMethod::Vni   ? L"VNI"
+                                                                        : L"Simple Telex";
+    std::wstring s = g.engineEnabled.load(std::memory_order_relaxed)
+                         ? L"● Bộ gõ: ĐANG BẬT"
+                         : L"● Bộ gõ: ĐANG TẮT";
+    s += L"  —  ";
+    s += method;
+    s += L"  —  Số 0–9: ";
+    s += g.options.digitsAreLiteral ? L"chữ số" : L"gõ dấu (VNI)";
+    ::SetWindowTextW(::GetDlgItem(g.hSettings, IDC_STAT_HEAD_STATUS), s.c_str());
+}
+
+// v1.1.2-r2 FAIL-SAFE CONTROL READS. IsDlgButtonChecked()/SendMessageW() on
+// a missing or just-destroyed control return 0 — which for a checkbox means
+// "unchecked". Historically that class of silent zero could flip a persisted
+// option without the user ever seeing the control (the exact mechanism that
+// can resurrect the digits bug: OK-ing a half-built dialog would re-enable
+// digit composition and persist it). The fallback is the CURRENT in-memory
+// value, so the dialog can only CHANGE an option through a real control.
+bool dlgChecked(HWND h, int id, bool fallback) noexcept {
+    return ::GetDlgItem(h, id)
+               ? (::IsDlgButtonChecked(h, id) == BST_CHECKED)
+               : fallback;
+}
+
 void settingsFromControls() {
     const bool telex = (::SendMessageW(::GetDlgItem(g.hSettings, IDC_RADIO_TELEX),
                                        BM_GETCHECK, 0, 0) == BST_CHECKED);
@@ -1713,6 +2137,27 @@ void settingsFromControls() {
         const int got = ::GetWindowTextW(edit, macroText.data(), len + 1);
         macroText.resize(static_cast<std::size_t>(got > 0 ? got : 0));
     }
+    // v1.1.3 latency fix: hoist EVERY control read above the engine lock —
+    // each IsDlgButtonChecked/SendMessageW is a cross-thread control call
+    // that used to extend the hook thread's stall window to the whole block
+    // on every OK/Apply. Only the STATE SWAP runs under engineMtx now (the
+    // checkbox reads touch no shared state).
+    const bool chkMacro    = dlgChecked(g.hSettings, IDC_CHK_MACRO,    g.options.useMacro);
+    const bool chkDigits   = dlgChecked(g.hSettings, IDC_CHK_DIGITS,   g.options.digitsAreLiteral);
+    const bool chkSpell    = dlgChecked(g.hSettings, IDC_CHK_SPELL,    g.options.checkSpelling);
+    const bool chkRestore  = dlgChecked(g.hSettings, IDC_CHK_RESTORE,  g.options.restoreIfWrongSpelling);
+    const bool chkUpper    = dlgChecked(g.hSettings, IDC_CHK_UPPER,    g.options.upperCaseFirstChar);
+    const bool chkModern   = dlgChecked(g.hSettings, IDC_CHK_MODERN,   g.options.useModernOrthography);
+    const bool chkQuick    = dlgChecked(g.hSettings, IDC_CHK_QUICK,    g.options.quickTelex);
+    const bool chkExclIde  = dlgChecked(g.hSettings, IDC_CHK_EXCLUDE_IDE,  g.exclIde);
+    const bool chkExclGame = dlgChecked(g.hSettings, IDC_CHK_EXCLUDE_GAME, g.exclGame);
+    const bool chkExclShl  = dlgChecked(g.hSettings, IDC_CHK_EXCLUDE_SHELL, g.exclShell);
+    const HWND outAutoCtl  = ::GetDlgItem(g.hSettings, IDC_RADIO_OUT_AUTO);
+    const bool outAuto     = outAutoCtl && (::SendMessageW(outAutoCtl, BM_GETCHECK, 0, 0) == BST_CHECKED);
+    const HWND outTsfCtl   = ::GetDlgItem(g.hSettings, IDC_RADIO_OUT_TSF);
+    const bool outTsf      = outTsfCtl && (::SendMessageW(outTsfCtl, BM_GETCHECK, 0, 0) == BST_CHECKED);
+    const bool hasTelexCtl = ::GetDlgItem(g.hSettings, IDC_RADIO_TELEX) != nullptr;
+    const bool hasComboCtl = ::GetDlgItem(g.hSettings, IDC_COMBO_CODETABLE) != nullptr;
     // v1.1.0 (race fix): parse + swap the table UNDER engineMtx — the
     // hook thread reads g_macros through the resolver inside
     // engine.process(), which always runs under this lock. The FILE WRITE
@@ -1720,25 +2165,35 @@ void settingsFromControls() {
     {
         std::lock_guard<std::mutex> lk(g.engineMtx);
         if (edit != nullptr) { applyMacrosText(macroText); }
-        g.options.inputMethod = telex ? InputMethod::Telex
-                              : vni   ? InputMethod::Vni
-                              :         InputMethod::SimpleTelex;
-        g.options.codeTable = (codeTableSel >= 0 && codeTableSel <= 4)
-            ? static_cast<CodeTable>(codeTableSel) : CodeTable::Unicode;
-        g.options.useMacro                 = ::IsDlgButtonChecked(g.hSettings, IDC_CHK_MACRO) == BST_CHECKED;
-        g.options.checkSpelling            = ::IsDlgButtonChecked(g.hSettings, IDC_CHK_SPELL) == BST_CHECKED;
-        g.options.restoreIfWrongSpelling   = ::IsDlgButtonChecked(g.hSettings, IDC_CHK_RESTORE) == BST_CHECKED;
-        g.options.upperCaseFirstChar       = ::IsDlgButtonChecked(g.hSettings, IDC_CHK_UPPER) == BST_CHECKED;
-        g.options.useModernOrthography     = ::IsDlgButtonChecked(g.hSettings, IDC_CHK_MODERN) == BST_CHECKED;
-        g.options.quickTelex               = ::IsDlgButtonChecked(g.hSettings, IDC_CHK_QUICK) == BST_CHECKED;
-        g.exclIde                          = ::IsDlgButtonChecked(g.hSettings, IDC_CHK_EXCLUDE_IDE) == BST_CHECKED;
-        g.exclGame                         = ::IsDlgButtonChecked(g.hSettings, IDC_CHK_EXCLUDE_GAME) == BST_CHECKED;
-        g.exclShell                        = ::IsDlgButtonChecked(g.hSettings, IDC_CHK_EXCLUDE_SHELL) == BST_CHECKED;
-        const bool outAuto = (::SendMessageW(::GetDlgItem(g.hSettings, IDC_RADIO_OUT_AUTO),
-                                             BM_GETCHECK, 0, 0) == BST_CHECKED);
-        const bool outTsf  = (::SendMessageW(::GetDlgItem(g.hSettings, IDC_RADIO_OUT_TSF),
-                                             BM_GETCHECK, 0, 0) == BST_CHECKED);
-        g.outputMode.store(outAuto ? 0 : outTsf ? 1 : 2, std::memory_order_relaxed);
+        // v1.1.2-r2: radio/combo groups follow the same fail-safe rule — the
+        // assignment only happens when its controls actually exist; a null
+        // HWND would otherwise fall through to the LAST enum member
+        // (SimpleTelex / CP1258 / SendInput) on a half-built dialog.
+        if (hasTelexCtl) {
+            g.options.inputMethod = telex ? InputMethod::Telex
+                                  : vni   ? InputMethod::Vni
+                                  :         InputMethod::SimpleTelex;
+        }
+        if (hasComboCtl) {
+            g.options.codeTable = (codeTableSel >= 0 && codeTableSel <= 4)
+                ? static_cast<CodeTable>(codeTableSel) : CodeTable::Unicode;
+        }
+        // v1.1.3: every value below was read ABOVE the lock (fail-safe
+        // dlgChecked fallbacks — a missing control can never silently turn
+        // an option off); only the assignments remain in the critical section.
+        g.options.useMacro                 = chkMacro;
+        g.options.digitsAreLiteral         = chkDigits;
+        g.options.checkSpelling            = chkSpell;
+        g.options.restoreIfWrongSpelling   = chkRestore;
+        g.options.upperCaseFirstChar       = chkUpper;
+        g.options.useModernOrthography     = chkModern;
+        g.options.quickTelex               = chkQuick;
+        g.exclIde                          = chkExclIde;
+        g.exclGame                         = chkExclGame;
+        g.exclShell                        = chkExclShl;
+        if (outAutoCtl != nullptr) {
+            g.outputMode.store(outAuto ? 0 : outTsf ? 1 : 2, std::memory_order_relaxed);
+        }
         g.engine.setOptions(g.options);
         g.engine.startNewSession();
         g.monitor.setExcludeIde(g.exclIde);
@@ -1761,6 +2216,7 @@ void settingsToControls() {
     ::SendMessageW(::GetDlgItem(g.hSettings, IDC_COMBO_CODETABLE), CB_SETCURSEL,
                    static_cast<WPARAM>(g.options.codeTable), 0);
     ::CheckDlgButton(g.hSettings, IDC_CHK_MACRO,   g.options.useMacro ? BST_CHECKED : BST_UNCHECKED);
+    ::CheckDlgButton(g.hSettings, IDC_CHK_DIGITS,  g.options.digitsAreLiteral ? BST_CHECKED : BST_UNCHECKED);
     ::CheckDlgButton(g.hSettings, IDC_CHK_SPELL,   g.options.checkSpelling ? BST_CHECKED : BST_UNCHECKED);
     ::CheckDlgButton(g.hSettings, IDC_CHK_RESTORE, g.options.restoreIfWrongSpelling ? BST_CHECKED : BST_UNCHECKED);
     ::CheckDlgButton(g.hSettings, IDC_CHK_UPPER,   g.options.upperCaseFirstChar ? BST_CHECKED : BST_UNCHECKED);
@@ -1784,7 +2240,8 @@ void settingsToControls() {
                      g.engineEnabled.load(std::memory_order_relaxed)
                          ? L"Bộ gõ: ĐANG BẬT — bấm để TẮT"
                          : L"Bộ gõ: ĐANG TẮT — bấm để BẬT");
-    showTab(0);
+    updateHeaderStatus();
+    showTab(g_settingsOpenTab);
 }
 
 void showTab(int tab) {
@@ -1792,12 +2249,19 @@ void showTab(int tab) {
     // toggle visibility so only the active tab's controls are shown.
     // (v3.0 bugfix: labels previously had no IDs and were never hidden —
     //  all three tabs' labels were drawn overlapping each other.)
+    // v1.1.2: the header (icon/title/status) and the bottom button row are
+    // NOT tab-assigned — they are always visible chrome.
     static constexpr int kTab0[] = {
-        IDC_STAT_METHOD, IDC_STAT_CODETABLE, IDC_STAT_OUT_LAB, IDC_STAT_OUT_NOTE,
-        IDC_RADIO_TELEX, IDC_RADIO_VNI, IDC_RADIO_SIMPLETELEX,
+        IDC_GRP_METHOD, IDC_RADIO_TELEX, IDC_RADIO_VNI, IDC_RADIO_SIMPLETELEX,
+        IDC_STAT_METHOD_HINT,
+        IDC_STAT_CODETABLE, IDC_COMBO_CODETABLE,
+        IDC_GRP_OPTIONS,
+        IDC_CHK_DIGITS, IDC_CHK_SPELL, IDC_CHK_RESTORE, IDC_CHK_QUICK,
+        IDC_CHK_MODERN, IDC_CHK_UPPER, IDC_CHK_MACRO,
+        IDC_GRP_OUTPUT,
         IDC_RADIO_OUT_AUTO, IDC_RADIO_OUT_TSF, IDC_RADIO_OUT_SEND,
-        IDC_COMBO_CODETABLE, IDC_CHK_MACRO, IDC_CHK_SPELL, IDC_CHK_RESTORE,
-        IDC_CHK_UPPER, IDC_CHK_MODERN, IDC_CHK_QUICK, 0
+        IDC_STAT_OUT_NOTE,
+        0
     };
     static constexpr int kTab1[] = {
         IDC_STAT_APPS_TITLE, IDC_STAT_APPS_NOTE,
@@ -1817,16 +2281,29 @@ void showTab(int tab) {
         IDC_STAT_TSFLAB, IDC_STAT_TSFV,
         IDC_STAT_APPLAB, IDC_STAT_APPV, 0
     };
+    // v1.1.2: tab 4 — Information (introduces the app inside the app).
+    static constexpr int kTab4[] = {
+        IDC_STAT_INFO_NAME, IDC_STAT_INFO_STATUS, IDC_STAT_INFO_ABOUT,
+        IDC_STAT_INFO_FEAT, IDC_STAT_INFO_GUIDE, IDC_STAT_INFO_LICENSE,
+        IDC_LNK_REPO, 0
+    };
     if (!g.hSettings) { return; }
     for (const int* p = kTab0; *p; ++p) { ::ShowWindow(::GetDlgItem(g.hSettings, *p), tab == 0 ? SW_SHOW : SW_HIDE); }
     for (const int* p = kTab1; *p; ++p) { ::ShowWindow(::GetDlgItem(g.hSettings, *p), tab == 1 ? SW_SHOW : SW_HIDE); }
     for (const int* p = kTab2; *p; ++p) { ::ShowWindow(::GetDlgItem(g.hSettings, *p), tab == 2 ? SW_SHOW : SW_HIDE); }
     for (const int* p = kTab3; *p; ++p) { ::ShowWindow(::GetDlgItem(g.hSettings, *p), tab == 3 ? SW_SHOW : SW_HIDE); }
+    for (const int* p = kTab4; *p; ++p) { ::ShowWindow(::GetDlgItem(g.hSettings, *p), tab == 4 ? SW_SHOW : SW_HIDE); }
 }
 
 LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
         case WM_CREATE: {
+            // v1.1.3 exception safety: the body allocates heavily (macro
+            // text parse, control setup, fonts). A bad_alloc unwinding
+            // through CreateWindowExW's C frames is UB and left
+            // g.hSettings dangling at a never-created HWND. Fail the
+            // creation cleanly: catch, return -1, publish only on success.
+            try {
             g.hSettings = hwnd;
             // v1.1.0 — DPI-relative layout. All coordinates below are
             // 96-dpi logical pixels; S() scales them to the actual monitor.
@@ -1835,9 +2312,9 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 return ::MulDiv(px, static_cast<int>(g_settingsDpi), 96);
             };
             // Resize the frame so the client area matches the scaled layout
-            // (the fixed 480x470 creation size is only a placeholder).
+            // (the fixed creation size below is only a placeholder).
             {
-                RECT rc{0, 0, S(520), S(560)};
+                RECT rc{0, 0, S(560), S(608)};
                 ::AdjustWindowRect(&rc, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU |
                                         WS_MINIMIZEBOX, FALSE);
                 ::SetWindowPos(hwnd, nullptr, 0, 0, rc.right - rc.left,
@@ -1845,167 +2322,256 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                                SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
             }
 
-            // Tab control (4 tabs)
+            // ---- v1.1.2 header: icon + name + live status (always visible) ----
+            {
+                HWND icon = mkCtl(hwnd, L"STATIC", L"",
+                                  WS_CHILD | WS_VISIBLE | SS_ICON,
+                                  S(14), S(10), S(34), S(34),
+                                  reinterpret_cast<HMENU>(IDC_STAT_HEAD_ICON));
+                if (g.hIconOn) {
+                    ::SendMessageW(icon, STM_SETIMAGE, IMAGE_ICON,
+                                   reinterpret_cast<LPARAM>(g.hIconOn));
+                }
+            }
+            {
+                HWND t = mkCtl(hwnd, L"STATIC", kAppTitle,
+                               WS_CHILD | WS_VISIBLE, S(58), S(12), S(360), S(28),
+                               reinterpret_cast<HMENU>(IDC_STAT_HEAD_TITLE));
+                ::SendMessageW(t, WM_SETFONT, reinterpret_cast<WPARAM>(uiFontTitle()), TRUE);
+            }
+            mkCtl(hwnd, L"STATIC", L"",
+                  WS_CHILD | WS_VISIBLE, S(58), S(42), S(490), S(18),
+                  reinterpret_cast<HMENU>(IDC_STAT_HEAD_STATUS));
+
+            // Tab control (5 tabs — v1.1.2 adds “Thông tin”)
             HWND tab = mkCtl(hwnd, WC_TABCONTROLW, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                             S(12), S(12), S(496), S(430), reinterpret_cast<HMENU>(IDC_TAB));
+                             S(12), S(66), S(536), S(492), reinterpret_cast<HMENU>(IDC_TAB));
             TCITEMW item{};
             item.mask = TCIF_TEXT;
             wchar_t t0[] = L"Bàn phím";
             wchar_t t1[] = L"Ứng dụng";
             wchar_t t2[] = L"Gõ tắt";
             wchar_t t3[] = L"Chẩn đoán";
+            wchar_t t4[] = L"Thông tin";
             item.pszText = t0; ::SendMessageW(tab, TCM_INSERTITEMW, 0, reinterpret_cast<LPARAM>(&item));
             item.pszText = t1; ::SendMessageW(tab, TCM_INSERTITEMW, 1, reinterpret_cast<LPARAM>(&item));
             item.pszText = t2; ::SendMessageW(tab, TCM_INSERTITEMW, 2, reinterpret_cast<LPARAM>(&item));
             item.pszText = t3; ::SendMessageW(tab, TCM_INSERTITEMW, 3, reinterpret_cast<LPARAM>(&item));
+            item.pszText = t4; ::SendMessageW(tab, TCM_INSERTITEMW, 4, reinterpret_cast<LPARAM>(&item));
 
-            // ---- tab 0: Bàn phím ----
-            mkCtl(hwnd, L"STATIC", L"Phương thức gõ:", WS_CHILD | WS_VISIBLE, S(28), S(52), S(110), S(18),
-                  reinterpret_cast<HMENU>(IDC_STAT_METHOD));
+            // ---- tab 0: Bàn phím (v1.1.2: grouped layout + digits option) ----
+            mkCtl(hwnd, L"BUTTON", L"Phương thức gõ",
+                  WS_CHILD | WS_VISIBLE | BS_GROUPBOX, S(24), S(86), S(494), S(76),
+                  reinterpret_cast<HMENU>(IDC_GRP_METHOD));
             mkCtl(hwnd, L"BUTTON", L"Telex", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
-                  S(150), S(50), S(80), S(20), reinterpret_cast<HMENU>(IDC_RADIO_TELEX));
+                  S(44), S(108), S(74), S(20), reinterpret_cast<HMENU>(IDC_RADIO_TELEX));
             mkCtl(hwnd, L"BUTTON", L"VNI", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
-                  S(235), S(50), S(80), S(20), reinterpret_cast<HMENU>(IDC_RADIO_VNI));
+                  S(128), S(108), S(58), S(20), reinterpret_cast<HMENU>(IDC_RADIO_VNI));
             mkCtl(hwnd, L"BUTTON", L"Simple Telex", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
-                  S(320), S(50), S(130), S(20), reinterpret_cast<HMENU>(IDC_RADIO_SIMPLETELEX));
-            mkCtl(hwnd, L"STATIC", L"Bảng mã:", WS_CHILD | WS_VISIBLE, S(28), S(82), S(110), S(18),
+                  S(196), S(108), S(112), S(20), reinterpret_cast<HMENU>(IDC_RADIO_SIMPLETELEX));
+            mkCtl(hwnd, L"STATIC",
+                  L"Telex & Simple Telex gõ dấu bằng chữ (as → á). VNI gõ dấu bằng số "
+                  L"(a1 → á) — chỉ khi tùy chọn chữ số bên dưới đang TẮT.",
+                  WS_CHILD | WS_VISIBLE, S(44), S(132), S(460), S(26),
+                  reinterpret_cast<HMENU>(IDC_STAT_METHOD_HINT));
+            mkCtl(hwnd, L"STATIC", L"Bảng mã:", WS_CHILD | WS_VISIBLE, S(28), S(172), S(90), S(18),
                   reinterpret_cast<HMENU>(IDC_STAT_CODETABLE));
             HWND combo = mkCtl(hwnd, WC_COMBOBOXW, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP |
-                               CBS_DROPDOWNLIST, S(150), S(80), S(200), S(200), reinterpret_cast<HMENU>(IDC_COMBO_CODETABLE));
+                               CBS_DROPDOWNLIST, S(128), S(168), S(210), S(200), reinterpret_cast<HMENU>(IDC_COMBO_CODETABLE));
             for (const wchar_t* s : {L"Unicode", L"TCVN3 (ABC)", L"VNI Windows",
                                      L"Unicode tổ hợp", L"CP 1258"}) {
                 ::SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(s));
             }
+            mkCtl(hwnd, L"BUTTON", L"Tùy chọn gõ",
+                  WS_CHILD | WS_VISIBLE | BS_GROUPBOX, S(24), S(196), S(494), S(180),
+                  reinterpret_cast<HMENU>(IDC_GRP_OPTIONS));
             const wchar_t* kOpts[] = {
-                L"Gõ tắt (macro) — xem tab Gõ tắt",
+                L"Số 0–9 luôn là chữ số — không dùng số để gõ dấu tiếng Việt (VNI)",
                 L"Kiểm tra chính tả",
-                L"Tự sửa từ gõ sai",
+                L"Tự sửa từ gõ sai — khôi phục phím gốc khi từ vô nghĩa",
+                L"Telex nhanh (cc→ch, gg→gi, kk→kh…)",
+                L"Chính tả mới (oà / uý thay vì òa / úy)",
                 L"Viết hoa đầu câu",
-                L"Chính tả mới (oà / uý)",
-                L"Telex nhanh (cc→ch, gg→gi)",
+                L"Gõ tắt (macro) — quản lý từ gọn trong tab Gõ tắt",
             };
-            const int kIds[] = {IDC_CHK_MACRO, IDC_CHK_SPELL, IDC_CHK_RESTORE,
-                                IDC_CHK_UPPER, IDC_CHK_MODERN, IDC_CHK_QUICK};
-            for (int i = 0; i < 6; ++i) {
+            const int kIds[] = {IDC_CHK_DIGITS, IDC_CHK_SPELL, IDC_CHK_RESTORE,
+                                IDC_CHK_QUICK, IDC_CHK_MODERN, IDC_CHK_UPPER,
+                                IDC_CHK_MACRO};
+            for (int i = 0; i < 7; ++i) {
                 // INT_PTR round-trip: reinterpret_cast<HMENU>(int) directly is
                 // a 32→64-bit pointer widening that MSVC flags as C4312 under
                 // /W4 /WX (HMENU is pointer-sized). Casting through INT_PTR is
                 // the canonical control-id idiom and is warning-free.
                 mkCtl(hwnd, L"BUTTON", kOpts[i], WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-                      S(28), S(118) + i * S(26), S(380), S(20),
+                      S(44), S(218) + i * S(22), S(460), S(20),
                       reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIds[i])));
             }
 
-            // Chế độ xuất — v1.1.0: three radios on TWO rows (the third one
-            // was previously clipped outside the window edge at every DPI).
-            mkCtl(hwnd, L"STATIC", L"Chế độ xuất:", WS_CHILD | WS_VISIBLE, S(28), S(290), S(110), S(18),
-                  reinterpret_cast<HMENU>(IDC_STAT_OUT_LAB));
+            // Chế độ xuất — v1.1.2: grouped, unchanged semantics.
+            mkCtl(hwnd, L"BUTTON", L"Chế độ xuất",
+                  WS_CHILD | WS_VISIBLE | BS_GROUPBOX, S(24), S(386), S(494), S(160),
+                  reinterpret_cast<HMENU>(IDC_GRP_OUTPUT));
             mkCtl(hwnd, L"BUTTON", L"Auto", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
-                  S(150), S(288), S(60), S(20), reinterpret_cast<HMENU>(IDC_RADIO_OUT_AUTO));
+                  S(44), S(408), S(66), S(20), reinterpret_cast<HMENU>(IDC_RADIO_OUT_AUTO));
             mkCtl(hwnd, L"BUTTON", L"Luôn TSF (chống nháy)", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
-                  S(215), S(288), S(180), S(20), reinterpret_cast<HMENU>(IDC_RADIO_OUT_TSF));
+                  S(118), S(408), S(180), S(20), reinterpret_cast<HMENU>(IDC_RADIO_OUT_TSF));
             mkCtl(hwnd, L"BUTTON", L"Luôn SendInput (nhanh nhất)", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
-                  S(150), S(312), S(240), S(20), reinterpret_cast<HMENU>(IDC_RADIO_OUT_SEND));
+                  S(44), S(432), S(240), S(20), reinterpret_cast<HMENU>(IDC_RADIO_OUT_SEND));
             mkCtl(hwnd, L"STATIC",
                   L"Auto: TSF cho trình duyệt & Office (không nháy chữ), SendInput trực tiếp "
-                  L"cho các ứng dụng khác (nhanh nhất, không qua thread phụ).",
-                  WS_CHILD | WS_VISIBLE, S(28), S(340), S(460), S(46),
+                  L"cho các ứng dụng khác (nhanh nhất, không qua thread phụ). "
+                  L"Khuyến nghị: giữ Auto — ứng dụng tự chọn đường xuất tốt nhất.",
+                  WS_CHILD | WS_VISIBLE, S(44), S(458), S(460), S(62),
                   reinterpret_cast<HMENU>(IDC_STAT_OUT_NOTE));
 
             // ---- tab 1: Ứng dụng ----
             mkCtl(hwnd, L"STATIC", L"Tự động tắt bộ gõ khi cửa sổ đang chạy là:",
-                  WS_CHILD | WS_VISIBLE, S(28), S(52), S(460), S(18),
+                  WS_CHILD | WS_VISIBLE, S(28), S(96), S(470), S(18),
                   reinterpret_cast<HMENU>(IDC_STAT_APPS_TITLE));
             mkCtl(hwnd, L"BUTTON", L"IDE / Editor (VS Code, Visual Studio, CLion…)",
-                  WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, S(28), S(80), S(460), S(20),
+                  WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, S(28), S(126), S(480), S(20),
                   reinterpret_cast<HMENU>(IDC_CHK_EXCLUDE_IDE));
             mkCtl(hwnd, L"BUTTON", L"Trò chơi toàn màn hình (DirectX / Vulkan / OpenGL)",
-                  WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, S(28), S(104), S(460), S(20),
+                  WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, S(28), S(152), S(480), S(20),
                   reinterpret_cast<HMENU>(IDC_CHK_EXCLUDE_GAME));
             mkCtl(hwnd, L"BUTTON", L"Windows Shell (Explorer, Terminal, CMD)",
-                  WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, S(28), S(128), S(460), S(20),
+                  WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, S(28), S(178), S(480), S(20),
                   reinterpret_cast<HMENU>(IDC_CHK_EXCLUDE_SHELL));
             mkCtl(hwnd, L"STATIC",
                   L"Lưu ý: tắt loại trừ Shell để gõ tên file tiếng Việt trong "
                   L"Explorer. Việc phát hiện cửa sổ là theo sự kiện (WinEvent), "
-                  L"không tốn CPU khi rảnh.",
-                  WS_CHILD | WS_VISIBLE, S(28), S(160), S(460), S(60),
+                  L"không tốn CPU khi rảnh. Khi bộ gõ tự tắt, trạng thái hiện ngay "
+                  L"trên dòng đầu cửa sổ và tooltip khay hệ thống.",
+                  WS_CHILD | WS_VISIBLE, S(28), S(210), S(480), S(64),
                   reinterpret_cast<HMENU>(IDC_STAT_APPS_NOTE));
 
             // ---- tab 2: Gõ tắt (v1.1.0 — the macro feature is now real) ----
             mkCtl(hwnd, L"STATIC",
                   L"Mỗi dòng một từ gọn:  từgọn=kết quả   (VD: cn=chào, hcm=Hồ Chí Minh). "
                   L"Dòng # là ghi chú. Gõ từ gọn rồi nhấn Space để mở rộng.",
-                  WS_CHILD | WS_VISIBLE, S(28), S(52), S(460), S(40),
+                  WS_CHILD | WS_VISIBLE, S(28), S(96), S(480), S(40),
                   reinterpret_cast<HMENU>(IDC_STAT_MACRO_HINT));
             mkCtl(hwnd, L"EDIT", L"",
                   WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | WS_BORDER |
                   ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN,
-                  S(28), S(98), S(460), S(300),
+                  S(28), S(142), S(480), S(396),
                   reinterpret_cast<HMENU>(IDC_EDIT_MACRO));
 
             // ---- tab 3: Chẩn đoán ----
             mkCtl(hwnd, L"STATIC", L"Độ trễ đỉnh hook → xử lý (µs):", WS_CHILD | WS_VISIBLE,
-                  S(28), S(52), S(220), S(18), reinterpret_cast<HMENU>(IDC_STAT_LATLAB));
-            mkCtl(hwnd, L"STATIC", L"—", WS_CHILD | WS_VISIBLE, S(260), S(52), S(220), S(18),
+                  S(28), S(96), S(230), S(18), reinterpret_cast<HMENU>(IDC_STAT_LATLAB));
+            mkCtl(hwnd, L"STATIC", L"—", WS_CHILD | WS_VISIBLE, S(270), S(96), S(230), S(18),
                   reinterpret_cast<HMENU>(IDC_STAT_LATVAL));
             mkCtl(hwnd, L"STATIC", L"Độ trễ trung bình (µs):", WS_CHILD | WS_VISIBLE,
-                  S(28), S(78), S(220), S(18), reinterpret_cast<HMENU>(IDC_STAT_AVGLAB));
-            mkCtl(hwnd, L"STATIC", L"—", WS_CHILD | WS_VISIBLE, S(260), S(78), S(220), S(18),
+                  S(28), S(122), S(230), S(18), reinterpret_cast<HMENU>(IDC_STAT_AVGLAB));
+            mkCtl(hwnd, L"STATIC", L"—", WS_CHILD | WS_VISIBLE, S(270), S(122), S(230), S(18),
                   reinterpret_cast<HMENU>(IDC_STAT_AVGVAL));
             mkCtl(hwnd, L"STATIC", L"Sự kiện bàn phím đã xử lý:", WS_CHILD | WS_VISIBLE,
-                  S(28), S(104), S(220), S(18), reinterpret_cast<HMENU>(IDC_STAT_PUSHLAB));
-            mkCtl(hwnd, L"STATIC", L"0", WS_CHILD | WS_VISIBLE, S(260), S(104), S(220), S(18),
+                  S(28), S(148), S(230), S(18), reinterpret_cast<HMENU>(IDC_STAT_PUSHLAB));
+            mkCtl(hwnd, L"STATIC", L"0", WS_CHILD | WS_VISIBLE, S(270), S(148), S(230), S(18),
                   reinterpret_cast<HMENU>(IDC_STAT_PUSHV));
             mkCtl(hwnd, L"STATIC", L"Sự kiện bị bỏ (hàng đợi đầy):", WS_CHILD | WS_VISIBLE,
-                  S(28), S(130), S(220), S(18), reinterpret_cast<HMENU>(IDC_STAT_DROPLAB));
-            mkCtl(hwnd, L"STATIC", L"0", WS_CHILD | WS_VISIBLE, S(260), S(130), S(220), S(18),
+                  S(28), S(174), S(230), S(18), reinterpret_cast<HMENU>(IDC_STAT_DROPLAB));
+            mkCtl(hwnd, L"STATIC", L"0", WS_CHILD | WS_VISIBLE, S(270), S(174), S(230), S(18),
                   reinterpret_cast<HMENU>(IDC_STAT_DROPV));
             mkCtl(hwnd, L"STATIC", L"Tốc độ gõ (ký tự/phút, ≈ WPM × 5):", WS_CHILD | WS_VISIBLE,
-                  S(28), S(156), S(230), S(18), reinterpret_cast<HMENU>(IDC_STAT_WPMLAB));
-            mkCtl(hwnd, L"STATIC", L"—", WS_CHILD | WS_VISIBLE, S(260), S(156), S(220), S(18),
+                  S(28), S(200), S(240), S(18), reinterpret_cast<HMENU>(IDC_STAT_WPMLAB));
+            mkCtl(hwnd, L"STATIC", L"—", WS_CHILD | WS_VISIBLE, S(270), S(200), S(230), S(18),
                   reinterpret_cast<HMENU>(IDC_STAT_WPMVAL));
             // v1.1.0 telemetry: barrier timeouts, self-healing reinstalls, TSF
             // slow commits, and the live per-app state.
             mkCtl(hwnd, L"STATIC", L"Chờ hàng đợi quá hạn (barrier):", WS_CHILD | WS_VISIBLE,
-                  S(28), S(182), S(220), S(18), reinterpret_cast<HMENU>(IDC_STAT_BARRIERLAB));
-            mkCtl(hwnd, L"STATIC", L"0", WS_CHILD | WS_VISIBLE, S(260), S(182), S(220), S(18),
+                  S(28), S(226), S(230), S(18), reinterpret_cast<HMENU>(IDC_STAT_BARRIERLAB));
+            mkCtl(hwnd, L"STATIC", L"0", WS_CHILD | WS_VISIBLE, S(270), S(226), S(230), S(18),
                   reinterpret_cast<HMENU>(IDC_STAT_BARRIERV));
             mkCtl(hwnd, L"STATIC", L"Lần tự phục hồi hook:", WS_CHILD | WS_VISIBLE,
-                  S(28), S(208), S(220), S(18), reinterpret_cast<HMENU>(IDC_STAT_REINSTLAB));
-            mkCtl(hwnd, L"STATIC", L"0", WS_CHILD | WS_VISIBLE, S(260), S(208), S(220), S(18),
+                  S(28), S(252), S(230), S(18), reinterpret_cast<HMENU>(IDC_STAT_REINSTLAB));
+            mkCtl(hwnd, L"STATIC", L"0", WS_CHILD | WS_VISIBLE, S(270), S(252), S(230), S(18),
                   reinterpret_cast<HMENU>(IDC_STAT_REINSTV));
             mkCtl(hwnd, L"STATIC", L"Commit TSF chậm (đã hạ cấp):", WS_CHILD | WS_VISIBLE,
-                  S(28), S(234), S(220), S(18), reinterpret_cast<HMENU>(IDC_STAT_TSFLAB));
-            mkCtl(hwnd, L"STATIC", L"0", WS_CHILD | WS_VISIBLE, S(260), S(234), S(220), S(18),
+                  S(28), S(278), S(230), S(18), reinterpret_cast<HMENU>(IDC_STAT_TSFLAB));
+            mkCtl(hwnd, L"STATIC", L"0", WS_CHILD | WS_VISIBLE, S(270), S(278), S(230), S(18),
                   reinterpret_cast<HMENU>(IDC_STAT_TSFV));
             mkCtl(hwnd, L"STATIC", L"Ứng dụng hiện tại:", WS_CHILD | WS_VISIBLE,
-                  S(28), S(260), S(220), S(18), reinterpret_cast<HMENU>(IDC_STAT_APPLAB));
-            mkCtl(hwnd, L"STATIC", L"—", WS_CHILD | WS_VISIBLE, S(260), S(260), S(220), S(18),
+                  S(28), S(304), S(230), S(18), reinterpret_cast<HMENU>(IDC_STAT_APPLAB));
+            mkCtl(hwnd, L"STATIC", L"—", WS_CHILD | WS_VISIBLE, S(270), S(304), S(230), S(18),
                   reinterpret_cast<HMENU>(IDC_STAT_APPV));
             mkCtl(hwnd, L"STATIC",
                   L"Kiến trúc: hàng đợi lock-free SPSC; hook thread không bao giờ bị chặn; "
                   L"quyết định bộ gõ chạy ngay trên hook thread; xuất qua TSF hoặc SendInput "
                   L"trực tiếp (không Backspace giả, không clipboard). Đỉnh độ trễ tính từ "
                   L"lúc mở hộp thoại.",
-                  WS_CHILD | WS_VISIBLE, S(28), S(292), S(460), S(100),
+                  WS_CHILD | WS_VISIBLE, S(28), S(338), S(480), S(90),
                   reinterpret_cast<HMENU>(IDC_STAT_DESC));
+
+            // ---- tab 4: Thông tin (v1.1.2 — in-app introduction) ----
+            // v1.1.2-r3: the tagline merged into the about paragraph; its
+            // slot is now the LIVE DIAGNOSTICS block (running build + state
+            // + conflict verdict — the "why do my digits still convert"
+            // answer, refreshed every timer tick).
+            {
+                HWND n = mkCtl(hwnd, L"STATIC", kAppTitle,
+                               WS_CHILD | WS_VISIBLE, S(28), S(96), S(400), S(34),
+                               reinterpret_cast<HMENU>(IDC_STAT_INFO_NAME));
+                ::SendMessageW(n, WM_SETFONT, reinterpret_cast<WPARAM>(uiFontTitle()), TRUE);
+            }
+            mkCtl(hwnd, L"STATIC", L"",
+                  WS_CHILD | WS_VISIBLE, S(28), S(134), S(500), S(64),
+                  reinterpret_cast<HMENU>(IDC_STAT_INFO_STATUS));
+            mkCtl(hwnd, L"STATIC",
+                  L"Bộ gõ tiếng Việt hiện đại cho Windows — nhanh, chính xác, "
+                  L"ổn định. KieeKey chạy nền trong khay, giúp gõ tiếng Việt có "
+                  L"dấu trong mọi ứng dụng (Word, Chrome, VS Code, game…). Lõi "
+                  L"gõ hiện đại hoá từ OpenKey: quyết định gõ chạy ngay trên "
+                  L"hook thread, xuất chữ trực tiếp qua TSF/SendInput — không "
+                  L"clipboard, không chữ nháy. Bật/tắt ngay trong ứng dụng.",
+                  WS_CHILD | WS_VISIBLE, S(28), S(206), S(500), S(88),
+                  reinterpret_cast<HMENU>(IDC_STAT_INFO_ABOUT));
+            mkCtl(hwnd, L"STATIC",
+                  L"Tính năng chính:\n"
+                  L"• Ba phương thức gõ Telex · VNI · Simple Telex và 5 bảng mã phổ biến\n"
+                  L"• Số 0–9 luôn gõ ra chữ số — hết cảnh gõ số bị thành dấu tiếng Việt\n"
+                  L"• Gõ tắt (macro) nhiều dòng, tự lưu vào %APPDATA%\\KieeKey\\macros.txt\n"
+                  L"• Tự tắt trong IDE và game toàn màn hình để không vướng thao tác\n"
+                  L"• Chống nháy chữ qua TSF cho trình duyệt & Office; SendInput siêu nhanh\n"
+                  L"• F9 chuyển kiểu đặt dấu cho từ đang gõ (oà ↔ òa) — giữ nguyên từ đã gõ",
+                  WS_CHILD | WS_VISIBLE, S(28), S(302), S(500), S(112),
+                  reinterpret_cast<HMENU>(IDC_STAT_INFO_FEAT));
+            mkCtl(hwnd, L"STATIC",
+                  L"Hướng dẫn nhanh:\n"
+                  L"• Bật/tắt: nhấp trái (hoặc phải) biểu tượng khay, hoặc nút lớn phía dưới\n"
+                  L"• Đổi phương thức gõ: trình đơn khay → Phương thức gõ, hoặc tab Bàn phím\n"
+                  L"• Mọi thay đổi được lưu ngay — thoát và mở lại luôn giữ nguyên cấu hình",
+                  WS_CHILD | WS_VISIBLE, S(28), S(422), S(500), S(72),
+                  reinterpret_cast<HMENU>(IDC_STAT_INFO_GUIDE));
+            mkCtl(hwnd, L"STATIC",
+                  L"Nguồn gốc & bản quyền: KieeKey phát triển từ OpenKey © 2019 Tuyen Mai, "
+                  L"phát hành theo GNU GPL v3. Phần hiện đại hoá © 2026 coderunknow.",
+                  WS_CHILD | WS_VISIBLE, S(28), S(502), S(500), S(32),
+                  reinterpret_cast<HMENU>(IDC_STAT_INFO_LICENSE));
+            mkCtl(hwnd, WC_LINK,
+                  L"<A HREF=\"https://github.com/coderunknow/KieeKey\">Mã nguồn · tài liệu · cập nhật: github.com/coderunknow/KieeKey</A>",
+                  WS_CHILD | WS_VISIBLE | WS_TABSTOP, S(28), S(538), S(500), S(20),
+                  reinterpret_cast<HMENU>(IDC_LNK_REPO));
 
             // ---- buttons ----
             // v1.1.1: the always-visible in-app ON/OFF switch (the removed
             // Ctrl+Shift hotkey's replacement). Lives on the button row so it
             // stays reachable from EVERY tab; the label mirrors the current
             // state and is refreshed by WM_TIMER every 500 ms.
-            mkCtl(hwnd, L"BUTTON", L"",
-                  WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-                  S(12), S(462), S(240), S(28),
-                  reinterpret_cast<HMENU>(IDC_BTN_TOGGLE));
+            {
+                HWND tg = mkCtl(hwnd, L"BUTTON", L"",
+                          WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+                          S(12), S(566), S(240), S(30),
+                          reinterpret_cast<HMENU>(IDC_BTN_TOGGLE));
+                ::SendMessageW(tg, WM_SETFONT, reinterpret_cast<WPARAM>(uiFontBold()), TRUE);
+            }
             mkCtl(hwnd, L"BUTTON", L"OK", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
-                  S(260), S(462), S(70), S(28), reinterpret_cast<HMENU>(IDOK));
+                  S(300), S(566), S(76), S(30), reinterpret_cast<HMENU>(IDOK));
             mkCtl(hwnd, L"BUTTON", L"Hủy", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                  S(338), S(462), S(70), S(28), reinterpret_cast<HMENU>(IDCANCEL));
+                  S(384), S(566), S(76), S(30), reinterpret_cast<HMENU>(IDCANCEL));
             mkCtl(hwnd, L"BUTTON", L"Áp dụng", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                  S(416), S(462), S(70), S(28), reinterpret_cast<HMENU>(IDC_BTN_APPLY));
+                  S(468), S(566), S(80), S(30), reinterpret_cast<HMENU>(IDC_BTN_APPLY));
 
             settingsToControls();
             // v1.1.0: the latency peak now reads "since the dialog opened"
@@ -2013,12 +2579,27 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             g.hook.resetPeakLatency();
             ::SetTimer(hwnd, 1, 500, nullptr);   // live telemetry
             return 0;
+            } catch (const std::bad_alloc&) {
+                g.hSettings = nullptr;
+                return -1;
+            } catch (...) {
+                g.hSettings = nullptr;
+                return -1;
+            }
         }
 
         case WM_NOTIFY: {
             const auto* nm = reinterpret_cast<const NMHDR*>(lParam);
             if (nm && nm->idFrom == IDC_TAB && nm->code == TCN_SELCHANGE) {
                 showTab(static_cast<int>(::SendMessageW(nm->hwndFrom, TCM_GETCURSEL, 0, 0)));
+            }
+            // v1.1.2: the Information tab's repository link (SysLink) — open
+            // the URL in the default browser.
+            if (nm && nm->idFrom == IDC_LNK_REPO &&
+                (nm->code == NM_CLICK || nm->code == NM_RETURN)) {
+                ::ShellExecuteW(hwnd, L"open",
+                                L"https://github.com/coderunknow/KieeKey",
+                                nullptr, nullptr, SW_SHOWNORMAL);
             }
             return 0;
         }
@@ -2043,11 +2624,32 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
             // v1.1.1: keep the always-visible on/off button in sync with the
             // engine state (it can also be flipped from the tray menu while
-            // this dialog is open).
-            ::SetWindowTextW(::GetDlgItem(hwnd, IDC_BTN_TOGGLE),
-                             g.engineEnabled.load(std::memory_order_relaxed)
-                                 ? L"Bộ gõ: ĐANG BẬT — bấm để TẮT"
-                                 : L"Bộ gõ: ĐANG TẮT — bấm để BẬT");
+            // this dialog is open). v1.1.2: the header status line follows.
+            const wchar_t* toggleLabel =
+                g.engineEnabled.load(std::memory_order_relaxed)
+                    ? L"Bộ gõ: ĐANG BẬT — bấm để TẮT"
+                    : L"Bộ gõ: ĐANG TẮT — bấm để BẬT";
+            {
+                HWND b = ::GetDlgItem(hwnd, IDC_BTN_TOGGLE);
+                wchar_t cur[64];
+                if (::GetWindowTextW(b, cur, 64) == 0 || std::wcscmp(cur, toggleLabel) != 0) {
+                    ::SetWindowTextW(b, toggleLabel);
+                }
+            }
+            updateHeaderStatus();
+
+            // v1.1.2-r3: the Information tab's live diagnostics block (the
+            // conflict verdict can change while the dialog is open — the
+            // user may quit EVKey right now).
+            {
+                static std::wstring s_lastDiag;
+                const std::wstring diag = infoDiagnosticsText();
+                if (diag != s_lastDiag) {
+                    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_STAT_INFO_STATUS),
+                                     diag.c_str());
+                    s_lastDiag = diag;
+                }
+            }
 
             // Latency: peak + EMA average.
             std::swprintf(buf, std::size(buf), L"%lld", static_cast<long long>(g.hook.peakLatencyUs()));
@@ -2160,6 +2762,51 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 }
 
 //===========================================================================
+// v1.1.2 — the single settings-window creation path (tray menu “Cài đặt…”,
+// “Thông tin & giới thiệu”, and the tray double-click all land here).
+// Selects the tab to open BEFORE creating the window: settingsToControls()
+// reads g_settingsOpenTab and shows exactly that tab (no post-create flicker).
+//===========================================================================
+void openSettingsDialog(int tab) {
+    // v1.1.2-r3: refresh the external-conflict scan on EVERY dialog open —
+    // the user may have quit/started EVKey since the last check, and the
+    // Information tab must show the current truth.
+    {
+        const ConflictScan cs = scanConflicts();
+        g.conflictWarning = cs.warning;
+        g.conflictDetail  = cs.detail;
+    }
+    if (g.hSettings) {
+        // Already open: just bring it up on the requested tab.
+        g_settingsOpenTab = tab;
+        const int cur = static_cast<int>(::SendMessageW(
+            ::GetDlgItem(g.hSettings, IDC_TAB), TCM_GETCURSEL, 0, 0));
+        if (cur != tab) {
+            ::SendMessageW(::GetDlgItem(g.hSettings, IDC_TAB), TCM_SETCURSEL,
+                           static_cast<WPARAM>(tab), 0);
+            showTab(tab);
+        }
+        ::SetForegroundWindow(g.hSettings);
+        return;
+    }
+    if (!g.hInst) { return; }
+    g_settingsOpenTab = tab;
+    const HWND created = ::CreateWindowExW(0, L"KieeKeySettings",
+                                    L"KieeKey — Cài đặt & Thông tin",
+                                    WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU |
+                                    WS_MINIMIZEBOX,
+                                    CW_USEDEFAULT, CW_USEDEFAULT, 572, 622,
+                                    nullptr, nullptr, g.hInst, nullptr);
+    // v1.1.3: publish the handle ONLY for a real window — a failed
+    // creation previously left g.hSettings dangling and every
+    // IsDialogMessageW/SetWindowTextW call targeting garbage.
+    if (created != nullptr) {
+        g.hSettings = created;
+        ::ShowWindow(g.hSettings, SW_SHOW);
+    }
+}
+
+//===========================================================================
 // Main (hidden) window
 //===========================================================================
 LRESULT CALLBACK mainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -2183,16 +2830,7 @@ LRESULT CALLBACK mainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         case WM_APP_TRAY:
             if (lParam == WM_LBUTTONDBLCLK) {
-                if (g.hSettings) { ::SetForegroundWindow(g.hSettings); }
-                else if (g.hInst) {
-                    g.hSettings = ::CreateWindowExW(0, L"KieeKeySettings",
-                                                    L"KieeKey — Cài đặt",
-                                                    WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU |
-                                                    WS_MINIMIZEBOX,
-                                                    CW_USEDEFAULT, CW_USEDEFAULT, 480, 470,
-                                                    nullptr, nullptr, g.hInst, nullptr);
-                    ::ShowWindow(g.hSettings, SW_SHOW);
-                }
+                openSettingsDialog(0);
             } else if (lParam == WM_RBUTTONUP || lParam == WM_CONTEXTMENU) {
                 showTrayMenu();
             }
@@ -2219,6 +2857,17 @@ LRESULT CALLBACK mainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 saveSettings();
                 g.hook.stop();      // consumer finalizer runs composer.detach()
                 g.monitor.stop();
+                // v1.1.3: end the process here. Previously the teardown left
+                // a LIVE tray icon over a DEAD IME (no hook, no restart path
+                // anywhere) if the session-end raced or was aborted after our
+                // TRUE — the "tray icon there but nothing types" trap. The
+                // session is ending; a clean quit is always correct.
+                NOTIFYICONDATAW nidEnd{};
+                nidEnd.cbSize = sizeof(nidEnd);
+                nidEnd.hWnd   = hwnd;
+                nidEnd.uID    = 1;
+                ::Shell_NotifyIconW(NIM_DELETE, &nidEnd);
+                ::PostQuitMessage(0);
             }
             return 0;
 
@@ -2381,6 +3030,15 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         return 2;
     }
 
+    // v1.1.2-r3: scan for external digit-conversion causes (other IMEs,
+    // Windows Vietnamese Telex/VNI layouts) BEFORE the welcome balloon so
+    // the balloon can carry the verdict.
+    {
+        const ConflictScan cs = scanConflicts();
+        g.conflictWarning = cs.warning;
+        g.conflictDetail  = cs.detail;
+    }
+
     addTrayIcon();
 
     // v3.5: serve second-instance wake signals (restore tray + balloon).
@@ -2397,7 +3055,11 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     // Message loop (IsDialogMessage gives the settings window Tab/Enter/Esc
     // navigation while it is open)
     MSG msg;
-    while (::GetMessageW(&msg, nullptr, 0, 0) > 0) {
+    // v1.1.3: GetMessage returns -1 on error — the classic `> 0` loop then
+    // fell into the FULL shutdown path on a transient error (IME gone, tray
+    // icon gone). Treat -1 as "skip this message, keep running".
+    BOOL gmRet = 0;
+    while ((gmRet = ::GetMessageW(&msg, nullptr, 0, 0)) > 0) {
         if (g.hSettings && ::IsDialogMessageW(g.hSettings, &msg)) { continue; }
         ::TranslateMessage(&msg);
         ::DispatchMessageW(&msg);

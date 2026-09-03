@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.1.1 - refactored and completed logic
+//   KieeKey v1.1.3 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.1.1 — MainWindow.xaml.cpp
+// KieeKey v1.1.3 — MainWindow.xaml.cpp
 // WinUI 3 settings surface. Owns the SAME production pipeline as the console
 // app (src/app/main.cpp): ModernKeyHook → TextEngine → TsfComposer, with
 // ProcessMonitor auto-exclusion. Toggling "Bật gõ tiếng Việt" starts/stops
@@ -67,22 +67,74 @@ MainWindow::MainWindow() {
 
     Title(L"KieeKey — Bộ gõ Tiếng Việt");
 
-    // ---- load persisted settings into the controls ----
+    // =====================================================================
+    // v1.1.2-r3 ROOT-CAUSE FIX (the "typing a number still produces a tone
+    // mark" report, WinUI 3 front-end). r1/r2 shipped the digits fix ONLY
+    // in the Win32 tray app:
+    //   * the engine here was DEFAULT-constructed — EngineOptions then meant
+    //     legacy VNI digit composition, so VNI users of this front-end kept
+    //     getting "digits → tone marks";
+    //   * the saved InputMethod/CodeTable never reached the engine either
+    //     (the combo's SelectionChanged fired while m_engine was still null).
+    // The engine is now created FROM the persisted options (including the
+    // digits policy + the same one-time self-heal migration as the Win32
+    // app — both front-ends share the registry key), and the UI controls are
+    // initialized afterwards under the m_uiInitializing guard.
+    // =====================================================================
+    ok::text::EngineOptions opts{};   // library default = digits are literal
+    bool exclIde = true, exclFullscreen = true, exclShell = false, smartSwitch = true;
     if (auto key = settingsKey(); key) {
         const DWORD method = key.getDword(L"InputMethod", 0);
-        if (method <= 2) { InputMethodBox().SelectedIndex(static_cast<int>(method)); }
+        if (method <= 2) { opts.inputMethod = static_cast<ok::text::InputMethod>(method); }
         const DWORD table = key.getDword(L"CodeTable", 0);
-        if (table <= 4) { CodeTableBox().SelectedIndex(static_cast<int>(table)); }
-        ModernOrthography().IsChecked(key.getDword(L"ModernOrthography", 0) != 0);
-        QuickTelex().IsChecked(key.getDword(L"QuickTelex", 0) != 0);
-        RestoreIfWrong().IsChecked(key.getDword(L"RestoreIfWrong", 1) != 0);
-        UpperCaseFirst().IsChecked(key.getDword(L"UpperCaseFirst", 0) != 0);
-        ExcludeIde().IsChecked(key.getDword(L"ExcludeIde", 1) != 0);
-        ExcludeFullscreen().IsChecked(key.getDword(L"ExcludeFullscreen", 1) != 0);
-        ExcludeShell().IsChecked(key.getDword(L"ExcludeShell", 0) != 0);
-        SmartSwitch().IsChecked(key.getDword(L"SmartSwitch", 1) != 0);
-        UseMacro().IsChecked(key.getDword(L"UseMacro", 1) != 0);
+        if (table <= 4) { opts.codeTable = static_cast<ok::text::CodeTable>(table); }
+        opts.useModernOrthography   = key.getDword(L"ModernOrthography", 0) != 0;
+        opts.quickTelex             = key.getDword(L"QuickTelex", 0) != 0;
+        opts.restoreIfWrongSpelling = key.getDword(L"RestoreIfWrong", 1) != 0;
+        opts.upperCaseFirstChar     = key.getDword(L"UpperCaseFirst", 0) != 0;
+        opts.useMacro               = key.getDword(L"UseMacro", 1) != 0;
+        exclIde         = key.getDword(L"ExcludeIde", 1) != 0;
+        exclFullscreen  = key.getDword(L"ExcludeFullscreen", 1) != 0;
+        exclShell       = key.getDword(L"ExcludeShell", 0) != 0;
+        smartSwitch     = key.getDword(L"SmartSwitch", 1) != 0;
+        // v1.1.2-r3 ONE-TIME SETTINGS MIGRATION — the exact Win32 contract:
+        // marker < 2 (fresh machine, or any install touched before r2)
+        // re-asserts the shipping digits policy ON and persists it; after
+        // that the user's own checkbox choice is respected forever.
+        const DWORD mig = key.getDword(L"SettingsMigration", 0);
+        if (mig < 2) {
+            opts.digitsAreLiteral = true;
+            key.setDword(L"DigitsLiteral", 1);
+            key.setDword(L"SettingsMigration", 2);
+        } else {
+            opts.digitsAreLiteral = key.getDword(L"DigitsLiteral", 1) != 0;
+        }
     }
+    m_engine = std::make_shared<ok::text::TextEngine>(opts);
+
+    // ---- load persisted settings into the controls (handlers guarded) ----
+    m_uiInitializing = true;
+    {
+        const int method = static_cast<int>(opts.inputMethod);
+        const int table  = static_cast<int>(opts.codeTable);
+        if (method >= 0 && method < static_cast<int>(InputMethodBox().Items().Size())) {
+            InputMethodBox().SelectedIndex(method);
+        }
+        if (table >= 0 && table < static_cast<int>(CodeTableBox().Items().Size())) {
+            CodeTableBox().SelectedIndex(table);
+        }
+        ModernOrthography().IsChecked(opts.useModernOrthography);
+        QuickTelex().IsChecked(opts.quickTelex);
+        RestoreIfWrong().IsChecked(opts.restoreIfWrongSpelling);
+        UpperCaseFirst().IsChecked(opts.upperCaseFirstChar);
+        DigitsLiteral().IsChecked(opts.digitsAreLiteral);
+        UseMacro().IsChecked(opts.useMacro);
+        ExcludeIde().IsChecked(exclIde);
+        ExcludeFullscreen().IsChecked(exclFullscreen);
+        ExcludeShell().IsChecked(exclShell);
+        SmartSwitch().IsChecked(smartSwitch);
+    }
+    m_uiInitializing = false;
 
     // ---- telemetry timer (1 Hz; reads atomic counters, zero allocations) ----
     m_timer = DispatcherTimer();
@@ -90,11 +142,7 @@ MainWindow::MainWindow() {
     m_timer.Tick({ this, &MainWindow::OnTelemetryTick });
     m_timer.Start();
 
-    // The engine pipeline is attached lazily on first toggle (the consumer
-    // thread of ModernKeyHook owns TextEngine/TsfComposer — COM apartment
-    // affinity handled in the same thread).
-    m_engine = std::make_shared<ok::text::TextEngine>();
-    m_hook   = std::make_shared<ok::hook::ModernKeyHook>();
+    m_hook    = std::make_shared<ok::hook::ModernKeyHook>();
     m_monitor = std::make_shared<ok::monitor::ProcessMonitor>();
     m_composer = std::make_shared<ok::tsf::TsfComposer>();
 }
@@ -332,6 +380,7 @@ void MainWindow::OnEngineToggled(IInspectable const&, RoutedEventArgs const&) {
 }
 
 void MainWindow::OnInputMethodChanged(IInspectable const&, SelectionChangedEventArgs const&) {
+    if (m_uiInitializing) { return; }   // v1.1.2-r3: ctor-programmed changes only mirror the engine
     const int idx = InputMethodBox().SelectedIndex();
     if (idx < 0) { return; }
     if (auto e = m_engine) {
@@ -346,6 +395,7 @@ void MainWindow::OnInputMethodChanged(IInspectable const&, SelectionChangedEvent
 }
 
 void MainWindow::OnCodeTableChanged(IInspectable const&, SelectionChangedEventArgs const&) {
+    if (m_uiInitializing) { return; }   // v1.1.2-r3: ctor-programmed changes only mirror the engine
     const int idx = CodeTableBox().SelectedIndex();
     if (idx < 0) { return; }
     if (auto e = m_engine) {
@@ -359,6 +409,7 @@ void MainWindow::OnCodeTableChanged(IInspectable const&, SelectionChangedEventAr
 }
 
 void MainWindow::OnOptionChanged(IInspectable const&, RoutedEventArgs const&) {
+    if (m_uiInitializing) { return; }   // v1.1.2-r3: ctor-programmed changes only mirror the engine
     if (!m_engine) { return; }
     auto opts = m_engine->options();
     opts.useModernOrthography = ModernOrthography().IsChecked().value_or(false);
@@ -366,6 +417,9 @@ void MainWindow::OnOptionChanged(IInspectable const&, RoutedEventArgs const&) {
     opts.restoreIfWrongSpelling = RestoreIfWrong().IsChecked().value_or(true);
     opts.upperCaseFirstChar   = UpperCaseFirst().IsChecked().value_or(false);
     opts.useMacro             = UseMacro().IsChecked().value_or(true);
+    // v1.1.2-r3: the digits policy is a first-class option here too (same
+    // registry value as the Win32 app — one choice, both front-ends).
+    opts.digitsAreLiteral     = DigitsLiteral().IsChecked().value_or(true);
     m_engine->setOptions(opts);
     m_engine->startNewSession();
 
@@ -375,6 +429,8 @@ void MainWindow::OnOptionChanged(IInspectable const&, RoutedEventArgs const&) {
         key.setDword(L"RestoreIfWrong",    opts.restoreIfWrongSpelling ? 1 : 0);
         key.setDword(L"UpperCaseFirst",    opts.upperCaseFirstChar ? 1 : 0);
         key.setDword(L"UseMacro",          opts.useMacro ? 1 : 0);
+        key.setDword(L"DigitsLiteral",     opts.digitsAreLiteral ? 1 : 0);
+        key.setDword(L"SettingsMigration", 2);
     }
     // Exclusion flags are consumed by ProcessMonitor at refresh time; poke it.
     m_monitor->refreshNow();
@@ -411,7 +467,7 @@ void MainWindow::OnAdvancedSettings(IInspectable const&, RoutedEventArgs const&)
 }
 
 void MainWindow::OnAbout(IInspectable const&, RoutedEventArgs const&) {
-    StatusText().Text(L"KieeKey v1.1.1 — engine C++23, hook lock-free, TSF, WinUI 3");
+    StatusText().Text(L"KieeKey v1.1.2 — engine C++23, hook lock-free, TSF, WinUI 3");
 }
 
 } // namespace KieeKey

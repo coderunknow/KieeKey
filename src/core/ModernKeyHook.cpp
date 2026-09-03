@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.1.1 - refactored and completed logic
+//   KieeKey v1.1.3 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.1.1 — ModernKeyHook.cpp
+// KieeKey v1.1.3 — ModernKeyHook.cpp
 // See ModernKeyHook.hpp for the architecture rationale.
 //----------------------------------------------------------------------------
 #include "ModernKeyHook.hpp"
@@ -233,6 +233,12 @@ void ModernKeyHook::stop() noexcept {
         handler_ = nullptr;
         producerHandler_ = nullptr;
         finalizer_ = nullptr;   // already ran on the consumer thread
+    } else {
+        // v1.1.3: a detached (wedged) pump may still execute its WM_TIMER
+        // tick. Null the callback NOW so the tick can never reach the
+        // watchdog after the owner's teardown begins (the app exits via
+        // ExitProcess on this path; this closes the library-use window).
+        pumpTick_ = nullptr;
     }
     // else: stuck-thread path — deliberately keep every handle alive so the
     // detached thread(s) can still touch them when their blocked call finally
@@ -362,6 +368,13 @@ bool ModernKeyHook::reinstallHooksOnPump() noexcept {
 //===========================================================================
 void ModernKeyHook::resyncModifiersFromOs() noexcept {
     modifierBits_.store(osModifierSnapshot(), std::memory_order_release);
+    // v1.1.3: drop the toggle-key edge bitmap as well. If a toggle KeyUp was
+    // missed while the OS still registered it (UIPI window, RDP transition),
+    // a stale "was down" bit would swallow the NEXT press's XOR and keep the
+    // tracked level out of phase forever. Clearing the bitmap re-arms edge
+    // detection; a benign 32-bit tear is impossible (aligned word stores) and
+    // the worst case is one suppressed XOR — corrected by the next resync.
+    toggleKeyDown_.fill(0);
 }
 
 //===========================================================================
@@ -500,20 +513,14 @@ bool ModernKeyHook::enqueue(const KeyEvent& ev) noexcept {
         return true;
     }
 
-    // Saturated. Policy: never block the hook; drop oldest by draining one
-    // slot (keeps newest, preserves order), or drop this event.
+    // Saturated. Policy: never block the hook. v1.1.3: the DropOldest branch
+    // (producer-side try_pop + retry) was REMOVED — an SPSC ring's tail is
+    // consumer-owned by contract; popping from the producer raced the real
+    // consumer's sequence numbers and could silently corrupt the ring. The
+    // app never selected DropOldest, so this is a loaded-footgun removal, not
+    // a behavior change: overflow now always drops the NEWEST event (counted).
     stats_.droppedOverflow.fetch_add(1, std::memory_order_relaxed);
-    if (overflowPolicy_.load(std::memory_order_relaxed) == OverflowPolicy::DropOldest) {
-        KeyEvent discard;
-        static_cast<void>(queue_.try_pop(discard));   // remove oldest, then retry once
-        if (queue_.try_push(ev)) {
-            if (consumerParked_.load(std::memory_order_acquire)) {
-                ::SetEvent(wakeEvent_.get());
-            }
-            return true;
-        }
-    }
-    return false;                  // DropNewest (default): input dropped, counted
+    return false;                  // input dropped, counted in diagnostics
 }
 
 void ModernKeyHook::applyModifierDelta(const KeyEvent& ev) noexcept {
@@ -545,20 +552,42 @@ void ModernKeyHook::applyModifierDelta(const KeyEvent& ev) noexcept {
             default: break;
         }
         if (toggleMask != 0) {
-            const std::uint32_t bits = modifierBits_.load(std::memory_order_relaxed);
-            modifierBits_.store(bits ^ toggleMask, std::memory_order_relaxed);
+            // v1.1.3: flip ONLY on the up->down transition (auto-repeat
+            // KeyDowns repeat the event without toggling the OS state —
+            // XORing per repeat desynchronized the tracked level; see the
+            // toggleKeyDown_ rationale in the header).
+            if (!wasToggleKeyDown(ev.vkCode)) {
+                setToggleKeyDown(ev.vkCode);
+                modifierBits_.fetch_xor(toggleMask, std::memory_order_relaxed);
+            }
             return;
         }
     }
     const std::uint32_t mask = modifierMaskForVk(ev.vkCode);
     if (!mask) { return; }
-    std::uint32_t bits = modifierBits_.load(std::memory_order_relaxed);
+    // v1.1.3: atomic RMW instead of load+store — resyncModifiersFromOs() may
+    // run concurrently from the UI thread when the IME is re-enabled; a plain
+    // store could silently resurrect a bit the hook just cleared (and vice
+    // versa). fetch_* composes with the snapshot store instead of clobbering.
     if (ev.action == KeyAction::KeyUp || ev.action == KeyAction::SysKeyUp) {
-        bits &= ~mask;
+        modifierBits_.fetch_and(~mask, std::memory_order_relaxed);
     } else {
-        bits |= mask;
+        modifierBits_.fetch_or(mask, std::memory_order_relaxed);
     }
-    modifierBits_.store(bits, std::memory_order_relaxed);
+}
+
+// ---- toggle-key edge bitmap (hook-thread-affine) --------------------------
+bool ModernKeyHook::wasToggleKeyDown(std::uint32_t vk) const noexcept {
+    if (vk >= 256) { return false; }
+    return (toggleKeyDown_[vk >> 5] & (1u << (vk & 31u))) != 0;
+}
+void ModernKeyHook::setToggleKeyDown(std::uint32_t vk) noexcept {
+    if (vk >= 256) { return; }
+    toggleKeyDown_[vk >> 5] |= (1u << (vk & 31u));
+}
+void ModernKeyHook::clearToggleKeyDown(std::uint32_t vk) noexcept {
+    if (vk >= 256) { return; }
+    toggleKeyDown_[vk >> 5] &= ~(1u << (vk & 31u));
 }
 
 // ---- suppressed-KeyDown bitmap (hook-thread-affine) -----------------------

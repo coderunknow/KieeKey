@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.1.1 - refactored and completed logic
+//   KieeKey v1.1.3 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.1.1 — TsfComposer.hpp
+// KieeKey v1.1.3 — TsfComposer.hpp
 // Text Services Framework (TSF) composer — the "buffer-state output" backend
 // that eliminates synthetic backspace injections and the clipboard+Shift+Insert
 // round-trip (the #1 cause of ghost/duplicate letters and cursor flicker).
@@ -114,7 +114,13 @@ public:
     // removes the per-keystroke RequestEditSession round-trip — the dominant
     // term in accent-typing latency. Returns true when the whole batch was
     // committed via TSF; on failure callers fall back per delta.
-    [[nodiscard]] bool commitBatch(const std::vector<EditDelta>& deltas) noexcept;
+    // v1.1.3: `appliedOut` (optional) receives the number of deltas that
+    // were COMMITTED to the document before the session stopped. TSF edit
+    // sessions are not transactional — on failure, only the suffix
+    // deltas[applied..] still needs delivering (SendInput fallback), so the
+    // caller can avoid duplicating the already-applied prefix.
+    [[nodiscard]] bool commitBatch(const std::vector<EditDelta>& deltas,
+                                   std::size_t* appliedOut = nullptr) noexcept;
 
     // Read the trailing run of ASCII letters immediately before the caret
     // (the word the user is currently inside). Used to re-sync the engine to

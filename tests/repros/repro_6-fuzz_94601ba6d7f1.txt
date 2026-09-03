@@ -1,0 +1,24 @@
+KieeKey — mega correctness reproducer (deterministic)
+suite: 6-fuzz
+meta: seed1130
+init options: method=Telex table=0 spelling=1 modern=1 quickTelex=0 restore=1 freeMark=0 zfwj=0 upperFirst=0 macro=1
+ops (compact; ^=caps, +=ctrl, ' '=space, \b=backspace, \n=enter, ~=mouse, |=mode): 
+fk~+t]~h
+  dd 0^jjbaxr^9n^zg|S 5|T3b[|S+ft, g^ve+8hpan|T|V-i|V
+qw4^n[ w
+ u6
+divergence: pos=56 engine=6 U+36  oracle=<end>
+engine text UTF-8: 3 d3f
+fkt]h
+  dd 0Jjbax9nZg 53b[t, gVe8hpan-i
+qw4N[ w
+ u6
+oracle  text UTF-8: 3 d3f
+fkt]h
+  dd 0Jjbax9nZg 53b[t, gVe8hpan-i
+qw4N[ w
+ u
+engine UTF-16 units: U+33 U+20 U+64 U+33 U+66 U+a U+66 U+6b U+74 U+5d U+68 U+a U+20 U+20 U+64 U+64 U+20 U+30 U+4a U+6a U+62 U+61 U+78 U+39 U+6e U+5a U+67 U+20 U+35 U+33 U+62 U+5b U+74 U+2c U+20 U+67 U+56 U+65 U+38 U+68 U+70 U+61 U+6e U+2d U+69 U+a U+71 U+77 U+34 U+4e U+5b U+20 U+77 U+a U+20 U+75 U+36 
+oracle  UTF-16 units: U+33 U+20 U+64 U+33 U+66 U+a U+66 U+6b U+74 U+5d U+68 U+a U+20 U+20 U+64 U+64 U+20 U+30 U+4a U+6a U+62 U+61 U+78 U+39 U+6e U+5a U+67 U+20 U+35 U+33 U+62 U+5b U+74 U+2c U+20 U+67 U+56 U+65 U+38 U+68 U+70 U+61 U+6e U+2d U+69 U+a U+71 U+77 U+34 U+4e U+5b U+20 U+77 U+a U+20 U+75 
+engine code points: CP[U+33 U+20 U+64 U+33 U+66 U+a U+66 U+6b U+74 U+5d U+68 U+a U+20 U+20 U+64 U+64 U+20 U+30 U+4a U+6a U+62 U+61 U+78 U+39 U+6e U+5a U+67 U+20 U+35 U+33 U+62 U+5b U+74 U+2c U+20 U+67 U+56 U+65 U+38 U+68 U+70 U+61 U+6e U+2d U+69 U+a U+71 U+77 U+34 U+4e U+5b U+20 U+77 U+a U+20 U+75 U+36 ]
+oracle  code points: CP[U+33 U+20 U+64 U+33 U+66 U+a U+66 U+6b U+74 U+5d U+68 U+a U+20 U+20 U+64 U+64 U+20 U+30 U+4a U+6a U+62 U+61 U+78 U+39 U+6e U+5a U+67 U+20 U+35 U+33 U+62 U+5b U+74 U+2c U+20 U+67 U+56 U+65 U+38 U+68 U+70 U+61 U+6e U+2d U+69 U+a U+71 U+77 U+34 U+4e U+5b U+20 U+77 U+a U+20 U+75 ]

@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.1.1 - refactored and completed logic
+//   KieeKey v1.1.3 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.1.1 — TextEngine.cpp
+// KieeKey v1.1.3 — TextEngine.cpp
 // C++20 Telex/VNI/Simple-Telex state machine.
 //
 // Porting notes:
@@ -1609,6 +1609,16 @@ void TextEngine::handleQuickTelex(char32_t c, bool caps) {
 
 bool TextEngine::checkQuickConsonant() {
     if (index_ <= 1) {
+        return false;
+    }
+    // v1.1.3 bounds fix: the transformation inserts ONE character (index_ +
+    // 1 total). At index_ == kMaxBuff - 1 the insert would overflow the
+    // fixed buffer bookkeeping: newCharCount was already computed as
+    // index_ + 1 = kMaxBuff while the guarded ++index_ no longer ran,
+    // emitting a stale 32nd char and a backspaceCount/newCharCount mismatch.
+    // A 31+ char word is far beyond any Vietnamese syllable — skip the
+    // quick-consonant transform there and let the key insert normally.
+    if (index_ >= kMaxBuff - 1) {
         return false;
     }
     int l = 0;

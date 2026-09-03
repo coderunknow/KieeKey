@@ -1,0 +1,114 @@
+#----------------------------------------------------------------------------
+# KieeKey v1.1.0 — CI/CD: x64 + ARM64 + ARM64EC release binaries on every
+# push/PR/tag.
+#
+# What CI builds (KIEEKEY_BUILD_UI=none — the default, dependency-free
+# configuration): KieeKeyApp.exe (Win32 tray app) + the static core +
+# the test harness (ctest: ok_tests, ok_ring_tests, ok_wrap_tests).
+#
+# The optional WinUI 3 front-end (KIEEKEY_BUILD_UI=winui3) is NOT built in
+# CI: it requires the Windows App SDK NuGet package (Microsoft.WindowsAppSDK)
+# to be restored on the build machine — do that locally with
+#   nuget install Microsoft.WindowsAppSDK -OutputDirectory build/nuget
+# plus find_package PATHS pointing at the package, if you need it.
+# CI never registers NuGet sources: steps that run `nuget sources add` /
+# `dotnet nuget add source` with a name the runner image already registers
+# fail with "The name specified has already been added to the list of
+# available package sources. Provide a unique name."
+#
+# No Developer Command Prompt step: the CMake Visual Studio generator
+# (`-A <platform>`) locates MSVC and selects the per-platform toolset by
+# itself — including ARM64EC. Routing ARM64EC through vcvarsall.bat is what
+# broke the build before ("[ERROR:vcvarsall.bat] Invalid argument found :
+# arm64ec" — vcvarsall has no `arm64ec` architecture argument).
+#
+# Unit tests (ctest) run only on the native x64 job: x64 Windows cannot
+# execute ARM64/ARM64EC binaries, so those jobs are build-only.
+#
+# Tagged pushes (v*) additionally produce a GitHub Release with the
+# per-platform artifact zips attached.
+#----------------------------------------------------------------------------
+name: build
+
+on:
+  push:
+    branches: [ main, dev ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.platform }}
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: x64
+            cmake_args: -A x64
+          - platform: ARM64
+            cmake_args: -A ARM64
+          - platform: ARM64EC
+            cmake_args: -A ARM64EC
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - name: Configure (CMake, Visual Studio generator — no dev prompt needed)
+        run: cmake -S . -B out/${{ matrix.platform }} ${{ matrix.cmake_args }} -DCMAKE_BUILD_TYPE=Release -DKIEEKEY_BUILD_TESTS=ON -DKIEEKEY_BUILD_UI=none
+
+      - name: Build
+        run: cmake --build out/${{ matrix.platform }} --config Release --parallel
+
+      - name: Run unit tests
+        if: matrix.platform == 'x64'
+        run: ctest --test-dir out/${{ matrix.platform }} -C Release --output-on-failure
+
+      - name: Collect artifacts
+        shell: pwsh
+        run: |
+          $src = "out/${{ matrix.platform }}/Release"
+          $dst = "KieeKey-${{ matrix.platform }}"
+          New-Item -ItemType Directory -Force -Path $dst | Out-Null
+          Copy-Item "$src/KieeKeyApp.exe"    $dst
+          Copy-Item "$src/ok_tests.exe"      $dst
+          Copy-Item "$src/ok_ring_tests.exe" $dst
+          Copy-Item "$src/ok_wrap_tests.exe" $dst
+          Copy-Item "LICENSE" $dst
+          Copy-Item "README.md" $dst
+          Compress-Archive -Path "$dst/*" -DestinationPath "$dst.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: KieeKey-${{ matrix.platform }}
+          path: KieeKey-${{ matrix.platform }}.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  #---------------------------------------------------------------------------
+  # Tag releases: attach the per-platform artifact zips to a GitHub Release.
+  #---------------------------------------------------------------------------
+  release:
+    name: Publish release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v5
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*.zip
+          generate_release_notes: true

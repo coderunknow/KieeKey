@@ -1,0 +1,69 @@
+# ---------- Build directories ----------
+build/
+build-*/
+out/
+cmake-build-*/
+bin/*
+!bin/README.txt
+
+# ---------- CMake ----------
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CMakeUserPresets.json
+install_manifest.txt
+cmake_install.cmake
+
+# ---------- Compiled objects / binaries ----------
+*.exe
+*.dll
+*.lib
+*.a
+*.obj
+*.o
+*.pdb
+*.ilk
+*.exp
+*.so
+*.dylib
+
+# ---------- Installers / packages ----------
+*.msi
+*.appx
+*.msix
+*.msixupload
+package/
+
+# ---------- Visual Studio / IDE ----------
+.vs/
+.vscode/ipch/
+*.user
+*.suo
+*.ncb
+*.sdf
+*.opensdf
+*.VC.db
+*.VC.opendb
+
+# ---------- C++20/23 module / PCH artifacts ----------
+*.ifc
+*.pch
+*.gch
+*.pch
+
+# ---------- WinUI 3 / XAML codegen output ----------
+Generated Files/
+*.g.h
+*.g.cpp
+XamlSaveStateFile.json
+
+# ---------- Test / coverage output ----------
+*.log
+coverage/
+*.gcda
+*.gcno
+
+# ---------- OS junk ----------
+Thumbs.db
+Desktop.ini
+.DS_Store

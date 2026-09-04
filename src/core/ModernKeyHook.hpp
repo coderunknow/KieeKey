@@ -198,6 +198,37 @@ public:
     [[nodiscard]] std::int64_t  avgLatencyUs() const noexcept { return avgLatencyUs_.load(std::memory_order_relaxed); }
 
     //-------------------------------------------------------------------------
+    //-------------------------------------------------------------------------
+    // v1.2.0 Stable — wake integrity.
+    //
+    // The hook thread is the ONLY producer of the key ring, but it is not the
+    // only producer of work: the app's producer callback pushes OutputItems
+    // into a SECOND ring that the consumer drains. The key ring is therefore
+    // only a WAKE SIGNAL for work that already exists elsewhere.
+    //
+    //   * pokeConsumer() — wake the consumer from ANY thread (not just the
+    //     hook thread). A lifecycle transition (engine switched off, power
+    //     resume, session unlock) can leave OutputItems queued with no
+    //     keystroke coming to wake the consumer; without this they would sit
+    //     there until the next key that happens to queue work.
+    //
+    //   * overflowWakeCount() — how many times the key ring was saturated
+    //     while the producer still needed a drain. Dropping the key event is
+    //     safe (the payload is not read), but dropping the WAKE is not: the
+    //     OutputItem stays queued and its pending-edit count stays armed.
+    //     Diagnostics only — the fix is unconditional.
+    //-------------------------------------------------------------------------
+    void pokeConsumer() noexcept;
+    [[nodiscard]] std::uint64_t overflowWakeCount() const noexcept {
+        return overflowWakeCount_.load(std::memory_order_relaxed);
+    }
+    // v1.2.0 Stable: consumer events whose handler threw (fault isolation —
+    // see consumerThreadMain). Expected to stay 0; a non-zero value means an
+    // edit was dropped, which is strictly better than a dead IME.
+    [[nodiscard]] std::uint64_t handlerExceptionCount() const noexcept {
+        return handlerExceptions_.load(std::memory_order_relaxed);
+    }
+
     // v3.3.1 — Hook Self-Healing support.
     //
     // Windows silently removes a low-level hook whose callback exceeds the
@@ -308,6 +339,14 @@ private:
     // producer skip the SetEvent syscall for every key that arrives while
     // the consumer is spinning (the entire hot-burst population).
     std::atomic<bool> consumerParked_{false};
+    // v1.2.0 Stable: saturated-ring wakes (see pokeConsumer's rationale) and
+    // the hook-installation handshake flag (replaces the unsynchronized read
+    // of keyboardHook_ from start()'s polling loop — reading a RAII handle
+    // member that the pump thread writes is a data race, benign in practice
+    // on x86/ARM but undefined and unsanitizable).
+    std::atomic<std::uint64_t> overflowWakeCount_{0};
+    std::atomic<std::uint64_t> handlerExceptions_{0};
+    std::atomic<bool> hooksInstalled_{false};
 
     ok::win32::EventHandle wakeEvent_;           // signaled to wake consumer
     ok::win32::HookHandle   keyboardHook_;
@@ -380,6 +419,13 @@ private:
     std::atomic<std::uint32_t> pumpTickIntervalMs_{0};   // 0 = no watchdog tick
     std::atomic<std::uint64_t> hookReinstallCount_{0};
     PumpTick pumpTick_;                                  // runs on the pump thread
+    // v1.2.0 Stable: "the pump tick must stop calling out" flag. stop() used
+    // to NULL the std::function from the UI thread while a DETACHED (wedged)
+    // pump could still run its WM_TIMER tick — a torn std::function read on
+    // the pump thread, i.e. a use-after-free of the callback's captures.
+    // Overwriting a std::function is not atomic and not thread-safe; an
+    // atomic flag read before the call is.
+    std::atomic<bool> pumpTickDead_{false};
 };
 
 } // namespace ok::hook

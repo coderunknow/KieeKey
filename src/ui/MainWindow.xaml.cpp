@@ -467,7 +467,7 @@ void MainWindow::OnAdvancedSettings(IInspectable const&, RoutedEventArgs const&)
 }
 
 void MainWindow::OnAbout(IInspectable const&, RoutedEventArgs const&) {
-    StatusText().Text(L"KieeKey v1.1.2 — engine C++23, hook lock-free, TSF, WinUI 3");
+    StatusText().Text(L"KieeKey v1.2.0 Stable — engine C++23, hook lock-free, TSF, WinUI 3");
 }
 
 } // namespace KieeKey

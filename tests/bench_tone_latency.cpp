@@ -582,8 +582,17 @@ int main(int argc, char** argv) {
     std::string popSel = "all", pathSel = "all", barrierSel = "all", commitSel = "0";
     long commitNsOpt = -1;
     long iters = 2000;
-    std::string wpmSel = "80,150,250";
-    long mixedReps = 3;
+    // v1.2.0 Stable — RUNTIME. The "mixed" population types a real passage at
+    // a real typing pace (it sleeps between keystrokes, which is the whole
+    // point of a paced simulation), so its cost is wall-clock-bound: ~26 s at
+    // 80 wpm, ~14 s at 150 wpm, ~8 s at 250 wpm, per (path x barrier) cell.
+    // The exhaustive matrix (3 paces x 3 reps x 3 paths x 2 barriers = 54
+    // cells) took ~14.5 minutes, which is too slow to be part of a normal
+    // workflow. The default is now the two bookend paces at one rep (~2 min);
+    // --fast gives a single cell set (~50 s) and --full restores the complete
+    // matrix for a release run.
+    std::string wpmSel = "150,250";
+    long mixedReps = 1;
     for (int i = 1; i < argc; ++i) {
         const auto val = [&](const char* a, const char* pfx) -> const char* {
             const std::size_t n = std::strlen(pfx);
@@ -600,6 +609,23 @@ int main(int argc, char** argv) {
         else if (const char* vIters = val(argv[i], "--iters=")) { iters = std::atol(vIters); }
         else if (const char* vWpm = val(argv[i], "--mixed-wpm=")) { wpmSel = vWpm; }
         else if (const char* vReps = val(argv[i], "--mixed-reps=")) { mixedReps = std::atol(vReps); }
+        else if (std::strcmp(argv[i], "--fast") == 0) { wpmSel = "250"; mixedReps = 1; }
+        else if (std::strcmp(argv[i], "--full") == 0) { wpmSel = "80,150,250"; mixedReps = 3; }
+        else if (std::strcmp(argv[i], "--help") == 0) {
+            std::printf(
+                "[tone] usage: bench_tone_latency [--pop=NAME|--pop=all] "
+                "[--path=inline|inline-deferred|tsf|all]\n"
+                "                                [--barrier=spin|hybrid|all] "
+                "[--commit=0|100us|1ms|NS] [--iters=N]\n"
+                "                                [--mixed-wpm=A,B,C] [--mixed-reps=N] "
+                "[--fast|--full]\n"
+                "[tone]   --fast  one pace (250 wpm), one rep  (~50 s)\n"
+                "[tone]   (def.)  paces 150+250 wpm, one rep    (~2 min)\n"
+                "[tone]   --full  paces 80+150+250 wpm, 3 reps  (~15 min)\n"
+                "[tone] The mixed population is paced in real time, so its cost "
+                "is wall-clock-bound.\n");
+            return 0;
+        }
         else { std::printf("[tone] unknown arg %s\n", argv[i]); return 2; }
     }
     if (commitNsOpt >= 0) { commitSel = std::to_string(commitNsOpt); }
@@ -609,7 +635,9 @@ int main(int argc, char** argv) {
     else if (commitSel == "1ms") { commitNs = 1'000'000; }
     else { commitNs = std::strtoull(commitSel.c_str(), nullptr, 10); }
 
-    std::printf("[tone] KieeKey v1.2.0 — tone-population latency benchmark\n");
+    std::printf("[tone] KieeKey v1.2.0 Stable — tone-population latency benchmark\n");
+    std::printf("[tone] mixed pace(s)=%s reps=%ld (--fast for one pace/one rep, "
+                "--full for the exhaustive matrix)\n", wpmSel.c_str(), mixedReps);
 
     EngineOptions o;
     o.restoreIfWrongSpelling = true;

@@ -360,7 +360,11 @@ void goldenRegression() {
         else {
             ++g_failures;
             std::printf("  [FAIL] %-5s -> got \"", c.seq);
-            for (wchar_t w : out) { std::printf("%lc", w); }
+            // v1.2.0 Stable: %lc is not portable across the Windows
+            // toolchains (MSVC binds it to wchar_t, clang/MinGW to wint_t,
+            // and C4477 fires under /W4 /WX). %ls is agreed on by all of
+            // them, so print the whole string in one call.
+            std::printf("%ls", out.c_str());
             std::printf("\" want \"%ls\"\n", c.expect);
         }
     }

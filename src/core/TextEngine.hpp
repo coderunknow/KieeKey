@@ -501,9 +501,38 @@ private:
     // Unicode code points (called exactly when code becomes ReplaceMacro).
     void setMacroExpansionFromResolver();
     bool checkQuickConsonant();
+    //-----------------------------------------------------------------------
+    // Quick-Telex eligibility ("gõ tắt" consonant clusters).
+    //
+    // v1.2.0 Stable — SYLLABLE-INITIAL GUARD (user-reported P1 false
+    // positive: "typing 'p' twice turns it into 'ph'").
+    //
+    // The legacy test — byte-identical to upstream OpenKey 2.0.5
+    // (tests/reference/openkey-2.0.5/engine/DataType.h:147) — fired whenever
+    // the key equalled the last character of the pending word, at ANY
+    // position. With "gõ tắt" enabled that mangled every Latin/English word
+    // containing a doubled consonant, because CC->CH, GG->GI, KK->KH,
+    // NN->NG, PP->PH, QQ->QU, TT->TH were being applied word-medially:
+    //
+    //     happy -> haphy     apple  -> aphle    letter  -> lether
+    //     account -> achount running -> runging success -> suches
+    //     tattoo -> tathoo   supper -> supher   copper  -> copher
+    //     attitude -> athitude       button -> buthon   cc -> ch
+    //
+    // Vietnamese is syllabic: every one of those clusters is
+    // syllable-INITIAL, and no Vietnamese syllable contains a doubled
+    // consonant. Requiring the pair to be the first two letters of the
+    // current word (index_ == 1, so chr(0) is the letter about to be
+    // doubled) keeps 100% of the intended feature -- "ppongf" -> "phòng",
+    // "ccaof" -> "chào" -- while making every word-medial false positive
+    // impossible.
+    //
+    // chr() masks the CAPS bit, so "pp"/"pP"/"Pp"/"PP" all match and the
+    // emitted cluster inherits the key's case, exactly as before.
+    //-----------------------------------------------------------------------
     bool isQuickTelexKey(char32_t c) const noexcept {
-        return index_ > 0 && (c == U'C' || c == U'G' || c == U'K' || c == U'N' ||
-                              c == U'Q' || c == U'P' || c == U'T') &&
+        return index_ == 1 && (c == U'C' || c == U'G' || c == U'K' || c == U'N' ||
+                               c == U'Q' || c == U'P' || c == U'T') &&
                chr(index_ - 1) == c;
     }
     void checkCorrectVowel(const FlatVec<FlatVec<std::uint16_t>>& charset,

@@ -42,6 +42,9 @@ project(KieeKey
 #----------------------------------------------------------------------------
 set(KIEEKEY_BUILD_UI "none" CACHE STRING "UI front-end: none | winui3")
 set(KIEEKEY_BUILD_TESTS ON CACHE BOOL "Build the unit-test harness")
+# Windows only: also build the extended (stress/soak/differential/keystroke)
+# harnesses. OFF by default — see the note in the Windows test block for why.
+set(KIEEKEY_BUILD_EXTRA_TESTS OFF CACHE BOOL "Build the extended test harnesses on Windows")
 set(KIEEKEY_PROFILE 0 CACHE STRING "Compile in the QPC stage profiler (0=off/default, 1=instrumented)")
 set_property(CACHE KIEEKEY_BUILD_UI PROPERTY STRINGS none winui3)
 
@@ -136,7 +139,8 @@ if(WIN32)
     # Bare names — CMake maps them per toolchain (user32.lib / -luser32).
     target_link_libraries(ok_core PUBLIC
         user32 gdi32 shell32 ole32 dwmapi psapi version urlmon winmm
-        advapi32)   # v1.1.3: OpenProcessToken / GetTokenInformation (elevation probe)
+        advapi32   # v1.1.3: OpenProcessToken / GetTokenInformation (elevation probe)
+        wtsapi32)  # v1.2.0: WTSRegisterSessionNotification (lock/unlock, RDP)
 
     # TSF composer
     add_library(ok_tsf STATIC
@@ -257,6 +261,108 @@ else()
         set_tests_properties(ok_tests ok_ring_tests ok_wrap_tests
                              PROPERTIES TIMEOUT 120)
 
+        #-------------------------------------------------------------------
+        # v1.2.0 Stable — the FULL suite is now registered with CTest.
+        #
+        # Before this release only ok_tests / ok_ring_tests / ok_wrap_tests
+        # were ctest targets: twelve more harnesses (stress, soak,
+        # differential, hotfix, output-item, v3.3.1 features) lived in tests/
+        # and were run by hand, if at all. A test that is never executed
+        # cannot protect a release — the release gate now runs all of them,
+        # with a hard timeout each so a future hang fails the job in minutes
+        # instead of burning the CI budget.
+        #-------------------------------------------------------------------
+        # Portable harnesses (pure std + the shim; identical on every host).
+        add_executable(ok_outputitem_tests tests/test_outputitem.cpp src/core/TextEngine.cpp)
+        target_include_directories(ok_outputitem_tests PRIVATE src/core)
+        target_compile_features(ok_outputitem_tests PRIVATE cxx_std_23)
+
+        add_executable(ok_hotfix_tests tests/test_hotfix.cpp src/core/TextEngine.cpp)
+        target_include_directories(ok_hotfix_tests PRIVATE src/core)
+        target_compile_features(ok_hotfix_tests PRIVATE cxx_std_23)
+
+        add_executable(ok_v331_tests tests/test_v331_features.cpp src/core/TextEngine.cpp)
+        target_include_directories(ok_v331_tests PRIVATE src/core)
+        target_compile_features(ok_v331_tests PRIVATE cxx_std_23)
+
+        add_executable(ok_stress_tests tests/stress_engine.cpp src/core/TextEngine.cpp)
+        target_include_directories(ok_stress_tests PRIVATE src/core)
+        target_compile_features(ok_stress_tests PRIVATE cxx_std_23)
+
+        add_executable(ok_soak_tests tests/soak_engine.cpp src/core/TextEngine.cpp)
+        target_include_directories(ok_soak_tests PRIVATE src/core)
+        target_compile_features(ok_soak_tests PRIVATE cxx_std_23)
+
+        add_executable(ok_queue_stress_tests tests/stress_queue.cpp src/core/TextEngine.cpp)
+        target_include_directories(ok_queue_stress_tests PRIVATE src/core)
+        target_compile_features(ok_queue_stress_tests PRIVATE cxx_std_23)
+
+        add_executable(ok_gate_tests
+            tests/gate_correctness.cpp src/core/TextEngine.cpp)
+        target_compile_definitions(ok_gate_tests PRIVATE NO_205)
+        target_include_directories(ok_gate_tests PRIVATE src/core tests imebench_kit/harness)
+        target_compile_features(ok_gate_tests PRIVATE cxx_std_17)
+
+        # v1.2.0 Stable — new suites (keystroke correctness, state-transition
+        # matrix, pipeline lifecycle + wake protocol, transport soak).
+        add_executable(ok_key_tests
+            tests/test_key_correctness.cpp src/core/TextEngine.cpp)
+        target_include_directories(ok_key_tests PRIVATE src/core)
+        target_compile_features(ok_key_tests PRIVATE cxx_std_23)
+
+        add_executable(ok_state_tests
+            tests/test_state_transitions.cpp src/core/TextEngine.cpp)
+        target_include_directories(ok_state_tests PRIVATE src/core)
+        target_compile_features(ok_state_tests PRIVATE cxx_std_23)
+
+        add_executable(ok_lifecycle_tests
+            tests/test_lifecycle.cpp src/core/TextEngine.cpp)
+        target_include_directories(ok_lifecycle_tests PRIVATE src/core tests)
+        target_compile_features(ok_lifecycle_tests PRIVATE cxx_std_23)
+        find_package(Threads REQUIRED)
+        target_link_libraries(ok_lifecycle_tests PRIVATE Threads::Threads)
+
+        add_executable(ok_soak_pipeline tests/soak_pipeline.cpp)
+        target_include_directories(ok_soak_pipeline PRIVATE src/core tests)
+        target_compile_features(ok_soak_pipeline PRIVATE cxx_std_23)
+        target_link_libraries(ok_soak_pipeline PRIVATE Threads::Threads)
+
+        add_test(NAME ok_outputitem_tests COMMAND ok_outputitem_tests)
+        add_test(NAME ok_hotfix_tests    COMMAND ok_hotfix_tests)
+        add_test(NAME ok_v331_tests      COMMAND ok_v331_tests)
+        # stress: <seed> <keyCount> — 1M fuzzed keys, invariants + determinism
+        add_test(NAME ok_stress_tests    COMMAND ok_stress_tests 1 1000000)
+        # soak: <iterations> <checkpointEvery> — flat-allocation/RSS check
+        add_test(NAME ok_soak_tests      COMMAND ok_soak_tests 200000 20000)
+        add_test(NAME ok_queue_stress_tests COMMAND ok_queue_stress_tests)
+        add_test(NAME ok_gate_tests      COMMAND ok_gate_tests)
+        add_test(NAME ok_key_tests       COMMAND ok_key_tests)
+        add_test(NAME ok_state_tests     COMMAND ok_state_tests)
+        add_test(NAME ok_lifecycle_tests COMMAND ok_lifecycle_tests)
+        add_test(NAME ok_soak_pipeline   COMMAND ok_soak_pipeline 300000 30000)
+
+        # Every registered test gets a hard cap. A regression that turns a
+        # barrier/wait path into an infinite block must fail the gate in
+        # minutes, not hang the job until the runner's own limit kills it.
+        set_tests_properties(
+            ok_tests ok_ring_tests ok_wrap_tests
+            ok_outputitem_tests ok_hotfix_tests ok_v331_tests
+            ok_stress_tests ok_soak_tests ok_queue_stress_tests
+            ok_gate_tests ok_key_tests ok_state_tests ok_lifecycle_tests
+            ok_soak_pipeline
+            PROPERTIES TIMEOUT 300)
+
+        # Version-identifier consistency (release-gate requirement: no mixed
+        # version strings). Skipped when no interpreter is available.
+        find_package(Python3 COMPONENTS Interpreter QUIET)
+        if(Python3_Interpreter_FOUND)
+            add_test(NAME ok_version_check
+                     COMMAND ${Python3_EXECUTABLE}
+                             ${CMAKE_SOURCE_DIR}/scripts/check_version.py
+                             --repo=${CMAKE_SOURCE_DIR})
+            set_tests_properties(ok_version_check PROPERTIES TIMEOUT 60)
+        endif()
+
         # E2E latency benchmark through the shim (run manually):
         #   ./ok_e2e_bench --keys=100000   → p50/p99/p99.9 + RSS report
         add_executable(ok_e2e_bench
@@ -318,10 +424,93 @@ if(WIN32 AND KIEEKEY_BUILD_TESTS)
     target_include_directories(ok_wrap_tests PRIVATE src/core tests)
     add_test(NAME ok_wrap_tests COMMAND ok_wrap_tests)
 
+    #-----------------------------------------------------------------------
+    # v1.2.0 Stable — EXTENDED suites, OPT-IN on Windows.
+    #
+    # These eleven harnesses are the same ones the Linux job runs from
+    # tests/run_all_tests.sh. They are OFF by default on Windows, and that is
+    # deliberate, not an oversight:
+    #
+    #   * several of them were written against POSIX (gate_correctness.cpp
+    #     installs a SIGBUS handler via sigjmp_buf; soak_engine.cpp reads
+    #     /proc/self/status) and simply do not compile against the Windows
+    #     SDK;
+    #   * the Windows CI job compiles with /W4 /WX — warnings as errors —
+    #     and none of these files has ever been built by MSVC, so any level-4
+    #     diagnostic (C4244 narrowing, C4267 size_t truncation, C4477 format,
+    #     C4834 nodiscard, ...) becomes a hard build failure on ALL THREE CI
+    #     platforms, because `cmake --build` builds every defined target.
+    #
+    # Restoring the CI contract the workflow file documents ("ctest: ok_tests,
+    # ok_ring_tests, ok_wrap_tests") is worth more than building unvetted
+    # harnesses. Enable locally to port them:
+    #     cmake -S . -B out -DKIEEKEY_BUILD_EXTRA_TESTS=ON
+    #-----------------------------------------------------------------------
+    if(KIEEKEY_BUILD_EXTRA_TESTS)
+    add_executable(ok_outputitem_tests tests/test_outputitem.cpp)
+    target_link_libraries(ok_outputitem_tests PRIVATE ok_core)
+    add_executable(ok_hotfix_tests tests/test_hotfix.cpp)
+    target_link_libraries(ok_hotfix_tests PRIVATE ok_core)
+    add_executable(ok_v331_tests tests/test_v331_features.cpp)
+    target_link_libraries(ok_v331_tests PRIVATE ok_core)
+    add_executable(ok_stress_tests tests/stress_engine.cpp)
+    target_link_libraries(ok_stress_tests PRIVATE ok_core)
+    add_executable(ok_soak_tests tests/soak_engine.cpp)
+    target_link_libraries(ok_soak_tests PRIVATE ok_core)
+    add_executable(ok_queue_stress_tests tests/stress_queue.cpp)
+    target_link_libraries(ok_queue_stress_tests PRIVATE ok_core)
+    add_executable(ok_gate_tests tests/gate_correctness.cpp)
+    target_compile_definitions(ok_gate_tests PRIVATE NO_205)
+    target_include_directories(ok_gate_tests PRIVATE tests imebench_kit/harness)
+    target_link_libraries(ok_gate_tests PRIVATE ok_core)
+
+    add_executable(ok_key_tests tests/test_key_correctness.cpp)
+    target_link_libraries(ok_key_tests PRIVATE ok_core)
+
+    add_executable(ok_state_tests tests/test_state_transitions.cpp)
+    target_link_libraries(ok_state_tests PRIVATE ok_core)
+    add_executable(ok_lifecycle_tests tests/test_lifecycle.cpp)
+    target_link_libraries(ok_lifecycle_tests PRIVATE ok_core)
+    add_executable(ok_soak_pipeline tests/soak_pipeline.cpp)
+    target_link_libraries(ok_soak_pipeline PRIVATE ok_core)
+
+    add_test(NAME ok_outputitem_tests COMMAND ok_outputitem_tests)
+    add_test(NAME ok_hotfix_tests    COMMAND ok_hotfix_tests)
+    add_test(NAME ok_v331_tests      COMMAND ok_v331_tests)
+    add_test(NAME ok_stress_tests    COMMAND ok_stress_tests 1 1000000)
+    add_test(NAME ok_soak_tests      COMMAND ok_soak_tests 200000 20000)
+    add_test(NAME ok_queue_stress_tests COMMAND ok_queue_stress_tests)
+    add_test(NAME ok_gate_tests      COMMAND ok_gate_tests)
+    add_test(NAME ok_key_tests       COMMAND ok_key_tests)
+    add_test(NAME ok_state_tests     COMMAND ok_state_tests)
+    add_test(NAME ok_lifecycle_tests COMMAND ok_lifecycle_tests)
+    add_test(NAME ok_soak_pipeline   COMMAND ok_soak_pipeline 300000 30000)
+    endif()   # KIEEKEY_BUILD_EXTRA_TESTS
+
     # Same hang protection for the Windows-compiled test suite (these run
     # on the native x64 CI job — the barrier/wait paths live here).
-    set_tests_properties(ok_tests ok_ring_tests ok_wrap_tests
-                         PROPERTIES TIMEOUT 120)
+    set_tests_properties(
+        ok_tests ok_ring_tests ok_wrap_tests
+        PROPERTIES TIMEOUT 300)
+    if(KIEEKEY_BUILD_EXTRA_TESTS)
+        set_tests_properties(
+            ok_outputitem_tests ok_hotfix_tests ok_v331_tests
+            ok_stress_tests ok_soak_tests ok_queue_stress_tests
+            ok_gate_tests ok_key_tests ok_state_tests ok_lifecycle_tests
+            ok_soak_pipeline
+            PROPERTIES TIMEOUT 300)
+    endif()
+
+    # Version-identifier consistency guard (MSVC builds must not ship mixed
+    # version strings either).
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME ok_version_check
+                 COMMAND ${Python3_EXECUTABLE}
+                         ${CMAKE_SOURCE_DIR}/scripts/check_version.py
+                         --repo=${CMAKE_SOURCE_DIR})
+        set_tests_properties(ok_version_check PROPERTIES TIMEOUT 60)
+    endif()
 
     # Performance / E2E benchmarks (not part of ctest — run manually).
     add_executable(ok_bench tests/bench_engine.cpp)

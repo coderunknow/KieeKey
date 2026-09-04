@@ -57,7 +57,7 @@ All modifications, refactoring and new code contributed on top of the
 upstream project — everything outside `tests/reference/` — are:
 
 ```
-KieeKey v1.1.2 - refactored and completed logic
+KieeKey v1.2.0 Stable - refactored and completed logic
 Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 SPDX-License-Identifier: GPL-3.0-or-later
 ```

@@ -32,6 +32,8 @@ for full traceability; the first public release is KieeKey v1.0.
 |---|---|---|
 | [V1.1.0_BENCHMARK_REPORT.md](V1.1.0_BENCHMARK_REPORT.md) | **v1.1.0** | v1.0.1 → v1.1.0 correctness suites, engine micro-bench, E2E/tone latency comparison + regression-test inventory |
 | [V1.2.0_BENCHMARK_REPORT.md](V1.2.0_BENCHMARK_REPORT.md) | **v1.2.0** | v1.1.3 → v1.2.0 audited benchmark corpus, hardened micro/integration/tone latency layers, differential correctness gate, external-engine comparison |
+| [V1.2.0_STABLE_BASELINE_REPORT.md](V1.2.0_STABLE_BASELINE_REPORT.md) | **v1.2.0 Stable** | The FROZEN pre-work baseline every stability change is measured against (commit `d2453db`): micro/E2E/tone numbers, resource figures, and the audit gaps the baseline exposed |
+| [V1.2.0_STABLE_RELEASE_REPORT.md](V1.2.0_STABLE_RELEASE_REPORT.md) | **v1.2.0 Stable** | Stability / correctness / real-world-UX release report: root-cause + fix for each P1–P3, new test suites, performance vs the frozen baseline (with the same-tree A/B methodology correction), release gate, deferred issues |
 
 Frozen benchmark evidence (`imebench_kit/results*`, `benchmark_runs/`) is
 **not shipped** in the source release — it is regenerable with the

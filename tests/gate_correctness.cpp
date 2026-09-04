@@ -80,7 +80,7 @@ std::string toUtf8(const std::wstring& w) {
 }
 
 // Escape control chars in op-stream samples so the report stays readable.
-std::string escapeOps(const std::string& s) {
+[[maybe_unused]] std::string escapeOps(const std::string& s) {
     std::string r;
     r.reserve(s.size());
     for (char c : s) {
@@ -103,7 +103,7 @@ std::string utf16Units(const std::wstring& w) {
     return o.str();
 }
 
-std::string codepoints(const std::wstring& w) {
+[[maybe_unused]] std::string codepoints(const std::wstring& w) {
     std::ostringstream o;
     o << "CP[";
     for (std::size_t i = 0; i < w.size(); ++i) {
@@ -114,7 +114,7 @@ std::string codepoints(const std::wstring& w) {
     return o.str();
 }
 
-std::string firstDivergence(const std::wstring& a, const std::wstring& b) {
+[[maybe_unused]] std::string firstDivergence(const std::wstring& a, const std::wstring& b) {
     std::size_t n = std::min(a.size(), b.size());
     std::size_t i = 0;
     while (i < n && a[i] == b[i]) ++i;
@@ -197,7 +197,7 @@ std::vector<MacroDef> gMacros = {
 // ReplaceMacro event.
 std::vector<std::uint32_t> gLastMacroKey;
 
-std::string longMacroKey() {
+[[maybe_unused]] std::string longMacroKey() {
     std::string s;
     for (int i = 0; i < 300; ++i) s += "ab";
     return s;
@@ -235,7 +235,7 @@ bool macroLookup(const std::vector<std::uint32_t>& key, std::vector<std::uint32_
     return false;
 }
 
-std::wstring expansionFor(const std::vector<std::uint32_t>& key) {
+[[maybe_unused]] std::wstring expansionFor(const std::vector<std::uint32_t>& key) {
     std::vector<std::uint32_t> data;
     if (macroLookup(key, data)) {
         std::wstring out;
@@ -543,18 +543,28 @@ struct CaseRecord {
 
 // sigsetjmp safety net for unexpected engine crashes (should never fire;
 // the oracle mirror pre-empts the known overflow before the engine faults).
+//
+// v1.2.0 Stable: POSIX-only. sigjmp_buf / siglongjmp / SIGBUS do not exist
+// in the Windows SDK, so this whole net compiled to a hard error there
+// (which is why the target is opt-in on Windows — see KIEEKEY_BUILD_EXTRA_
+// TESTS in CMakeLists.txt). On Windows the harness simply runs without the
+// net: a crash then fails the run loudly instead of being caught.
+#if !defined(_WIN32)
 sigjmp_buf g_jmp;
 volatile sig_atomic_t g_crashed = 0;
 void onCrash(int) { g_crashed = 1; siglongjmp(g_jmp, 1); }
 
-void installCrashHandler() {
+[[maybe_unused]] void installCrashHandler() {
     std::signal(SIGSEGV, onCrash);
     std::signal(SIGABRT, onCrash);
     std::signal(SIGBUS, onCrash);
     std::signal(SIGFPE, onCrash);
 }
+#else
+[[maybe_unused]] void installCrashHandler() {}
+#endif
 
-std::string opSignature(const std::vector<std::string>& ops) {
+[[maybe_unused]] std::string opSignature(const std::vector<std::string>& ops) {
     std::uint64_t h = 1469598103934665603ull;
     for (const auto& s : ops) {
         for (char c : s) { h ^= static_cast<unsigned char>(c); h *= 1099511628211ull; }
@@ -565,7 +575,7 @@ std::string opSignature(const std::vector<std::string>& ops) {
     return o.str();
 }
 
-std::string opSignature(const std::string& ops) {
+[[maybe_unused]] std::string opSignature(const std::string& ops) {
     std::uint64_t h = 1469598103934665603ull;
     for (char c : ops) { h ^= static_cast<unsigned char>(c); h *= 1099511628211ull; }
     std::ostringstream o;
@@ -694,7 +704,7 @@ bool charToTelex(wchar_t c, std::string& keys) {
 
 // Convert a precomposed word (possibly containing spaces/hyphens) to raw
 // Telex keys. Returns false if any character is undecodable.
-bool wordToTelexKeys(const std::wstring& word, std::string& keys) {
+[[maybe_unused]] bool wordToTelexKeys(const std::wstring& word, std::string& keys) {
     std::string k;
     for (wchar_t c : word) {
         if (c == L' ') { k += ' '; continue; }

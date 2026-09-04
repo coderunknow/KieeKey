@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.1.3 — resource.h
+// KieeKey v1.2.0 Stable — resource.h
 // Resource identifiers for the Win32 tray application (src/app/main.cpp).
 //----------------------------------------------------------------------------
 #pragma once

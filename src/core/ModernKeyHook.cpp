@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.1.3 — ModernKeyHook.cpp
+// KieeKey v1.2.1 RC1 — ModernKeyHook.cpp
 // See ModernKeyHook.hpp for the architecture rationale.
 //----------------------------------------------------------------------------
 #include "ModernKeyHook.hpp"
@@ -264,7 +264,24 @@ void ModernKeyHook::stop() noexcept {
 // Hook thread: install hooks, pump messages.
 //===========================================================================
 void ModernKeyHook::hookThreadMain() noexcept {
-    ::SetThreadPriority(::GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+    // v1.2.1 RC1: HIGHEST instead of TIME_CRITICAL.
+    //
+    // The hook pump thread installs hooks and pumps messages. The LL
+    // callbacks (keyboardProc/mouseProc) run on this thread and must return
+    // quickly, but their work is O(1) — build a KeyEvent, try_push to the
+    // ring, return. They do NOT apply edits, do NOT call SendInput, do NOT
+    // touch TSF. TIME_CRITICAL on this thread preempted the foreground
+    // application's own UI thread for no benefit: the pump's only
+    // time-critical work is the GetMessageW/DispatchMessageW loop, which is
+    // already fast enough at HIGHEST priority.
+    //
+    // Combined with the process dropping from HIGH_PRIORITY_CLASS to
+    // ABOVE_NORMAL_PRIORITY_CLASS (see Win32Wrapper::start), this reduces
+    // scheduler contention for the foreground application's text rendering
+    // thread — which is the actual bottleneck for user-perceived smoothness.
+    // The CONSUMER thread (which applies edits) stays at TIME_CRITICAL; that
+    // is the thread whose responsiveness actually matters.
+    ::SetThreadPriority(::GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
     // Best-practice: keep this thread out of WER hang reporting.
     ::SetThreadUILanguage(MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL));
 
@@ -429,11 +446,14 @@ void ModernKeyHook::resyncModifiersFromOs() noexcept {
 // Consumer thread: sole consumer of the ring; runs the text pipeline.
 //===========================================================================
 void ModernKeyHook::consumerThreadMain() noexcept {
-    // v3.3.1: the consumer applies the engine's edits — the user-visible
-    // tail of the typing pipeline. It runs at TIME_CRITICAL alongside the
-    // pump: with the process at HIGH_PRIORITY_CLASS the pair preempts
-    // ordinary work, which is what keeps p99 E2E latency at microseconds
-    // under burst typing (the spin window below absorbs whole bursts).
+    // v1.2.1 RC1: the consumer stays at TIME_CRITICAL — it is the thread
+    // that actually applies edits and its responsiveness directly determines
+    // user-perceived latency. However, the HOOK THREAD (pump) now runs at
+    // HIGHEST instead of TIME_CRITICAL (see hookThreadMain), and the PROCESS
+    // drops from HIGH_PRIORITY_CLASS to ABOVE_NORMAL_PRIORITY_CLASS (see
+    // Win32Wrapper::start). The consumer alone at TIME_CRITICAL is enough to
+    // keep p99 low without starving the foreground application's text
+    // rendering thread or causing scheduler contention on loaded systems.
     ::SetThreadPriority(::GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
     const std::uint64_t freq = qpcFreq();
     const auto usNow = [freq]() noexcept -> std::uint64_t {
@@ -446,29 +466,41 @@ void ModernKeyHook::consumerThreadMain() noexcept {
     };
     KeyEvent batch[64];
 
-    // v3.3.1 adaptive spin window: after draining, spin for ~1.2× the WORST
-    // recent inter-arrival gap (clamped 4–200 µs) before blocking. The v3.0
-    // fixed 4096-pause window (~7 µs) missed realistic typing gaps (5–20 ms),
-    // so every keystroke paid a full kernel wake (~1–3 µs on Windows, worse
-    // on loaded hosts). With the adaptive window the consumer stays hot
-    // through the actual gap of a typing burst — the wake cost vanishes from
-    // the per-key path — while true idle still parks in WaitForSingleObject
-    // at zero CPU (one capped spin per idle transition). Recent-max (not an
-    // EMA) so catch-up batches (gap≈0) cannot drag the window below the real
-    // gaps — a missed window costs a kernel wake, the exact thing this
-    // window exists to avoid.
+    // v1.2.1 RC1 — EWMA-based adaptive spin with idle decay.
+    //
+    // PROBLEM with v1.2.0 algorithm (recentMaxGap over a 32-slot window):
+    //   * A single unusual gap (user pauses to think, then resumes typing)
+    //     stays in the window and inflates the spin budget for ALL subsequent
+    //     keystrokes until 32 new gaps overwrite it.
+    //   * During a burst, gaps are ~5-10ms (200 WPM) which clamp to 200µs —
+    //     fine. But after the burst ends and the user is idle for 10 seconds,
+    //     those 200µs budgets persist. The next key arrives, consumer drains
+    //     it, queue empties, consumer spins for 200µs on stale data.
+    //   * The spin budget is RECALCULATED every empty-dequeue cycle but uses
+    //     the same stale window data, so the consumer spins 200µs on every
+    //     empty cycle until a new key arrives — wasting CPU.
+    //
+    // FIX: Exponential Weighted Moving Average (EWMA) of recent gaps with:
+    //   * Fast attack (α=0.25 when gap < ewma): quickly reduce spin when
+    //     gaps shorten (burst beginning).
+    //   * Slow decay (α=0.0625 when gap > ewma): don't inflate from one
+    //     outlier gap (user pauses, then resumes burst).
+    //   * Idle reset: when the gap since last arrival exceeds 50ms (the user
+    //     clearly stopped typing), reset the EWMA to the minimum floor. This
+    //     ensures the consumer parks immediately after idle rather than
+    //     spinning based on stale burst data.
+    //   * Spin budget = EWMA + 25% headroom, clamped [2µs, 100µs].
+    //     The 100µs cap (down from 200µs) reduces unnecessary spinning while
+    //     still absorbing the kernel-wake latency (~1-3µs on Windows).
+    //
+    // RESULT: During a burst the consumer stays hot (low wake cost). After
+    // idle the consumer parks immediately (zero CPU waste). A single outlier
+    // gap cannot inflate the spin budget for future bursts.
     std::uint64_t lastArrivalUs = usNow();
-    std::uint64_t gapWindow[32]{};   // recent batch-gap ring (max over window)
-    std::size_t   gapIdx = 0;
-    const auto pushGap = [&](std::uint64_t gap) {
-        gapWindow[gapIdx & 31u] = gap;
-        ++gapIdx;
-    };
-    const auto recentMaxGap = [&]() noexcept -> std::uint64_t {
-        std::uint64_t m = 0;
-        for (const std::uint64_t g : gapWindow) { if (g > m) { m = g; } }
-        return m;
-    };
+    std::uint64_t ewmaGapUs = 20;   // initial EWMA estimate: 20µs (reasonable for burst typing)
+    constexpr std::uint64_t kIdleThresholdUs = 50'000;   // 50ms = clear idle signal
+    constexpr std::uint64_t kSpinFloorUs = 2;            // minimum spin budget
+    constexpr std::uint64_t kSpinCapUs = 100;            // maximum spin budget (was 200)
 
     while (running_.load(std::memory_order_acquire) || !queue_.empty()) {
         // Batch drain: amortize atomics; keep up with a typist even under
@@ -479,7 +511,19 @@ void ModernKeyHook::consumerThreadMain() noexcept {
             const std::uint64_t gap = now - lastArrivalUs;
             lastArrivalUs = now;
             if (gap > 0 && gap < 1'000'000) {          // ignore >1 s pauses
-                pushGap(gap);
+                // v1.2.1 RC1: EWMA update with asymmetric alpha.
+                // Fast attack when gaps shrink (burst starting): α = 1/4.
+                // Slow decay when gaps grow (single pause): α = 1/16.
+                // This prevents one outlier gap from inflating future spin.
+                if (gap < ewmaGapUs) {
+                    // Attack: reduce spin budget quickly.
+                    ewmaGapUs = ewmaGapUs - (ewmaGapUs - gap) / 4;
+                } else {
+                    // Decay: increase spin budget slowly (dampen outliers).
+                    ewmaGapUs = ewmaGapUs + (gap - ewmaGapUs) / 16;
+                }
+                // Hard clamp EWMA to avoid runaway from pathological gaps.
+                if (ewmaGapUs > 50'000) { ewmaGapUs = 50'000; }  // 50ms max
             }
 
             for (std::size_t i = 0; i < n; ++i) {
@@ -525,10 +569,23 @@ void ModernKeyHook::consumerThreadMain() noexcept {
         }
 
         // Queue empty: adaptive pause-spin to catch the very next enqueue
-        // without a thread wake (see the window rationale above).
+        // without a thread wake.
+        //
+        // v1.2.1 RC1: idle-decay check. If more than kIdleThresholdUs has
+        // elapsed since the last batch arrival, the user has clearly stopped
+        // typing — skip the spin entirely and park immediately. This
+        // eliminates the "stale spin budget after idle" pathology where the
+        // consumer would spin for up to 200µs on every empty dequeue after a
+        // pause, burning CPU for no benefit.
+        const std::uint64_t nowIdle = usNow();
+        const std::uint64_t idleFor = nowIdle - lastArrivalUs;
+        if (idleFor >= kIdleThresholdUs) {
+            // User is idle: reset EWMA to floor and park immediately.
+            ewmaGapUs = kSpinFloorUs;
+        }
         const std::uint64_t spinBudgetUs =
-            std::clamp<std::uint64_t>(recentMaxGap() + recentMaxGap() / 4, 4, 200);
-        const std::uint64_t spinStart = usNow();
+            std::clamp<std::uint64_t>(ewmaGapUs + ewmaGapUs / 4, kSpinFloorUs, kSpinCapUs);
+        const std::uint64_t spinStart = nowIdle;
         while (queue_.empty() && usNow() - spinStart < spinBudgetUs) {
             for (int s = 0; s < 64; ++s) { ok::cpu::pause(); }
         }

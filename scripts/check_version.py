@@ -62,8 +62,8 @@ import pathlib
 # The single source of truth. KieeKey ships "X.Y.Z" with an optional channel
 # word; the PE VERSIONINFO needs a 4-part number, the manifest needs 4 parts,
 # and the UI shows the 3-part form plus the channel.
-DEFAULT_EXPECT = "1.2.0"
-CHANNEL = "Stable"
+DEFAULT_EXPECT = "1.2.1"
+CHANNEL = "RC1"
 
 
 def _fail(msg: str) -> None:

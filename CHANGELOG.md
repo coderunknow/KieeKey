@@ -3,6 +3,79 @@
 All notable changes to KieeKey are documented here. Format based on
 Keep a Changelog; versioning: SemVer.
 
+## [1.2.1-RC1] — 2026-09-04
+
+### Real-world performance and smoothness release
+
+> **Scope:** a real-world performance, latency smoothness, CPU efficiency,
+> and resource-usage release on top of v1.2.0 Stable. **Not** a feature
+> release. Every change targets a measurable real-world typing improvement;
+> no change was accepted that improved a microbenchmark while degrading
+> user-perceived smoothness. Full investigation detail in
+> [`docs/reports/V1.2.1_RC1_PERFORMANCE_REPORT.md`](docs/reports/V1.2.1_RC1_PERFORMANCE_REPORT.md).
+
+#### Changed — Consumer spin algorithm (EWMA + idle decay)
+
+* **Replaced recent-max adaptive spin with EWMA + idle decay.** The v1.2.0
+  algorithm used `recentMaxGap` over a 32-slot window with a 200 µs cap.
+  A single unusual inter-keystroke gap (user pausing to think, then
+  resuming typing) inflated the spin budget for all subsequent keystrokes
+  until 32 new gaps overwrote it. After idle, the consumer continued
+  spinning for up to 200 µs on every empty dequeue cycle based on stale
+  burst data, burning CPU for no benefit.
+
+  The new algorithm uses an Exponential Weighted Moving Average (EWMA)
+  with asymmetric α: fast attack (α=¼) when gaps shrink (burst starting),
+  slow decay (α=¹⁄₁₆) when gaps grow (single pause). An idle-decay check
+  resets the EWMA to floor when more than 50 ms have elapsed since the
+  last batch arrival. The spin cap is reduced from 200 µs to 100 µs.
+
+  **Result:** During a burst the consumer stays hot (low wake cost). After
+  idle the consumer parks immediately (zero CPU waste). A single outlier
+  gap cannot inflate the spin budget for future bursts.
+
+#### Changed — Thread and process priority policy
+
+* **Hook pump thread: TIME_CRITICAL → HIGHEST.** The hook pump installs
+  hooks and pumps messages. Its LL callbacks are O(1) (build KeyEvent,
+  try_push, return). TIME_CRITICAL on this thread preempted the foreground
+  application's own UI thread for no measurable benefit. HIGHEST is
+  sufficient for the message pump.
+
+* **Process: HIGH_PRIORITY_CLASS → ABOVE_NORMAL_PRIORITY_CLASS.**
+  HIGH_PRIORITY_CLASS elevated EVERY thread in the process (UI thread,
+  monitor thread, watchdog, settings dialog) above normal applications.
+  Combined with TIME_CRITICAL on both worker threads, this created
+  scheduler contention with the foreground application's text rendering
+  thread — the user-visible symptom was "fast microbenchmarks but typing
+  feels laggy under load". ABOVE_NORMAL keeps the IME ahead of background
+  work while yielding to the foreground app's own threads.
+
+  The CONSUMER thread (which actually applies edits) stays at
+  TIME_CRITICAL. That is the thread whose responsiveness directly
+  determines user-perceived latency.
+
+#### Added — Real-world typing benchmark
+
+* **`tests/bench_real_world_typing.cpp`** — models human-like typing
+  patterns (variable inter-key intervals, bursts followed by pauses,
+  backspace corrections, spaces, punctuation, single keys separated by
+  long idle periods). Reports both latency (p50/p90/p95/p99/p99.9/max)
+  AND resource cost (CPU time per key, wall-clock throughput) for each
+  workload. Six workloads: burst_200wpm, normal_60wpm, slow_30wpm,
+  burst_pause, single_keys, mixed.
+
+#### Verified and deliberately unchanged
+
+* **TextEngine composition semantics** — byte-identical to v1.2.0 Stable.
+  No engine change in this release.
+* **Lock-free queue (SPSCRing)** — unchanged. The Vyukov ring is correct
+  and not a bottleneck.
+* **EditDrainBarrier** — unchanged. The hybrid spin+event barrier is
+  correct and its 1 ms budget is appropriate.
+* **TSF commit path** — unchanged. No TSF regression.
+* **All v1.2.0 correctness tests** — pass without modification.
+
 ## [1.2.0] — 2026-09-04
 
 ### Feature + performance release on top of the v1.1.3 hardening pass

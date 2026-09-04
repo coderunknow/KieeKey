@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.2.0 - refactored and completed logic
+// KieeKey v1.2.1 RC1 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v3.3.1 — win32_wrapper.hpp
+// KieeKey v1.2.1 RC1 — win32_wrapper.hpp
 // The Win32 transport layer of the IME: hook lifecycle, lock-free queueing,
 // batched synthetic input, priorities, and hook self-healing.
 //
@@ -69,8 +69,11 @@
 //     SendInput call (chunked only when a payload exceeds one batch).
 //     Zero heap allocation, self-tagged dwExtraInfo so the hook skips
 //     its own output.
-//   * Priority policy: hook pump + consumer threads run at
-//     THREAD_PRIORITY_TIME_CRITICAL and the process at HIGH_PRIORITY_CLASS.
+//   * Priority policy: consumer thread at THREAD_PRIORITY_TIME_CRITICAL,
+//     hook pump at THREAD_PRIORITY_HIGHEST, process at
+//     ABOVE_NORMAL_PRIORITY_CLASS (v1.2.1 RC1: reduced from HIGH + TIME_CRIT
+//     on both threads — the over-elevation starved the foreground app's text
+//     rendering thread on loaded systems).
 //   * OutputRing is the Vyukov SPSC ring with capacity 1024.
 //----------------------------------------------------------------------------
 #pragma once
@@ -659,11 +662,24 @@ public:
     // Same contract as ModernKeyHook::start (handler runs on the consumer
     // thread). Applies the process priority policy, then starts the hook.
     [[nodiscard]] bool start(ok::hook::ModernKeyHook::EventHandler handler) {
-        // Process priority policy (once): HIGH_PRIORITY_CLASS keeps the pump
-        // + consumer pair (both TIME_CRITICAL) ahead of ordinary work
-        // without the starvation risk of REALTIME.
+        // v1.2.1 RC1 — process priority policy (once): ABOVE_NORMAL instead
+        // of HIGH_PRIORITY_CLASS.
+        //
+        // RATIONALE: HIGH_PRIORITY_CLASS elevates EVERY thread in the
+        // process (UI thread, monitor thread, watchdog, settings dialog)
+        // above normal-priority applications. Combined with TIME_CRITICAL on
+        // the consumer + HIGHEST on the pump, this created scheduler
+        // contention with the foreground application's own text rendering
+        // thread. The user-visible symptom was "fast microbenchmarks but
+        // typing feels laggy under load" — the IME's threads were starving
+        // the app that needed to paint the text.
+        //
+        // ABOVE_NORMAL_PRIORITY_CLASS keeps the IME ahead of background work
+        // (compilers, downloads) while yielding to normal-priority foreground
+        // threads. The consumer alone at TIME_CRITICAL provides the latency
+        // edge; the process boost is redundant with it and harmful.
         if (!priorityApplied_.exchange(true, std::memory_order_relaxed)) {
-            ::SetPriorityClass(::GetCurrentProcess(), HIGH_PRIORITY_CLASS);
+            ::SetPriorityClass(::GetCurrentProcess(), ABOVE_NORMAL_PRIORITY_CLASS);
         }
         emitter_.setSelfInjectTick(&selfInjectTickMs_);
         return hook_.start(std::move(handler));

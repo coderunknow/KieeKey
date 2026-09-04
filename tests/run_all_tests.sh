@@ -177,6 +177,7 @@ build ok_tests            -std=c++2b -O2 $INC tests/test_textengine.cpp   $ENGIN
 build diff_engine_ab      -std=c++2b -O2 $INC -Itests tests/diff_engine_ab.cpp \
                           $ENGINE23 $ENGINE_RC1                                     || rc=1
 build test_notifications  -std=c++2b -O2 $INC tests/test_notifications.cpp $ENGINE23 || rc=1
+build stress_rc2          -std=c++2b -O2 -pthread $INC tests/stress_rc2.cpp $ENGINE23  || rc=1
 build test_hotfix_asan    -std=c++2b -O1 -g -fsanitize=address,undefined \
                           -fno-omit-frame-pointer $INC tests/test_hotfix.cpp $ENGINE_ASAN || rc=1
 build ok_ring_tests       -std=c++2b -O2 $INC tests/test_ringbuffer.cpp             || rc=1
@@ -273,6 +274,7 @@ dispatch_runs() {
 run ok_tests             120
 run diff_engine_ab       300
 run test_notifications   120
+run stress_rc2           300
 run test_hotfix_asan     300
 run ok_ring_tests        120
 run ok_wrap_tests        120

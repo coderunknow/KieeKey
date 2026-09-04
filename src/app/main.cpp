@@ -245,6 +245,7 @@ struct AppState {
     // non-zero count means a future engine path regressed and the guard
     // held the line). Surfaced on the Information tab.
     std::atomic<std::uint64_t> digitGuardHits{0};
+    std::atomic<std::uint64_t> shortcutGuardHits{0};   // v1.2.1 RC2 bug #3 guard
     // v1.1.2-r3 conflict detector cache (scanConflicts result). UI-thread
     // only: refreshed at startup and on every settings-dialog open.
     std::wstring conflictWarning;   // empty when clean
@@ -1347,9 +1348,25 @@ PD onHookEventImpl(const KeyEvent& ev) {
             in.ch >= U'0' && in.ch <= U'9' &&
             r.code != EngineCode::DoNothing &&
             r.code != EngineCode::ReplaceMacro;
-        if (digitLiteralEvent) {
-            g.digitGuardHits.fetch_add(1, std::memory_order_relaxed);
-            g.engine.startNewSession();   // screen now shows the raw digit
+        // v1.2.1 RC2 BUG #3 — SHORTCUT-SAFETY GUARD. A Ctrl/Alt chord whose
+        // key is a punctuation word-break (Ctrl+, Ctrl+. Ctrl+/ Ctrl+;) or a
+        // control VK (Ctrl+Enter, Ctrl+Tab, Alt+Enter, ...) is fed to the
+        // engine as a word break so the pending word is finalised. When that
+        // word is a non-Vietnamese spelling under restoreIfWrongSpelling
+        // ("wolf", "wifi") the engine returns a Restore edit and the hook
+        // CONSUMED the chord: the app never saw its shortcut (VS Code
+        // Ctrl+, = Settings, Ctrl+Enter = Send in mail clients). Found by
+        // tests/stress_rc2.cpp scenario 4. Policy: a chord is never
+        // suppressed and never rewrites text; the engine word state is
+        // dropped (the app is about to act on the shortcut anyway).
+        const bool shortcutRestoreEvent =
+            in.otherCtrl &&
+            (r.code == EngineCode::Restore ||
+             r.code == EngineCode::RestoreAndStartNewSession);
+        if (digitLiteralEvent || shortcutRestoreEvent) {
+            if (digitLiteralEvent) { g.digitGuardHits.fetch_add(1, std::memory_order_relaxed); }
+            else                   { g.shortcutGuardHits.fetch_add(1, std::memory_order_relaxed); }
+            g.engine.startNewSession();   // screen keeps what it shows
             g.repScratch.clear();         // guarded: no replacement to apply
         } else {
             g.engine.replacementUtf16(r, g.repScratch);   // scratch — no per-key alloc
@@ -1397,11 +1414,11 @@ PD onHookEventImpl(const KeyEvent& ev) {
         //     space was eaten ('arbit hối đoái' rendered 'arbithối đoái').
         // Backspace / word-break / mouse Restores keep their no-re-issue
         // semantics (verified against 2.0.5).
-        reissueTyped = !digitLiteralEvent &&
+        reissueTyped = !digitLiteralEvent && !shortcutRestoreEvent &&
                        (r.code == EngineCode::Restore ||
                         r.code == EngineCode::RestoreAndStartNewSession) &&
                        (in.kind == InputKind::Char || in.kind == InputKind::Space);
-        if (digitLiteralEvent) {
+        if (digitLiteralEvent || shortcutRestoreEvent) {
             // Guarded: force the pass-through contract (suppress stays false,
             // repScratch is not consumed by the output path below).
             g.repScratch.clear();
@@ -1898,6 +1915,11 @@ std::wstring infoDiagnosticsText() {
     if (hits != 0) {
         s += L"\nLớp bảo vệ số đã chặn " + std::to_wstring(hits) +
              L" lần (bất thường — vui lòng cập nhật KieeKey).";
+    }
+    const std::uint64_t sc = g.shortcutGuardHits.load(std::memory_order_relaxed);
+    if (sc != 0) {
+        s += L"\nPhím tắt Ctrl/Alt được bảo vệ khỏi sửa lỗi chính tả: " +
+             std::to_wstring(sc) + L" lần.";
     }
     return s;
 }

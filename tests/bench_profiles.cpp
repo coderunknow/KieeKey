@@ -65,8 +65,14 @@
 #include "TextEngine.hpp"
 #include "win32_wrapper.hpp"
 
-#if !defined(_WIN32) || defined(OK_WRAP_NO_WIN32)
-#include <sys/resource.h>
+// Build (native):  g++ -std=c++20 -O2 -DOK_WRAP_NO_WIN32 -Isrc/core -Itests
+//                      tests/bench_profiles.cpp src/core/win32_wrapper.cpp
+//                      src/core/TextEngine.cpp -lpthread
+// Build (Windows): same file WITHOUT OK_WRAP_NO_WIN32 (real QPC/SendInput
+//                  shim types come from <windows.h> via win32_wrapper.hpp).
+#if defined(_WIN32) && defined(OK_WRAP_NO_WIN32)
+static double threadCpuMs() { return 0; }   // shim-on-Windows: no CPU clock without <windows.h>
+#elif !defined(_WIN32)
 #include <time.h>
 static double threadCpuMs() {
     timespec ts{};
@@ -148,7 +154,9 @@ struct Pipeline {
     std::uint64_t batchStartNs = 0;
 
     Pipeline(const Strategy& s, Result& r, std::size_t n) : st(s), res(r), t0(n), done(n) {
+#ifndef BENCH_RC1_ENGINE   // RC1 barrier has fixed tuning (== Balanced); used for the RC1/default row
         barrier.setTuning((s.barrierBudgetUs + 999) / 1000, s.barrierSpinIters);
+#endif
     }
 
     void consumerLoop() {

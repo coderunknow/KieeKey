@@ -423,6 +423,18 @@ else()
         target_include_directories(ok_realworld_bench PRIVATE src/core)
         target_compile_features(ok_realworld_bench PRIVATE cxx_std_20)
 
+        # v1.2.1 RC2 — Performance Preference Profiles through the shim
+        # pipeline. Run manually:  ./ok_profiles_bench --keys=100000 --runs=3
+        add_executable(ok_profiles_bench
+            tests/bench_profiles.cpp
+            src/core/win32_wrapper.cpp
+            src/core/TextEngine.cpp
+        )
+        target_include_directories(ok_profiles_bench PRIVATE src/core tests)
+        target_compile_definitions(ok_profiles_bench PRIVATE OK_WRAP_NO_WIN32)
+        target_compile_features(ok_profiles_bench PRIVATE cxx_std_20)
+        target_link_libraries(ok_profiles_bench PRIVATE Threads::Threads)
+
         message(STATUS "Non-Windows host: building the shim-based test suite only "
                        "(ok_tests, ok_ring_tests, ok_wrap_tests). The Windows product "
                        "targets (ok_core, ok_tsf, KieeKeyApp.exe) require WIN32.")

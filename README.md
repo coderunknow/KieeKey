@@ -20,6 +20,31 @@ text-store composer and an optional WinUI 3 Fluent settings UI.
 
 ---
 
+## What's new in v1.2.1 RC2 — performance, optimization & real-world hardening
+
+* **Engine decision latency −28 % … −61 %** on every real-world typing
+  workload and percentile (200 WPM burst p50 161 → 75 ns, p99.9 456 → 191 ns),
+  E2E pipeline burst p50 −9.9 % / p99 −6.9 %, memory flat — with the engine
+  proven **decision-identical to RC1** on 1.2 M lockstep events against the
+  frozen RC1 engine (`tests/diff_engine_ab.cpp`).
+* **Performance Preference Profiles** (settings → *Chế độ xuất & hiệu năng*):
+  Cân bằng (default = RC1 behaviour), Nhanh nhất, Ít nháy chữ nhất, Chính xác
+  tối đa, Tự động thích ứng, plus Tiết kiệm CPU / Từ điển hybrids — one
+  centralized strategy that really changes output path, spin, barrier, batch
+  and correctness policy. Each profile is benchmarked.
+* **Smart notifications** with cooldown, dedup, hourly caps and a persisted
+  *Don't show again* — first use: *"Telex nhanh đang sửa nhầm từ của bạn?"*
+  when the general quick-Telex detector sees you repeatedly undoing
+  `cc/gg/kk/nn/qq/pp/tt` expansions (**Turn off / Keep / Don't show again**).
+* **3 bugs fixed** with permanent regression tests, incl. Ctrl/Alt shortcuts
+  (Ctrl+`,` Ctrl+Enter…) that were swallowed after a non-Vietnamese word.
+* New 7-scenario stress battery (`tests/stress_rc2.cpp`); 21 native suites.
+
+Full report with RC1-vs-RC2 tables (faster / unchanged / slower on every
+row), profiling, rejected optimizations and methodology:
+[docs/reports/V1.2.1_RC2_PERFORMANCE_REPORT.md](docs/reports/V1.2.1_RC2_PERFORMANCE_REPORT.md)
+— raw artifacts in [`docs/bench/`](docs/bench/).
+
 ## What's new in v1.2.0 Stable
 
 **Two releases in one version:** the v1.2.0 feature + performance release,

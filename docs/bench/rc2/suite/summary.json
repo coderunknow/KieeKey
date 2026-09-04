@@ -1,0 +1,221 @@
+{
+ "schema": "run_bench_suite.summary.v1",
+ "sides": {
+  "cur": {
+   "perf": {
+    "T0_control_ns": {
+     "min": 21,
+     "mean": 29.227,
+     "p50": 28,
+     "p99": 33,
+     "max": 121205
+    },
+    "vn-compose": {
+     "T1-decision": {
+      "min": 43,
+      "mean": 76.2161,
+      "p50": 70,
+      "p90": 98,
+      "p99": 132,
+      "p999": 160,
+      "max": 45563
+     },
+     "T1+encode": {
+      "min": 73,
+      "mean": 110.424,
+      "p50": 100,
+      "p90": 130,
+      "p99": 281,
+      "p999": 328,
+      "max": 45716
+     }
+    },
+    "mixed": {
+     "T1-decision": {
+      "min": 41,
+      "mean": 83.2673,
+      "p50": 79,
+      "p90": 105,
+      "p99": 155,
+      "p999": 193,
+      "max": 72789
+     },
+     "T1+encode": {
+      "min": 70,
+      "mean": 125.201,
+      "p50": 110,
+      "p90": 158,
+      "p99": 333,
+      "p999": 392,
+      "max": 102561
+     }
+    },
+    "passthrough": {
+     "T1-decision": {
+      "min": 34,
+      "mean": 76.0658,
+      "p50": 74,
+      "p90": 98,
+      "p99": 139,
+      "p999": 181,
+      "max": 65287
+     },
+     "T1+encode": {
+      "min": 59,
+      "mean": 106.59,
+      "p50": 103,
+      "p90": 129,
+      "p99": 169,
+      "p999": 233,
+      "max": 65700
+     }
+    },
+    "delete": {
+     "T1-decision": {
+      "min": 44,
+      "mean": 73.9353,
+      "p50": 68,
+      "p90": 98,
+      "p99": 121,
+      "p999": 201,
+      "max": 33313
+     },
+     "T1+encode": {
+      "min": 74,
+      "mean": 105.17,
+      "p50": 98,
+      "p90": 129,
+      "p99": 163,
+      "p999": 247,
+      "max": 33400
+     }
+    }
+   },
+   "e2e": {
+    "raw_us": {
+     "p50": 29.677,
+     "p99": 111.68,
+     "p999": 1035.07,
+     "max": 2583.15
+    },
+    "burst_hot_us": {
+     "p50": 27.73,
+     "p99": 81.789,
+     "p999": 96.62,
+     "max": 99.985
+    },
+    "pipeline_us": {
+     "p50": 29.292,
+     "p99": 83.747,
+     "p999": 97.117,
+     "max": 99.985
+    },
+    "wake_pay_us": {
+     "p50": 41.658,
+     "p99": 120
+    },
+    "lag_spikes_median": 1440,
+    "throughput_keys_per_s_median": 13261.1,
+    "peak_rss_mb_total_median": 8.4375,
+    "burst_p50_target_ok": false,
+    "burst_p99_target_ok": false
+   },
+   "tone": {
+    "tone-append": {
+     "spin": {
+      "edit_p50_us": 0.208,
+      "edit_p99_us": 1.622
+     },
+     "hybrid": {
+      "edit_p50_us": 0.21,
+      "edit_p99_us": 1.451
+     }
+    },
+    "dbar": {
+     "spin": {
+      "edit_p50_us": 0.235,
+      "edit_p99_us": 1.248
+     },
+     "hybrid": {
+      "edit_p50_us": 0.237,
+      "edit_p99_us": 1.538
+     }
+    },
+    "reposition": {
+     "spin": {
+      "edit_p50_us": 0.207,
+      "edit_p99_us": 1.557
+     },
+     "hybrid": {
+      "edit_p50_us": 0.206,
+      "edit_p99_us": 1.455
+     }
+    },
+    "restore-reissue": {
+     "spin": {
+      "edit_p50_us": 0.222,
+      "edit_p99_us": 1.627
+     },
+     "hybrid": {
+      "edit_p50_us": 0.219,
+      "edit_p99_us": 1.821
+     }
+    },
+    "double-tone": {
+     "spin": {
+      "edit_p50_us": 0.313,
+      "edit_p99_us": 1.907
+     },
+     "hybrid": {
+      "edit_p50_us": 0.311,
+      "edit_p99_us": 1.963
+     }
+    },
+    "mid-word": {
+     "spin": {
+      "edit_p50_us": 0.234,
+      "edit_p99_us": 1.553
+     },
+     "hybrid": {
+      "edit_p50_us": 0.233,
+      "edit_p99_us": 1.538
+     }
+    },
+    "horn-compound": {
+     "spin": {
+      "edit_p50_us": 0.356,
+      "edit_p99_us": 1.709
+     },
+     "hybrid": {
+      "edit_p50_us": 0.356,
+      "edit_p99_us": 1.678
+     }
+    },
+    "heavy-word": {
+     "spin": {
+      "edit_p50_us": 0.294,
+      "edit_p99_us": 1.858
+     },
+     "hybrid": {
+      "edit_p50_us": 0.296,
+      "edit_p99_us": 1.938
+     }
+    },
+    "mixed": {
+     "spin": {
+      "edit_p50_us": 6.82,
+      "edit_p99_us": 8.659
+     },
+     "hybrid": {
+      "edit_p50_us": 7.254,
+      "edit_p99_us": 11.547
+     }
+    }
+   },
+   "gate": {
+    "rc": 0,
+    "log": "gate_cur.log"
+   }
+  }
+ }
+}

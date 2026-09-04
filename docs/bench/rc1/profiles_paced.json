@@ -1,0 +1,6 @@
+{
+  "keys": 20000, "runs": 3, "rate_hz": 1000,
+  "profiles": [
+    {"profile": "Balanced", "output": 0, "spinCapUs": 100, "barrierBudgetUs": 1000, "editBatchMax": 32, "dictionaryRestore": false, "decision_p50_ns": 416, "decision_p99_ns": 2317, "e2e_p50_us": 2.719, "e2e_p99_us": 114.662, "e2e_p999_us": 1017.62, "barrier_p50_us": 133.883, "barrier_p99_us": 133.883, "barrier_waits": 3, "barrier_timeouts": 0, "commits": 1059, "edits_ring": 1059, "edits_inline": 1072, "wakes": 1060, "visible_retypes": 1072, "consumer_cpu_ms": 129.815, "wall_ms": 35720.7}
+  ]
+}

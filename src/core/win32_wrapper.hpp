@@ -78,6 +78,7 @@
 //----------------------------------------------------------------------------
 #pragma once
 
+#include <algorithm>   // std::clamp (v1.2.1 RC2 barrier tuning)
 #include <array>
 #include <atomic>
 #include <condition_variable>

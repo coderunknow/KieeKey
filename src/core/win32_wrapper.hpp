@@ -389,6 +389,97 @@ private:
 };
 
 //---------------------------------------------------------------------------
+// PendingEditCounter (v1.2.0 Stable) — the ordering-barrier bookkeeping.
+//
+// HISTORY: this counter used to live inline in src/app/main.cpp as a bare
+// std::atomic<std::uint32_t> incremented/decremented at six call sites. Being
+// app-local it was untestable, and two of its failure modes are exactly the
+// kind of bug this release exists to remove:
+//
+//   (a) STRANDED COUNT — a lifecycle transition (engine switched off, IME
+//       auto-excluded in the current app, pipeline (re)started) stops the
+//       producer from queueing work. Nothing wakes the consumer any more, so
+//       a count that was already published is never released. From then on
+//       EVERY pass-through keystroke paid the full barrier timeout (1 ms of
+//       hook-thread stall per key) until an edit happened to re-arm the
+//       wake — the "sometimes it takes a moment" symptom.
+//   (b) PHANTOM COUNT — publishing after the ring push let the consumer apply
+//       the edit and observe 0 before the increment landed; the "reached
+//       zero" notification was then skipped (fixed in v1.1.3, pinned here).
+//
+// It now lives in the wrapper layer so the invariants are unit-testable on
+// EVERY platform (this is pure std + the barrier above, no Win32).
+//
+// CONTRACT
+//   * publish(n)  — producer, BEFORE the item becomes visible to the consumer
+//                   (acq_rel), so the consumer can never observe "applied
+//                   everything" while a publish is still in flight.
+//   * rollback(n) — producer, when the push failed (edit degraded to inline).
+//   * consume(n)  — consumer, after the n edits were actually applied.
+//   * forceQuiesce() — lifecycle only: clears the count and releases every
+//                   waiter. Safe ONLY where the caller guarantees no further
+//                   edits can be produced (engine off / pipeline stopped).
+//                   It is the recovery for (a), not a general-purpose reset.
+//---------------------------------------------------------------------------
+class PendingEditCounter final {
+public:
+    explicit PendingEditCounter(EditDrainBarrier& barrier) noexcept : barrier_(barrier) {}
+
+    PendingEditCounter(const PendingEditCounter&)            = delete;
+    PendingEditCounter& operator=(const PendingEditCounter&) = delete;
+
+    // Producer side — publish BEFORE the ring push (see contract above).
+    void publish(std::uint32_t n = 1) noexcept {
+        if (n == 0) { return; }
+        pending_.fetch_add(n, std::memory_order_acq_rel);
+    }
+
+    // Producer side — the push failed; the edit was emitted inline instead.
+    void rollback(std::uint32_t n = 1) noexcept {
+        if (n == 0) { return; }
+        pending_.fetch_sub(n, std::memory_order_acq_rel);
+        releaseIfDrained();
+    }
+
+    // Consumer side — n edits were applied (or definitively abandoned).
+    void consume(std::uint32_t n) noexcept {
+        if (n == 0) { return; }
+        pending_.fetch_sub(n, std::memory_order_acq_rel);
+        releaseIfDrained();
+    }
+
+    // Lifecycle side — see contract. Clears a stranded count AND wakes every
+    // waiter, so a stalled hook thread can never stay blocked on an edit that
+    // is never going to be applied.
+    void forceQuiesce() noexcept {
+        pending_.store(0, std::memory_order_release);
+        barrier_.notifyDrained();
+    }
+
+    // Producer side — bounded wait until every published edit was applied.
+    // Returns false on timeout (the key is delivered anyway — the documented
+    // degradation, counted in EditDrainBarrier::timeouts()).
+    [[nodiscard]] bool waitDrained() noexcept { return barrier_.waitDrained(pending_); }
+
+    [[nodiscard]] std::uint32_t pending() const noexcept {
+        return pending_.load(std::memory_order_acquire);
+    }
+
+private:
+    void releaseIfDrained() noexcept {
+        // Re-READ after the release: a late producer publish (the race fixed
+        // in v1.1.3) can slip between the fetch_sub and this load, and a
+        // skipped notification would leave the barrier armed forever.
+        if (pending_.load(std::memory_order_acquire) == 0) {
+            barrier_.notifyDrained();
+        }
+    }
+
+    EditDrainBarrier&      barrier_;
+    std::atomic<std::uint32_t> pending_{0};
+};
+
+//---------------------------------------------------------------------------
 // HookWatchdog — hook self-healing (v3.3.1).
 //
 // Detection model: the LL callbacks stamp a tick for EVERY event they see
@@ -585,6 +676,13 @@ public:
         hook_.setConsumerFinalizer(std::move(f));
     }
     void stop() noexcept { hook_.stop(); }
+
+    // v1.2.0 Stable — wake the consumer from any thread (lifecycle recovery
+    // for edits stranded by a transition that stops the producer; see
+    // ModernKeyHook::pokeConsumer for the failure mode).
+    void pokeConsumer() noexcept { hook_.pokeConsumer(); }
+    [[nodiscard]] std::uint64_t overflowWakeCount() const noexcept { return hook_.overflowWakeCount(); }
+    [[nodiscard]] std::uint64_t handlerExceptionCount() const noexcept { return hook_.handlerExceptionCount(); }
 
     [[nodiscard]] bool running() const noexcept { return hook_.running(); }
 

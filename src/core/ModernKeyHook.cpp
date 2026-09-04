@@ -140,6 +140,12 @@ bool ModernKeyHook::start(EventHandler handler) {
     stats_.pushed.store(0, std::memory_order_relaxed);
     stats_.droppedOverflow.store(0, std::memory_order_relaxed);
     peakLatencyUs_.store(0, std::memory_order_relaxed);
+    // v1.2.0 Stable: re-arm the handshake + callback-liveness flags. A
+    // previous stop()/start() cycle must never observe a stale "installed"
+    // or a stale "pump tick is dead".
+    hooksInstalled_.store(false, std::memory_order_release);
+    pumpTickDead_.store(false, std::memory_order_release);
+    overflowWakeCount_.store(0, std::memory_order_relaxed);
     // v3.5: re-arm the shutdown acknowledgements (start() may follow stop()).
     hookPumpExited_.store(false, std::memory_order_release);
     consumerExited_.store(false, std::memory_order_release);
@@ -159,8 +165,13 @@ bool ModernKeyHook::start(EventHandler handler) {
     });
 
     // Wait until the hooks are installed (or the hook thread dies).
+    // v1.2.0 Stable: poll the atomic handshake flag, not the hook handle
+    // member (the pump thread owns that handle; reading it here was a data
+    // race — invisible on today's compilers/CPUs, but it is UB and TSan
+    // would flag it in any future instrumented build).
     for (int i = 0; i < 2000 && hookThread_.joinable(); ++i) {
-        if (keyboardHook_ || !running_.load(std::memory_order_acquire)) { break; }
+        if (hooksInstalled_.load(std::memory_order_acquire) ||
+            !running_.load(std::memory_order_acquire)) { break; }
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     if (!keyboardHook_.operator bool()) {
@@ -234,11 +245,15 @@ void ModernKeyHook::stop() noexcept {
         producerHandler_ = nullptr;
         finalizer_ = nullptr;   // already ran on the consumer thread
     } else {
-        // v1.1.3: a detached (wedged) pump may still execute its WM_TIMER
-        // tick. Null the callback NOW so the tick can never reach the
-        // watchdog after the owner's teardown begins (the app exits via
-        // ExitProcess on this path; this closes the library-use window).
-        pumpTick_ = nullptr;
+        // v1.1.3 (hardened in v1.2.0): a detached (wedged) pump may still
+        // execute its WM_TIMER tick, so the tick callback must stop reaching
+        // out once teardown begins. The v1.1.3 code assigned
+        // `pumpTick_ = nullptr` here — that is a NON-ATOMIC write to a
+        // std::function that the pump thread may be reading at that very
+        // moment (torn read of the callable's state, i.e. a use-after-free
+        // of its captures). The library-use window is closed by an atomic
+        // flag instead, which the pump checks before invoking the callback.
+        pumpTickDead_.store(true, std::memory_order_release);
     }
     // else: stuck-thread path — deliberately keep every handle alive so the
     // detached thread(s) can still touch them when their blocked call finally
@@ -267,6 +282,9 @@ void ModernKeyHook::hookThreadMain() noexcept {
     fgWinEvent_.reset(::SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND,
                                         nullptr, &ModernKeyHook::winEventProc, 0, 0,
                                         WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS));
+    // v1.2.0 Stable: publish the installation handshake AFTER all three hooks
+    // are set (start() waits on this flag, never on the handles themselves).
+    hooksInstalled_.store(keyboardHook_.operator bool(), std::memory_order_release);
 
     // v3.3.1 self-healing heartbeat: arm the pump-tick WM_TIMER. The tick
     // runs the watchdog inside THIS message loop, so a detected silent
@@ -294,7 +312,14 @@ void ModernKeyHook::hookThreadMain() noexcept {
         if (tickArmed && msg.message == WM_TIMER &&
             msg.hwnd == nullptr && msg.wParam == kSelfHealTimerId) {
             // Watchdog heartbeat — handled inline; never dispatched.
-            if (pumpTick_) { pumpTick_(); }
+            // v1.2.0 Stable: the atomic liveness flag guards the call. A
+            // stop() that had to DETACH this pump sets it before teardown
+            // begins, so the tick can never invoke a callback whose owner is
+            // being destroyed (the v1.1.3 `pumpTick_ = nullptr` write was a
+            // data race on the std::function itself).
+            if (!pumpTickDead_.load(std::memory_order_acquire) && pumpTick_) {
+                pumpTick_();
+            }
             continue;
         }
         ::TranslateMessage(&msg);
@@ -312,7 +337,29 @@ void ModernKeyHook::hookThreadMain() noexcept {
     keyboardHook_.reset();
     mouseHook_.reset();
     fgWinEvent_.reset();
+    // v1.2.0 Stable: clear the handshake + the published thread id. A later
+    // start() must never spin on a stale "installed" flag, and stop() must
+    // never PostThreadMessage(WM_QUIT) to a thread id that is already gone
+    // (a recycled id would deliver WM_QUIT to an unrelated thread).
+    hooksInstalled_.store(false, std::memory_order_release);
+    hookThreadId_.store(0, std::memory_order_release);
     g_instance = nullptr;
+}
+
+//===========================================================================
+// v1.2.0 Stable — wake the consumer from any thread.
+//
+// SetEvent is thread-safe and idempotent for a manual-reset event, so the UI
+// thread (or any lifecycle callback) can ask the consumer to drain work that
+// is already queued in the app's output ring. Without this, a lifecycle
+// transition that stops the producer from queueing key events (engine
+// switched off, foreground auto-excluded, power resume) leaves queued edits
+// stranded: nothing wakes the consumer, so the pending-edit count never
+// reaches zero and every later pass-through keystroke pays the full barrier
+// timeout.
+//===========================================================================
+void ModernKeyHook::pokeConsumer() noexcept {
+    if (wakeEvent_) { ::SetEvent(wakeEvent_.get()); }
 }
 
 //===========================================================================
@@ -332,6 +379,7 @@ bool ModernKeyHook::reinstallHooksOnPump() noexcept {
                                         nullptr, &ModernKeyHook::winEventProc, 0, 0,
                                         WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS));
     const bool ok = keyboardHook_.operator bool();
+    hooksInstalled_.store(ok, std::memory_order_release);
     if (ok) {
         hookReinstallCount_.fetch_add(1, std::memory_order_relaxed);
         // v1.1.0-audit fix: re-seed the live modifier tracker from the async
@@ -454,7 +502,24 @@ void ModernKeyHook::consumerThreadMain() noexcept {
                     avgLatencyUs_.store(avg, std::memory_order_relaxed);
                 }
 
-                if (handler_) { handler_(ev); }   // TextEngine + composer live here
+                // v1.2.0 Stable — the consumer thread must NEVER die.
+                // onConsumerEvent() is noexcept and runs real work (TSF
+                // commit, std::wstring payloads, COM). Any escaping exception
+                // (std::bad_alloc under memory pressure, a COM error
+                // translated to an exception by a future wrapper, …) called
+                // std::terminate() inside consumerThreadMain()'s noexcept
+                // frame — the IME process vanished mid-keystroke, with the
+                // tray icon still in the notification area. That is the
+                // single worst user-visible failure an IME can have, so the
+                // handler call is now fault-isolated: one bad event is
+                // dropped (counted) and the pipeline keeps running.
+                if (handler_) {
+                    try {
+                        handler_(ev);
+                    } catch (...) {
+                        handlerExceptions_.fetch_add(1, std::memory_order_relaxed);
+                    }
+                }
             }
             continue;    // burst mode: never wait while data is flowing
         }
@@ -520,6 +585,22 @@ bool ModernKeyHook::enqueue(const KeyEvent& ev) noexcept {
     // app never selected DropOldest, so this is a loaded-footgun removal, not
     // a behavior change: overflow now always drops the NEWEST event (counted).
     stats_.droppedOverflow.fetch_add(1, std::memory_order_relaxed);
+
+    // v1.2.0 Stable — DROP THE EVENT, NEVER THE WAKE.
+    //
+    // The KeyEvent payload is not read by the consumer (it is only the wake
+    // signal and a latency stamp), but the producer callback has ALREADY
+    // pushed the real work — an OutputItem carrying the engine's edit — into
+    // the app's out-ring, and has already published it into the pending-edit
+    // count. Dropping the wake leaves that edit stranded: nothing signals
+    // the parked consumer, the count never returns to zero, and the next
+    // pass-through key burns the full 1 ms barrier budget before being
+    // delivered out of order (the ghosting the barrier exists to prevent).
+    // Waking unconditionally costs one SetEvent in a situation that only
+    // arises when the pipeline is already deep in a backlog; correctness
+    // wins over a syscall we are not otherwise paying.
+    overflowWakeCount_.fetch_add(1, std::memory_order_relaxed);
+    ::SetEvent(wakeEvent_.get());
     return false;                  // input dropped, counted in diagnostics
 }
 

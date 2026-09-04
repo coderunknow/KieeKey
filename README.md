@@ -5,8 +5,8 @@
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20ARM64-0078D6.svg)
 ![Build](https://img.shields.io/badge/build-CMake%20%3E%3D%203.28-064FAD.svg)
 
-**KieeKey v1.2.0** is a modern, low-latency Vietnamese input method engine
-(bộ gõ Tiếng Việt) for Windows, with a system-tray application, a TSF
+**KieeKey v1.2.0 Stable** is a modern, low-latency Vietnamese input method
+engine (bộ gõ Tiếng Việt) for Windows, with a system-tray application, a TSF
 text-store composer and an optional WinUI 3 Fluent settings UI.
 
 > **KieeKey is a modified version based on
@@ -20,9 +20,85 @@ text-store composer and an optional WinUI 3 Fluent settings UI.
 
 ---
 
-## What's new in v1.2.0
+## What's new in v1.2.0 Stable
 
-**A feature + performance release on top of the v1.1.3 hardening pass.**
+**Two releases in one version:** the v1.2.0 feature + performance release,
+followed by a **stability / correctness / real-world-UX hardening pass**
+(the "Stable" suffix — this is what v1.2.0 Stable ships).
+
+### The stability pass (recommended reading first)
+
+An IME is a system service the user reaches through their fingers, so the
+release goal was **real-world reliability, not benchmark numbers**: two
+changes were accepted that cost a sub-nanosecond amount of throughput because
+they remove a user-visible failure mode.
+
+1. **The IME can no longer die mid-keystroke.** Any exception escaping the
+   consumer handler — a plain `std::bad_alloc` under memory pressure is
+   enough — used to call `std::terminate()` inside a `noexcept` frame. The
+   process vanished while the tray icon stayed behind, and every window then
+   produced raw, uncomposed Vietnamese with no visible signal. The handler is
+   now fault-isolated: one bad event is dropped and counted, the pipeline
+   keeps running.
+1. **"Typing `p` twice turns it into `ph`" is fixed.** With "gõ tắt"
+   (quickTelex) enabled, the cluster shortcut fired at *any* position in a
+   word instead of only at the start of a syllable, so ordinary English words
+   were silently mangled: `happy→haphy`, `apple→aphle`, `letter→lether`,
+   `account→achount`, `running→runging`, `success→suches`, `cc→ch`, and 31
+   more. Vietnamese clusters (ch, gi, kh, ng, ph, qu, th) are always
+   syllable-initial, so the rule now requires the doubled pair to be the
+   word's first two letters — which keeps 100% of the intended feature
+   (`ppongf→phòng`, `ccaof→chào`) and makes every word-medial false positive
+   impossible.
+2. **Silent data loss on every caret move is fixed.** Every caret-moving
+   keystroke (arrows, Home/End, PgUp/PgDn, Ins, Ctrl+Backspace) and every
+   mouse click queues a resync, and each one used to inflate the counter that
+   is the **only** clamp on how many characters a correction may delete. A
+   later edit could therefore delete text to the LEFT of the word that the
+   engine never committed — silently, with no error anywhere. Repro: click
+   into a partially typed word, press Right a few times, finish the word.
+3. **No more 1 ms stalls after a lifecycle transition.** Switching the engine
+   off, landing in an auto-excluded app, or resuming from sleep could leave
+   the ordering barrier's count armed with nothing left to wake the consumer,
+   so every following keystroke paid the full barrier budget and arrived out
+   of order. Lifecycle drains now poke the consumer, wait with a bound, and
+   force quiescence only when it is genuinely wedged.
+4. **Sleep/resume, lock/unlock and display changes are handled.** The tracked
+   Shift/Ctrl/CapsLock bits, the cached keyboard layout and the per-app
+   exclusion policy are all re-established — a modifier released while the
+   secure desktop owned the keyboard is never seen as a key-up.
+5. **DPI: the settings dialog only used to resize its frame**, leaving every
+   child control and font at the old DPI. It now re-scales position, size and
+   font, backed by a font cache that never evicts an in-use font.
+6. **Testing: CTest went from 3 targets to 15**, with hard timeouts. Twelve
+   harnesses existed in `tests/` and were never executed by any automated
+   gate, so "full suite green" previously meant only "everything that ran,
+   passed". Four new suites add ~18 500 assertions, including
+   `tests/test_key_correctness.cpp` — which answers the question no other
+   harness asked: *"I pressed these keys, is the text on screen what it should
+   be?"* It models the shipped hook's consumer contract line-for-line and
+   exhaustively checks all 18 278 one-to-three-letter sequences for silent
+   character loss.
+7. **The test and benchmark suites are much faster to run.**
+   `tests/run_all_tests.sh` went **84 s → 35 s**: `--jobs` was parsed but
+   never used (everything was sequential) and `TextEngine.cpp` was recompiled
+   for all 13 engine-linked targets instead of once.
+   `tests/bench_tone_latency.cpp` went **866 s → 134 s** by default, with
+   `--fast` (~50 s) and `--full` (the exhaustive matrix) available.
+
+**Measured against a frozen pre-work baseline:** mean Δp50 **+0.28 %**,
+mean Δp99 **+0.19 %** (same-tree A/B — well under a nanosecond per key),
+tone-population latency unchanged where it matters (`mixed`/TSF 101.94 →
+101.98 µs), throughput 13 502 → 13 531 keys/s, memory flat. No known P0 or P1
+remains at release.
+
+Full engineering detail:
+[docs/reports/V1.2.0_STABLE_RELEASE_REPORT.md](docs/reports/V1.2.0_STABLE_RELEASE_REPORT.md)
+(baseline:
+[docs/reports/V1.2.0_STABLE_BASELINE_REPORT.md](docs/reports/V1.2.0_STABLE_BASELINE_REPORT.md)).
+
+### The feature + performance release
+
 Three headlines:
 
 1. **Macro expansion at printable punctuation (opt-in).** A new

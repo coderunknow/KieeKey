@@ -31,6 +31,200 @@ Keep a Changelog; versioning: SemVer.
   oracle; 2.06M events in ~1 s). Evidence in
   `docs/reports/V1.2.0_BENCHMARK_REPORT.md`.
 
+### 1.2.0 Stable — stability / correctness / real-world-UX hardening pass
+
+> **Scope:** a stability, correctness, smoothness, robustness and real-world
+> UX release on top of the v1.2.0 feature/perf tree. **Not** an optimization
+> campaign — two changes were accepted that cost a sub-nanosecond amount of
+> throughput because they remove a user-visible failure mode. Full detail in
+> [`docs/reports/V1.2.0_STABLE_RELEASE_REPORT.md`](docs/reports/V1.2.0_STABLE_RELEASE_REPORT.md);
+> the reference it is measured against is
+> [`docs/reports/V1.2.0_STABLE_BASELINE_REPORT.md`](docs/reports/V1.2.0_STABLE_BASELINE_REPORT.md).
+
+#### Fixed — P1 (no known P0/P1 remains at release)
+
+* **An escaping exception killed the IME process mid-keystroke.**
+  `ModernKeyHook::consumerThreadMain()` is `noexcept`, so any exception out
+  of the consumer handler (a plain `std::bad_alloc` under memory pressure is
+  enough) called `std::terminate()`. The IME vanished while the tray icon
+  stayed behind — every window then produced raw, uncomposed Vietnamese with
+  no visible signal. The handler call is now fault-isolated: one bad event
+  is dropped and counted (`handlerExceptionCount()`), the pipeline keeps
+  running, and no further edits can be produced while the engine is off.
+* **`resumeFromText()` inflated the backspace clamp — silent data loss.**
+  Every caret-moving keystroke (arrows, Home/End, PgUp/PgDn, Ins,
+  Ctrl+Backspace) and every mouse click queues a resync; each one replayed
+  the visible word through `process()` and counted every replayed letter as
+  newly committed, inflating `visibleAccount_` by `k x len(word)`. That
+  counter is the **only** clamp on how many characters a correction may
+  delete, so a later edit could delete text to the LEFT of the word that the
+  engine never committed — silently, with no error anywhere. Repro: click
+  into a partially typed word, press Right a few times, finish the word.
+  Fixed by (a) early-returning from `process()` when `rawReplay_` is set, so
+  replayed letters are never counted, and (b) setting
+  `visibleAccount_ = rawWord.size()` at the end of `resumeFromText()`, which
+  is the exact upper bound on any legitimate backspace.
+
+#### Fixed — P1 (continued): keystroke correctness false positive
+
+* **"Typing 'p' twice turns it into 'ph'" — with "gõ tắt" (quickTelex)
+  enabled, every doubled consonant was expanded into a Vietnamese cluster at
+  ANY position in the word.** `isQuickTelexKey()` only checked "the key equals
+  the last character of the pending word", so real Latin/English words were
+  silently mangled: `happy→haphy`, `apple→aphle`, `letter→lether`,
+  `account→achount`, `running→runging`, `success→suches`, `tattoo→tathoo`,
+  `supper→supher`, `copper→copher`, `attitude→athitude`, `button→buthon`,
+  `cc→ch`. Vietnamese is syllabic: every one of those clusters (ch, gi, kh,
+  ng, ph, qu, th) is **syllable-initial** and no Vietnamese syllable contains a
+  doubled consonant, so the rule now requires the pair to be the first two
+  letters of the word. 100% of the legitimate use is preserved
+  (`ppongf→phòng`, `ccaof→chào`) and every word-medial false positive is
+  impossible. 37 real words are now pinned byte-for-byte in
+  `tests/test_key_correctness.cpp`, and the suite is proven to fail when the
+  fix is reverted.
+* **Test-fidelity bug found while investigating it:** the consumer model in
+  `tests/test_state_transitions.cpp` applied `EngineResult::backspaceCount`
+  unconditionally, which does **not** match the shipped hook. The real rule
+  (src/app/main.cpp) only applies an edit when the result is *consumed*, so a
+  `DoNothing` result with a non-zero backspaceCount (the grammar-repair path)
+  is a pass-through. The model was emitting `work→ửokk` where the real IME
+  emits `work→ửok`. Fixed; the suite still passes all 15 877 checks.
+
+#### Verified as CORRECT and deliberately left alone (not bugs)
+
+Investigated exhaustively (every 1-, 2- and 3-letter lowercase word = 18 278
+sequences, plus a curated corpus) and confirmed byte-identical to upstream
+OpenKey 2.0.5:
+
+* **A doubled tone key undoes the mark** — `ass→as`, `chess→ches`,
+  `coffee→cofee`, `cass→cas`. Documented legacy-hook semantics (see the comment
+  in `tests/engine205.cpp`).
+* **`z` removes the tone mark** — `mà`+`z`→`ma`. `handleMainKey`'s "Z key
+  removes mark" branch, identical to upstream `Engine.cpp:1056`.
+* **`w`→`ư`, `oo`→`ô`, `aa`→`â`, doubled vowels** — standard Telex.
+
+These are pinned as expectations in case 5 of `tests/test_key_correctness.cpp`
+so a future "fix" cannot silently change them.
+
+#### Changed — developer workflow speed
+
+* `tests/run_all_tests.sh` was **84 s → 35 s** (17 targets). Two real defects:
+  `--jobs` was parsed but **never used** (every build and every run was
+  strictly sequential), and `src/core/TextEngine.cpp` — the dominant
+  translation unit at ~1.7 s — was recompiled from scratch for all 13
+  engine-linked targets. It is now compiled once per language dialect and
+  linked, and builds and runs are dispatched with `xargs -P`.
+* `tests/bench_tone_latency.cpp` was **866 s → 134 s** by default. Its "mixed"
+  population types a real passage at a real typing pace (it sleeps between
+  keystrokes — that is the point of a paced simulation), so the exhaustive
+  3-pace × 3-rep × 3-path × 2-barrier matrix was inherently wall-clock-bound.
+  The default is now the two bookend paces at one rep; **`--fast`** gives one
+  pace/one rep (~50 s) and **`--full`** restores the complete matrix for a
+  release run. The `--help` output documents all three.
+
+#### Fixed — P2
+
+* **Stranded pending-edit count: a 1 ms stall on every keystroke.** A
+  lifecycle transition that stops the producer (engine off, foreground app
+  auto-excluded, pipeline restart, power resume) left the barrier's count
+  armed with nothing left to wake the consumer, so every following
+  pass-through keystroke paid the full 1 ms barrier budget and was delivered
+  out of order. `PendingEditCounter` was extracted from `src/app/main.cpp`
+  into `win32_wrapper.hpp` (now unit-testable on every platform),
+  `ModernKeyHook::pokeConsumer()` can wake the consumer from any thread, and
+  `drainPendingEditsForLifecycle()` (poke -> bounded wait -> poke -> bounded
+  wait -> `forceQuiesce()`) replaces every bare barrier wait at a lifecycle
+  point.
+* **Dropping the wake signal on ring overflow.** The `KeyEvent` payload is
+  only a signal — the real work was already pushed and already published.
+  Dropping the wake stranded that edit. Overflow now always wakes, counted in
+  `overflowWakeCount()`.
+* **Data race on the pump-tick callback.** `stop()` on the detach path
+  assigned `pumpTick_ = nullptr` — a non-atomic write to a `std::function`
+  the pump thread may be reading (torn read = use-after-free of its
+  captures). Replaced with an atomic liveness flag the pump checks before
+  invoking the callback.
+* **Data race on the hook-installation handshake.** `start()`'s polling loop
+  read a handle member that the pump thread writes (UB; would fail any future
+  TSan build). Replaced with an atomic `hooksInstalled_` flag, re-armed in
+  `start()` and cleared on the pump's exit path.
+* **Version-bearing singleton/wake names — a real upgrade hazard.**
+  `KieeKey_1.1.0_Singleton` / `KieeKey_1.1.0_Wake`: the moment the name
+  changed, a running old instance and a newly launched new one no longer
+  shared a mutex, so **both** started, **both** installed a low-level
+  keyboard hook, and every keystroke was composed twice. Now version-free
+  (`KieeKey_Singleton`, `KieeKey_Wake`), enforced by
+  `scripts/check_version.py`.
+* **Stale hook thread id after shutdown** — a later `stop()` could
+  `PostThreadMessage(WM_QUIT)` to a recycled id and deliver it to an
+  unrelated thread. Cleared on the pump's exit path.
+* **Producer-side fault isolation** — the hook producer callback isolates
+  exceptions and sets a deferred repair flag instead of leaving the pipeline
+  half-updated.
+
+#### Fixed — P3 (real-world UX)
+
+* **Power / session / display lifecycle.** `WM_POWERBROADCAST` (suspend,
+  resume), `WM_WTSSESSION_CHANGE` (lock, unlock, fast-user switch, remote
+  connect/disconnect) and `WM_DISPLAYCHANGE` were ignored, so the state
+  carried across a resume was whatever happened to be cached: tracked
+  Shift/Ctrl/CapsLock bits (a modifier released while the secure desktop
+  owned the keyboard is never seen as a key-up), the cached HKL, and the
+  per-app exclusion / TSF-vs-inline policy for a foreground that no longer
+  exists. All three are now handled: session reset, modifier re-seed, HKL and
+  exclusion re-probe, and settings-dialog re-scale on display change.
+* **DPI: the settings dialog only resized its frame**, leaving every child
+  control and font at the old DPI (clipped text, misplaced controls).
+  `refreshSettingsDpi()` / `rescaleChild()` now re-scale position, size and
+  font, backed by a per-DPI font cache that never evicts an in-use font (the
+  old one deleted fonts still attached to live controls).
+* Stale single-instance state on shutdown; a foreground-probe race (the
+  probed HWND is now carried in `wParam` and validated).
+
+#### Changed — build, tests, tooling
+
+* **CTest: 3 -> 14 targets.** Twelve harnesses existed in `tests/` and were
+  never executed by any automated gate — "full suite green" was true only in
+  the weak sense of "everything that ran, passed". All are now registered,
+  with a **300 s hard timeout** each so a future hang fails the job in
+  minutes instead of burning the CI budget.
+* **New suites:** `tests/test_state_transitions.cpp` (engine state matrix —
+  15 877 checks, 0 failures, with a dedicated regression property for the
+  `visibleAccount_` bug), `tests/test_lifecycle.cpp` (pipeline lifecycle +
+  wake protocol — 2 511 checks), `tests/soak_pipeline.cpp` (1.28 M-edit
+  transport soak: conservation, strict ordering, boundedness, liveness, flat
+  RSS).
+* **New tooling:** `tests/run_all_tests.sh` (one-command suite runner),
+  `tools/crossbuild_windows.sh` (reproducible Windows cross-build),
+  `scripts/check_version.py` (version-identifier gate, now also a CTest
+  target).
+* Version bumped to **1.2.0 Stable** across every carrier, including the
+  previously-stale `scripts/*`, `imebench_kit/harness/*`, the WinUI 3 about
+  banner and `THIRD-PARTY-NOTICES.md`.
+
+#### Performance vs the frozen baseline
+
+Same-tree A/B (the authoritative method — see the report, section 4.1, for
+why comparing binaries built from different trees measures code-layout
+variance): **mean delta p50 +0.28 %, mean delta p99 +0.19 %** — well under
+one nanosecond per keystroke. No regression on the tone populations that
+carry the real cost (`mixed`/TSF 101.94 -> 101.98 us) or on pipeline
+throughput (13 502 -> 13 531 keys/s). Memory flat.
+
+#### Deferred
+
+* **D-1 (P2)** the optional WinUI 3 front-end (`KIEEKEY_BUILD_UI=winui3`, not
+  built by CI) does not yet use the pending-edit counter / drain barrier.
+  Shipping uncompiled, untested concurrency code there is a worse trade than
+  documenting it; its version string was corrected.
+* **D-2 (P2)** the new lifecycle/soak suites model the Win32 `SetEvent` /
+  `WaitForSingleObject` pair with a condvar — they prove the *protocol*, not
+  the Win32 calls. Real-Windows sign-off remains a manual step.
+* **D-3 / D-4 (P3)** CI-host noise at p99; no automated real-Windows UI test.
+* **D-5 (P3)** the D2 over-backspace policy still has exactly one clamp.
+  It is now correct and regression-tested; a second independent clamp would
+  change composition semantics and is recommended for v1.3.
+
 ## [1.1.3] — 2026-09-03
 
 ### Quality/performance hardening release — accuracy, latency, stability,
@@ -189,7 +383,7 @@ Keep a Changelog; versioning: SemVer.
   p99 ≈ 52 µs through the shim, host-bound). The barrier and lock fixes
   only remove wait time from paths that USED to block.
 
-## [1.1.2] — 2026-09-03## [1.1.2] — 2026-09-03
+## [1.1.2] — 2026-09-03
 
 ### Fixed — "typing a number produced a tone mark or changed the word"
 ### (the digits-are-numbers fix)

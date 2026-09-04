@@ -85,6 +85,24 @@
 #include <shellapi.h>   // Shell_NotifyIcon / NOTIFYICONDATA (excluded by LEAN_AND_MEAN)
 #include <timeapi.h>    // timeBeginPeriod/timeEndPeriod (winmm — already linked)
 #include <tlhelp32.h>   // v1.1.2-r3: CreateToolhelp32Snapshot (conflict detector)
+#include <wtsapi32.h>   // v1.2.0: WTSRegisterSessionNotification (lock/unlock,
+                        //          fast-user switching, RDP transitions)
+
+// v1.2.0 Stable: WM_POWERBROADCAST event codes. The PBT_* set is versioned by
+// _WIN32_WINNT in some SDK/MinGW header combinations, so the two this file
+// uses are defaulted rather than assumed (the values are fixed by the
+// Windows ABI — they cannot change between SDKs).
+#ifndef PBT_APMSUSPEND
+#define PBT_APMSUSPEND 0x0004
+#endif
+#ifndef PBT_APMRESUMEAUTOMATIC
+#define PBT_APMRESUMEAUTOMATIC 0x0012
+#endif
+#ifndef PBT_APMRESUME
+// Not exposed by every MinGW winuser.h; the documented "resume after a
+// critical/manual suspend" code.
+#define PBT_APMRESUME 0x0007
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -125,12 +143,23 @@ using ok::tsf::TsfComposer;
 namespace {
 
 //===========================================================================
-// v1.1.1 — single source of truth for the user-visible version string.
-// (The .rc VERSIONINFO, the manifest and the CMake project() carry their own
-// copies — all kept at 1.2.0; CHANGELOG documents the release.)
+// Single source of truth for the user-visible version strings.
+//
+// v1.2.0 Stable: these are the ONLY place the marketing version is spelled
+// out. Every other carrier must match:
+//   * src/app/KieeKeyApp.rc        — FILEVERSION / PRODUCTVERSION (numeric)
+//                                    + FileVersion / ProductVersion strings
+//   * src/app/KieeKeyApp.manifest  — assemblyIdentity version (numeric)
+//   * CMakeLists.txt               — project(KieeKey VERSION …)
+//   * README.md / CHANGELOG.md     — documentation
+// The four carriers used to disagree (the .rc still carried 1,1,3,0 while its
+// own strings said 1.2.0.0), which is how a user ends up unable to answer
+// "which build am I running" from File Explorer. `scripts/check_version.py`
+// fails the build if they drift apart again.
 //===========================================================================
-constexpr wchar_t kAppVersion[] = L"1.2.0";
-constexpr wchar_t kAppTitle[]   = L"KieeKey v1.2.0";   // keep in sync with kAppVersion
+constexpr wchar_t kAppVersion[]     = L"1.2.0";           // numeric, 3-part
+constexpr wchar_t kAppVersionFull[] = L"1.2.0 Stable";    // with channel
+constexpr wchar_t kAppTitle[]       = L"KieeKey v1.2.0 Stable";  // sync with kAppVersionFull
 
 //===========================================================================
 // Output item: what the consumer thread must emit (trivially copyable → can
@@ -189,6 +218,14 @@ struct AppState {
     std::atomic<std::uint64_t> tsfSlowCount{0};
     // WPM gauge: printable keydowns the engine actually processed.
     std::atomic<std::uint64_t> keysTyped{0};
+    // v1.2.0 Stable — producer-fault telemetry + the deferred repair flag
+    // armed by onHookEvent()'s noexcept trampoline. Both are expected to stay
+    // at zero; a non-zero producerFailures means an edit was dropped in order
+    // to keep the IME alive (strictly better than a dead process).
+    std::atomic<std::uint64_t> producerFailures{0};
+    std::atomic<std::uint64_t> consumerFailures{0};
+    std::atomic<bool>          engineResyncPending{false};
+
     // v1.1.2-r3 diagnostics: times the hook-layer NUMBER-SAFETY GUARD had to
     // discard an engine decision for a digit event (expected to stay 0 —
     // the engine's own digitsAreLiteral tests already pin inertness; a
@@ -200,22 +237,29 @@ struct AppState {
     std::wstring conflictWarning;   // empty when clean
     std::wstring conflictDetail;
 
-    // Number of Edit items currently sitting in outRing that the consumer has
-    // not yet applied. Incremented by the producer (TSF path, after a
-    // successful outRing push), decremented by the consumer after it applies
-    // the edit (commit or fallback). Used by the ordering barrier: a
-    // pass-through key must not reach the application while edits are pending,
-    // otherwise the app's text gets ahead of the engine's buffer and the next
-    // edit's backspace deletes the wrong characters (the "ghosting/sticking"
-    // when typing and deleting quickly).
-    std::atomic<std::uint32_t> pendingEdits{0};
-
     // v3.4 (S1): event-driven ordering barrier. waitPendingEditsDrained()
     // spins ~2 µs, then waits on this barrier's auto-reset event — the
     // consumer signals it whenever pendingEdits transitions to 0 — hard-
     // capped at 1 ms. Replaces the v3.3.1 2 ms busy-spin that stalled the
     // hook thread (and on ≤2-core hosts stole the consumer's core).
+    //
+    // Declared BEFORE pendingEdits: the counter holds a reference to it.
     ok::wrap::EditDrainBarrier drainBarrier;
+
+    // Edits the producer has published to outRing that the consumer has not
+    // applied yet. Used by the ordering barrier: a pass-through key must not
+    // reach the application while edits are pending, otherwise the app's
+    // text gets ahead of the engine's buffer and the next edit's backspace
+    // deletes the wrong characters (the "ghosting/sticking" when typing and
+    // deleting quickly).
+    //
+    // v1.2.0 Stable: this was a bare std::atomic<std::uint32_t> with the
+    // publish/consume/rollback rules spread over six call sites in this file.
+    // It is now ok::wrap::PendingEditCounter — same hot-path cost (one
+    // acq_rel RMW + one relaxed load), but the rules live in ONE unit-tested
+    // place and the lifecycle recovery (forceQuiesce) exists at all. See
+    // win32_wrapper.hpp for the two failure modes it closes.
+    ok::wrap::PendingEditCounter pendingEdits{drainBarrier};
 
     // v3.4 (S2): inline output policy. Default stays hook-inline (zero
     // consumer hop — the frozen 1.055 µs burst p50 on quiet real hardware
@@ -804,14 +848,60 @@ inline std::uint32_t t_lastBarrierNs = 0;
 void waitPendingEditsDrained() noexcept {
 #if KIEEKEY_PROFILE
     const std::uint64_t profT0 = ok::prof::qpcNow();
-    g.drainBarrier.waitDrained(g.pendingEdits);
+    g.pendingEdits.waitDrained();
     // The barrier cost lands on the NEXT pass-through record (the key being
     // delivered): the hook thread reads t_lastBarrierNs when building its
     // StageRecord. Overwritten on every barrier call (serialized thread).
     t_lastBarrierNs = ok::prof::nsSince(profT0);
 #else
-    g.drainBarrier.waitDrained(g.pendingEdits);
+    g.pendingEdits.waitDrained();
 #endif
+}
+
+//===========================================================================
+// v1.2.0 Stable — bounded drains for LIFECYCLE transitions.
+//
+// waitPendingEditsDrained() (above) only WAITS. That is correct on the
+// steady-state path, where the producer keeps queueing work and therefore
+// keeps waking the consumer. It is NOT enough at a lifecycle transition:
+// once the producer stops queueing key events (engine switched off,
+// foreground auto-excluded, power resume, session unlock), a count that was
+// already published has nothing left to wake the consumer for. The wait then
+// burns its full 1 ms budget and gives up with the count STILL armed — and
+// that armed count degraded every later pass-through keystroke by the full
+// barrier budget. This is the "sometimes typing takes a moment, then it goes
+// away" report.
+//
+// Both helpers poke the consumer first (SetEvent — the consumer wakes, drains
+// the out-ring and releases the count) and then wait.
+//===========================================================================
+// Hook-thread flavour: bounded to the barrier budget, never forces a reset.
+// (An edit may legitimately still be in flight against a slow foreground;
+//  the TSF slow-commit watchdog owns that case.)
+void drainPendingEditsForHook() noexcept {
+    if (g.pendingEdits.pending() == 0) { return; }
+    if (g.pendingEdits.waitDrained()) { return; }
+    // Stranded: nobody is going to wake the consumer. One SetEvent here is
+    // paid at most once per transition — never on the steady-state path.
+    g.hook.pokeConsumer();
+    static_cast<void>(g.pendingEdits.waitDrained());
+}
+
+// UI/lifecycle flavour: may force quiescence. Only valid where the caller
+// guarantees no further edits can be published (the engine is off, or the
+// pipeline is being torn down) — that is what makes clearing the count a
+// recovery rather than an ordering violation.
+void drainPendingEditsForLifecycle() noexcept {
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        if (g.pendingEdits.pending() == 0) { return; }
+        g.hook.pokeConsumer();
+        if (g.pendingEdits.waitDrained()) { return; }
+    }
+    // The consumer demonstrably cannot make progress (the classic wedge: a
+    // synchronous TSF edit session marshalled into a hung application's STA).
+    // Leaving the count armed would stall every following keystroke, and the
+    // edits it counts can never be applied anyway — clear it and say so.
+    g.pendingEdits.forceQuiesce();
 }
 
 // Queue a consumer-side re-sync: read the visible word before the caret via
@@ -829,7 +919,41 @@ bool requestContextResync() noexcept {
 // hook decision — whether to swallow the key AND whether the consumer thread
 // has queued work that needs a wake (see ModernKeyHook::ProducerDecision).
 using PD = ok::hook::ModernKeyHook::ProducerDecision;
+
+//---------------------------------------------------------------------------
+// v1.2.0 Stable — FAULT ISOLATION for the producer (hook) thread.
+//
+// onHookEventImpl does real work on the most latency-critical thread in the
+// system, and some of it allocates (the replacement scratch, macro
+// expansions). It is wrapped in a noexcept trampoline because the function is
+// called DIRECTLY from the WH_KEYBOARD_LL callback: an exception escaping a
+// noexcept frame calls std::terminate(), which would kill the IME process
+// mid-keystroke AND — because the callback never returns — trip Windows'
+// LowLevelHooksTimeout and get the hook silently removed. One crash, two
+// failure modes, both invisible until the user notices the tray icon lying.
+//
+// The degradation is deliberately PASS-THROUGH: the key reaches the
+// application untouched, so no keystroke is ever lost or duplicated by the
+// recovery. The engine may have advanced its buffer without the screen
+// following, so the failure arms a resync that the next key event applies
+// (see g.engineResyncPending).
+//---------------------------------------------------------------------------
+PD onHookEventImpl(const KeyEvent& ev);
+
 PD onHookEvent(const KeyEvent& ev) noexcept {
+    try {
+        return onHookEventImpl(ev);
+    } catch (...) {
+        // Counted (MemoryFailPoint-style degradation), never fatal. Taking
+        // g.engineMtx here could deadlock if the thrower owns it, so the
+        // repair is deferred to the next key event instead.
+        g.producerFailures.fetch_add(1, std::memory_order_relaxed);
+        g.engineResyncPending.store(true, std::memory_order_release);
+        return PD{};   // pass-through — the keystroke is never lost
+    }
+}
+
+PD onHookEventImpl(const KeyEvent& ev) {
     // v1.1.1: the global Ctrl+Shift toggle hotkey was REMOVED. It was the
     // root cause of the recurring "the IME suddenly turns off for no reason"
     // reports: bare Ctrl+Shift is also Windows' language-switch chord and a
@@ -840,6 +964,15 @@ PD onHookEvent(const KeyEvent& ev) noexcept {
     // change is confirmed with a tray balloon and persisted immediately.
     // The hook thread no longer toggles anything.
     if (!g.engineEnabled.load(std::memory_order_relaxed)) { return PD{}; }
+
+    // v1.2.0 Stable: repair after a producer-side fault (see onHookEvent).
+    // The previous event threw after the engine had already consumed the
+    // key, so the engine's buffer and the visible text disagree; dropping
+    // the pending word is the only safe way back to a known-good state.
+    if (g.engineResyncPending.exchange(false, std::memory_order_acq_rel)) {
+        std::lock_guard<std::mutex> lk(g.engineMtx);
+        g.engine.startNewSession();
+    }
 
     // ---- v3.3.1: F9 (bare — no modifiers) switches the tone style --------
     // OpenKey-convention hotkey: converts the PENDING word's mark placement
@@ -878,9 +1011,9 @@ PD onHookEvent(const KeyEvent& ev) noexcept {
                 it.textLen = static_cast<std::uint32_t>(n);
                 for (std::size_t i = 0; i < n; ++i) { it.text[i] = g.repScratch[i]; }
                 // v1.1.3 (see main edit site): count published BEFORE push.
-                g.pendingEdits.fetch_add(1, std::memory_order_acq_rel);
+                g.pendingEdits.publish(1);
                 if (!g.outRing.try_push(it)) {
-                    g.pendingEdits.fetch_sub(1, std::memory_order_acq_rel);
+                    g.pendingEdits.rollback(1);
                     emitInline(bs, g.repScratch);   // ring full — inline fallback
                     return PD{true, false};
                 }
@@ -929,7 +1062,14 @@ PD onHookEvent(const KeyEvent& ev) noexcept {
         if (g.fgUseTsf_.load(std::memory_order_relaxed)) {
             g.fgUseTsf_.store(false, std::memory_order_relaxed);
             g.fgProbePending_.store(true, std::memory_order_relaxed);
-            if (g.hMain) { ::PostMessageW(g.hMain, WM_APP_FGPROBE, 0, 0); }
+            // v1.2.0 Stable: carry the probed HWND in wParam. The UI thread
+            // discards the result if the foreground moved on while the probe
+            // was queued (see probeForegroundResponsiveness).
+            const auto fgSnap = g.monitor.snapshot();
+            if (g.hMain) {
+                ::PostMessageW(g.hMain, WM_APP_FGPROBE,
+                               reinterpret_cast<WPARAM>(fgSnap ? fgSnap->hwnd : nullptr), 0);
+            }
         }
         if (g.fgExcluded_.load(std::memory_order_relaxed)) {
             std::lock_guard<std::mutex> lk(g.engineMtx);
@@ -972,7 +1112,11 @@ PD onHookEvent(const KeyEvent& ev) noexcept {
     if (ev.action != KeyAction::KeyDown && ev.action != KeyAction::SysKeyDown) return PD{};
     if (ev.injected || ev.vkCode == 0 || isModifierVk(ev.vkCode)) return PD{};
     if (g.fgExcluded_.load(std::memory_order_relaxed)) {
-        waitPendingEditsDrained();   // finish the previous word before the key passes
+        // v1.2.0 Stable: a lifecycle drain, not a bare wait — the engine is
+        // being taken out of the loop for this app, so no further key event
+        // will queue work and a stranded count would stall every following
+        // pass-through key by the full barrier budget.
+        drainPendingEditsForHook();
         std::lock_guard<std::mutex> lk(g.engineMtx);
         g.engine.startNewSession();
         return PD{};
@@ -1178,9 +1322,9 @@ PD onHookEvent(const KeyEvent& ev) noexcept {
         // read prev == 0 — the "reached zero" notification was then skipped
         // and a PHANTOM pending count stayed armed forever, degrading every
         // later pass-through keystroke to the full 1 ms barrier wait.
-        g.pendingEdits.fetch_add(1, std::memory_order_acq_rel);
+        g.pendingEdits.publish(1);
         if (!g.outRing.try_push(it)) {
-            g.pendingEdits.fetch_sub(1, std::memory_order_acq_rel);   // roll back
+            g.pendingEdits.rollback(1);   // roll back
             emitInline(bs, g.repScratch);
             return PD{true, false};
         }
@@ -1213,11 +1357,11 @@ PD onHookEvent(const KeyEvent& ev) noexcept {
             it.textLen = static_cast<std::uint32_t>(n);
             for (std::size_t i = 0; i < n; ++i) { it.text[i] = g.repScratch[i]; }
             // v1.1.3 (see main edit site): count published BEFORE the push.
-            g.pendingEdits.fetch_add(1, std::memory_order_acq_rel);
+            g.pendingEdits.publish(1);
             if (g.outRing.try_push(it)) {
                 return PD{true, true};
             }
-            g.pendingEdits.fetch_sub(1, std::memory_order_acq_rel);   // roll back
+            g.pendingEdits.rollback(1);   // roll back
             // ring full — degrade to in-callback emit (never drop a char)
         }
         emitInline(bs, g.repScratch);
@@ -1330,10 +1474,7 @@ void onConsumerEvent(const KeyEvent& /*ev*/) noexcept {
         // acq_rel subtract instead of trusting the fetch_sub previous value —
         // a late producer fetch_add (the race fixed above) could slip between
         // the two and leave the barrier armed forever.
-        g.pendingEdits.fetch_sub(g_editBatchCount, std::memory_order_acq_rel);
-        if (g.pendingEdits.load(std::memory_order_acquire) == 0) {
-            g.drainBarrier.notifyDrained();
-        }
+        g.pendingEdits.consume(g_editBatchCount);
         g_editBatch.clear();
         g_editBatchCount = 0;
     };
@@ -1341,8 +1482,23 @@ void onConsumerEvent(const KeyEvent& /*ev*/) noexcept {
     OutputItem it;
     while (g.outRing.try_pop(it)) {
         if (it.kind == OutputItem::Kind::Edit) {
-            g_editBatch.push_back(ok::tsf::EditDelta{
-                it.backspace, std::wstring(it.text, it.text + it.textLen)});
+            // v1.2.0 Stable: this push_back allocates (a std::wstring per
+            // delta). The whole function is noexcept — an escaping bad_alloc
+            // here called std::terminate() and killed the IME mid-keystroke,
+            // leaving a live tray icon over a dead engine. Degrade instead:
+            // emit this one delta through the inline (SendInput) path, which
+            // needs no heap, and keep draining the ring.
+            try {
+                g_editBatch.push_back(ok::tsf::EditDelta{
+                    it.backspace, std::wstring(it.text, it.text + it.textLen)});
+            } catch (...) {
+                g.consumerFailures.fetch_add(1, std::memory_order_relaxed);
+                g.pendingEdits.rollback(1);      // never counted → never waited for
+                // Direct emitter call: no std::wstring, no allocation — the
+                // fallback must not be able to throw for the same reason.
+                g.hook.emitter().sendEdit(it.backspace, it.text, it.textLen);
+                continue;
+            }
             ++g_editBatchCount;
 #if KIEEKEY_PROFILE
             if (profOn && g_editBatch.size() == 1) {
@@ -1376,10 +1532,7 @@ void onConsumerEvent(const KeyEvent& /*ev*/) noexcept {
                 g_consumerSink.push(r);
             }
 #endif
-            g.pendingEdits.fetch_sub(1, std::memory_order_acq_rel);
-            if (g.pendingEdits.load(std::memory_order_acquire) == 0) {
-                g.drainBarrier.notifyDrained();
-            }
+            g.pendingEdits.consume(1);
             continue;
         }
         // Non-edit item: apply any pending edits FIRST (ring order), then the
@@ -1688,12 +1841,21 @@ void toggleEngineFromUi() {
         // ForegroundChanged resync; atomic — safe from the UI thread).
         g.hook.resyncModifiersFromOs();
     } else {
-        // v1.1.3 ordering fix: with edits still queued (pendingEdits > 0 —
-        // realistic against a slow STA foreground), disabled-mode letters
-        // reached the app immediately while the stale edit committed later
-        // and deleted the WRONG characters. Drain the queue (bounded by the
-        // barrier budget) so OFF is a clean cut-off point.
-        waitPendingEditsDrained();
+        // v1.1.3 ordering fix (v1.2.0: completed): with edits still queued
+        // (pending > 0 — realistic against a slow STA foreground),
+        // disabled-mode letters reached the app immediately while the stale
+        // edit committed later and deleted the WRONG characters. Drain the
+        // queue so OFF is a clean cut-off point.
+        //
+        // v1.2.0: the plain wait could never actually succeed here — turning
+        // the engine OFF stops the producer, so nothing wakes a parked
+        // consumer and the drain always timed out with the count still armed
+        // (every later keystroke then paid 1 ms of hook-thread stall until
+        // an edit happened to re-arm the wake). drainPendingEditsForLifecycle()
+        // pokes the consumer first and, if it is genuinely wedged, clears the
+        // count — safe precisely because the engine is OFF and no further
+        // edit can be published.
+        drainPendingEditsForLifecycle();
     }
     updateTrayIcon();
     saveSettings();   // persist at every change point (restart-proof)
@@ -1808,8 +1970,20 @@ void showTrayMenu() noexcept {
 //      line of defense, terminateStaleInstance() below takes over a zombie
 //      so a relaunch NEVER requires a reboot or Task Manager.
 //===========================================================================
-constexpr wchar_t kSingletonMutexName[] = L"KieeKey_1.1.0_Singleton";
-constexpr wchar_t kWakeEventName[]      = L"KieeKey_1.1.0_Wake";
+// v1.2.0 Stable: the names are deliberately VERSION-FREE.
+//
+// They used to embed "1.1.0" — a leftover from the release that introduced
+// the single-instance protocol. Two consequences, both real:
+//   * mixed version identifiers in the shipped binary (the mutex name was
+//     the only place in the build still claiming 1.1.0); and
+//   * a genuine upgrade hazard: the moment the name changed, an OLD instance
+//     already running and a NEWLY launched one would no longer share a
+//     mutex, so BOTH would start, both would install a low-level keyboard
+//     hook, and every keystroke would be composed twice (double letters).
+// A singleton exists to prevent exactly that, so the name must be stable
+// across versions.
+constexpr wchar_t kSingletonMutexName[] = L"KieeKey_Singleton";
+constexpr wchar_t kWakeEventName[]      = L"KieeKey_Wake";
 
 UINT      g_msgTaskbarCreated = 0;    // RegisterWindowMessageW("TaskbarCreated")
 HANDLE    g_wakeExitEvent     = nullptr;   // manual-reset; stops the watcher
@@ -1945,25 +2119,92 @@ void clearRunningPid() noexcept {
     }
 }
 
+//===========================================================================
+// v1.2.0 Stable — POWER / SESSION / DISPLAY lifecycle.
+//
+// A keyboard IME lives exactly where the OS's worst lifecycle edges are:
+// every one of these transitions can drop low-level hook callbacks, lose a
+// key-up, change the DPI or monitor topology, or change the foreground
+// without an EVENT_SYSTEM_FOREGROUND (Alt-Tab into a lock screen doesn't
+// produce one that means anything). KieeKey used to ignore all of them, so
+// the state carried across a resume was whatever happened to be cached:
+//   * the tracked Shift/Ctrl/CapsLock bits (a modifier released while the
+//     secure desktop owned the keyboard is never seen as a key-up);
+//   * the cached keyboard layout HKL (a layout switch on the lock screen);
+//   * the per-app exclusion + TSF-vs-inline policy for a foreground that no
+//     longer exists;
+//   * and any pending-edit count, with no consumer wake coming for it.
+// The resync below is the "known-good state" the release notes promise: it is
+// cheap (it runs once per transition, never per keystroke) and it is
+// idempotent, so a spurious or repeated message is harmless.
+//
+// Suspend/lock is the conservative half: the pending word is dropped, because
+// a key-up lost across the transition would otherwise leave a phantom
+// composition that the next keystroke composes onto.
+//===========================================================================
+void onLifecycleSuspend() noexcept {
+    // Drop the pending word: no key-up is guaranteed to arrive across a
+    // suspend / lock, so any half-composed word is already untrustworthy.
+    std::lock_guard<std::mutex> lk(g.engineMtx);
+    g.engine.startNewSession();
+}
+
+void onLifecycleResume() noexcept {
+    // 1. Re-seed the delta-tracked modifier state from the OS (the same
+    //    resync the ForegroundChanged path performs, for the same reason).
+    g.hook.resyncModifiersFromOs();
+    // 2. Re-read the foreground: the monitor's snapshot, the exclusion cache,
+    //    the TSF-vs-inline policy and the cached keyboard layout.
+    g.monitor.refreshNow();
+    updateExclusionCache();
+    updateForegroundPolicy();
+    // 3. Any pending-edit count predates the transition; a consumer parked
+    //    through it has no wake coming. Poke + drain (bounded), and force
+    //    quiescence only if the consumer is genuinely wedged.
+    drainPendingEditsForLifecycle();
+    // 4. Clear the foreground-hang gate: a probe that was in flight when the
+    //    machine suspended will never complete, and a stuck "pending" flag
+    //    would keep the output path on inline SendInput for that foreground
+    //    forever (a silent, permanent downgrade).
+    g.fgProbePending_.store(false, std::memory_order_relaxed);
+    // 5. The pending word is dropped (see onLifecycleSuspend) and the tray
+    //    tooltip is refreshed (the foreground may have changed under us).
+    {
+        std::lock_guard<std::mutex> lk(g.engineMtx);
+        g.engine.startNewSession();
+    }
+    updateTrayIcon();
+}
+
 // UI thread (posted as WM_APP_FGPROBE from the hook pump after a foreground
 // switch that selected the TSF policy): a bounded WM_NULL ping decides
 // whether the new foreground may receive synchronous TSF edit sessions.
 // Hung → the policy stays inline SendInput (cannot block); healthy → the
 // snapshot-based policy is restored. 150 ms budget, once per app switch.
-void probeForegroundResponsiveness() noexcept {
+void probeForegroundResponsiveness(HWND probedHwnd) noexcept {
     const auto s = g.monitor.snapshot();
     const HWND fg = (s ? s->hwnd : nullptr);
     bool healthy = true;
-    if (fg != nullptr) {
+    if (fg != nullptr && (probedHwnd == nullptr || probedHwnd == fg)) {
         DWORD_PTR res = 0;
         healthy = ::SendMessageTimeoutW(fg, WM_NULL, 0, 0,
                                         SMTO_ABORTIFHUNG | SMTO_BLOCK, 150,
                                         &res) != 0;
+    } else {
+        // v1.2.0 Stable: the foreground changed again while the probe was in
+        // flight (Alt-Tab twice in 150 ms is ordinary). The old code restored
+        // the snapshot-based policy unconditionally, which re-armed TSF for a
+        // window this probe never actually pinged — the exact hang the gate
+        // exists to prevent. A stale probe result is simply discarded; the
+        // newer foreground switch has already posted its own probe.
+        healthy = false;
     }
     if (healthy) {
         updateForegroundPolicy();   // restore the snapshot-based policy (TSF if chosen)
     } else {
-        g.fgHungCount.fetch_add(1, std::memory_order_relaxed);
+        if (fg != nullptr && (probedHwnd == nullptr || probedHwnd == fg)) {
+            g.fgHungCount.fetch_add(1, std::memory_order_relaxed);
+        }
         // Keep inline — fgUseTsf_ was already cleared by the producer.
     }
     // v1.1.0-audit fix: the probe ran — the pending flag was set by the
@@ -2009,31 +2250,154 @@ UINT g_settingsDpi = 96;
 // Information tab, used by the tray menu's “Thông tin & giới thiệu”).
 int g_settingsOpenTab = 0;
 
-HFONT uiFont() noexcept {
-    // v1.1.0-audit fix: cache PER DPI. The single static font was created at
-    // the FIRST settings-dialog DPI and never re-created — reopening the
-    // dialog (or moving it per WM_DPICHANGED) on a different monitor scaled
-    // all control geometry via S() but kept the old font height, clipping
-    // text on mixed-DPI setups. 96 is the fallback; entries evict oldest.
-    struct FontForDpi { UINT dpi; HFONT font; };
-    static FontForDpi cache[4] = {};
+//===========================================================================
+// v1.2.0 Stable — one per-DPI font cache for all three face variants.
+//
+// The v1.1.x caches EVICTED an entry (round-robin over four slots) and
+// DeleteObject()'d the font it kicked out — while live controls still held
+// that HFONT. A user who dragged the dialog across four different-DPI
+// monitors (or whose monitor set changed scaling at runtime) could therefore
+// end up with controls painting through a deleted GDI object: garbled or
+// default-font text, with no error anywhere. That is a use-after-free with a
+// cosmetic symptom, which is exactly the class of bug this release audits
+// for.
+//
+// The fix is the boring one: the working set is bounded by the NUMBER OF
+// DISTINCT DPI VALUES A DESKTOP CAN HAVE (a handful; 8 slots is generous),
+// each font is a few KB, and the process exits soon after the dialog closes.
+// So the cache never evicts — it returns the closest existing font if it is
+// ever full, which degrades to "slightly wrong point size" instead of
+// "painting through freed memory".
+//===========================================================================
+namespace {
+struct FontCache {
+    struct Entry { UINT dpi = 0; int weight = 0; int px96 = 0; HFONT font = nullptr; };
+    static constexpr std::size_t kSlots = 8;
+    Entry slots[kSlots]{};
+};
+
+// px96 = face height in 96-dpi logical pixels (negative for "match this
+// cell height", the CreateFont convention used throughout this dialog).
+HFONT cachedFont(int px96, int weight) noexcept {
+    static FontCache cache;
     const UINT dpi = g_settingsDpi ? g_settingsDpi : 96;
-    HFONT hit = nullptr;
-    std::size_t slot = 0;   // oldest slot (round-robin eviction)
-    for (std::size_t i = 0; i < std::size(cache); ++i) {
-        if (cache[i].dpi == dpi && cache[i].font != nullptr) { return cache[i].font; }
-        if (cache[i].font == nullptr) { slot = i; }
+    std::size_t freeSlot = FontCache::kSlots;
+    for (std::size_t i = 0; i < FontCache::kSlots; ++i) {
+        FontCache::Entry& e = cache.slots[i];
+        if (e.font == nullptr) { if (freeSlot == FontCache::kSlots) { freeSlot = i; } continue; }
+        if (e.dpi == dpi && e.weight == weight && e.px96 == px96) { return e.font; }
     }
-    const int px = -::MulDiv(13, static_cast<int>(dpi), 96);
-    hit = ::CreateFontW(px, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                        CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-    if (hit != nullptr) {
-        if (cache[slot].font != nullptr) { ::DeleteObject(cache[slot].font); }
-        cache[slot].dpi = dpi;
-        cache[slot].font = hit;
+    if (freeSlot == FontCache::kSlots) {
+        // Cache full (more than 8 distinct DPI/face combinations — not
+        // reachable on real hardware). Reuse a font that already exists
+        // rather than deleting one that is in use.
+        return cache.slots[0].font;
     }
-    return hit;   // nullptr → controls keep the system font (safe)
+    const int px = -::MulDiv(px96, static_cast<int>(dpi), 96);
+    HFONT f = ::CreateFontW(px, 0, 0, 0, weight, FALSE, FALSE, FALSE,
+                            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                            CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                            DEFAULT_PITCH, L"Segoe UI");
+    if (f != nullptr) {
+        cache.slots[freeSlot] = FontCache::Entry{dpi, weight, px96, f};
+        return f;
+    }
+    // CreateFont failed (out of GDI handles): fall back to any font we
+    // already own, else nullptr (controls then keep the system font).
+    for (std::size_t i = 0; i < FontCache::kSlots; ++i) {
+        if (cache.slots[i].font != nullptr) { return cache.slots[i].font; }
+    }
+    return nullptr;
+}
+} // namespace
+
+HFONT uiFont() noexcept      { return cachedFont(13, FW_NORMAL); }
+HFONT uiFontBold() noexcept  { return cachedFont(13, FW_SEMIBOLD); }
+HFONT uiFontTitle() noexcept { return cachedFont(20, FW_SEMIBOLD); }
+
+//===========================================================================
+// v1.2.0 Stable — live DPI re-scaling of an OPEN settings dialog.
+//
+// WM_DPICHANGED used to resize only the frame and leave every child control
+// at the creation monitor's scale (documented in the old comment as a known
+// limitation): drag the window to a 150 % monitor and the labels kept their
+// 100 % geometry and font, so the right-hand column overflowed the frame and
+// the fonts looked blurry or clipped. Rebuilding the dialog would fix the
+// layout but throw away unsaved edits, which is worse.
+//
+// This scales every child rectangle in place by newDpi/oldDpi and re-applies
+// the matching per-DPI font, preserving all control content. It runs on a
+// monitor/DPI change only — never on the input path.
+//===========================================================================
+namespace {
+struct RescaleCtx {
+    UINT  oldDpi;
+    UINT  newDpi;
+    HFONT oldNormal;
+    HFONT oldBold;
+    HFONT oldTitle;
+    HFONT newNormal;
+    HFONT newBold;
+    HFONT newTitle;
+};
+
+BOOL CALLBACK rescaleChild(HWND child, LPARAM lp) noexcept {
+    const auto* ctx = reinterpret_cast<const RescaleCtx*>(lp);
+    if (ctx == nullptr || ctx->oldDpi == 0 || ctx->newDpi == 0) { return TRUE; }
+
+    RECT rc{};
+    if (!::GetWindowRect(child, &rc)) { return TRUE; }
+    HWND parent = ::GetParent(child);
+    if (parent == nullptr) { return TRUE; }
+    // Work in parent-client coordinates so a border/style change cannot skew
+    // the mapping, then scale about the origin and write it back.
+    ::MapWindowPoints(nullptr, parent, reinterpret_cast<POINT*>(&rc), 2);
+    auto scale = [ctx](LONG v) noexcept -> LONG {
+        return ::MulDiv(v, static_cast<int>(ctx->newDpi), static_cast<int>(ctx->oldDpi));
+    };
+    const LONG x = scale(rc.left);
+    const LONG y = scale(rc.top);
+    const LONG w = scale(rc.right - rc.left);
+    const LONG h = scale(rc.bottom - rc.top);
+    ::SetWindowPos(child, nullptr, x, y, w, h,
+                   SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+
+    // Re-apply the font that matches the control's weight class at the NEW
+    // DPI (the control keeps whatever it had if we cannot classify it).
+    const HFONT cur = reinterpret_cast<HFONT>(
+        ::SendMessageW(child, WM_GETFONT, 0, 0));
+    HFONT replacement = nullptr;
+    if (cur == ctx->oldTitle)       { replacement = ctx->newTitle; }
+    else if (cur == ctx->oldBold)   { replacement = ctx->newBold; }
+    else if (cur == ctx->oldNormal) { replacement = ctx->newNormal; }
+    if (replacement != nullptr && replacement != cur) {
+        ::SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(replacement), TRUE);
+    }
+    return TRUE;
+}
+} // namespace
+
+// Re-scale an open settings dialog after its DPI changed (WM_DPICHANGED,
+// WM_DISPLAYCHANGE). No-op when the dialog is closed or the DPI is unchanged.
+void refreshSettingsDpi() noexcept {
+    if (!g.hSettings) { return; }
+    const UINT newDpi = windowDpi(g.hSettings);
+    if (newDpi == 0 || newDpi == g_settingsDpi) { return; }
+
+    // Snapshot the OLD fonts (they are still alive — the cache never
+    // deletes an in-use font) so each control can be re-classified.
+    const RescaleCtx ctx{
+        g_settingsDpi, newDpi,
+        uiFont(), uiFontBold(), uiFontTitle(),
+        nullptr, nullptr, nullptr};
+    g_settingsDpi = newDpi;   // cachedFont() now mints the new-DPI faces
+    RescaleCtx full{
+        ctx.oldDpi, newDpi,
+        ctx.oldNormal, ctx.oldBold, ctx.oldTitle,
+        uiFont(), uiFontBold(), uiFontTitle()};
+    ::EnumChildWindows(g.hSettings, &rescaleChild,
+                       reinterpret_cast<LPARAM>(&full));
+    ::InvalidateRect(g.hSettings, nullptr, TRUE);
 }
 
 HWND mkCtl(HWND parent, LPCWSTR cls, LPCWSTR text, DWORD style, int x, int y,
@@ -2042,51 +2406,6 @@ HWND mkCtl(HWND parent, LPCWSTR cls, LPCWSTR text, DWORD style, int x, int y,
                                x, y, w, h, parent, id, g.hInst, nullptr);
     if (c) { ::SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont()), TRUE); }
     return c;
-}
-
-// v1.1.2 — bold + display-size variants of uiFont() for the header and the
-// Information tab. Same per-DPI caching discipline as uiFont() (the font
-// must match the monitor DPI or text clips on mixed-DPI setups).
-HFONT uiFontBold() noexcept {
-    static HFONT cache[4] = {};
-    static UINT  cacheDpi[4] = {};
-    const UINT dpi = g_settingsDpi ? g_settingsDpi : 96;
-    for (std::size_t i = 0; i < std::size(cache); ++i) {
-        if (cacheDpi[i] == dpi && cache[i] != nullptr) { return cache[i]; }
-    }
-    std::size_t slot = 0;
-    for (std::size_t i = 0; i < std::size(cache); ++i) { if (cache[i] == nullptr) { slot = i; break; } }
-    const int px = -::MulDiv(13, static_cast<int>(dpi), 96);
-    HFONT f = ::CreateFontW(px, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
-                            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                            CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-    if (f != nullptr) {
-        if (cache[slot] != nullptr) { ::DeleteObject(cache[slot]); }
-        cache[slot] = f;
-        cacheDpi[slot] = dpi;
-    }
-    return f;
-}
-
-HFONT uiFontTitle() noexcept {
-    static HFONT cache[4] = {};
-    static UINT  cacheDpi[4] = {};
-    const UINT dpi = g_settingsDpi ? g_settingsDpi : 96;
-    for (std::size_t i = 0; i < std::size(cache); ++i) {
-        if (cacheDpi[i] == dpi && cache[i] != nullptr) { return cache[i]; }
-    }
-    std::size_t slot = 0;
-    for (std::size_t i = 0; i < std::size(cache); ++i) { if (cache[i] == nullptr) { slot = i; break; } }
-    const int px = -::MulDiv(20, static_cast<int>(dpi), 96);
-    HFONT f = ::CreateFontW(px, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
-                            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                            CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-    if (f != nullptr) {
-        if (cache[slot] != nullptr) { ::DeleteObject(cache[slot]); }
-        cache[slot] = f;
-        cacheDpi[slot] = dpi;
-    }
-    return f;
 }
 
 // v1.1.2 — refresh the always-visible header status line: engine state,
@@ -2606,9 +2925,11 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
         case WM_DPICHANGED: {
             // v1.1.0: follow the monitor DPI — resize the frame to the OS-
-            // suggested rect (controls keep their creation-scale layout and
-            // re-scale on the next time the dialog opens; the frame at least
-            // never lands half off-screen after a monitor move).
+            // suggested rect.
+            // v1.2.0: AND re-scale every child control + font. Previously the
+            // controls kept their creation-monitor geometry, so a dialog
+            // dragged to a differently-scaled monitor rendered clipped/
+            // mis-scaled until it was closed and reopened.
             const auto* rects = reinterpret_cast<const RECT*>(lParam);
             if (rects != nullptr) {
                 const int w = rects->right - rects->left;
@@ -2616,6 +2937,7 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 ::SetWindowPos(hwnd, nullptr, rects->left, rects->top, w, h,
                                SWP_NOZORDER | SWP_NOACTIVATE);
             }
+            refreshSettingsDpi();
             return 0;
         }
 
@@ -2826,7 +3148,47 @@ LRESULT CALLBACK mainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             if (g.hSettings) { ::SetForegroundWindow(g.hSettings); }
             return 0;
         case WM_APP_FGPROBE:
-            probeForegroundResponsiveness();
+            probeForegroundResponsiveness(reinterpret_cast<HWND>(wParam));
+            return 0;
+
+        // ---- v1.2.0 Stable: power / session / display lifecycle -----------
+        case WM_POWERBROADCAST:
+            switch (wParam) {
+                case PBT_APMSUSPEND:
+                    // About to sleep (or hibernate). Drop the pending word —
+                    // no key-up is guaranteed to arrive across the resume.
+                    onLifecycleSuspend();
+                    return TRUE;
+                case PBT_APMRESUMEAUTOMATIC:   // user-present resume
+                case PBT_APMRESUME:            // explicit resume
+                    onLifecycleResume();
+                    return TRUE;
+                default:
+                    break;
+            }
+            return TRUE;
+
+        case WM_WTSSESSION_CHANGE:
+            // Session lock/unlock, fast-user switching, RDP connect/disconnect:
+            // the secure desktop owns the keyboard while we are locked, so
+            // every hook callback in that window is lost (same reasoning as a
+            // suspend, minus the power transition).
+            if (wParam == WTS_SESSION_LOCK || wParam == WTS_SESSION_LOGOFF) {
+                onLifecycleSuspend();
+            } else if (wParam == WTS_SESSION_UNLOCK || wParam == WTS_SESSION_LOGON) {
+                onLifecycleResume();
+            }
+            return 0;
+
+        case WM_DISPLAYCHANGE:
+            // Monitor topology / resolution changed. Re-evaluate the
+            // foreground policy (fullscreen-game detection depends on the
+            // monitor rect) and, if the settings dialog is open, re-scale it
+            // so it cannot be left at the old monitor's DPI.
+            g.monitor.refreshNow();
+            updateExclusionCache();
+            updateForegroundPolicy();
+            if (g.hSettings) { refreshSettingsDpi(); }
             return 0;
         case WM_APP_TRAY:
             if (lParam == WM_LBUTTONDBLCLK) {
@@ -2872,6 +3234,9 @@ LRESULT CALLBACK mainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
 
         case WM_DESTROY:
+            // v1.2.0: stop listening for session notifications — the window
+            // is going away and the notification must not be re-routed.
+            (void)::WTSUnRegisterSessionNotification(hwnd);
             // v1.1.1: final persistence sweep on the clean-exit path — every
             // change point already saves; this guarantees the registry always
             // mirrors the last UI state the user saw (restart-proof).
@@ -3001,7 +3366,24 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     // Hidden main window (owns the tray icon)
     g.hMain = ::CreateWindowExW(0, L"KieeKeyMain", L"KieeKey",
                                 WS_POPUP, 0, 0, 0, 0, nullptr, nullptr, hInst, nullptr);
-    if (!g.hMain) { return 1; }
+    if (!g.hMain) {
+        // v1.2.0 Stable: leave no stale single-instance state behind. The old
+        // early return skipped clearRunningPid(), so the registry kept
+        // advertising a PID that is gone — the next launch's zombie-takeover
+        // probe then had a dead PID to investigate.
+        clearRunningPid();
+        if (mutex) { ::ReleaseMutex(mutex); ::CloseHandle(mutex); }
+        ::timeEndPeriod(1);
+        return 1;
+    }
+
+    // v1.2.0 Stable: receive WM_WTSSESSION_CHANGE (lock/unlock, fast-user
+    // switching, RDP connect/disconnect). Without this the IME never learns
+    // that the secure desktop owned the keyboard, so every modifier key-up
+    // released while locked stayed "held" in the delta tracker.
+    // Best effort — on an OS/edition without the API the window simply never
+    // receives the message.
+    (void)::WTSRegisterSessionNotification(g.hMain, NOTIFY_FOR_THIS_SESSION);
 
     // Process monitor (foreground detection, zero idle CPU)
     (void)g.monitor.start();
@@ -3027,8 +3409,18 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
                       L"KieeKey", MB_OK | MB_ICONERROR);
         g.hook.stop();
         g.monitor.stop();
+        // v1.2.0 Stable: same hygiene as the other early return — no stale
+        // PID, no held mutex, no raised timer resolution.
+        clearRunningPid();
+        if (mutex) { ::ReleaseMutex(mutex); ::CloseHandle(mutex); }
+        ::timeEndPeriod(1);
         return 2;
     }
+
+    // v1.2.0 Stable: the pipeline is starting from a known-quiet state.
+    // Defensive against a future restart path that reuses this object after
+    // edits were published (see PendingEditCounter::forceQuiesce's contract).
+    g.pendingEdits.forceQuiesce();
 
     // v1.1.2-r3: scan for external digit-conversion causes (other IMEs,
     // Windows Vietnamese Telex/VNI layouts) BEFORE the welcome balloon so

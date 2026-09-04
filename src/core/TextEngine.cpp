@@ -108,6 +108,30 @@ bool TextEngine::resumeFromText(const std::wstring& rawWord) noexcept {
     // typingWord_ and made the next word break "restore" composed text that
     // was never displayed (duplicated/ghost letters). rawReplay_ mode inserts
     // each letter verbatim — buffer state exactly mirrors the screen.
+    //
+    // v1.2.0 Stable — D2 VISIBLE-ACCOUNT FIX (P1).
+    //
+    // The replay used to run through process(), which counts every DoNothing
+    // Char event as "one more committed character" (++visibleAccount_). That
+    // is correct for a keystroke the engine is forwarding to the app, and
+    // WRONG for a replay: these letters are already on screen and were
+    // already accounted for when they were typed (or belong to document text
+    // this engine never committed at all). Every resync therefore added the
+    // word length on top of the real committed length — and a resync is
+    // queued on EVERY caret-moving keystroke (arrows, Home/End, PgUp/PgDn,
+    // Ins, Ctrl+Backspace) and on every mouse click, so the counter could be
+    // inflated by k×len(word) with k presses of an arrow key.
+    //
+    // visibleAccount_ is the ONLY thing clamping backspaceCount (the D2
+    // over-backspace policy above), so an inflated counter lets a later edit
+    // delete characters the engine never committed: click into a partially
+    // typed word, press Right a few times, finish the word — and the
+    // correction eats text to the LEFT of the word. That is user-visible
+    // data loss with no error anywhere.
+    //
+    // Fix: the replay commits nothing, so it must not count. Afterwards the
+    // engine owns exactly the adopted word — no more, no less — which is also
+    // the exact upper bound on any backspace it can legitimately want.
     rawReplay_ = true;
     for (const wchar_t wc : rawWord) {
         const char32_t c = static_cast<char32_t>(wc);
@@ -115,9 +139,10 @@ bool TextEngine::resumeFromText(const std::wstring& rawWord) noexcept {
         in.kind   = InputKind::Char;
         in.ch     = c;
         in.isCaps = (c >= U'A' && c <= U'Z');
-        (void)process(in);   // state advance only
+        (void)process(in);   // state advance only (no accounting while rawReplay_)
     }
     rawReplay_ = false;
+    visibleAccount_ = rawWord.size();
     return true;
 }
 
@@ -214,6 +239,12 @@ const EngineResult& TextEngine::process(const TextInput& in) {
     }
     assert(result_.backspaceCount <= visibleAccount_);
 #endif
+    // v1.2.0 Stable: a raw replay (resumeFromText) commits NOTHING — the
+    // letters are already on screen and resumeFromText sets the account to the
+    // adopted word length when it is done. Skipping the block below is what
+    // stops every resync from inflating the D2 clamp (see resumeFromText).
+    if (rawReplay_) { finalizeResult(); return result_; }
+
     // Consumer-visible accounting (mirrors the verification consumer,
     // including the Restore re-issue contracts: the typed character after a
     // Char-Restore — hotfix §3 — and the space after a Space-Restore — D4).

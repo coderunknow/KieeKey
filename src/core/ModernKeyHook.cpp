@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.2.1 RC1 — ModernKeyHook.cpp
+// KieeKey v1.2.1 RC2 — ModernKeyHook.cpp
 // See ModernKeyHook.hpp for the architecture rationale.
 //----------------------------------------------------------------------------
 #include "ModernKeyHook.hpp"

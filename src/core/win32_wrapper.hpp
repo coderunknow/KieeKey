@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-// KieeKey v1.2.1 RC1 - refactored and completed logic
+// KieeKey v1.2.1 RC2 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.2.1 RC1 — win32_wrapper.hpp
+// KieeKey v1.2.1 RC2 — win32_wrapper.hpp
 // The Win32 transport layer of the IME: hook lifecycle, lock-free queueing,
 // batched synthetic input, priorities, and hook self-healing.
 //

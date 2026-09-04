@@ -609,7 +609,7 @@ int main(int argc, char** argv) {
     else if (commitSel == "1ms") { commitNs = 1'000'000; }
     else { commitNs = std::strtoull(commitSel.c_str(), nullptr, 10); }
 
-    std::printf("[tone] KieeKey v1.1.1 — tone-population latency benchmark\n");
+    std::printf("[tone] KieeKey v1.2.0 — tone-population latency benchmark\n");
 
     EngineOptions o;
     o.restoreIfWrongSpelling = true;

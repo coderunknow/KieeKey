@@ -3,6 +3,34 @@
 All notable changes to KieeKey are documented here. Format based on
 Keep a Changelog; versioning: SemVer.
 
+## [1.2.0] — 2026-09-04
+
+### Feature + performance release on top of the v1.1.3 hardening pass
+
+* **Macro expansion at printable punctuation (opt-in).**
+  `EngineOptions::macroExpandsOnPunctuation` (default `false`, preserving
+  OpenKey-2.0.5 byte parity). When enabled, a printable macro-break
+  character typed with kind `Char` (`, . ; / ' \\ - =`) expands the pending
+  abbreviation AND stays visible in the output (`xl,` → `xin lỗi,`), and
+  the macro-key accumulator is reset after the match so consecutive
+  `xl, xl,` both expand. Legacy default keeps the 2.0.5 semantics: the
+  trigger is swallowed and the poisoned accumulator blocks the next match.
+* **VIQR output parity for macro expansions.**
+  `EngineResult::macroExpansionUtf16` renders through the VIQR pipeline when
+  `OutputEncoding::Viqr` is selected — precomposed Vietnamese no longer
+  leaks as raw Unicode into pure-ASCII VIQR output.
+* **Grammar-gate fast path.** `wordHasTransform_` records whether the
+  current word ever received a transform; `checkGrammar()` cannot repair a
+  word with no transform mask, so the per-key re-scan is skipped for those
+  words (monotone within a word, conservative on restore).
+* **Benchmark & verification tooling:** hardened `imebench_kit` perf
+  harness (warm-up, per-workload session reset, sorted percentiles, no-op
+  timing-overhead control, multi-run JSON with full decile+tail
+  distributions), multi-run `--json` mode in `tests/e2e_bench.cpp`, and a
+  deterministic differential correctness gate (engine vs clean-room
+  oracle; 2.06M events in ~1 s). Evidence in
+  `docs/reports/V1.2.0_BENCHMARK_REPORT.md`.
+
 ## [1.1.3] — 2026-09-03
 
 ### Quality/performance hardening release — accuracy, latency, stability,

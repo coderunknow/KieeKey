@@ -31,6 +31,7 @@ for full traceability; the first public release is KieeKey v1.0.
 | Document | Release | Content |
 |---|---|---|
 | [V1.1.0_BENCHMARK_REPORT.md](V1.1.0_BENCHMARK_REPORT.md) | **v1.1.0** | v1.0.1 → v1.1.0 correctness suites, engine micro-bench, E2E/tone latency comparison + regression-test inventory |
+| [V1.2.0_BENCHMARK_REPORT.md](V1.2.0_BENCHMARK_REPORT.md) | **v1.2.0** | v1.1.3 → v1.2.0 audited benchmark corpus, hardened micro/integration/tone latency layers, differential correctness gate, external-engine comparison |
 
 Frozen benchmark evidence (`imebench_kit/results*`, `benchmark_runs/`) is
 **not shipped** in the source release — it is regenerable with the

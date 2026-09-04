@@ -5,7 +5,7 @@
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20ARM64-0078D6.svg)
 ![Build](https://img.shields.io/badge/build-CMake%20%3E%3D%203.28-064FAD.svg)
 
-**KieeKey v1.1.3** is a modern, low-latency Vietnamese input method engine
+**KieeKey v1.2.0** is a modern, low-latency Vietnamese input method engine
 (bộ gõ Tiếng Việt) for Windows, with a system-tray application, a TSF
 text-store composer and an optional WinUI 3 Fluent settings UI.
 
@@ -20,7 +20,36 @@ text-store composer and an optional WinUI 3 Fluent settings UI.
 
 ---
 
-## What's new in v1.1.3
+## What's new in v1.2.0
+
+**A feature + performance release on top of the v1.1.3 hardening pass.**
+Three headlines:
+
+1. **Macro expansion at printable punctuation (opt-in).** A new
+   `EngineOptions::macroExpandsOnPunctuation` switch (default OFF — legacy
+   byte-parity with OpenKey 2.0.5 is preserved) makes a macro break at
+   `, . ; / ' \\ - =` expand the abbreviation AND keep the punctuation
+   visible: typing `xl,` now yields `xin lỗi,` instead of swallowing the
+   comma, and the macro-key accumulator is reset so consecutive `xl, xl,`
+   both expand. (Legacy default keeps the 2.0.5 behavior byte-for-byte.)
+2. **VIQR macro parity.** `EngineResult::macroExpansionUtf16` now renders
+   macro expansions through the VIQR pipeline when
+   `OutputEncoding::Viqr` is selected — precomposed Vietnamese no longer
+   leaks as raw Unicode into pure-ASCII VIQR output.
+3. **Grammar-gate speedup.** A `wordHasTransform_` eligibility flag skips
+   the per-key `checkGrammar()` re-scan whenever the current word has never
+   received a transform — provably no-op work removed from the hot path
+   (monotone within a word, conservative on restore).
+
+Measured evidence (this release's benchmark report,
+[docs/reports/V1.2.0_BENCHMARK_REPORT.md](docs/reports/V1.2.0_BENCHMARK_REPORT.md)):
+engine decision p50 ≈ **118–137 ns/key** (down ~5–18 % vs v1.1.3 on the
+same host, 2M keys × 3 interleaved runs), shim-pipeline burst p50 ≈
+**25.8 µs** (down ~16 %), tone-population parity, and a new deterministic
+correctness gate (2.06M events, engine vs clean-room oracle) passing on
+both versions before any latency number is trusted.
+
+### What was in v1.1.3
 
 **A quality/performance hardening pass over the whole input pipeline —
 accuracy, latency, stability, robustness — with no behavior changes beyond
@@ -310,7 +339,7 @@ original licenses — see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 ## Tóm tắt (Tiếng Việt)
 
-**KieeKey v1.1.3** là bộ gõ Tiếng Việt cho Windows, được xây dựng dựa trên
+**KieeKey v1.2.0** là bộ gõ Tiếng Việt cho Windows, được xây dựng dựa trên
 dự án **[OpenKey](https://github.com/tuyenvm/OpenKey)** (GPL-3.0) của tác
 giả Tuyen Mai. Toàn bộ engine gốc đã được port sang C++ hiện đại, refactor
 và hoàn thiện logic: pipeline hook bất đồng bộ với hàng đợi lock-free,

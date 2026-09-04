@@ -49,6 +49,16 @@ same host, 2M keys × 3 interleaved runs), shim-pipeline burst p50 ≈
 correctness gate (2.06M events, engine vs clean-room oracle) passing on
 both versions before any latency number is trusted.
 
+Benchmark tooling (kept in-repo for future releases): the hardened micro
+harness `imebench_kit/harness/bench_perf.cpp` (v2 — warm-up, session reset,
+sorted percentiles, T0-control overhead floor, full-distribution JSON), the
+multi-run `--runs/--json` integration harness `tests/e2e_bench.cpp`, the
+differential correctness gate `tests/gate_correctness.cpp`, and the
+single-command suite runner **`tests/run_bench_suite.sh`** which builds all
+targets, writes the machine-readable environment record, runs gate +
+micro + integration + tone layers, and aggregates everything into
+`summary.json`.
+
 ### What was in v1.1.3
 
 **A quality/performance hardening pass over the whole input pipeline —

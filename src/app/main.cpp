@@ -846,15 +846,22 @@ inline std::uint32_t t_lastBarrierNs = 0;
 #endif
 
 void waitPendingEditsDrained() noexcept {
+    // PendingEditCounter::waitDrained() is [[nodiscard]] on purpose — a
+    // lifecycle drain MUST know whether the wait was satisfied or timed out
+    // (see drainPendingEditsForLifecycle). This call site is the plain
+    // pass-through ordering guard, where a timeout degrades to the same
+    // "deliver the key anyway" behaviour either way, so the result is
+    // deliberately discarded. (MSVC /W4 /WX turns a bare discard into
+    // C4834, which broke the v1.2.0 Stable CI build.)
 #if KIEEKEY_PROFILE
     const std::uint64_t profT0 = ok::prof::qpcNow();
-    g.pendingEdits.waitDrained();
+    static_cast<void>(g.pendingEdits.waitDrained());
     // The barrier cost lands on the NEXT pass-through record (the key being
     // delivered): the hook thread reads t_lastBarrierNs when building its
     // StageRecord. Overwritten on every barrier call (serialized thread).
     t_lastBarrierNs = ok::prof::nsSince(profT0);
 #else
-    g.pendingEdits.waitDrained();
+    static_cast<void>(g.pendingEdits.waitDrained());
 #endif
 }
 

@@ -1496,11 +1496,13 @@ void TextEngine::insertW(char32_t /*data*/, bool /*caps*/) {
             ((typingWord_[vowelStart_] & kToneWMask) && chr(vowelStart_ + 1) == U'I') ||
             ((typingWord_[vowelStart_] & kToneWMask) && chr(vowelStart_ + 1) == U'A')) {
             result_.code = EngineCode::Restore;
-            std::size_t idx = 0;
+            // v1.2.0 Stable: the `idx` counter that used to live here was
+            // incremented but never read (dead). Removed — it is a pure
+            // write, so this cannot change behaviour, and it tripped
+            // -Wunused-but-set-variable (C4189-adjacent) in strict builds.
             for (std::size_t ii = vowelStart_; ii < index_; ++ii) {
                 typingWord_[ii] &= ~kToneWMask;
                 result_.newChars[index_ - 1 - ii] = getCharacterCode(typingWord_[ii]) & ~kStandaloneMask;
-                ++idx;
             }
             isRestoredW_ = true;
             tempDisableKey_ = true;

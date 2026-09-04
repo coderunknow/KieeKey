@@ -42,6 +42,9 @@ project(KieeKey
 #----------------------------------------------------------------------------
 set(KIEEKEY_BUILD_UI "none" CACHE STRING "UI front-end: none | winui3")
 set(KIEEKEY_BUILD_TESTS ON CACHE BOOL "Build the unit-test harness")
+# Windows only: also build the extended (stress/soak/differential/keystroke)
+# harnesses. OFF by default — see the note in the Windows test block for why.
+set(KIEEKEY_BUILD_EXTRA_TESTS OFF CACHE BOOL "Build the extended test harnesses on Windows")
 set(KIEEKEY_PROFILE 0 CACHE STRING "Compile in the QPC stage profiler (0=off/default, 1=instrumented)")
 set_property(CACHE KIEEKEY_BUILD_UI PROPERTY STRINGS none winui3)
 
@@ -421,8 +424,29 @@ if(WIN32 AND KIEEKEY_BUILD_TESTS)
     target_include_directories(ok_wrap_tests PRIVATE src/core tests)
     add_test(NAME ok_wrap_tests COMMAND ok_wrap_tests)
 
-    # v1.2.0 Stable — the same suite is registered on Windows so the native
-    # x64 CI job runs everything, not just the three historic targets.
+    #-----------------------------------------------------------------------
+    # v1.2.0 Stable — EXTENDED suites, OPT-IN on Windows.
+    #
+    # These eleven harnesses are the same ones the Linux job runs from
+    # tests/run_all_tests.sh. They are OFF by default on Windows, and that is
+    # deliberate, not an oversight:
+    #
+    #   * several of them were written against POSIX (gate_correctness.cpp
+    #     installs a SIGBUS handler via sigjmp_buf; soak_engine.cpp reads
+    #     /proc/self/status) and simply do not compile against the Windows
+    #     SDK;
+    #   * the Windows CI job compiles with /W4 /WX — warnings as errors —
+    #     and none of these files has ever been built by MSVC, so any level-4
+    #     diagnostic (C4244 narrowing, C4267 size_t truncation, C4477 format,
+    #     C4834 nodiscard, ...) becomes a hard build failure on ALL THREE CI
+    #     platforms, because `cmake --build` builds every defined target.
+    #
+    # Restoring the CI contract the workflow file documents ("ctest: ok_tests,
+    # ok_ring_tests, ok_wrap_tests") is worth more than building unvetted
+    # harnesses. Enable locally to port them:
+    #     cmake -S . -B out -DKIEEKEY_BUILD_EXTRA_TESTS=ON
+    #-----------------------------------------------------------------------
+    if(KIEEKEY_BUILD_EXTRA_TESTS)
     add_executable(ok_outputitem_tests tests/test_outputitem.cpp)
     target_link_libraries(ok_outputitem_tests PRIVATE ok_core)
     add_executable(ok_hotfix_tests tests/test_hotfix.cpp)
@@ -461,16 +485,21 @@ if(WIN32 AND KIEEKEY_BUILD_TESTS)
     add_test(NAME ok_state_tests     COMMAND ok_state_tests)
     add_test(NAME ok_lifecycle_tests COMMAND ok_lifecycle_tests)
     add_test(NAME ok_soak_pipeline   COMMAND ok_soak_pipeline 300000 30000)
+    endif()   # KIEEKEY_BUILD_EXTRA_TESTS
 
     # Same hang protection for the Windows-compiled test suite (these run
     # on the native x64 CI job — the barrier/wait paths live here).
     set_tests_properties(
         ok_tests ok_ring_tests ok_wrap_tests
-        ok_outputitem_tests ok_hotfix_tests ok_v331_tests
-        ok_stress_tests ok_soak_tests ok_queue_stress_tests
-        ok_gate_tests ok_key_tests ok_state_tests ok_lifecycle_tests
-        ok_soak_pipeline
         PROPERTIES TIMEOUT 300)
+    if(KIEEKEY_BUILD_EXTRA_TESTS)
+        set_tests_properties(
+            ok_outputitem_tests ok_hotfix_tests ok_v331_tests
+            ok_stress_tests ok_soak_tests ok_queue_stress_tests
+            ok_gate_tests ok_key_tests ok_state_tests ok_lifecycle_tests
+            ok_soak_pipeline
+            PROPERTIES TIMEOUT 300)
+    endif()
 
     # Version-identifier consistency guard (MSVC builds must not ship mixed
     # version strings either).

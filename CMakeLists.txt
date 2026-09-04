@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------------
-# KieeKey v1.2.0 — CMake build (modern replacement for the .sln/.vcxproj)
+# KieeKey v1.2.1 RC1 — CMake build (modern replacement for the .sln/.vcxproj)
 #
 #   * C++23, /W4 + /WX (warnings as errors) for release-grade hygiene (MSVC)
 #   * x64 + ARM64 out of the box (ARM64EC possible: -A ARM64EC, VS 17.4+)
@@ -33,7 +33,7 @@
 cmake_minimum_required(VERSION 3.28)
 
 project(KieeKey
-        VERSION 1.2.0
+        VERSION 1.2.1
         DESCRIPTION "KieeKey — Vietnamese input method (modern core)"
         LANGUAGES CXX)
 
@@ -386,6 +386,16 @@ else()
         target_compile_definitions(ok_tone_bench PRIVATE OK_WRAP_NO_WIN32)
         target_include_directories(ok_tone_bench PRIVATE src/core tests)
         target_compile_features(ok_tone_bench PRIVATE cxx_std_23)
+
+        # v1.2.1 RC1 — real-world typing benchmark (human-like patterns,
+        # reports latency AND resource cost). Run manually:
+        #   ./ok_realworld_bench --keys=50000 --runs=3
+        add_executable(ok_realworld_bench
+            tests/bench_real_world_typing.cpp
+            src/core/TextEngine.cpp
+        )
+        target_include_directories(ok_realworld_bench PRIVATE src/core)
+        target_compile_features(ok_realworld_bench PRIVATE cxx_std_20)
 
         message(STATUS "Non-Windows host: building the shim-based test suite only "
                        "(ok_tests, ok_ring_tests, ok_wrap_tests). The Windows product "

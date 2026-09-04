@@ -159,6 +159,24 @@ struct EngineOptions {
     bool upperCaseFirstChar   = false;
     bool useMacro             = true;
     bool useMacroInEnglishMode = false;
+    // v1.2.0 — macro expansion at punctuation: with the default (false) the
+    // engine keeps the legacy 2.0.5 macro semantics byte-for-byte — a macro
+    // abbreviation is expanded when the trigger key is a Space or Enter
+    // (macro-break punctuation characters like ',' also fire the legacy
+    // expansion, which REPLACES the abbreviation AND swallows the
+    // punctuation, and the punctuation is pushed into the macro-key
+    // accumulator so a second abbreviation immediately after it can never
+    // expand again). With this option ON the macro-break punctuation
+    // characters (',' '.' ';' '/' '\'' '\\' '-' '=') expand the
+    // abbreviation AND stay visible: the trigger character is appended to
+    // the emitted expansion (the consumer already inserts the expansion
+    // verbatim — no new result contract), and the macro-key accumulator is
+    // reset so consecutive abbreviations separated by punctuation both
+    // expand ("xl, xl," → "xin lỗi, xin lỗi,").
+    // Space/Enter triggers keep their D3 semantics in both modes (the
+    // expansion is emitted and the break key is consumed — the macro text
+    // itself provides any trailing separator).
+    bool macroExpandsOnPunctuation = false;
     // P1 (v3.1): dictionary-assisted foreign-word protection — the v3.1
     // word-break restore decision consults a general Vietnamese lexicon:
     // a pending composition is reverted to the raw keystrokes only when the
@@ -520,6 +538,18 @@ private:
     // transform masks stored in typingWord_ (the next word break then
     // "restored" phantom composed text — duplicated letters on screen).
     bool rawReplay_             = false;
+    // v1.2.0 — grammar-repair eligibility fast flag (performance). Every
+    // Vietnamese-composition repair that checkGrammar() performs acts on
+    // transform masks in the word buffer (a W-hook pair for the double-ư
+    // fix, a tone mark for the mark-move): with NO transform ever applied to
+    // the current word (pure ASCII typing — English words, plain prefixes),
+    // checkGrammar() provably cannot change anything, so it is skipped and
+    // the per-key vowel re-scan is avoided. The flag is monotone within a
+    // word (set as soon as any transform family runs, cleared only when the
+    // word session resets), so it can only ever cause FEWER no-op scans —
+    // never a missed repair (a repair requires a mask, a mask requires the
+    // flag to be set). See checkGrammar call site in mainKeyBranch.
+    bool wordHasTransform_      = false;
     // v1.1.0: VNI vowel-scan validity. The VNI branch scans the buffer for
     // the last O/A/E to map digit 6/7/8 keys; when nothing matches, the old
     // code kept the PREVIOUS word's index (stale vowelEnd_) and could apply

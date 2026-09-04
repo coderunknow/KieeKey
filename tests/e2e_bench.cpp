@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.1.3 — tests/e2e_bench.cpp
+// KieeKey v1.2.0 — tests/e2e_bench.cpp
 // End-to-end latency harness for the Win32 wrapper pipeline.
 //
 // Measures the FULL software chain per keystroke, exactly as the shipped
@@ -69,6 +69,7 @@
 #include <condition_variable>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -309,27 +310,27 @@ static double pct(std::vector<std::uint64_t>& v, double p) {
     return static_cast<double>(v[idx]) / 1000.0;   // ns → µs
 }
 
-int main(int argc, char** argv) {
-    long keys = 100000;
-    bool paced = false;
-    unsigned long long spinCapOpt = 200;   // bench-only adaptive-spin cap (µs)
-    long rateHz = 0;       // >0: constant-rate injection probe; 0 = the
-                           // v3.0 burst convention (word bursts, 300–800 µs
-                           // inter-burst pauses — the regime the IME runs in).
-    for (int i = 1; i < argc; ++i) {
-        if (!std::strncmp(argv[i], "--keys=", 7)) { keys = std::atol(argv[i] + 7); }
-        else if (!std::strcmp(argv[i], "--paced")) { paced = true; }
-        else if (!std::strncmp(argv[i], "--rate=", 7)) { rateHz = std::atol(argv[i] + 7); }
-        else if (!std::strncmp(argv[i], "--spin=", 7)) { spinCapOpt = std::strtoul(argv[i] + 7, nullptr, 10); }
-    }
+struct RunSummary {
+    long run = 0;
+    std::size_t keys = 0;
+    std::uint64_t sendInputCalls = 0;
+    double rawP50 = 0, rawP99 = 0, rawP999 = 0, rawMax = 0;
+    double hotP50 = 0, hotP99 = 0, hotP999 = 0, hotMax = 0;
+    double wakeP50 = 0, wakeP99 = 0; std::size_t wakeN = 0;
+    double plP50 = 0, plP99 = 0, plP999 = 0, plMax = 0;
+    std::uint64_t spikes = 0, events = 0;
+    double throughput = 0;
+    double rssTotalMb = 0, rssPipelineMb = 0;
+};
 
-    std::printf("[e2e] KieeKey v1.1.1 — Win32 wrapper E2E latency\n");
-    std::printf("[e2e] workload: %ld keys, %s, spin-cap=%llu us\n", keys,
-                paced ? "150 WPM paced"
-                      : (rateHz > 0 ? "constant-rate injection probe"
-                                    : "burst (word bursts + inter-burst pauses, v3.0 convention)"),
-                spinCapOpt);
+RunSummary runOnce(long runIdx, long keys, bool paced, unsigned long long spinCapUs,
+                   long rateHz, const std::string& stream,
+                   const std::vector<ok::text::EngineOptions>& optsDummy) {
+    (void)optsDummy;
+    RunSummary sum;
+    sum.run = runIdx;
 
+    std::printf("[e2e] ---- run %ld ----\n", runIdx);
     EngineOptions o;
     o.restoreIfWrongSpelling = true;
     o.useDictionaryRestore = true;
@@ -363,10 +364,9 @@ int main(int argc, char** argv) {
         return false;
     });
 
-    const std::string stream = buildKeystream(keys);
     std::vector<std::uint64_t> lat(static_cast<std::size_t>(keys), 0);
     BenchPipeline pipe(eng, lat);
-    pipe.spinCapUs = spinCapOpt;
+    pipe.spinCapUs = spinCapUs;
     pipe.startSerial.assign(static_cast<std::size_t>(keys), 0);
     pipe.doneSerial.assign(static_cast<std::size_t>(keys), 0);
 
@@ -386,7 +386,7 @@ int main(int argc, char** argv) {
     if (prioRc == 0) {
         std::printf("[e2e] SCHED_FIFO priority applied\n");
     } else {
-        std::printf("[e2e] SCHED_FIFO unavailable (rc=%d, need root) — Windows uses "
+        std::printf("[e2e] SCHED_FIFO unavailable (rc=%d, need root) - Windows uses "
                     "THREAD_PRIORITY_TIME_CRITICAL + HIGH_PRIORITY_CLASS instead\n", prioRc);
     }
 #endif
@@ -399,9 +399,6 @@ int main(int argc, char** argv) {
     // std::thread::native_handle() is a pthread_t, not a HANDLE.
     ::SetThreadAffinityMask(::GetCurrentThread(), 1u);
     std::thread consumer([&pipe, procs] {
-        // Shift in DWORD_PTR width: `1u << n` produced a 32-bit result that
-        // was then implicitly widened to the 64-bit mask parameter —
-        // warning C4334 under /W4 /WX on MSVC (treated as an error).
         ::SetThreadAffinityMask(::GetCurrentThread(),
                                 static_cast<DWORD_PTR>(1) << (1u % procs));
         pipe.consumeLoop();
@@ -410,7 +407,7 @@ int main(int argc, char** argv) {
     std::thread consumer([&pipe] { pipe.consumeLoop(); });
 
     // Latency-bench hygiene: give the two pipeline threads dedicated cores
-    // when the host exposes ≥2 CPUs (otherwise co-scheduling pollutes the
+    // when the host exposes >=2 CPUs (otherwise co-scheduling pollutes the
     // measured "latency" with scheduler timeslicing, not the pipeline).
     {
         cpu_set_t pset, cset;
@@ -432,20 +429,20 @@ int main(int argc, char** argv) {
     long burstLen = 3;
     // per-key population tag: a key that arrives while the consumer is hot
     // (intra-burst, wake-free) vs a key that pays a thread wake (first key
-    // after a pause — the OS wake cost is host-dependent, NOT pipeline cost).
+    // after a pause - the OS wake cost is host-dependent, NOT pipeline cost).
     std::vector<char> afterPause(static_cast<std::size_t>(keys), 0);
     std::uint64_t seq = 0;
     for (long i = 0; i < keys; ++i) {
         pipe.produce(stream[static_cast<std::size_t>(i)], static_cast<std::uint64_t>(i));
         if (paced) {
-            // 150 WPM = 750 chars/min = 12.5 Hz → 80 ms between keystrokes
+            // 150 WPM = 750 chars/min = 12.5 Hz -> 80 ms between keystrokes
             afterPause[static_cast<std::size_t>(i)] = 1;
             std::this_thread::sleep_for(std::chrono::milliseconds(80));
         } else if (gapNs.count() > 0) {
             nextKey += gapNs;
             std::this_thread::sleep_until(nextKey);
         } else {
-            // v3.0 convention: word bursts (3..15 keys, back-to-back — the
+            // v3.0 convention: word bursts (3..15 keys, back-to-back - the
             // consumer is hot) with human-cadence inter-burst pauses.
             ++burstPos;
             if (burstPos >= burstLen && i + 1 < keys) {
@@ -467,8 +464,7 @@ int main(int argc, char** argv) {
     consumer.join();
     const auto tEnd = Clock::now();
 
-    // ---- report ------------------------------------------------------------
-    // per-key T_E2E = batch-ready (consumer) − hook-capture (producer stamp)
+    // ---- per-key T_E2E = batch-ready (consumer) - hook-capture (producer) --
     std::vector<std::uint64_t> sorted;
     sorted.reserve(lat.size());
     for (std::size_t i = 0; i < lat.size(); ++i) {
@@ -486,7 +482,7 @@ int main(int argc, char** argv) {
     // Scheduler-deschedule attribution: keys whose latency exceeded 100 us
     // arrive in CONTIGUOUS runs (the whole batch queued behind one OS
     // deschedule of the consumer thread). Group them into events and report
-    // a pipeline-only percentile over the unaffected population — on
+    // a pipeline-only percentile over the unaffected population - on
     // Windows the TIME_CRITICAL consumer is not descheduled this way.
     std::vector<char> affected(lat.size(), 0);
     std::uint64_t events = 0;
@@ -501,9 +497,7 @@ int main(int argc, char** argv) {
             i = end;
         }
     }
-    // populations: ALL keys · burst/hot (wake-free — the "Burst mode" the
-    // targets describe) · wake-payers (first key after a pause; the OS wake
-    // cost is host-dependent)
+    // populations: ALL keys / burst-hot (wake-free) / wake-payers
     std::vector<std::uint64_t> pipelineOnly, hotOnly, wakeOnly;
     pipelineOnly.reserve(sorted.size());
     hotOnly.reserve(sorted.size());
@@ -526,7 +520,7 @@ int main(int argc, char** argv) {
     std::printf("[e2e]          p50=%.3f us  p99=%.3f us  p99.9=%.3f us  max=%.3f us\n",
                 pct(hotOnly, 0.50), pct(hotOnly, 0.99), pct(hotOnly, 0.999),
                 hotOnly.empty() ? 0.0 : static_cast<double>(hotOnly.back()) / 1000.0);
-    std::printf("[e2e] WAKE-PAY (first key after a pause — OS wake cost, host-dependent)\n");
+    std::printf("[e2e] WAKE-PAY (first key after a pause - OS wake cost, host-dependent)\n");
     std::printf("[e2e]          p50=%.3f us  p99=%.3f us  n=%zu\n",
                 pct(wakeOnly, 0.50), pct(wakeOnly, 0.99), wakeOnly.size());
     std::printf("[e2e] PIPELINE (all keys, deschedule-excluded)\n");
@@ -541,19 +535,135 @@ int main(int argc, char** argv) {
     std::printf("[e2e] throughput: %.0f keys/s (includes %s pacing)\n",
                 static_cast<double>(keys) / secs, paced ? "150 WPM" : "burst");
     const double harnessBytes = static_cast<double>(lat.size() * 8 * 3 + lat.size() + stream.size());
+    const double rssTotal = static_cast<double>(peakRssKb()) / 1024.0;
+    const double rssPipeline = (static_cast<double>(peakRssKb()) * 1024.0 - harnessBytes) / (1024.0 * 1024.0);
     std::printf("[e2e] peak RSS: %.2f MB total; IME pipeline footprint ~%.2f MB "
                 "(excl. %.1f MB harness arrays; engine-only baseline 2.00 MB)\n",
-                static_cast<double>(peakRssKb()) / 1024.0,
-                (static_cast<double>(peakRssKb()) * 1024.0 - harnessBytes) / (1024.0 * 1024.0),
-                harnessBytes / (1024.0 * 1024.0));
+                rssTotal, rssPipeline, harnessBytes / (1024.0 * 1024.0));
 
-    // ---- verification targets (burst mode) ----------------------------------
+    sum.keys = sorted.size();
+    sum.sendInputCalls = static_cast<std::uint64_t>(pipe.emitter.sendInputCalls());
+    sum.rawP50 = pct(sorted, 0.50); sum.rawP99 = pct(sorted, 0.99);
+    sum.rawP999 = pct(sorted, 0.999);
+    sum.rawMax = sorted.empty() ? 0.0 : static_cast<double>(sorted.back()) / 1000.0;
+    sum.hotP50 = pct(hotOnly, 0.50); sum.hotP99 = pct(hotOnly, 0.99);
+    sum.hotP999 = pct(hotOnly, 0.999);
+    sum.hotMax = hotOnly.empty() ? 0.0 : static_cast<double>(hotOnly.back()) / 1000.0;
+    sum.wakeP50 = pct(wakeOnly, 0.50); sum.wakeP99 = pct(wakeOnly, 0.99); sum.wakeN = wakeOnly.size();
+    sum.plP50 = pct(pipelineOnly, 0.50); sum.plP99 = pct(pipelineOnly, 0.99);
+    sum.plP999 = pct(pipelineOnly, 0.999);
+    sum.plMax = pipelineOnly.empty() ? 0.0 : static_cast<double>(pipelineOnly.back()) / 1000.0;
+    sum.spikes = spikes; sum.events = events;
+    sum.throughput = static_cast<double>(keys) / secs;
+    sum.rssTotalMb = rssTotal; sum.rssPipelineMb = rssPipeline;
+    return sum;
+}
+
+static double median(std::vector<double> v) {
+    if (v.empty()) { return 0; }
+    std::sort(v.begin(), v.end());
+    return v[v.size() / 2];
+}
+
+int main(int argc, char** argv) {
+    long keys = 100000;
+    bool paced = false;
+    unsigned long long spinCapOpt = 200;   // bench-only adaptive-spin cap (us)
+    long rateHz = 0;       // >0: constant-rate injection probe; 0 = the
+                           // v3.0 burst convention (word bursts, 300-800 us
+                           // inter-burst pauses - the regime the IME runs in).
+    long runs = 1;
+    std::string jsonPath;
+    for (int i = 1; i < argc; ++i) {
+        if (!std::strncmp(argv[i], "--keys=", 7)) { keys = std::atol(argv[i] + 7); }
+        else if (!std::strcmp(argv[i], "--paced")) { paced = true; }
+        else if (!std::strncmp(argv[i], "--rate=", 7)) { rateHz = std::atol(argv[i] + 7); }
+        else if (!std::strncmp(argv[i], "--spin=", 7)) { spinCapOpt = std::strtoul(argv[i] + 7, nullptr, 10); }
+        else if (!std::strncmp(argv[i], "--runs=", 7)) { runs = std::atol(argv[i] + 7); }
+        else if (!std::strncmp(argv[i], "--json=", 7)) { jsonPath = argv[i] + 7; }
+    }
+    if (runs < 1) { runs = 1; }
+
+    std::printf("[e2e] KieeKey - Win32 wrapper E2E latency\n");
+    std::printf("[e2e] workload: %ld keys, %s, spin-cap=%llu us, runs=%ld%s%s\n", keys,
+                paced ? "150 WPM paced"
+                      : (rateHz > 0 ? "constant-rate injection probe"
+                                    : "burst (word bursts + inter-burst pauses, v3.0 convention)"),
+                spinCapOpt, runs, jsonPath.empty() ? "" : ", json=", jsonPath.c_str());
+
+    const std::string stream = buildKeystream(keys);
+    std::vector<RunSummary> summaries;
+    const std::vector<ok::text::EngineOptions> optsDummy;   // (kept for future per-run options)
+    for (long r = 0; r < runs; ++r) {
+        summaries.push_back(runOnce(r, keys, paced, spinCapOpt, rateHz, stream, optsDummy));
+    }
+
+    // ---- multi-run aggregation ---------------------------------------------
+    if (runs > 1) {
+        auto col = [&](double RunSummary::*m) {
+            std::vector<double> v;
+            for (const auto& s : summaries) { v.push_back(s.*m); }
+            return v;
+        };
+        std::printf("[e2e] === multi-run summary (%ld runs) ===\n", runs);
+        std::printf("[e2e] BURST/HOT p50 median=%.3f us  p99 median=%.3f us  p99.9 median=%.3f us\n",
+                    median(col(&RunSummary::hotP50)), median(col(&RunSummary::hotP99)),
+                    median(col(&RunSummary::hotP999)));
+        std::printf("[e2e] PIPELINE p50 median=%.3f us  p99 median=%.3f us  p99.9 median=%.3f us\n",
+                    median(col(&RunSummary::plP50)), median(col(&RunSummary::plP99)),
+                    median(col(&RunSummary::plP999)));
+        auto colu = [&](std::uint64_t RunSummary::*m) {
+            std::vector<std::uint64_t> v;
+            for (const auto& s : summaries) { v.push_back(s.*m); }
+            std::sort(v.begin(), v.end());
+            return v.empty() ? 0 : v[v.size() / 2];
+        };
+        std::printf("[e2e] WAKE-PAY p50 median=%.3f us  spikes median=%llu  throughput median=%.0f keys/s\n",
+                    median(col(&RunSummary::wakeP50)),
+                    static_cast<unsigned long long>(colu(&RunSummary::spikes)),
+                    median(col(&RunSummary::throughput)));
+    }
+
+    if (!jsonPath.empty()) {
+        std::ofstream jf(jsonPath);
+        if (!jf) { std::fprintf(stderr, "[e2e] cannot open %s\n", jsonPath.c_str()); return 2; }
+        jf << "{\n  \"schema\": \"e2e_bench.v2\",\n";
+        jf << "  \"runs\": [\n";
+        for (std::size_t r = 0; r < summaries.size(); ++r) {
+            const RunSummary& s = summaries[r];
+            jf << (r == 0 ? "    {\n" : "    ,{\n");
+            jf << "      \"run\": " << s.run << ",\n";
+            jf << "      \"keys\": " << s.keys << ",\n";
+            jf << "      \"sendInputCalls\": " << s.sendInputCalls << ",\n";
+            jf << "      \"raw_us\": { \"p50\": " << s.rawP50 << ", \"p99\": " << s.rawP99
+               << ", \"p999\": " << s.rawP999 << ", \"max\": " << s.rawMax << " },\n";
+            jf << "      \"burst_hot_us\": { \"p50\": " << s.hotP50 << ", \"p99\": " << s.hotP99
+               << ", \"p999\": " << s.hotP999 << ", \"max\": " << s.hotMax << " },\n";
+            jf << "      \"wake_pay_us\": { \"p50\": " << s.wakeP50 << ", \"p99\": " << s.wakeP99
+               << ", \"n\": " << s.wakeN << " },\n";
+            jf << "      \"pipeline_us\": { \"p50\": " << s.plP50 << ", \"p99\": " << s.plP99
+               << ", \"p999\": " << s.plP999 << ", \"max\": " << s.plMax << " },\n";
+            jf << "      \"lag_spikes_keys\": " << s.spikes << ",\n";
+            jf << "      \"lag_spike_events\": " << s.events << ",\n";
+            jf << "      \"throughput_keys_per_s\": " << s.throughput << ",\n";
+            jf << "      \"peak_rss_mb_total\": " << s.rssTotalMb << ",\n";
+            jf << "      \"pipeline_footprint_mb\": " << s.rssPipelineMb << "\n";
+            jf << "    }\n";
+        }
+        jf << "  ]\n}\n";
+        jf.close();
+        std::fprintf(stderr, "[e2e] wrote %s\n", jsonPath.c_str());
+    }
+
+    // ---- verification targets (burst mode, median across runs) --------------
     if (!paced && rateHz == 0) {
-        const double p50 = pct(hotOnly, 0.50), p99 = pct(hotOnly, 0.99);
+        std::vector<double> h50, h99;
+        for (const auto& s : summaries) { h50.push_back(s.hotP50); h99.push_back(s.hotP99); }
+        const double p50 = median(std::move(h50)), p99 = median(std::move(h99));
         const bool okP50 = p50 <= 2.5, okP99 = p99 <= 7.0;
-        std::printf("[e2e] TARGETS (burst mode = wake-free population): "
+        std::printf("[e2e] TARGETS (burst mode median of %ld run(s), wake-free population): "
                     "p50 %s (%.3f <= 2.5)  p99 %s (%.3f <= 7.0)\n",
-                    okP50 ? "PASS" : "FAIL", p50, okP99 ? "PASS" : "FAIL", p99);
+                    runs, okP50 ? "PASS" : "FAIL", p50, okP99 ? "PASS" : "FAIL", p99);
         return (okP50 && okP99) ? 0 : 1;
     }
     return 0;

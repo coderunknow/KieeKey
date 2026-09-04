@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.1.3 - refactored and completed logic
+//   KieeKey v1.2.0 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.1.3 — src/app/main.cpp
+// KieeKey v1.2.0 — src/app/main.cpp
 // The OpenKey-style Windows tray application (replaces the pre-tray console host):
 //
 //   * System tray icon (green = Vietnamese ON, gray = OFF) with the classic
@@ -127,10 +127,10 @@ namespace {
 //===========================================================================
 // v1.1.1 — single source of truth for the user-visible version string.
 // (The .rc VERSIONINFO, the manifest and the CMake project() carry their own
-// copies — all kept at 1.1.3; CHANGELOG documents the release.)
+// copies — all kept at 1.2.0; CHANGELOG documents the release.)
 //===========================================================================
-constexpr wchar_t kAppVersion[] = L"1.1.3";
-constexpr wchar_t kAppTitle[]   = L"KieeKey v1.1.3";   // keep in sync with kAppVersion
+constexpr wchar_t kAppVersion[] = L"1.2.0";
+constexpr wchar_t kAppTitle[]   = L"KieeKey v1.2.0";   // keep in sync with kAppVersion
 
 //===========================================================================
 // Output item: what the consumer thread must emit (trivially copyable → can

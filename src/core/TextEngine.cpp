@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.1.3 - refactored and completed logic
+//   KieeKey v1.2.0 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.1.3 — TextEngine.cpp
+// KieeKey v1.2.0 — TextEngine.cpp
 // C++20 Telex/VNI/Simple-Telex state machine.
 //
 // Porting notes:
@@ -82,6 +82,7 @@ void TextEngine::startNewSession() noexcept {
     hasHandleQuickConsonant_ = false;
     midWordToggle_ = false;   // v3.3.1: fresh word, fresh toggle bookkeeping
     macroExpandLen_ = 0;      // v1.1.0: no expansion on screen in a fresh session
+    wordHasTransform_ = false;   // v1.2.0: fresh word — no transform ran yet
     longWordHelper_.clear();
     result_.backspaceCount = 0;
     result_.newCharCount = 0;
@@ -291,6 +292,16 @@ void TextEngine::wordBreakBranch(char32_t c, bool caps, const TextInput& in, boo
         result_.backspaceCount = static_cast<std::uint8_t>(result_.macroKey.size());
         setMacroExpansionFromResolver();
         hasHandledMacro_ = true;
+        // v1.2.0 — macroExpandsOnPunctuation: when the macro trigger is a
+        // printable punctuation character (Char kind — not Space/Enter, which
+        // keep their D3 consumed-key semantics), the punctuation the user
+        // actually typed is appended to the emitted expansion so it stays on
+        // screen ("xl," → "xin lỗi,"). Legacy mode keeps the 2.0.5 behavior
+        // (the trigger char vanishes — it is replaced by the expansion).
+        if (opts_.macroExpandsOnPunctuation && in.kind == InputKind::Char &&
+            in.ch != 0) {
+            result_.macroExpansion.push_back(static_cast<std::uint32_t>(in.ch));
+        }
     } else if ((opts_.quickStartConsonant || opts_.quickEndConsonant) &&
                !tempDisableKey_ && macroBreak) {
         checkQuickConsonant();
@@ -356,6 +367,7 @@ void TextEngine::wordBreakBranch(char32_t c, bool caps, const TextInput& in, boo
             spaceCount_ = 0;
             longWordHelper_.clear();
             macroExpandLen_ = 0;
+            wordHasTransform_ = false;   // v1.2.0: fresh word after an expansion
             for (const std::uint32_t v : result_.macroExpansion) {
                 macroExpandLen_ += (v >= 0x10000u) ? 2u : 1u;
             }
@@ -364,7 +376,22 @@ void TextEngine::wordBreakBranch(char32_t c, bool caps, const TextInput& in, boo
 
     if (opts_.useMacro) {
         if (isCharKeyCode_) {
-            pushMacroKey(c | (caps ? kCapsMask : 0));
+            // v1.2.0 — macroExpandsOnPunctuation accumulator hygiene: the
+            // legacy path pushes the punctuation trigger char into the macro
+            // accumulator even after the expansion fired, so the NEXT
+            // abbreviation typed right after a punctuation expansion could
+            // never match again (its accumulated key was poisoned by the
+            // leftover abbreviation + trigger). With the option ON the
+            // punctuation is part of the expansion (see above) and the
+            // accumulator is reset to a clean empty state instead of being
+            // re-seeded — consecutive "xl, xl," both expand. Legacy mode
+            // keeps the 2.0.5 behavior exactly (push + poisoned next match).
+            if (result_.code == EngineCode::ReplaceMacro &&
+                opts_.macroExpandsOnPunctuation && in.kind == InputKind::Char) {
+                result_.macroKey.clear();
+            } else {
+                pushMacroKey(c | (caps ? kCapsMask : 0));
+            }
         } else {
             result_.macroKey.clear();
         }
@@ -420,6 +447,7 @@ void TextEngine::spaceBranch(char32_t /*c*/, bool /*caps*/) {
         stateIndex_ = 0;
         tempDisableKey_ = false;
         longWordHelper_.clear();
+        wordHasTransform_ = false;   // v1.2.0: fresh word after an expansion
     } else if ((opts_.quickStartConsonant || opts_.quickEndConsonant) &&
                !tempDisableKey_ && checkQuickConsonant()) {
         ++spaceCount_;
@@ -522,8 +550,8 @@ void TextEngine::backspaceBranch(bool /*caps*/) {
             startNewSession();
             specialChar_.clear();
             restoreLastTypingState();
-        } else {
-            checkGrammar(1);
+        } else if (wordHasTransform_) {
+            checkGrammar(1);   // v1.2.0: gated — see member doc
         }
     }
 }
@@ -592,7 +620,10 @@ void TextEngine::mainKeyBranch(char32_t c, bool caps) {
         handleMainKey(c, caps);
     }
 
-    if (!opts_.freeMark && !isKeyD(c)) {
+    if (!opts_.freeMark && !isKeyD(c) && wordHasTransform_) {
+        // v1.2.0: grammar repair can only act on transform masks in the
+        // buffer; a word with no transform (pure raw typing) provably has
+        // nothing to repair, so the per-key vowel re-scan is skipped.
         if (result_.code == EngineCode::DoNothing) {
             checkGrammar(-1);
         } else {
@@ -846,15 +877,18 @@ void TextEngine::restoreLastTypingState() {
             if (first == U' ') {
                 spaceCount_ = static_cast<int>(typingStatesData_.size());
                 index_ = 0;
+                wordHasTransform_ = true;   // v1.2.0: restored state may carry masks
             } else if (isCharKeyCodeChar(first)) {
                 index_ = 0;
                 specialChar_ = typingStatesData_;
                 checkSpelling();
+                wordHasTransform_ = true;   // v1.2.0: conservative — see member doc
             } else {
                 for (std::size_t i = 0; i < typingStatesData_.size(); ++i) {
                     typingWord_[i] = typingStatesData_[i];
                 }
                 index_ = typingStatesData_.size();
+                wordHasTransform_ = true;   // v1.2.0: restored word may carry masks
             }
         }
     }
@@ -1287,6 +1321,7 @@ void TextEngine::handleModernMark() {
 }
 
 void TextEngine::insertMark(std::uint32_t markMask, bool canModify) {
+    wordHasTransform_ = true;   // v1.2.0: transform-family entry (see member doc)
     vowelCount_ = 0;
 
     if (canModify) {
@@ -1341,6 +1376,7 @@ void TextEngine::insertMark(std::uint32_t markMask, bool canModify) {
 // D / ^(AOE) / W handlers
 //===========================================================================
 void TextEngine::insertD(char32_t /*c*/, bool /*caps*/) {
+    wordHasTransform_ = true;   // v1.2.0: transform-family entry (see member doc)
     result_.code = EngineCode::WillProcess;
     result_.backspaceCount = 0;
     for (std::size_t ii = index_ - 1; ii != std::size_t(-1); --ii) {
@@ -1363,6 +1399,7 @@ void TextEngine::insertD(char32_t /*c*/, bool /*caps*/) {
 }
 
 void TextEngine::insertAOE(char32_t data, bool /*caps*/) {
+    wordHasTransform_ = true;   // v1.2.0: transform-family entry (see member doc)
     findAndCalculateVowel();
 
     // remove W tone
@@ -1412,6 +1449,7 @@ void TextEngine::insertAOE(char32_t data, bool /*caps*/) {
 }
 
 void TextEngine::insertW(char32_t /*data*/, bool /*caps*/) {
+    wordHasTransform_ = true;   // v1.2.0: transform-family entry (see member doc)
     isRestoredW_ = false;
     findAndCalculateVowel();
 
@@ -1523,6 +1561,7 @@ void TextEngine::insertW(char32_t /*data*/, bool /*caps*/) {
 // Standalone [ ] and w handling
 //===========================================================================
 void TextEngine::reverseLastStandaloneChar(char32_t keyCode, bool caps) {
+    wordHasTransform_ = true;   // v1.2.0: transform-family entry (see member doc)
     result_.code = EngineCode::WillProcess;
     result_.backspaceCount = 0;
     result_.newCharCount = 1;
@@ -2273,22 +2312,7 @@ void appendUtf16(std::wstring& out, char32_t cp) {
         out.push_back(static_cast<wchar_t>(0xDC00 + (t & 0x3FF)));
     }
 }
-} // namespace
 
-std::wstring TextEngine::replacementUtf16(const EngineResult& r) const {
-    std::wstring out;
-    replacementUtf16(r, out);
-    return out;
-}
-
-void TextEngine::macroExpansionUtf16(const EngineResult& r, std::wstring& out) const {
-    out.clear();
-    for (std::uint32_t v : r.macroExpansion) {
-        appendUtf16(out, static_cast<char32_t>(v));
-    }
-}
-
-namespace {
 // P3: VIQR mnemonic output — precomposed Vietnamese -> pure ASCII.
 // (Complete map for the Vietnamese TetxLatin Extended Additional set the
 // engine can produce; plain ASCII letters and đ/Đ map to dd/DD.)
@@ -2343,6 +2367,34 @@ void appendViqr(std::wstring& out, char32_t cp) {
     out.push_back(static_cast<wchar_t>(cp));   // plain ASCII passes through
 }
 } // namespace
+
+std::wstring TextEngine::replacementUtf16(const EngineResult& r) const {
+    std::wstring out;
+    replacementUtf16(r, out);
+    return out;
+}
+
+void TextEngine::macroExpansionUtf16(const EngineResult& r, std::wstring& out) const {
+    // v1.2.0 — VIQR parity fix: macro expansions previously bypassed the
+    // output-encoding pipeline, so with OutputEncoding::Viqr selected the
+    // expansion's precomposed Vietnamese characters leaked through as raw
+    // Unicode (a channel configured for pure-ASCII VIQR output received
+    // mixed content — non-ASCII bytes right after ASCII mnemonics). The
+    // expansion now renders through the same VIQR path as every other
+    // engine output; ASCII expansion text (the overwhelmingly common case)
+    // is unaffected.
+    out.clear();
+    out.reserve(r.macroExpansion.size() + 1);
+    if (opts_.outputEncoding == OutputEncoding::Viqr) {
+        for (const std::uint32_t v : r.macroExpansion) {
+            appendViqr(out, static_cast<char32_t>(v));
+        }
+    } else {
+        for (const std::uint32_t v : r.macroExpansion) {
+            appendUtf16(out, static_cast<char32_t>(v));
+        }
+    }
+}
 
 void TextEngine::replacementUtf16(const EngineResult& r, std::wstring& out) const {
     // Decode engine encoding → UTF-16, OLDEST-FIRST. The engine fills

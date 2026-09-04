@@ -1,5 +1,5 @@
 //----------------------------------------------------------------------------
-// KieeKey v1.1.3 — KieeKeyApp.rc
+// KieeKey v1.2.0 — KieeKeyApp.rc
 // Resources for the Win32 tray application: app icon, DPI/comctl32 v6
 // manifest, version info. (The settings dialog is built in code in
 // main.cpp so layout stays pixel-exact.)
@@ -40,11 +40,11 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "KieeKey"
             VALUE "FileDescription",  "KieeKey — Bộ gõ Tiếng Việt"
-            VALUE "FileVersion",      "1.1.3.0"
+            VALUE "FileVersion",      "1.2.0.0"
             VALUE "InternalName",     "KieeKey"
             VALUE "OriginalFilename", "KieeKeyApp.exe"
             VALUE "ProductName",      "KieeKey"
-            VALUE "ProductVersion",   "1.1.3.0"
+            VALUE "ProductVersion",   "1.2.0.0"
         END
     END
     BLOCK "VarFileInfo"

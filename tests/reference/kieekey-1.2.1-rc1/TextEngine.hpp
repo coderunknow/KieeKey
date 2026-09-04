@@ -553,41 +553,8 @@ private:
     // Typing-history states. Stored as fixed kMaxBuff arrays + parallel
     // lengths so a word-break push_back copies 128 bytes with NO heap
     // allocation (legacy used vector-of-vectors → one alloc per word break).
-    //
-    // v1.2.1 RC2: bounded RING instead of vector + erase-from-front. RC1
-    // capped the history at kMaxHistory entries by erasing the oldest one
-    // on every push once full — a 64 × 128 B memmove on EVERY committed
-    // word for the whole session after the first 64 words (gprof: ~9 % of
-    // engine time on realistic prose). The ring keeps the exact observable
-    // contract (push drops the oldest, pop returns the newest, clear empties,
-    // capacity kMaxHistory) with O(1) push and no heap traffic at all.
-    struct HistoryRing {
-        static constexpr std::size_t kMaxHistory = 64;
-        std::array<std::array<std::uint32_t, kMaxBuff>, kMaxHistory> entries{};
-        std::array<std::uint8_t, kMaxHistory> lens{};
-        std::size_t head = 0;    // index of the oldest entry
-        std::size_t count = 0;
-
-        [[nodiscard]] std::size_t size() const noexcept { return count; }
-        [[nodiscard]] bool empty() const noexcept { return count == 0; }
-        void clear() noexcept { head = 0; count = 0; }
-        [[nodiscard]] std::size_t backSlot() const noexcept {
-            return (head + count - 1) % kMaxHistory;
-        }
-        // Returns the slot to fill for a new newest entry (dropping the
-        // oldest when full).
-        std::size_t pushSlot() noexcept {
-            if (count == kMaxHistory) {
-                head = (head + 1) % kMaxHistory;
-                --count;
-            }
-            const std::size_t slot = (head + count) % kMaxHistory;
-            ++count;
-            return slot;
-        }
-        void popBack() noexcept { if (count) { --count; } }
-    };
-    HistoryRing typingStates_;
+    std::vector<std::array<std::uint32_t, kMaxBuff>> typingStates_;
+    std::vector<std::uint8_t> typingStatesLen_;
     std::vector<std::uint32_t> typingStatesData_;   // restore scratch (reused)
     std::vector<std::uint32_t> specialChar_;
 

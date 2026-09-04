@@ -158,7 +158,26 @@ mkdir -p "$OBJ_DIR"
 ENGINE23="$OBJ_DIR/te23.o"
 ENGINE17="$OBJ_DIR/te17.o"
 
+# v1.2.1 RC2: frozen RC1 engine (tests/reference/kieekey-1.2.1-rc1) compiled
+# under a renamed namespace for the lockstep A/B differential.
+"$CXX" -std=c++2b -O2 -Dok=ok_rc1 -Itests/reference/kieekey-1.2.1-rc1 \
+    -c tests/reference/kieekey-1.2.1-rc1/TextEngine.cpp -o "$OBJ_DIR/te_rc1.o" \
+    >> "$BUILD_LOG" 2>&1 || { fail "frozen RC1 TextEngine.cpp failed to compile"; exit 1; }
+ENGINE_RC1="$OBJ_DIR/te_rc1.o"
+# v1.2.1 RC2: -O1 + sanitizers regression build. RC1 shipped an ODR bug
+# (FlatTables.hpp codeTableFor: external-linkage inline referencing
+# internal-linkage tables) that only surfaced as a LINK failure at -O1 with
+# ASan; -O2 inlined it away. Keep one such build in the gate forever.
+"$CXX" -std=c++2b -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer $INC \
+    -c src/core/TextEngine.cpp -o "$OBJ_DIR/te_asan.o" \
+    >> "$BUILD_LOG" 2>&1 || { fail "TextEngine.cpp (-O1 sanitizers) failed to compile"; exit 1; }
+ENGINE_ASAN="$OBJ_DIR/te_asan.o"
+
 build ok_tests            -std=c++2b -O2 $INC tests/test_textengine.cpp   $ENGINE23 || rc=1
+build diff_engine_ab      -std=c++2b -O2 $INC -Itests tests/diff_engine_ab.cpp \
+                          $ENGINE23 $ENGINE_RC1                                     || rc=1
+build test_hotfix_asan    -std=c++2b -O1 -g -fsanitize=address,undefined \
+                          -fno-omit-frame-pointer $INC tests/test_hotfix.cpp $ENGINE_ASAN || rc=1
 build ok_ring_tests       -std=c++2b -O2 $INC tests/test_ringbuffer.cpp             || rc=1
 build ok_wrap_tests       -std=c++2b -O2 $INC -DOK_WRAP_NO_WIN32 \
                           tests/test_win32wrapper.cpp src/core/win32_wrapper.cpp    || rc=1
@@ -251,6 +270,8 @@ dispatch_runs() {
 # into an infinite block must fail the gate in minutes, not hang CI until the
 # job-level limit kills it.
 run ok_tests             120
+run diff_engine_ab       300
+run test_hotfix_asan     300
 run ok_ring_tests        120
 run ok_wrap_tests        120
 run test_outputitem      120

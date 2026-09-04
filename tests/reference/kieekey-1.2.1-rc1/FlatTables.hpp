@@ -575,14 +575,7 @@ constexpr FlatMap<std::uint16_t, FlatVec<std::uint16_t>, 8> kQuickTelex = {
 };
 
 // ---- codeTableFor -----------------------------------------------------
-// v1.2.1 RC2 — INTERNAL linkage on purpose. The tables above are namespace-
-// scope `constexpr` objects (internal linkage); an `inline` (external-
-// linkage) function that refers to them is ill-formed NDR (each TU gets a
-// different definition — [basic.def.odr]). GCC's linker surfaced it as
-// "referenced in section .data.rel.local … defined in discarded section"
-// under -O1/-fsanitize builds; MSVC happened to fold it. `static` makes every
-// TU own its (identical) copy, which is exactly the semantics intended.
-[[nodiscard]] static inline const FlatCodeTable& codeTableFor(int codeTable) noexcept {
+[[nodiscard]] inline const FlatCodeTable& codeTableFor(int codeTable) noexcept {
     static constexpr std::array<const FlatCodeTable*, 5> tables = {
         &kCodeTableUnicode, &kCodeTableTcvn3, &kCodeTableVniWindows,
         &kCodeTableUnicodeCompound, &kCodeTableCp1258,

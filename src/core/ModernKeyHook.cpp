@@ -499,8 +499,8 @@ void ModernKeyHook::consumerThreadMain() noexcept {
     std::uint64_t lastArrivalUs = usNow();
     std::uint64_t ewmaGapUs = 20;   // initial EWMA estimate: 20µs (reasonable for burst typing)
     constexpr std::uint64_t kIdleThresholdUs = 50'000;   // 50ms = clear idle signal
-    constexpr std::uint64_t kSpinFloorUs = 2;            // minimum spin budget
-    constexpr std::uint64_t kSpinCapUs = 100;            // maximum spin budget (was 200)
+    // v1.2.1 RC2: floor/cap are runtime knobs (Performance profiles —
+    // setConsumerSpinBounds); RC1 constants 2/100 remain the defaults.
 
     while (running_.load(std::memory_order_acquire) || !queue_.empty()) {
         // Batch drain: amortize atomics; keep up with a typist even under
@@ -579,6 +579,8 @@ void ModernKeyHook::consumerThreadMain() noexcept {
         // pause, burning CPU for no benefit.
         const std::uint64_t nowIdle = usNow();
         const std::uint64_t idleFor = nowIdle - lastArrivalUs;
+        const std::uint64_t kSpinFloorUs = spinFloorUs_.load(std::memory_order_relaxed);
+        const std::uint64_t kSpinCapUs   = std::max<std::uint64_t>(kSpinFloorUs, spinCapUs_.load(std::memory_order_relaxed));
         if (idleFor >= kIdleThresholdUs) {
             // User is idle: reset EWMA to floor and park immediately.
             ewmaGapUs = kSpinFloorUs;

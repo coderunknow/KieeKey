@@ -95,6 +95,17 @@
 #ifndef PBT_APMSUSPEND
 #define PBT_APMSUSPEND 0x0004
 #endif
+// v1.2.1 RC2: NIN_BALLOON* are gated on _WIN32_IE >= 0x0501 in shellapi.h;
+// fixed ABI values (WM_USER + 2..5).
+#ifndef NIN_BALLOONHIDE
+#define NIN_BALLOONHIDE      (WM_USER + 3)
+#endif
+#ifndef NIN_BALLOONTIMEOUT
+#define NIN_BALLOONTIMEOUT   (WM_USER + 4)
+#endif
+#ifndef NIN_BALLOONUSERCLICK
+#define NIN_BALLOONUSERCLICK (WM_USER + 5)
+#endif
 #ifndef PBT_APMRESUMEAUTOMATIC
 #define PBT_APMRESUMEAUTOMATIC 0x0012
 #endif
@@ -125,6 +136,8 @@
 
 #include "LockFreeQueue.hpp"
 #include "ModernKeyHook.hpp"
+#include "Notifications.hpp"   // v1.2.1 RC2: notification center + QuickTelex detector
+#include "PerfProfile.hpp"     // v1.2.1 RC2: performance preference profiles
 #include "ProcessMonitor.hpp"
 #include "Profiler.hpp"
 #include "TextEngine.hpp"
@@ -271,6 +284,27 @@ struct AppState {
 
     // output mode: 0=Auto, 1=Always TSF, 2=Always SendInput (inline)
     std::atomic<int> outputMode{0};
+
+    // v1.2.1 RC2 — Performance preference profile (persisted) + hybrid
+    // flags, and the RESOLVED strategy the hot paths read. Every consumer
+    // of a tunable reads `strategy` fields through relaxed atomics mirrored
+    // below (never the struct itself) so a profile switch from the UI
+    // thread is race-free against the hook/consumer threads.
+    std::atomic<int>          perfProfile{static_cast<int>(ok::perf::Profile::Balanced)};
+    std::atomic<unsigned>     perfHybrid{ok::perf::kHybridNone};
+    std::atomic<std::uint32_t> editBatchMax{32};              // consumer TSF batch cap
+    std::atomic<bool>          layoutRecheckEveryKey{false};  // hook: HKL re-check per key
+    std::atomic<bool>          tsfSlowDowngrade{true};        // auto inline on slow TSF
+    std::atomic<bool>          deferInlineByProfile{false};   // profile-driven deferred inline
+    std::atomic<int>           strategyOutput{0};             // 0 auto / 1 inline / 2 tsf
+    std::atomic<std::uint64_t> lastKeyTickMs{0};              // adaptive: idle detection
+
+    // v1.2.1 RC2 — notification center (policy engine; UI thread polls) and
+    // the QuickTelex unwanted-correction detector (hook thread, under
+    // engineMtx — O(1), allocation-free).
+    ok::notify::NotificationCenter  notify;
+    ok::notify::QuickTelexDetector  quickTelexDetector;
+    char32_t                        lastRawKeyUpper = 0;     // hook-thread affine
 
     // Hook-thread-affine scratch (never touched from other threads):
     std::atomic<HKL> currentHkl{nullptr};  // cached foreground keyboard layout
@@ -541,6 +575,12 @@ void loadSettings() {
         // v1.1.0: persisted Vietnamese on/off (OpenKey parity — the old
         // build forgot the toggle on every restart).
         g.enabledOnStart                   = key.getDword(L"Enabled", 1) != 0;
+        // v1.2.1 RC2: performance profile + hybrid flags + notification
+        // suppressions (the ONLY persisted notification state).
+        const DWORD pp = key.getDword(L"PerfProfile", 0);
+        g.perfProfile.store(static_cast<int>(ok::perf::profileFromIndex(pp)), std::memory_order_relaxed);
+        g.perfHybrid.store(key.getDword(L"PerfHybrid", 0) & 0x0Fu, std::memory_order_relaxed);
+        g.options.useDictionaryRestore     = key.getDword(L"DictionaryRestore", 0) != 0;
         // v1.1.2-r2 ONE-TIME SETTINGS MIGRATION (self-heal).
         //
         // SettingsMigration < 2 identifies any install that has not yet run
@@ -578,6 +618,10 @@ void saveSettings() {
         key.setDword(L"OutputMode",        static_cast<DWORD>(g.outputMode.load(std::memory_order_relaxed)));
         // v1.1.0: persist the Vietnamese on/off state at every change point.
         key.setDword(L"Enabled",           g.engineEnabled.load(std::memory_order_relaxed) ? 1 : 0);
+        // v1.2.1 RC2
+        key.setDword(L"PerfProfile",       static_cast<DWORD>(g.perfProfile.load(std::memory_order_relaxed)));
+        key.setDword(L"PerfHybrid",        static_cast<DWORD>(g.perfHybrid.load(std::memory_order_relaxed)));
+        key.setDword(L"DictionaryRestore", g.options.useDictionaryRestore ? 1 : 0);
         // v1.1.2: digits-are-numbers option (the fix for "typing a number
         // produced a tone mark / changed the word").
         key.setDword(L"DigitsLiteral",     g.options.digitsAreLiteral ? 1 : 0);
@@ -712,7 +756,14 @@ bool isFlickerProne(ok::monitor::ProcessClass kind, const std::string& exeLower)
 
 void updateForegroundPolicy() noexcept {
     const auto s = g.monitor.snapshot();
-    const int mode = g.outputMode.load(std::memory_order_relaxed);
+    // v1.2.1 RC2: the explicit output-mode radio wins; when it is Auto the
+    // resolved performance strategy decides (Fastest → inline, LeastFlicker
+    // → TSF, Balanced/MaxCorrectness → the per-app table).
+    int mode = g.outputMode.load(std::memory_order_relaxed);
+    if (mode == 0) {
+        const int so = g.strategyOutput.load(std::memory_order_relaxed);
+        if (so == 1) { mode = 2; } else if (so == 2) { mode = 1; }
+    }
     switch (mode) {
         case 1: g.fgUseTsf_.store(true, std::memory_order_relaxed);  break;
         case 2: g.fgUseTsf_.store(false, std::memory_order_relaxed); break;
@@ -738,6 +789,72 @@ void refreshLayoutCache() noexcept {
     g.currentHkl.store(fg ? ::GetKeyboardLayout(::GetWindowThreadProcessId(fg, nullptr))
                           : ::GetKeyboardLayout(0),
                        std::memory_order_relaxed);
+}
+
+//===========================================================================
+// v1.2.1 RC2 — Performance preference profiles: resolve + apply.
+//
+// ONE function applies the centralized strategy (PerfProfile.hpp) to every
+// runtime knob: consumer spin bounds (ModernKeyHook), ordering-barrier
+// budget/spin (EditDrainBarrier), consumer TSF batch cap, output preference
+// (feeds updateForegroundPolicy), deferred-inline routing, per-key layout
+// re-check and the engine's dictionary restore. Called on the UI thread at
+// startup, on every settings apply, and (Adaptive only) from the 1 s
+// telemetry tick. Never called on the hook thread.
+//===========================================================================
+ok::perf::Telemetry collectTelemetry() noexcept {
+    ok::perf::Telemetry t;
+    t.tsfSlowCommits  = g.tsfSlowCount.load(std::memory_order_relaxed);
+    t.barrierTimeouts = g.drainBarrier.timeouts();
+    const std::uint64_t now = ::GetTickCount64();
+    const std::uint64_t last = g.lastKeyTickMs.load(std::memory_order_relaxed);
+    t.idleSeconds = last ? static_cast<std::uint32_t>((now - last) / 1000) : 0;
+    SYSTEM_POWER_STATUS ps{};
+    if (::GetSystemPowerStatus(&ps)) { t.onBattery = (ps.ACLineStatus == 0); }
+    SYSTEM_INFO si{};
+    ::GetNativeSystemInfo(&si);
+    t.logicalCpus = si.dwNumberOfProcessors ? si.dwNumberOfProcessors : 1;
+    return t;
+}
+
+ok::perf::Strategy g_appliedStrategy = ok::perf::resolveStrategy(ok::perf::Profile::Balanced);
+
+// Returns true when the strategy changed. `lockEngine` — the caller does not
+// already hold engineMtx.
+bool g_strategyApplied = false;   // false until the first apply (startup)
+
+bool applyPerfStrategy(bool lockEngine, bool force = false) noexcept {
+    const auto profile = ok::perf::profileFromIndex(
+        static_cast<std::uint32_t>(g.perfProfile.load(std::memory_order_relaxed)));
+    const auto hybrid  = static_cast<std::uint8_t>(g.perfHybrid.load(std::memory_order_relaxed) & 0x0Fu);
+    const ok::perf::Strategy st = ok::perf::resolveStrategy(profile, hybrid, collectTelemetry());
+    if (!force && g_strategyApplied && st == g_appliedStrategy) {
+        return false;
+    }
+    g_strategyApplied = true;
+    g_appliedStrategy = st;
+    g.hook.setConsumerSpinBounds(st.consumerSpinFloorUs, st.consumerSpinCapUs);
+    g.drainBarrier.setTuning((st.barrierBudgetUs + 999) / 1000, st.barrierSpinIters);
+    g.editBatchMax.store(std::clamp<std::uint32_t>(st.editBatchMax, 1, 64), std::memory_order_relaxed);
+    g.layoutRecheckEveryKey.store(st.layoutRecheckEveryKey, std::memory_order_relaxed);
+    g.tsfSlowDowngrade.store(st.tsfSlowDowngrade, std::memory_order_relaxed);
+    g.deferInlineByProfile.store(st.deferInlineToConsumer, std::memory_order_relaxed);
+    g.strategyOutput.store(static_cast<int>(st.output), std::memory_order_relaxed);
+    // Engine-side: the dictionary restore is a real EngineOptions field.
+    // The user's explicit checkbox state is kept in g.options; the profile
+    // only ever turns it ON (MaxCorrectness / ExtraCorrect hybrid).
+    const bool wantDict = st.dictionaryRestore || g.options.useDictionaryRestore;
+    {
+        std::unique_lock<std::mutex> lk(g.engineMtx, std::defer_lock);
+        if (lockEngine) { lk.lock(); }
+        if (g.engine.options().useDictionaryRestore != wantDict) {
+            EngineOptions o = g.engine.options();
+            o.useDictionaryRestore = wantDict;
+            g.engine.setOptions(o);
+        }
+    }
+    updateForegroundPolicy();
+    return true;
 }
 
 // Inline zero-latency output (hook thread). Exactly what original OpenKey
@@ -1178,9 +1295,15 @@ PD onHookEventImpl(const KeyEvent& ev) {
     }
 
     g.keysTyped.fetch_add(1, std::memory_order_relaxed);   // WPM gauge
+    // v1.2.1 RC2: Adaptive profile idle signal (one relaxed store; the
+    // tick value is already computed by the hook layer per event).
+    g.lastKeyTickMs.store(::GetTickCount64(), std::memory_order_relaxed);
     // v1.1.3: pick up in-window layout switches (Win+Space etc.) between
     // words — a space or navigation key always precedes the next word.
-    if (in.kind == InputKind::Space || in.kind == InputKind::WordBreak) {
+    // v1.2.1 RC2: MaxCorrectness re-checks on EVERY key (two user-mode
+    // reads, ~50 ns) so a mid-word layout switch can never mis-decode.
+    if (in.kind == InputKind::Space || in.kind == InputKind::WordBreak ||
+        g.layoutRecheckEveryKey.load(std::memory_order_relaxed)) {
         refreshLayoutCache();
     }
 
@@ -1230,6 +1353,40 @@ PD onHookEventImpl(const KeyEvent& ev) {
             g.repScratch.clear();         // guarded: no replacement to apply
         } else {
             g.engine.replacementUtf16(r, g.repScratch);   // scratch — no per-key alloc
+        }
+        // v1.2.1 RC2 — QuickTelex unwanted-correction observation. Only
+        // active while the option is ON; ~5 integer ops per key, no
+        // allocation, never blocks (the notification itself is raised into
+        // a lock-free slot the UI thread polls). Rules mirror
+        // tests/test_notifications.cpp::testDetectorAgainstEngine exactly.
+        if (g.options.quickTelex) {
+            const std::uint64_t nowMs = ::GetTickCount64();
+            auto& det = g.quickTelexDetector;
+            if (in.kind == InputKind::Backspace) {
+                det.observeBackspace(nowMs);
+                g.lastRawKeyUpper = 0;
+            } else if (in.kind == InputKind::Space || in.kind == InputKind::WordBreak) {
+                det.observeWordCommitted(nowMs);
+                g.lastRawKeyUpper = 0;
+            } else {
+                const char32_t up = (in.ch >= U'a' && in.ch <= U'z') ? in.ch - 32 : in.ch;
+                if (r.code == EngineCode::WillProcess && r.backspaceCount == 1 &&
+                    r.newCharCount == 2 && up == g.lastRawKeyUpper &&
+                    ok::text::kQuickTelex.find(static_cast<std::uint16_t>(up)) !=
+                        ok::text::kQuickTelex.end()) {
+                    det.observeExpansion(up, nowMs);
+                    g.lastRawKeyUpper = 0;
+                } else {
+                    if (r.code == EngineCode::Restore ||
+                        r.code == EngineCode::RestoreAndStartNewSession) {
+                        det.observeRestore(nowMs);
+                    } else {
+                        det.observeRawChar(nowMs);
+                    }
+                    g.lastRawKeyUpper = up;
+                }
+            }
+            det.maybeRaise(g.notify, nowMs);
         }
         // Restore re-issue contracts (the app-visible semantics the legacy
         // hooks deliver and the user expects):
@@ -1355,7 +1512,8 @@ PD onHookEventImpl(const KeyEvent& ev) {
 #if KIEEKEY_PROFILE
         if (profOn) { profRec.flags |= ok::prof::kIsEdit; }
 #endif
-        if (g.inlineDeferred && g.repScratch.size() <= kRingTextCap) {
+        if ((g.inlineDeferred || g.deferInlineByProfile.load(std::memory_order_relaxed)) &&
+            g.repScratch.size() <= kRingTextCap) {
             OutputItem it;
             it.kind      = OutputItem::Kind::InlineEdit;
             it.backspace = static_cast<std::uint32_t>(bs);
@@ -1383,7 +1541,10 @@ PD onHookEventImpl(const KeyEvent& ev) {
 namespace {
 // Bounded batch of pending edits for ONE TSF edit session (see below).
 // thread_local: the consumer thread is the only user; reused across drains.
-inline constexpr std::size_t kMaxEditBatch = 32;
+// v1.2.1 RC2: the RC1 constant (32) is now the Balanced profile's batch cap
+// (g.editBatchMax); kMaxEditBatch is the hard upper bound any profile can
+// request (LeastFlicker = 64).
+inline constexpr std::size_t kMaxEditBatch = 64;
 thread_local std::vector<ok::tsf::EditDelta> g_editBatch;
 thread_local std::uint32_t g_editBatchCount = 0;   // pendingEdits units in the batch
 #if KIEEKEY_PROFILE
@@ -1442,8 +1603,18 @@ void onConsumerEvent(const KeyEvent& /*ev*/) noexcept {
             // foreground to inline SendInput (which can never block) until
             // the next app switch re-evaluates the policy.
             if (g.composer.lastCommitSlow()) {
-                g.fgUseTsf_.store(false, std::memory_order_relaxed);
-                g.tsfSlowCount.fetch_add(1, std::memory_order_relaxed);
+                // v1.2.1 RC2: the count is telemetry (Adaptive profile input,
+                // Information tab) and is always kept; the DOWNGRADE itself
+                // is a profile knob (LeastFlicker keeps TSF regardless).
+                const auto n = g.tsfSlowCount.fetch_add(1, std::memory_order_relaxed) + 1;
+                if (g.tsfSlowDowngrade.load(std::memory_order_relaxed)) {
+                    g.fgUseTsf_.store(false, std::memory_order_relaxed);
+                    // Tell the user once per hour at most (policy in
+                    // Notifications.hpp); lock-free slot, UI thread polls.
+                    g.notify.raise(ok::notify::Id::TsfSlowDowngrade,
+                                   static_cast<std::uint8_t>(std::min<std::uint64_t>(100, 50 + n * 10)),
+                                   static_cast<std::uint32_t>(n), ::GetTickCount64());
+                }
             }
         } else {
             // Last-resort fallback: synthetic backspaces + Unicode text.
@@ -1513,7 +1684,13 @@ void onConsumerEvent(const KeyEvent& /*ev*/) noexcept {
                 g_editBatchSeq = it.profSeq;
             }
 #endif
-            if (g_editBatch.size() >= kMaxEditBatch) { flushEditBatch(); }
+            // v1.2.1 RC2: the batch cap is a profile knob (1 = one edit per
+            // commit for MaxCorrectness … 64 for LeastFlicker); kMaxEditBatch
+            // remains the hard upper bound of the reserved vector.
+            if (g_editBatch.size() >= std::min<std::size_t>(
+                    kMaxEditBatch, g.editBatchMax.load(std::memory_order_relaxed))) {
+                flushEditBatch();
+            }
             continue;   // keep draining — more edits may follow in the burst
         }
         // v3.4 (S2): deferred inline edit — flush pending TSF edits first
@@ -2016,6 +2193,143 @@ void showTrayBalloon(const wchar_t* title, const wchar_t* text) noexcept {
     ::Shell_NotifyIconW(NIM_MODIFY, &nid);
 }
 
+//===========================================================================
+// v1.2.1 RC2 — intelligent notifications: registry-backed suppression store,
+// UI-thread presentation (tray balloon → click opens a 3-way choice) and the
+// QuickTelex "Turn off / Keep / Don't show again" flow.
+//
+// The hot paths only ever call NotificationCenter::raise() (lock-free slot).
+// Everything below runs on the UI thread from the 1 s WM_TIMER on the hidden
+// main window. When the shell has no notification area (Explorer down,
+// kiosk shells, RDP without tray) Shell_NotifyIcon simply fails and the
+// item is dropped — nothing is retried, nothing blocks.
+//===========================================================================
+void settingsToControls();   // fwd (defined with the settings dialog)
+
+std::wstring notifySuppressValueName(ok::notify::Id id) {
+    return L"NotifySuppress_" + std::to_wstring(static_cast<int>(id));
+}
+ok::notify::Store makeNotifyStore() {
+    ok::notify::Store st;
+    st.isSuppressed = [](ok::notify::Id id) -> bool {
+        if (auto key = settingsKey(); key) {
+            return key.getDword(notifySuppressValueName(id), 0) != 0;
+        }
+        return false;
+    };
+    st.setSuppressed = [](ok::notify::Id id, bool v) {
+        if (auto key = settingsKey(); key) {
+            key.setDword(notifySuppressValueName(id), v ? 1 : 0);
+        }
+    };
+    return st;
+}
+
+ok::notify::Notification g_shownNotification;   // the balloon currently on screen (UI thread)
+
+void presentNotification(const ok::notify::Notification& n) {
+    using ok::notify::Id;
+    g_shownNotification = n;
+    switch (n.id) {
+        case Id::QuickTelexUnwanted: {
+            wchar_t body[256];
+            std::swprintf(body, std::size(body),
+                L"Có vẻ bạn đã hoàn tác %u lần việc Telex nhanh tự đổi phụ âm kép "
+                L"(pp→ph, tt→th, cc→ch…). Nhấp vào đây để chọn: Tắt Telex nhanh / Giữ / Không hỏi lại.",
+                static_cast<unsigned>(n.evidence));
+            showTrayBalloon(L"KieeKey — Telex nhanh đang sửa nhầm?", body);
+            break;
+        }
+        case Id::TsfSlowDowngrade:
+            showTrayBalloon(L"KieeKey — Đã chuyển sang SendInput",
+                L"Ứng dụng hiện tại phản hồi TSF chậm nên KieeKey đã chuyển sang xuất trực tiếp "
+                L"để giữ độ trễ thấp. Nhấp để biết thêm.");
+            break;
+        case Id::BarrierTimeouts:
+            showTrayBalloon(L"KieeKey — Máy đang quá tải",
+                L"Một số phím phải chờ lệnh sửa trước đó lâu hơn bình thường. "
+                L"Hồ sơ \"Tự động thích ứng\" sẽ tự nới thời gian chờ.");
+            break;
+        case Id::HookReinstalled:
+            showTrayBalloon(L"KieeKey — Hook bàn phím đã tự phục hồi",
+                L"Windows đã gỡ hook bàn phím cấp thấp và KieeKey đã cài lại. Không cần thao tác gì.");
+            break;
+        default: break;
+    }
+}
+
+// Balloon clicked: the QuickTelex item opens a Vietnamese 3-way choice.
+// Every action goes through NotificationCenter::resolve() so "Don't show
+// again" is persisted centrally.
+void onNotificationClicked() {
+    using ok::notify::Action;
+    using ok::notify::Id;
+    const ok::notify::Notification n = g_shownNotification;
+    g_shownNotification = {};
+    if (!n.valid()) { return; }
+    if (n.id == Id::QuickTelexUnwanted) {
+        // TaskDialog-free 3-way choice (MessageBox keeps the UI dependency
+        // surface at user32 only): Yes = Tắt, No = Giữ, Cancel = Không hỏi lại.
+        const int r = ::MessageBoxW(g.hMain,
+            L"Telex nhanh (cc→ch, gg→gi, kk→kh, nn→ng, pp→ph, qq→qu, tt→th, uu→ư) "
+            L"có vẻ đang đổi những phụ âm kép bạn muốn giữ nguyên.\n\n"
+            L"Yes  = TẮT Telex nhanh\n"
+            L"No   = GIỮ bật (nhắc lại sau nếu còn xảy ra)\n"
+            L"Cancel = Giữ bật và KHÔNG HỎI LẠI",
+            L"KieeKey — Telex nhanh", MB_YESNOCANCEL | MB_ICONQUESTION | MB_TOPMOST);
+        if (r == IDYES) {
+            {
+                std::lock_guard<std::mutex> lk(g.engineMtx);
+                g.options.quickTelex = false;
+                g.engine.setOptions(g.options);
+                g.engine.startNewSession();
+                g.quickTelexDetector.reset();
+            }
+            g.notify.resolve(n.id, Action::TurnOff);
+            saveSettings();
+            if (g.hSettings) { settingsToControls(); }
+            showTrayBalloon(L"KieeKey", L"Đã TẮT Telex nhanh. Bật lại trong Cài đặt → Bàn phím.");
+        } else if (r == IDCANCEL) {
+            g.notify.resolve(n.id, Action::DontShowAgain);
+        } else {
+            g.notify.resolve(n.id, Action::Keep);
+            g.quickTelexDetector.reset();   // start counting afresh
+        }
+        return;
+    }
+    if (n.id == Id::TsfSlowDowngrade) {
+        openSettingsDialog(3);   // diagnostics tab shows the slow-commit counter
+    }
+    g.notify.resolve(n.id, Action::Dismissed);
+}
+
+// 1 s UI-thread tick: adaptive re-resolution + notification poll.
+void onNotifyTick() {
+    if (g.perfProfile.load(std::memory_order_relaxed) == static_cast<int>(ok::perf::Profile::Adaptive)) {
+        applyPerfStrategy(/*lockEngine=*/true);
+    }
+    // Hook self-heal telemetry → informational notification (low priority).
+    {
+        static std::uint64_t s_lastReinstalls = 0;
+        const std::uint64_t re = g.hook.hookReinstallCount();
+        if (re > s_lastReinstalls) {
+            s_lastReinstalls = re;
+            g.notify.raise(ok::notify::Id::HookReinstalled, 60,
+                           static_cast<std::uint32_t>(re), ::GetTickCount64());
+        }
+        static std::uint64_t s_lastTimeouts = 0;
+        const std::uint64_t to = g.drainBarrier.timeouts();
+        if (to >= 50 && to - s_lastTimeouts >= 50) {   // sustained, not a blip
+            s_lastTimeouts = to;
+            g.notify.raise(ok::notify::Id::BarrierTimeouts, 85,
+                           static_cast<std::uint32_t>(to), ::GetTickCount64());
+        }
+    }
+    if (!g.notify.hasPending()) { return; }
+    const ok::notify::Notification n = g.notify.takePending(::GetTickCount64());
+    if (n.valid()) { presentNotification(n); }
+}
+
 // Re-register the tray icon: after an Explorer restart the old icon is gone
 // (NIM_ADD), after a wake it may still exist (NIM_ADD fails harmlessly, the
 // following NIM_MODIFY refreshes icon + tip either way).
@@ -2484,6 +2798,15 @@ void settingsFromControls() {
     const bool outTsf      = outTsfCtl && (::SendMessageW(outTsfCtl, BM_GETCHECK, 0, 0) == BST_CHECKED);
     const bool hasTelexCtl = ::GetDlgItem(g.hSettings, IDC_RADIO_TELEX) != nullptr;
     const bool hasComboCtl = ::GetDlgItem(g.hSettings, IDC_COMBO_CODETABLE) != nullptr;
+    // v1.2.1 RC2: performance profile + hybrids + notification mute (all
+    // read above the lock, fail-safe to the current values).
+    const HWND perfCtl     = ::GetDlgItem(g.hSettings, IDC_COMBO_PERF);
+    const int  perfSel     = perfCtl ? static_cast<int>(::SendMessageW(perfCtl, CB_GETCURSEL, 0, 0))
+                                     : g.perfProfile.load(std::memory_order_relaxed);
+    const unsigned curHyb  = g.perfHybrid.load(std::memory_order_relaxed);
+    const bool hybLowCpu   = dlgChecked(g.hSettings, IDC_CHK_PERF_LOWCPU, (curHyb & ok::perf::kHybridLowCpu) != 0);
+    const bool hybDict     = dlgChecked(g.hSettings, IDC_CHK_PERF_DICT,   (curHyb & ok::perf::kHybridExtraCorrect) != 0);
+    const bool notifyOn    = dlgChecked(g.hSettings, IDC_CHK_NOTIFY, !g.notify.sessionMuted());
     // v1.1.0 (race fix): parse + swap the table UNDER engineMtx — the
     // hook thread reads g_macros through the resolver inside
     // engine.process(), which always runs under this lock. The FILE WRITE
@@ -2520,8 +2843,15 @@ void settingsFromControls() {
         if (outAutoCtl != nullptr) {
             g.outputMode.store(outAuto ? 0 : outTsf ? 1 : 2, std::memory_order_relaxed);
         }
+        if (perfSel >= 0 && perfSel < static_cast<int>(ok::perf::Profile::kCount)) {
+            g.perfProfile.store(perfSel, std::memory_order_relaxed);
+        }
+        g.perfHybrid.store((hybLowCpu ? ok::perf::kHybridLowCpu : 0u) |
+                           (hybDict ? ok::perf::kHybridExtraCorrect : 0u), std::memory_order_relaxed);
+        g.notify.setSessionMuted(!notifyOn);
         g.engine.setOptions(g.options);
         g.engine.startNewSession();
+        applyPerfStrategy(/*lockEngine=*/false, /*force=*/true);   // already under engineMtx
         g.monitor.setExcludeIde(g.exclIde);
         g.monitor.setExcludeGame(g.exclGame);
         g.monitor.setExcludeShell(g.exclShell);
@@ -2552,6 +2882,14 @@ void settingsToControls() {
     ::CheckDlgButton(g.hSettings, IDC_CHK_EXCLUDE_GAME,  g.exclGame ? BST_CHECKED : BST_UNCHECKED);
     ::CheckDlgButton(g.hSettings, IDC_CHK_EXCLUDE_SHELL, g.exclShell ? BST_CHECKED : BST_UNCHECKED);
     const int outMode = g.outputMode.load(std::memory_order_relaxed);
+    ::SendMessageW(::GetDlgItem(g.hSettings, IDC_COMBO_PERF), CB_SETCURSEL,
+                   static_cast<WPARAM>(g.perfProfile.load(std::memory_order_relaxed)), 0);
+    {
+        const unsigned hyb = g.perfHybrid.load(std::memory_order_relaxed);
+        ::CheckDlgButton(g.hSettings, IDC_CHK_PERF_LOWCPU, (hyb & ok::perf::kHybridLowCpu) ? BST_CHECKED : BST_UNCHECKED);
+        ::CheckDlgButton(g.hSettings, IDC_CHK_PERF_DICT,   (hyb & ok::perf::kHybridExtraCorrect) ? BST_CHECKED : BST_UNCHECKED);
+        ::CheckDlgButton(g.hSettings, IDC_CHK_NOTIFY, g.notify.sessionMuted() ? BST_UNCHECKED : BST_CHECKED);
+    }
     ::CheckRadioButton(g.hSettings, IDC_RADIO_OUT_AUTO, IDC_RADIO_OUT_SEND,
                        IDC_RADIO_OUT_AUTO + outMode);
     // v1.1.1: load the macro definitions into the editor. v1.1.0-audit fix:
@@ -2587,6 +2925,8 @@ void showTab(int tab) {
         IDC_GRP_OUTPUT,
         IDC_RADIO_OUT_AUTO, IDC_RADIO_OUT_TSF, IDC_RADIO_OUT_SEND,
         IDC_STAT_OUT_NOTE,
+        IDC_STAT_PERF_LAB, IDC_COMBO_PERF, IDC_CHK_PERF_LOWCPU, IDC_CHK_PERF_DICT,
+        IDC_STAT_PERF_NOTE, IDC_CHK_NOTIFY,
         0
     };
     static constexpr int kTab1[] = {
@@ -2734,8 +3074,8 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             }
 
             // Chế độ xuất — v1.1.2: grouped, unchanged semantics.
-            mkCtl(hwnd, L"BUTTON", L"Chế độ xuất",
-                  WS_CHILD | WS_VISIBLE | BS_GROUPBOX, S(24), S(386), S(494), S(160),
+            mkCtl(hwnd, L"BUTTON", L"Chế độ xuất & hiệu năng",
+                  WS_CHILD | WS_VISIBLE | BS_GROUPBOX, S(24), S(386), S(494), S(176),
                   reinterpret_cast<HMENU>(IDC_GRP_OUTPUT));
             mkCtl(hwnd, L"BUTTON", L"Auto", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
                   S(44), S(408), S(66), S(20), reinterpret_cast<HMENU>(IDC_RADIO_OUT_AUTO));
@@ -2745,10 +3085,31 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                   S(44), S(432), S(240), S(20), reinterpret_cast<HMENU>(IDC_RADIO_OUT_SEND));
             mkCtl(hwnd, L"STATIC",
                   L"Auto: TSF cho trình duyệt & Office (không nháy chữ), SendInput trực tiếp "
-                  L"cho các ứng dụng khác (nhanh nhất, không qua thread phụ). "
-                  L"Khuyến nghị: giữ Auto — ứng dụng tự chọn đường xuất tốt nhất.",
-                  WS_CHILD | WS_VISIBLE, S(44), S(458), S(460), S(62),
+                  L"cho các ứng dụng khác. Khuyến nghị: giữ Auto và chọn hồ sơ hiệu năng bên dưới.",
+                  WS_CHILD | WS_VISIBLE, S(44), S(454), S(460), S(28),
                   reinterpret_cast<HMENU>(IDC_STAT_OUT_NOTE));
+            // v1.2.1 RC2 — Performance preference profile (inside the output group).
+            mkCtl(hwnd, L"STATIC", L"Hồ sơ hiệu năng:", WS_CHILD | WS_VISIBLE,
+                  S(44), S(488), S(110), S(18), reinterpret_cast<HMENU>(IDC_STAT_PERF_LAB));
+            HWND perfCombo = mkCtl(hwnd, WC_COMBOBOXW, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP |
+                                   CBS_DROPDOWNLIST, S(158), S(484), S(180), S(160),
+                                   reinterpret_cast<HMENU>(IDC_COMBO_PERF));
+            for (const wchar_t* s : {L"Cân bằng (mặc định)", L"Nhanh nhất", L"Ít nháy chữ nhất",
+                                     L"Chính xác tối đa", L"Tự động thích ứng"}) {
+                ::SendMessageW(perfCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(s));
+            }
+            mkCtl(hwnd, L"BUTTON", L"Tiết kiệm CPU", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+                  S(346), S(485), S(80), S(20), reinterpret_cast<HMENU>(IDC_CHK_PERF_LOWCPU));
+            mkCtl(hwnd, L"BUTTON", L"Từ điển", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+                  S(430), S(485), S(80), S(20), reinterpret_cast<HMENU>(IDC_CHK_PERF_DICT));
+            mkCtl(hwnd, L"STATIC",
+                  L"Nhanh nhất: SendInput, xử lý nóng. Ít nháy: TSF gộp lệnh. Chính xác: mọi lưới an toàn. "
+                  L"Tự động: điều chỉnh theo máy. Có thể kết hợp thêm hai ô bên phải.",
+                  WS_CHILD | WS_VISIBLE, S(44), S(508), S(460), S(28),
+                  reinterpret_cast<HMENU>(IDC_STAT_PERF_NOTE));
+            mkCtl(hwnd, L"BUTTON", L"Thông báo thông minh (gợi ý khi Telex nhanh sửa nhầm, TSF chậm…)",
+                  WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, S(44), S(538), S(460), S(20),
+                  reinterpret_cast<HMENU>(IDC_CHK_NOTIFY));
 
             // ---- tab 1: Ứng dụng ----
             mkCtl(hwnd, L"STATIC", L"Tự động tắt bộ gõ khi cửa sổ đang chạy là:",
@@ -3202,8 +3563,16 @@ LRESULT CALLBACK mainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 openSettingsDialog(0);
             } else if (lParam == WM_RBUTTONUP || lParam == WM_CONTEXTMENU) {
                 showTrayMenu();
+            } else if (lParam == NIN_BALLOONUSERCLICK) {
+                onNotificationClicked();          // v1.2.1 RC2
+            } else if (lParam == NIN_BALLOONTIMEOUT || lParam == NIN_BALLOONHIDE) {
+                g_shownNotification = {};         // nothing to act on any more
             }
             return 0;
+
+        case WM_TIMER:
+            if (wParam == 7) { onNotifyTick(); return 0; }   // v1.2.1 RC2
+            break;
 
         case WM_APP_UPDATE_TIP:
             // Tooltip-only refresh (foreground change / exclusion hint):
@@ -3397,6 +3766,16 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     g.monitor.refreshNow();
     updateExclusionCache();
     updateForegroundPolicy();
+    // v1.2.1 RC2: apply the persisted performance profile to every runtime
+    // knob before the first keystroke; load persisted notification
+    // suppressions ("Don't show again") from the registry.
+    g.notify.setStore(makeNotifyStore());
+    g.notify.loadSuppressions();
+    applyPerfStrategy(/*lockEngine=*/true, /*force=*/true);
+    // Adaptive re-resolution + notification polling: a 1 s timer on the
+    // hidden main window (UI thread). One relaxed load when nothing is
+    // pending — no per-key cost anywhere.
+    ::SetTimer(g.hMain, 7, 1000, nullptr);
 
     // Hook: producer decides (engine runs on the hook thread, may suppress);
     // consumer emits the edits (TSF / SendInput fallback).

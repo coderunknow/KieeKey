@@ -480,7 +480,17 @@ def main():
         fout.write(f"constexpr FlatMap<std::uint16_t, FlatVec<std::uint16_t>, {len(entries)}> {name} = {{\n    {{ {ent} }}\n}};\n\n")
 
     fout.write("// ---- codeTableFor -----------------------------------------------------\n")
-    fout.write("[[nodiscard]] inline const FlatCodeTable& codeTableFor(int codeTable) noexcept {\n")
+    # INTERNAL linkage (static): the tables it refers to are constexpr
+    # (internal linkage) — an external-linkage inline function referencing
+    # them is an ODR violation (see the comment in the generated header).
+    fout.write("// v1.2.1 RC2 — INTERNAL linkage on purpose. The tables above are namespace-\n")
+    fout.write("// scope `constexpr` objects (internal linkage); an `inline` (external-\n")
+    fout.write("// linkage) function that refers to them is ill-formed NDR (each TU gets a\n")
+    fout.write("// different definition — [basic.def.odr]). GCC's linker surfaced it as\n")
+    fout.write("// \"referenced in section .data.rel.local … defined in discarded section\"\n")
+    fout.write("// under -O1/-fsanitize builds; MSVC happened to fold it. `static` makes every\n")
+    fout.write("// TU own its (identical) copy, which is exactly the semantics intended.\n")
+    fout.write("[[nodiscard]] static inline const FlatCodeTable& codeTableFor(int codeTable) noexcept {\n")
     fout.write("    static constexpr std::array<const FlatCodeTable*, 5> tables = {\n")
     fout.write("        &kCodeTableUnicode, &kCodeTableTcvn3, &kCodeTableVniWindows,\n")
     fout.write("        &kCodeTableUnicodeCompound, &kCodeTableCp1258,\n")

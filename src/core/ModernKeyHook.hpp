@@ -265,6 +265,19 @@ public:
     // re-establishment requirement.
     void setPumpTickIntervalMs(std::uint32_t ms) noexcept { pumpTickIntervalMs_.store(ms, std::memory_order_relaxed); }
 
+    // v1.2.1 RC2 — Performance profiles: consumer adaptive-spin bounds
+    // (µs). Read once per empty-dequeue by the consumer (relaxed), so a
+    // profile change from the UI thread takes effect within one wake.
+    // Defaults reproduce RC1 (floor 2, cap 100).
+    void setConsumerSpinBounds(std::uint32_t floorUs, std::uint32_t capUs) noexcept {
+        if (floorUs < 1) { floorUs = 1; }
+        if (capUs < floorUs) { capUs = floorUs; }
+        if (capUs > 1000) { capUs = 1000; }
+        spinFloorUs_.store(floorUs, std::memory_order_relaxed);
+        spinCapUs_.store(capUs, std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint32_t consumerSpinCapUs() const noexcept { return spinCapUs_.load(std::memory_order_relaxed); }
+
     // Re-install WH_KEYBOARD_LL / WH_MOUSE_LL / the foreground WinEvent hook
     // IN PLACE on the pump thread. Public for the self-healing watchdog —
     // MUST be called from the pump thread only (LL hooks are thread-affine;
@@ -417,6 +430,8 @@ private:
     std::atomic<std::uint32_t> lastKbEventTickMs_{0};    // stamped per LL keyboard event
     std::atomic<std::uint32_t> lastMouseEventTickMs_{0}; // stamped per LL mouse event
     std::atomic<std::uint32_t> pumpTickIntervalMs_{0};   // 0 = no watchdog tick
+    std::atomic<std::uint32_t> spinFloorUs_{2};          // v1.2.1 RC2 profile knobs
+    std::atomic<std::uint32_t> spinCapUs_{100};
     std::atomic<std::uint64_t> hookReinstallCount_{0};
     PumpTick pumpTick_;                                  // runs on the pump thread
     // v1.2.0 Stable: "the pump tick must stop calling out" flag. stop() used

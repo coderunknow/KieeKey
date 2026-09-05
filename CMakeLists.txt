@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------------
-# KieeKey v1.2.1 RC1 — CMake build (modern replacement for the .sln/.vcxproj)
+# KieeKey v1.2.1 RC2 — CMake build (modern replacement for the .sln/.vcxproj)
 #
 #   * C++23, /W4 + /WX (warnings as errors) for release-grade hygiene (MSVC)
 #   * x64 + ARM64 out of the box (ARM64EC possible: -A ARM64EC, VS 17.4+)
@@ -133,6 +133,8 @@ if(WIN32)
         src/core/VietnameseTables.hpp
         src/core/TextEngine.hpp
         src/core/TextEngine.cpp
+        src/core/PerfProfile.hpp       # v1.2.1 RC2: performance preference profiles
+        src/core/Notifications.hpp     # v1.2.1 RC2: notification center + QuickTelex detector
     )
     target_include_directories(ok_core PUBLIC src/core)
     target_compile_features(ok_core PUBLIC cxx_std_23)
@@ -281,6 +283,27 @@ else()
         target_include_directories(ok_hotfix_tests PRIVATE src/core)
         target_compile_features(ok_hotfix_tests PRIVATE cxx_std_23)
 
+        # v1.2.1 RC2 — live engine vs frozen v1.2.1 RC1 engine, lockstep
+        # differential over randomized keystreams × the option matrix.
+        add_library(ok_engine_rc1_ref OBJECT tests/reference/kieekey-1.2.1-rc1/TextEngine.cpp)
+        target_include_directories(ok_engine_rc1_ref PRIVATE tests/reference/kieekey-1.2.1-rc1)
+        target_compile_definitions(ok_engine_rc1_ref PRIVATE ok=ok_rc1)
+        target_compile_features(ok_engine_rc1_ref PRIVATE cxx_std_23)
+        add_executable(ok_diff_ab_tests tests/diff_engine_ab.cpp src/core/TextEngine.cpp
+                       $<TARGET_OBJECTS:ok_engine_rc1_ref>)
+        target_include_directories(ok_diff_ab_tests PRIVATE src/core tests)
+        target_compile_features(ok_diff_ab_tests PRIVATE cxx_std_23)
+
+        # v1.2.1 RC2 — notification framework + QuickTelex detector + profiles.
+        add_executable(ok_notify_tests tests/test_notifications.cpp src/core/TextEngine.cpp)
+        target_include_directories(ok_notify_tests PRIVATE src/core)
+        target_compile_features(ok_notify_tests PRIVATE cxx_std_23)
+        add_executable(ok_stress_rc2 tests/stress_rc2.cpp src/core/TextEngine.cpp)
+        target_include_directories(ok_stress_rc2 PRIVATE src/core)
+        target_compile_features(ok_stress_rc2 PRIVATE cxx_std_23)
+        find_package(Threads REQUIRED)
+        target_link_libraries(ok_stress_rc2 PRIVATE Threads::Threads)
+
         add_executable(ok_v331_tests tests/test_v331_features.cpp src/core/TextEngine.cpp)
         target_include_directories(ok_v331_tests PRIVATE src/core)
         target_compile_features(ok_v331_tests PRIVATE cxx_std_23)
@@ -329,6 +352,9 @@ else()
 
         add_test(NAME ok_outputitem_tests COMMAND ok_outputitem_tests)
         add_test(NAME ok_hotfix_tests    COMMAND ok_hotfix_tests)
+        add_test(NAME ok_diff_ab_tests   COMMAND ok_diff_ab_tests)
+        add_test(NAME ok_notify_tests    COMMAND ok_notify_tests)
+        add_test(NAME ok_stress_rc2      COMMAND ok_stress_rc2 500000)
         add_test(NAME ok_v331_tests      COMMAND ok_v331_tests)
         # stress: <seed> <keyCount> — 1M fuzzed keys, invariants + determinism
         add_test(NAME ok_stress_tests    COMMAND ok_stress_tests 1 1000000)
@@ -346,7 +372,7 @@ else()
         # minutes, not hang the job until the runner's own limit kills it.
         set_tests_properties(
             ok_tests ok_ring_tests ok_wrap_tests
-            ok_outputitem_tests ok_hotfix_tests ok_v331_tests
+            ok_outputitem_tests ok_hotfix_tests ok_diff_ab_tests ok_notify_tests ok_stress_rc2 ok_v331_tests
             ok_stress_tests ok_soak_tests ok_queue_stress_tests
             ok_gate_tests ok_key_tests ok_state_tests ok_lifecycle_tests
             ok_soak_pipeline
@@ -396,6 +422,18 @@ else()
         )
         target_include_directories(ok_realworld_bench PRIVATE src/core)
         target_compile_features(ok_realworld_bench PRIVATE cxx_std_20)
+
+        # v1.2.1 RC2 — Performance Preference Profiles through the shim
+        # pipeline. Run manually:  ./ok_profiles_bench --keys=100000 --runs=3
+        add_executable(ok_profiles_bench
+            tests/bench_profiles.cpp
+            src/core/win32_wrapper.cpp
+            src/core/TextEngine.cpp
+        )
+        target_include_directories(ok_profiles_bench PRIVATE src/core tests)
+        target_compile_definitions(ok_profiles_bench PRIVATE OK_WRAP_NO_WIN32)
+        target_compile_features(ok_profiles_bench PRIVATE cxx_std_20)
+        target_link_libraries(ok_profiles_bench PRIVATE Threads::Threads)
 
         message(STATUS "Non-Windows host: building the shim-based test suite only "
                        "(ok_tests, ok_ring_tests, ok_wrap_tests). The Windows product "
@@ -461,6 +499,17 @@ if(WIN32 AND KIEEKEY_BUILD_TESTS)
     target_link_libraries(ok_outputitem_tests PRIVATE ok_core)
     add_executable(ok_hotfix_tests tests/test_hotfix.cpp)
     target_link_libraries(ok_hotfix_tests PRIVATE ok_core)
+    add_library(ok_engine_rc1_ref OBJECT tests/reference/kieekey-1.2.1-rc1/TextEngine.cpp)
+    target_include_directories(ok_engine_rc1_ref PRIVATE tests/reference/kieekey-1.2.1-rc1)
+    target_compile_definitions(ok_engine_rc1_ref PRIVATE ok=ok_rc1)
+    target_compile_features(ok_engine_rc1_ref PRIVATE cxx_std_23)
+    add_executable(ok_diff_ab_tests tests/diff_engine_ab.cpp $<TARGET_OBJECTS:ok_engine_rc1_ref>)
+    target_include_directories(ok_diff_ab_tests PRIVATE tests)
+    target_link_libraries(ok_diff_ab_tests PRIVATE ok_core)
+    add_executable(ok_notify_tests tests/test_notifications.cpp)
+    target_link_libraries(ok_notify_tests PRIVATE ok_core)
+    add_executable(ok_stress_rc2 tests/stress_rc2.cpp)
+    target_link_libraries(ok_stress_rc2 PRIVATE ok_core)
     add_executable(ok_v331_tests tests/test_v331_features.cpp)
     target_link_libraries(ok_v331_tests PRIVATE ok_core)
     add_executable(ok_stress_tests tests/stress_engine.cpp)
@@ -486,6 +535,9 @@ if(WIN32 AND KIEEKEY_BUILD_TESTS)
 
     add_test(NAME ok_outputitem_tests COMMAND ok_outputitem_tests)
     add_test(NAME ok_hotfix_tests    COMMAND ok_hotfix_tests)
+    add_test(NAME ok_diff_ab_tests   COMMAND ok_diff_ab_tests)
+    add_test(NAME ok_notify_tests    COMMAND ok_notify_tests)
+    add_test(NAME ok_stress_rc2      COMMAND ok_stress_rc2 500000)
     add_test(NAME ok_v331_tests      COMMAND ok_v331_tests)
     add_test(NAME ok_stress_tests    COMMAND ok_stress_tests 1 1000000)
     add_test(NAME ok_soak_tests      COMMAND ok_soak_tests 200000 20000)
@@ -504,7 +556,7 @@ if(WIN32 AND KIEEKEY_BUILD_TESTS)
         PROPERTIES TIMEOUT 300)
     if(KIEEKEY_BUILD_EXTRA_TESTS)
         set_tests_properties(
-            ok_outputitem_tests ok_hotfix_tests ok_v331_tests
+            ok_outputitem_tests ok_hotfix_tests ok_diff_ab_tests ok_notify_tests ok_stress_rc2 ok_v331_tests
             ok_stress_tests ok_soak_tests ok_queue_stress_tests
             ok_gate_tests ok_key_tests ok_state_tests ok_lifecycle_tests
             ok_soak_pipeline

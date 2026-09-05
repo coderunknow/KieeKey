@@ -3,6 +3,93 @@
 All notable changes to KieeKey are documented here. Format based on
 Keep a Changelog; versioning: SemVer.
 
+## [1.2.1-RC2] — 2026-09-04
+
+### Performance, Optimization & Real-World Hardening
+
+> **Scope:** measured engine hot-path optimization (decision-identical to
+> RC1, proven by a lockstep differential against the frozen RC1 engine),
+> Performance Preference Profiles, an intelligent notification framework
+> with a QuickTelex unwanted-correction detector, three bug fixes with
+> permanent regression tests, and a 7-scenario real-world stress battery.
+> Full evidence, methodology, rejected strategies and RC1-vs-RC2 tables in
+> [`docs/reports/V1.2.1_RC2_PERFORMANCE_REPORT.md`](docs/reports/V1.2.1_RC2_PERFORMANCE_REPORT.md);
+> raw benchmark artifacts in `docs/bench/{rc1,rc2}/`.
+
+#### Performance (engine — `src/core/TextEngine.*`)
+
+* **Engine decision latency −28 % … −61 %** on every real-world workload and
+  percentile (200 WPM burst p50 161 → 75 ns, p99.9 456 → 191 ns); micro
+  bench −30 % … −52 %; E2E shim pipeline burst p50 −9.9 %, p99 −6.9 %.
+* `HistoryRing`: bounded 64-entry ring replaces `std::vector` +
+  erase-from-front for the undo history — O(1), zero hot-path heap traffic.
+* `checkSpelling`: leading/end-consonant matchers fold the option masks
+  once per call (were per cell); row order, short-circuit and final index
+  preserved exactly.
+* `handleMainKey`: QU-tail guard and sequence-tail pre-filter hoisted before
+  `checkCorrectVowel` (~90 % fewer candidate calls, identical outcome).
+* Rejected (measured, documented): unbounded history, `-O3`/`-march=native`
+  for the product, lock-free engine access, callback/QPC trimming, pipeline
+  redesign, prefix memoisation, changing the default spin/barrier values.
+
+#### Added — Performance Preference Profiles (`src/core/PerfProfile.hpp`)
+
+* Balanced (= RC1 behaviour, default), Fastest, Least Flicker, Maximum
+  Correctness, Auto/Adaptive, plus OR-able hybrids (Prefer inline / Prefer
+  TSF / Extra correctness / Low CPU). One centralized `Strategy` drives:
+  output preference, consumer spin floor/cap, ordering-barrier budget/spin,
+  TSF batch cap (1…64), deferred inline, dictionary restore, per-key layout
+  re-check, slow-TSF downgrade. Adaptive re-resolves every second from
+  telemetry (slow TSF commits, barrier misses, typing rate, idle, battery,
+  CPU count). Settings tab "Chế độ xuất & hiệu năng"; persisted in the
+  registry (`PerfProfile`, `PerfHybrid`).
+* `ModernKeyHook::setConsumerSpinBounds`, `EditDrainBarrier::setTuning`
+  (runtime; RC1 defaults unchanged).
+* `tests/bench_profiles.cpp` — measures every profile through the shim
+  pipeline (RC1/default, RC2/default, Fastest, Balanced, Max Correctness,
+  Least Flicker, Adaptive, two hybrids).
+
+#### Added — Intelligent notifications (`src/core/Notifications.hpp`)
+
+* `NotificationCenter`: stable ids, confidence thresholds, per-id cooldown,
+  hourly caps, global 60 s gap, dedup, session mute, persisted "Don't show
+  again" (`NotifySuppress_<id>`). Lock-free producer slot; UI polls once per
+  second — nothing on the input path.
+* `QuickTelexDetector`: general heuristic over all quick-Telex pairs
+  (`cc gg kk nn qq pp tt`), confirmed-undo scoring with acceptance decay;
+  raises "Telex nhanh đang sửa nhầm từ của bạn?" with **Turn off / Keep /
+  Don't show again** (tray balloon → message box). Also raises: TSF slow
+  downgrade, hook re-installed, barrier timeouts.
+
+#### Fixed
+
+* **ODR / link failure at `-O1` and under ASan**: `FlatTables.hpp::codeTableFor`
+  was `inline` while referencing internal-linkage tables → `static inline`.
+  Regression: `test_hotfix_asan` (-O1 + ASan/UBSan build in the suite).
+* **`gate_correctness --max-words=N` rejected** → `run_all_tests.sh --quick`
+  had been failing (rc=2) since v1.2.0. Fixed.
+* **Ctrl/Alt chords consumed by a wrong-spelling Restore** (Ctrl+`,`
+  Ctrl+`.` Ctrl+Enter, Ctrl+Tab, Alt+Enter after a non-Vietnamese word such
+  as `wolf`/`wifi`): the shortcut never reached the app and the word was
+  retyped. Hook-level guard: a chord is never suppressed, never rewrites
+  text. Regression: `stress_rc2` scenario 4. Found by the new stress battery.
+
+#### Added — Tests
+
+* `tests/diff_engine_ab.cpp` + frozen RC1 engine under
+  `tests/reference/kieekey-1.2.1-rc1/` (lockstep differential, 1.2 M events).
+* `tests/test_notifications.cpp`, `tests/stress_rc2.cpp` (burst
+  determinism, 2 M-key leak check, correction-heavy + detector, mixed
+  mode-switching + chords, Unicode/emoji, 3 h notification-cap simulation,
+  concurrent producer/UI). 21 native suites in `run_all_tests.sh` and CTest.
+
+#### Changed
+
+* Version `1.2.1 RC1` → `1.2.1 RC2` in every carrier (incl. the demo, which
+  had been left at 1.2.0).
+* Slow-TSF telemetry is always counted; the automatic downgrade is now
+  profile-gated (Least Flicker keeps TSF) and raises a notification.
+
 ## [1.2.1-RC1] — 2026-09-04
 
 ### Real-world performance and smoothness release

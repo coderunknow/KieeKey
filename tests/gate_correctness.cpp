@@ -1032,7 +1032,13 @@ void runS4(GateStats& g) {
 int main(int argc, char** argv) {
     std::size_t maxWords = 0;
     for (int i = 1; i < argc; ++i) {
-        if (std::string(argv[i]) == "--max-words" && i + 1 < argc) maxWords = static_cast<std::size_t>(std::atoll(argv[++i]));
+        const std::string a = argv[i];
+        // v1.2.1 RC2 (bug #2): accept BOTH "--max-words N" and "--max-words=N".
+        // The documented usage line and tests/run_all_tests.sh --quick used
+        // the "=" form, which this parser rejected with rc=2 — every quick
+        // run of the suite had been failing on the gate since v1.2.0.
+        if (a == "--max-words" && i + 1 < argc) maxWords = static_cast<std::size_t>(std::atoll(argv[++i]));
+        else if (a.rfind("--max-words=", 0) == 0) maxWords = static_cast<std::size_t>(std::atoll(a.c_str() + 12));
         else { std::fprintf(stderr, "unknown arg %s\n", argv[i]); return 2; }
     }
     std::printf("[gate] KieeKey correctness gate (deterministic; no timing)\\n");

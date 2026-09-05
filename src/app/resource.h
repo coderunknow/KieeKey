@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.2.1 RC1 — resource.h
+// KieeKey v1.2.1 RC2 — resource.h
 // Resource identifiers for the Win32 tray application (src/app/main.cpp).
 //----------------------------------------------------------------------------
 #pragma once
@@ -124,6 +124,12 @@
 #define IDC_STAT_INFO_LICENSE     563   // tab 4: origin & license
 #define IDC_LNK_REPO              564   // tab 4: source repository (SysLink)
 #define IDC_STAT_METHOD_HINT      565   // tab 0: input-method explainer line
+#define IDC_STAT_PERF_LAB         566   // v1.2.1 RC2 tab 0: "Hồ sơ hiệu năng:"
+#define IDC_COMBO_PERF            567   // v1.2.1 RC2 tab 0: profile combo
+#define IDC_CHK_PERF_LOWCPU       568   // v1.2.1 RC2 tab 0: hybrid — tiết kiệm CPU
+#define IDC_CHK_PERF_DICT         569   // v1.2.1 RC2 tab 0: hybrid — kiểm tra từ điển
+#define IDC_STAT_PERF_NOTE        570   // v1.2.1 RC2 tab 0: profile explainer
+#define IDC_CHK_NOTIFY            571   // v1.2.1 RC2 tab 0: thông báo thông minh (mute)
 
 // ---- app messages ----
 #define WM_APP_TRAY               (WM_APP + 1)   // tray icon notification
@@ -132,3 +138,4 @@
 #define WM_APP_UPDATE_TIP         (WM_APP + 3)   // refresh tray tooltip/balloon
 #define WM_APP_RESTORE            (WM_APP + 4)   // 2nd-instance wake: restore tray icon
 #define WM_APP_FGPROBE            (WM_APP + 5)   // probe foreground responsiveness (UI thread)
+#define WM_APP_NOTIFY_POLL        (WM_APP + 6)   // v1.2.1 RC2: notification center poll / adaptive tick

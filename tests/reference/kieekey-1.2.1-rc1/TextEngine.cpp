@@ -62,6 +62,8 @@ TextEngine::TextEngine(EngineOptions opts) noexcept : opts_(opts) {
     useSpellingBefore_ = opts_.checkSpelling;
     // Pre-reserve the reusable state buffers so the hot path never hits the
     // heap (vector-of-arrays grows only for genuinely long typing history).
+    typingStates_.reserve(128);
+    typingStatesLen_.reserve(128);
     typingStatesData_.reserve(kMaxBuff);
     specialChar_.reserve(kMaxBuff);
     result_.macroKey.reserve(128);
@@ -361,9 +363,12 @@ void TextEngine::wordBreakBranch(char32_t c, bool caps, const TextInput& in, boo
     isCharKeyCode_ = (in.kind == InputKind::Char) && isCharKeyCodeChar(c);
     if (!isCharKeyCode_) {
         specialChar_.clear();
-        // Drop the undo history (v1.2.1 RC2: a single bounded ring, so the
-        // RC1 "parallel halves must never diverge" hazard no longer exists).
+        // Clear BOTH halves of the parallel history (states + lengths). They
+        // must never diverge: a lone clear here previously let typingStatesLen_
+        // grow for the whole session while the 64-entry cap (keyed on
+        // typingStates_.size()) never fired.
         typingStates_.clear();
+        typingStatesLen_.clear();
     } else {
         if (spaceCount_ > 0) {
             saveWord(U' ', spaceCount_);
@@ -543,6 +548,7 @@ void TextEngine::backspaceBranch(bool /*caps*/) {
             startNewSession();
             specialChar_.clear();
             typingStates_.clear();
+            typingStatesLen_.clear();
         }
         result_.backspaceCount = 0;
         result_.newCharCount = 0;
@@ -868,27 +874,34 @@ void TextEngine::pushTypingState() {
     // every append site flushes at >= kMaxBuff and the restore path (the
     // only place stale data used to survive) now pre-clears.
     assert(typingStatesData_.size() <= kMaxBuff);
-    // Bounded undo history (ring, see HistoryRing): the newest
-    // HistoryRing::kMaxHistory committed words are kept, the oldest is
-    // overwritten. Backspace only ever restores the most recent states, so
-    // keeping the tail is exactly right, and memory stays flat at
-    // 64 × 128 B ≈ 8 KiB inside the engine object (no heap).
-    const std::size_t slot = typingStates_.pushSlot();
-    auto& entry = typingStates_.entries[slot];
-    const std::size_t n = std::min(typingStatesData_.size(), kMaxBuff);
-    for (std::size_t i = 0; i < n; ++i) {
+    std::array<std::uint32_t, kMaxBuff> entry{};
+    for (std::size_t i = 0; i < typingStatesData_.size(); ++i) {
         entry[i] = typingStatesData_[i];
     }
-    typingStates_.lens[slot] = static_cast<std::uint8_t>(n);
+    typingStates_.push_back(entry);
+    typingStatesLen_.push_back(static_cast<std::uint8_t>(typingStatesData_.size()));
     typingStatesData_.clear();
+
+    // Bound the undo history. The stack grows ~128 B per committed word for
+    // the WHOLE session (legacy OpenKey had the same flaw, worse: it used
+    // vector-of-vectors → 1 heap alloc per word, unbounded). Backspace only
+    // ever restores the most recent states, so keeping the tail is exactly
+    // right, and memory stays flat at 64 × 128 B ≈ 8 KiB. The cap is keyed
+    // on typingStatesLen_ (the half that must never be allowed to grow).
+    constexpr std::size_t kMaxHistory = 64;
+    if (typingStatesLen_.size() > kMaxHistory) {
+        const std::size_t over = typingStatesLen_.size() - kMaxHistory;
+        typingStatesLen_.erase(typingStatesLen_.begin(), typingStatesLen_.begin() + over);
+        typingStates_.erase(typingStates_.begin(), typingStates_.begin() + over);
+    }
 }
 
 void TextEngine::restoreLastTypingState() {
     if (typingStates_.size() > 0) {
-        const std::size_t slot = typingStates_.backSlot();
-        typingStatesData_.assign(typingStates_.entries[slot].begin(),
-                                 typingStates_.entries[slot].begin() + typingStates_.lens[slot]);
-        typingStates_.popBack();
+        typingStatesData_.assign(typingStates_.back().begin(),
+                                 typingStates_.back().begin() + typingStatesLen_.back());
+        typingStates_.pop_back();
+        typingStatesLen_.pop_back();
         if (typingStatesData_.size() > 0) {
             const char32_t first =
                 static_cast<char32_t>(typingStatesData_[0] & kCharMask);
@@ -922,42 +935,6 @@ void TextEngine::restoreLastTypingState() {
 //===========================================================================
 // Spelling / vowel machinery (port of checkSpelling)
 //===========================================================================
-namespace {
-// v1.2.1 RC2 — leading-consonant matcher, semantics-identical rewrite of the
-// RC1 table walk (gprof: checkSpelling was 52 % of engine time on prose;
-// this prefix scan was the bulk of it — up to 33 rows × 3 columns with two
-// option-dependent masks recomputed per cell).
-//
-// RC1 semantics being preserved EXACTLY (do not "simplify" further):
-//   * rows are tried in table order; the FIRST row that is not rejected
-//     wins and `j` is left at that row's length;
-//   * a row is rejected when the word is shorter than the row, or when any
-//     cell within the word disagrees with the char under BOTH masks;
-//   * when every row is rejected `j` is left at the length of the LAST
-//     row (the RC1 loop exits with j == row.size() of the final row).
-// The two masks depend only on options, so they are folded to two 16-bit
-// constants per call instead of per cell, and the comparison order
-// (mask A, then mask B) is kept so the short-circuit is identical.
-inline std::size_t matchLeadingConsonant(const std::uint32_t* word, std::size_t endIndex,
-                                         std::uint16_t maskA, std::uint16_t maskB) noexcept {
-    std::size_t j = 0;
-    for (std::size_t i = 0; i < kConsonantTable.size(); ++i) {
-        const auto& row = kConsonantTable[i];
-        const std::size_t n = row.size();
-        if (endIndex < n) { j = n; continue; }   // RC1: flag=true, j ends at n
-        bool reject = false;
-        for (j = 0; j < n; ++j) {
-            const std::uint16_t c = static_cast<std::uint16_t>(word[j] & kCharMask);
-            const std::uint16_t t = row[j];
-            if (static_cast<std::uint16_t>(t & ~maskA) != c &&
-                static_cast<std::uint16_t>(t & ~maskB) != c) { reject = true; break; }
-        }
-        if (!reject) { return j; }
-    }
-    return j;
-}
-} // namespace
-
 void TextEngine::checkSpelling(bool forceCheckVowel) {
     spellingOK_ = false;
     spellingVowelOK_ = true;
@@ -971,9 +948,26 @@ void TextEngine::checkSpelling(bool forceCheckVowel) {
         std::size_t j = 0;
         // ---- check first consonant ----
         if (isConsonantAt(0)) {
-            const std::uint16_t maskA = opts_.quickStartConsonant ? kEndConsonantMask : std::uint16_t{0};
-            const std::uint16_t maskB = opts_.allowConsonantZfwj ? kConsonantAllowMask : std::uint16_t{0};
-            j = matchLeadingConsonant(typingWord_.data(), spellingEndIndex_, maskA, maskB);
+            std::size_t i = 0;
+            for (; i < kConsonantTable.size(); ++i) {
+                spellingFlag_ = false;
+                if (spellingEndIndex_ < kConsonantTable[i].size()) {
+                    spellingFlag_ = true;
+                }
+                j = 0;
+                for (; j < kConsonantTable[i].size(); ++j) {
+                    if (spellingEndIndex_ > j &&
+                        (kConsonantTable[i][j] & ~(opts_.quickStartConsonant ? kEndConsonantMask : 0)) != chr(j) &&
+                        (kConsonantTable[i][j] & ~(opts_.allowConsonantZfwj ? kConsonantAllowMask : 0)) != chr(j)) {
+                        spellingFlag_ = true;
+                        break;
+                    }
+                }
+                if (spellingFlag_) {
+                    continue;
+                }
+                break;
+            }
         }
 
         if (j == spellingEndIndex_) {   // for "d" case
@@ -1031,38 +1025,22 @@ void TextEngine::checkSpelling(bool forceCheckVowel) {
             }
 
             // ---- continue check last consonant ----
-            // v1.2.1 RC2: option mask folded once per call (was per cell);
-            // row order, short-circuit and the final value of `j` are the
-            // RC1 ones. Note `j` is intentionally left where the RC1 loop
-            // left it (used by nothing afterwards, kept for fidelity).
-            if (k >= spellingEndIndex_) {
-                // No trailing chars: RC1 accepted on the very first row
-                // (every cell is beyond the word, so no cell can mismatch).
-                j = kEndConsonantTable[0].size();
-                spellingOK_ = true;
-            } else {
-                const std::uint16_t endMask = opts_.quickEndConsonant ? kEndConsonantMask : std::uint16_t{0};
-                const std::uint32_t* tail = typingWord_.data() + k;
-                const std::size_t tailLen = spellingEndIndex_ - k;
-                for (std::size_t ii = 0; ii < kEndConsonantTable.size(); ++ii) {
-                    const auto& row = kEndConsonantTable[ii];
-                    const std::size_t n = row.size();
-                    spellingFlag_ = false;
-                    for (j = 0; j < n; ++j) {
-                        if (j < tailLen &&
-                            static_cast<std::uint16_t>(row[j] & ~endMask) !=
-                                static_cast<std::uint16_t>(tail[j] & kCharMask)) {
-                            spellingFlag_ = true;
-                            break;
-                        }
-                    }
-                    if (spellingFlag_) {
-                        continue;
-                    }
-                    if (j >= tailLen) {
-                        spellingOK_ = true;
+            for (std::size_t ii = 0; ii < kEndConsonantTable.size(); ++ii) {
+                spellingFlag_ = false;
+                j = 0;
+                for (; j < kEndConsonantTable[ii].size(); ++j) {
+                    if (spellingEndIndex_ > k + j &&
+                        (kEndConsonantTable[ii][j] & ~(opts_.quickEndConsonant ? kEndConsonantMask : 0)) != chr(k + j)) {
+                        spellingFlag_ = true;
                         break;
                     }
+                }
+                if (spellingFlag_) {
+                    continue;
+                }
+                if (k + j >= spellingEndIndex_) {
+                    spellingOK_ = true;
+                    break;
                 }
             }
 
@@ -2008,10 +1986,11 @@ bool TextEngine::switchToneStyle() {
 //===========================================================================
 void TextEngine::checkCorrectVowel(
     const FlatVec<FlatVec<std::uint16_t>>& charset, int& i, int& k, char32_t markKey) {
-    // The legacy "ignore qu case" guard (buffer ends in Q,U → never a
-    // vowel/mark target) is hoisted into handleMainKey (v1.2.1 RC2): it
-    // depends only on the buffer, so it is evaluated once per key instead
-    // of once per candidate sequence (up to 79 × per mark key).
+    // ignore "qu" case
+    if (index_ >= 2 && chr(index_ - 1) == U'U' && chr(index_ - 2) == U'Q') {
+        isCorect_ = false;
+        return;
+    }
     k = static_cast<int>(index_ - 1);
     int j = static_cast<int>(charset[static_cast<std::size_t>(i)].size()) - 1;
     for (; j >= 0; --j) {
@@ -2053,24 +2032,6 @@ void TextEngine::handleMainKey(char32_t c, bool caps) {
         return;
     }
 
-    // v1.2.1 RC2 — hoisted candidate-scan guards (semantics identical to
-    // RC1, see checkCorrectVowel):
-    //   * quTail: buffer ends in "QU" → RC1's checkCorrectVowel rejected
-    //     EVERY candidate, so every scan below ended with
-    //     isCorect_ = isChanged_ = false and fell through to insertKey().
-    //     (The D path's "allow d after consonant" clause needs chr(index_-1)
-    //     == 'D', impossible when it is 'U', so it is covered too.)
-    //   * lastChr / seqMask: RC1's first per-candidate comparison was
-    //     "sequence tail (masked) == last buffer char"; testing it inline
-    //     before the call skips the call for the ~90 % of candidates that
-    //     fail there, with identical outcome.
-    const bool quTail = index_ >= 2 && chr(index_ - 1) == U'U' && chr(index_ - 2) == U'Q';
-    const std::uint16_t lastChr = index_ ? chr(index_ - 1) : std::uint16_t{0};
-    const std::uint16_t seqMask = opts_.quickEndConsonant ? kEndConsonantMask : std::uint16_t{0};
-    auto tailMatches = [&](const FlatVec<std::uint16_t>& seq) noexcept {
-        return static_cast<std::uint16_t>(seq[seq.size() - 1] & ~seqMask) == lastChr;
-    };
-
     if (c == U'[') {
         checkForStandaloneChar(c, caps, U'O');
         return;
@@ -2086,9 +2047,8 @@ void TextEngine::handleMainKey(char32_t c, bool caps) {
         isChanged_ = false;
         int k = static_cast<int>(index_);
         int i = 0;
-        for (; !quTail && i < static_cast<int>(kConsonantD.size()); ++i) {
-            const auto& seq = kConsonantD[static_cast<std::size_t>(i)];
-            if (index_ < seq.size() || !tailMatches(seq)) {
+        for (; i < static_cast<int>(kConsonantD.size()); ++i) {
+            if (index_ < kConsonantD[static_cast<std::size_t>(i)].size()) {
                 continue;
             }
             isCorect_ = true;
@@ -2119,9 +2079,8 @@ void TextEngine::handleMainKey(char32_t c, bool caps) {
             isChanged_ = false;
             int k = static_cast<int>(index_);
             int l = 0;
-            for (; !quTail && l < static_cast<int>(charset.size()); ++l) {
-                const auto& seq = charset[static_cast<std::size_t>(l)];
-                if (index_ < seq.size() || !tailMatches(seq)) {
+            for (; l < static_cast<int>(charset.size()); ++l) {
+                if (index_ < charset[static_cast<std::size_t>(l)].size()) {
                     continue;
                 }
                 isCorect_ = true;
@@ -2181,9 +2140,8 @@ void TextEngine::handleMainKey(char32_t c, bool caps) {
     isChanged_ = false;
     int k = static_cast<int>(index_);
     int i = 0;
-    for (; !quTail && i < static_cast<int>(charset.size()); ++i) {
-        const auto& seq = charset[static_cast<std::size_t>(i)];
-        if (index_ < seq.size() || !tailMatches(seq)) {
+    for (; i < static_cast<int>(charset.size()); ++i) {
+        if (index_ < charset[static_cast<std::size_t>(i)].size()) {
             continue;
         }
         isCorect_ = true;

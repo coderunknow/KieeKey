@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-// KieeKey v1.2.1 RC1 - refactored and completed logic
+// KieeKey v1.2.1 RC2 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.2.1 RC1 — win32_wrapper.hpp
+// KieeKey v1.2.1 RC2 — win32_wrapper.hpp
 // The Win32 transport layer of the IME: hook lifecycle, lock-free queueing,
 // batched synthetic input, priorities, and hook self-healing.
 //
@@ -78,6 +78,7 @@
 //----------------------------------------------------------------------------
 #pragma once
 
+#include <algorithm>   // std::clamp (v1.2.1 RC2 barrier tuning)
 #include <array>
 #include <atomic>
 #include <condition_variable>
@@ -302,14 +303,30 @@ public:
         }
     }
 
-    bool waitDrained(const std::atomic<std::uint32_t>& pending,
-                     std::uint32_t spinIters = kSpinIters) noexcept {
-        return waitDrainedHooked(pending, spinIters, [] {}, kWaitBudgetMs);
+    bool waitDrained(const std::atomic<std::uint32_t>& pending) noexcept {
+        return waitDrainedHooked(pending, spinIters_.load(std::memory_order_relaxed), [] {},
+                                 budgetMs_.load(std::memory_order_relaxed));
+    }
+    bool waitDrained(const std::atomic<std::uint32_t>& pending, std::uint32_t spinIters) noexcept {
+        return waitDrainedHooked(pending, spinIters, [] {}, budgetMs_.load(std::memory_order_relaxed));
     }
 
     [[nodiscard]] std::uint64_t timeouts() const noexcept { return timeouts_.load(std::memory_order_relaxed); }
 
+    // v1.2.1 RC2 — Performance profiles: runtime barrier tuning. Budget is
+    // clamped to [1, 4] ms (the LL-hook stall cap stays bounded no matter
+    // what a profile asks for); spin iterations to [20, 2000].
+    void setTuning(std::uint32_t budgetMs, std::uint32_t spinIters) noexcept {
+        budgetMs_.store(std::clamp<std::uint32_t>(budgetMs, 1, kMaxBudgetMs), std::memory_order_relaxed);
+        spinIters_.store(std::clamp<std::uint32_t>(spinIters, 20, 2000), std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint32_t budgetMs() const noexcept { return budgetMs_.load(std::memory_order_relaxed); }
+    [[nodiscard]] std::uint32_t spinIters() const noexcept { return spinIters_.load(std::memory_order_relaxed); }
+    static constexpr std::uint32_t kMaxBudgetMs = 4;
+
 private:
+    std::atomic<std::uint32_t> budgetMs_{kWaitBudgetMs};
+    std::atomic<std::uint32_t> spinIters_{kSpinIters};
     // v1.1.0 — QPC millisecond clock for the barrier deadline (see
     // waitDrainedHooked). Magic-static frequency cache: initialized once,
     // thread-safe, zero per-call overhead.
@@ -376,14 +393,28 @@ private:
         }
     }
 
-    bool waitDrained(const std::atomic<std::uint32_t>& pending,
-                     std::uint32_t spinIters = kSpinIters) noexcept {
-        return waitDrainedHooked(pending, spinIters, [] { }, kWaitBudgetMs);
+    bool waitDrained(const std::atomic<std::uint32_t>& pending) noexcept {
+        return waitDrainedHooked(pending, spinIters_.load(std::memory_order_relaxed), [] { },
+                                 budgetMs_.load(std::memory_order_relaxed));
+    }
+    bool waitDrained(const std::atomic<std::uint32_t>& pending, std::uint32_t spinIters) noexcept {
+        return waitDrainedHooked(pending, spinIters, [] { }, budgetMs_.load(std::memory_order_relaxed));
     }
 
     [[nodiscard]] std::uint64_t timeouts() const noexcept { return timeouts_.load(std::memory_order_relaxed); }
 
+    // v1.2.1 RC2 — see the Win32 flavor.
+    void setTuning(std::uint32_t budgetMs, std::uint32_t spinIters) noexcept {
+        budgetMs_.store(std::clamp<std::uint32_t>(budgetMs, 1, kMaxBudgetMs), std::memory_order_relaxed);
+        spinIters_.store(std::clamp<std::uint32_t>(spinIters, 20, 2000), std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint32_t budgetMs() const noexcept { return budgetMs_.load(std::memory_order_relaxed); }
+    [[nodiscard]] std::uint32_t spinIters() const noexcept { return spinIters_.load(std::memory_order_relaxed); }
+    static constexpr std::uint32_t kMaxBudgetMs = 4;
+
 private:
+    std::atomic<std::uint32_t> budgetMs_{kWaitBudgetMs};
+    std::atomic<std::uint32_t> spinIters_{kSpinIters};
     std::mutex m_;
     std::condition_variable cv_;
     std::atomic<bool> evt_{false};
@@ -710,6 +741,11 @@ public:
     [[nodiscard]] OutputRing& outRing() noexcept { return outRing_; }
     [[nodiscard]] const OutputRing& outRing() const noexcept { return outRing_; }
     [[nodiscard]] InlineEmitter& emitter() noexcept { return emitter_; }
+
+    // v1.2.1 RC2 — Performance profiles: consumer spin bounds passthrough.
+    void setConsumerSpinBounds(std::uint32_t floorUs, std::uint32_t capUs) noexcept {
+        hook_.setConsumerSpinBounds(floorUs, capUs);
+    }
 
     // ---- diagnostics ----
     [[nodiscard]] std::uint64_t pushed()  const noexcept { return hook_.pushed(); }

@@ -1,0 +1,6 @@
+=== summary (medians over 3 run(s)) ===
+[cur] gate rc=0
+[cur] T0-control ns mean=28.9 p50=28 max=34948
+[cur] perf T1-decision p50 ns: vn-compose=125, mixed=136, passthrough=127, delete=111
+[cur] e2e burst/hot p50=30.79us p99=87.87us pipeline p50=31.86us wake p50=44.06us spikes-med=1321 rss=8.44MB
+[cur] tone edit p50 us (pop[barrier]): dbar[hybrid]=0.230 dbar[spin]=0.231 double-tone[hybrid]=0.325 double-tone[spin]=0.328 heavy-word[hybrid]=0.395 heavy-word[spin]=0.392 horn-compound[hybrid]=0.414 horn-compound[spin]=0.415 mid-word[hybrid]=0.243 mid-word[spin]=0.244 mixed[hybrid]=7.061 mixed[spin]=7.114 reposition[hybrid]=0.198 reposition[spin]=0.197 restore-reissue[hybrid]=0.219 restore-reissue[spin]=0.221 tone-append[hybrid]=0.200 tone-append[spin]=0.197

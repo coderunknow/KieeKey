@@ -346,13 +346,26 @@ private:
         // itself — the legacy shifted-digit check can never fire on the resolved
         // character. This mirrors the 2.0.5 hook, which delivers the raw key
         // with the shift bit and breaks the word.
-        return c == U',' || c == U'.' || c == U'/' || c == U';' || c == U'\'' ||
-               c == U'\\' || c == U'-' || c == U'=' || c == U'`' ||
-               c == U'!' || c == U'@' || c == U'#' || c == U'$' || c == U'%' ||
-               c == U'^' || c == U'&' || c == U'*' || c == U'(' || c == U')' ||
-               c == U'_' || c == U'+' || c == U'{' || c == U'}' || c == U'|' ||
-               c == U':' || c == U'"' || c == U'<' || c == U'>' || c == U'?' ||
-               c == U'~';
+        //
+        // v1.2.2 RC1: the 32-way OR chain ran on EVERY Char event (process()
+        // first branch). Two 64-bit masks are the identical set — branchless
+        // for the ASCII range, false for anything else (none of the break
+        // characters live above 0x7E).
+        const unsigned u = static_cast<unsigned>(c);
+        if (u >= 128u) { return false; }
+        constexpr std::uint64_t lo =
+            (0x7FFFULL << 33) |    // '!' .. '/'
+            (0x3FULL << 58);       // ':' .. '?'
+        constexpr std::uint64_t hi =
+            (1ULL << 0) |          // '@'
+            (1ULL << 28) |         // '\\'
+            (1ULL << 30) |         // '^'
+            (1ULL << 31) |         // '_'
+            (1ULL << 32) |         // '`'
+            (0xFULL << 59);        // '{' .. '~'
+        return (u < 64u)
+                   ? (((lo >> u) & 1ULL) != 0)
+                   : (((hi >> (u - 64u)) & 1ULL) != 0);
     }
     static constexpr bool isMacroBreakChar(char32_t c) noexcept {
         // Legacy _macroBreakCode (printable subset).
@@ -414,14 +427,20 @@ private:
     bool isKeyJ(char32_t c) const noexcept { return PCH(4) == c; }
 
     // NOTE: internal identity is uppercase (tables store 0x41 = 'A' …).
+    // v1.2.2 RC1: branchless bit test (A E I O U Y = bits 0,4,8,14,20,24).
+    // isConsonantAt() is on the checkSpelling / findAndCalculateVowel hot
+    // path; six comparisons per call was the previous cost.
     static constexpr bool isVowelChar(char32_t c) noexcept {
-        return c == U'A' || c == U'E' || c == U'U' || c == U'Y' || c == U'I' || c == U'O';
+        const unsigned u = static_cast<unsigned>(c) - static_cast<unsigned>(U'A');
+        return u < 26u && (((0x01104111u >> u) & 1u) != 0u);
     }
     static constexpr bool isConsonantChar(char32_t c) noexcept { return !isVowelChar(c); }
     bool isMarkKey(char32_t c) const noexcept {
         const auto m = opts_.inputMethod;
         if (m == InputMethod::Telex || m == InputMethod::SimpleTelex) {
-            return c == U'S' || c == U'F' || c == U'R' || c == U'J' || c == U'X';
+            // v1.2.2 RC1: S F R J X = bits 18,5,17,9,23.
+            const unsigned u = static_cast<unsigned>(c) - static_cast<unsigned>(U'A');
+            return u < 26u && (((0x00860220u >> u) & 1u) != 0u);
         }
         return c == U'1' || c == U'2' || c == U'3' || c == U'5' || c == U'4';
     }

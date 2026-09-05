@@ -170,12 +170,12 @@ namespace {
 // "which build am I running" from File Explorer. `scripts/check_version.py`
 // fails the build if they drift apart again.
 //===========================================================================
-constexpr wchar_t kAppVersion[]     = L"1.2.1";           // numeric, 3-part
-// v1.2.1 Stable: [[maybe_unused]] — this is a documented VERSION CARRIER
+constexpr wchar_t kAppVersion[]     = L"1.2.2";           // numeric, 3-part
+// v1.2.2 RC1: [[maybe_unused]] — this is a documented VERSION CARRIER
 // (check_version.py reads it), not a code-level constant; the UI shows the
 // title/version forms. Keeping it zero-maintenance and warning-clean.
-[[maybe_unused]] constexpr wchar_t kAppVersionFull[] = L"1.2.1 Stable";    // with channel
-constexpr wchar_t kAppTitle[]       = L"KieeKey v1.2.1 Stable";  // sync with kAppVersionFull
+[[maybe_unused]] constexpr wchar_t kAppVersionFull[] = L"1.2.2 RC1";    // with channel
+constexpr wchar_t kAppTitle[]       = L"KieeKey v1.2.2 RC1";  // sync with kAppVersionFull
 
 //===========================================================================
 // Output item: what the consumer thread must emit (trivially copyable → can

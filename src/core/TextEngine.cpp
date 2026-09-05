@@ -1053,6 +1053,157 @@ static_assert([] {
     }
     return true;
 }(), "end-consonant bucket overflow — regenerate with a wider rows[]");
+
+// v1.2.2 RC1 — LAST-CHARACTER SEQUENCE BUCKETS for handleMainKey.
+//
+// Fresh gprof on v1.2.1 Stable (this host): handleMainKey is #1 at ~26 % of
+// engine time (13.6 ns/call × 15.5 M calls on the 20 M-key prose driver).
+// Each of the three candidate scans (kConsonantD 79, kVowelForMark 79,
+// kVowel up to 32) still walks every sequence; RC2's tailMatches pre-filter
+// rejects ~90 % at the first comparison, but the loop overhead remains.
+// Indexing sequences by the last cell (under seqMask) — analog of RC3's
+// first-letter consonant buckets — visits only the sequences that CAN
+// match, in original table order.
+//
+// Equivalence, proven from the v1.2.1 loops:
+//   * a sequence outside the bucket is exactly one whose tailMatches() is
+//     false — the v1.2.1 loop continued past it without calling
+//     checkCorrectVowel; skipping it cannot change which sequence first
+//     wins;
+//   * visit order inside a bucket is the original table (or flattened
+//     group-then-seq) order, so the first winner is the same `i` /
+//     `(group, seq)`;
+//   * on total rejection the v1.2.1 loop left isCorect_ = isChanged_ =
+//     false and fell through to insertKey — identical;
+//   * quTail still short-circuits the whole scan (no bucket lookup);
+//   * sequences whose last cell is not A–Z under the active mask cannot
+//     tail-match an A–Z lastChr (and lastChr is always A–Z or 0 on this
+//     path) — they are omitted from every bucket, matching the v1.2.1
+//     continue.
+//
+// Two tables per charset (seqMask ∈ {0, kEndConsonantMask}).
+struct SeqIdxBucket {
+    std::uint8_t idx[48];
+    std::uint8_t count;
+};
+
+template <std::uint16_t mask>
+constexpr std::array<SeqIdxBucket, 26> buildDSeqBuckets() {
+    std::array<SeqIdxBucket, 26> b{};
+    for (std::size_t i = 0; i < kConsonantD.size(); ++i) {
+        const auto& seq = kConsonantD[i];
+        if (seq.size() == 0) { continue; }
+        const std::uint16_t last = static_cast<std::uint16_t>(seq[seq.size() - 1] & ~mask);
+        if (last < U'A' || last > U'Z') { continue; }
+        SeqIdxBucket& bucket = b[last - U'A'];
+        if (bucket.count < 48) {
+            bucket.idx[bucket.count++] = static_cast<std::uint8_t>(i);
+        }
+    }
+    return b;
+}
+
+constexpr auto kDSeqBucketsOff = buildDSeqBuckets<0>();
+constexpr auto kDSeqBucketsOn  = buildDSeqBuckets<kEndConsonantMask>();
+
+struct MarkCand {
+    std::uint8_t group;
+    std::uint8_t seq;
+};
+struct MarkSeqBucket {
+    MarkCand cands[48];
+    std::uint8_t count;
+};
+
+template <std::uint16_t mask>
+constexpr std::array<MarkSeqBucket, 26> buildMarkSeqBuckets() {
+    std::array<MarkSeqBucket, 26> b{};
+    // kVowelForMark is keyed A,E,I,O,U,Y — entries[] is that sorted order,
+    // which is also `for (const auto& e : kVowelForMark)` visit order.
+    for (std::uint8_t g = 0; g < 6; ++g) {
+        const auto& charset = kVowelForMark.entries[g].second;
+        for (std::size_t s = 0; s < charset.size(); ++s) {
+            const auto& seq = charset[s];
+            if (seq.size() == 0) { continue; }
+            const std::uint16_t last = static_cast<std::uint16_t>(seq[seq.size() - 1] & ~mask);
+            if (last < U'A' || last > U'Z') { continue; }
+            MarkSeqBucket& bucket = b[last - U'A'];
+            if (bucket.count < 48) {
+                bucket.cands[bucket.count++] = MarkCand{g, static_cast<std::uint8_t>(s)};
+            }
+        }
+    }
+    return b;
+}
+
+constexpr auto kMarkSeqBucketsOff = buildMarkSeqBuckets<0>();
+constexpr auto kMarkSeqBucketsOn  = buildMarkSeqBuckets<kEndConsonantMask>();
+
+template <std::size_t vowelEntry, std::uint16_t mask>
+constexpr std::array<SeqIdxBucket, 26> buildVowelSeqBuckets() {
+    std::array<SeqIdxBucket, 26> b{};
+    const auto& charset = kVowel.entries[vowelEntry].second;
+    for (std::size_t i = 0; i < charset.size(); ++i) {
+        const auto& seq = charset[i];
+        if (seq.size() == 0) { continue; }
+        const std::uint16_t last = static_cast<std::uint16_t>(seq[seq.size() - 1] & ~mask);
+        if (last < U'A' || last > U'Z') { continue; }
+        SeqIdxBucket& bucket = b[last - U'A'];
+        if (bucket.count < 48) {
+            bucket.idx[bucket.count++] = static_cast<std::uint8_t>(i);
+        }
+    }
+    return b;
+}
+
+// kVowel keys in sorted order: A=0, E=1, O=2, W=3.
+constexpr auto kVowelAOff = buildVowelSeqBuckets<0, 0>();
+constexpr auto kVowelAOn  = buildVowelSeqBuckets<0, kEndConsonantMask>();
+constexpr auto kVowelEOff = buildVowelSeqBuckets<1, 0>();
+constexpr auto kVowelEOn  = buildVowelSeqBuckets<1, kEndConsonantMask>();
+constexpr auto kVowelOOff = buildVowelSeqBuckets<2, 0>();
+constexpr auto kVowelOOn  = buildVowelSeqBuckets<2, kEndConsonantMask>();
+constexpr auto kVowelWOff = buildVowelSeqBuckets<3, 0>();
+constexpr auto kVowelWOn  = buildVowelSeqBuckets<3, kEndConsonantMask>();
+
+static_assert([] {
+    const auto check48 = [](const auto& table) {
+        for (const auto& bkt : table) { if (bkt.count > 48) { return false; } }
+        return true;
+    };
+    return check48(kDSeqBucketsOff) && check48(kDSeqBucketsOn) &&
+           check48(kMarkSeqBucketsOff) && check48(kMarkSeqBucketsOn) &&
+           check48(kVowelAOff) && check48(kVowelAOn) &&
+           check48(kVowelEOff) && check48(kVowelEOn) &&
+           check48(kVowelOOff) && check48(kVowelOOn) &&
+           check48(kVowelWOff) && check48(kVowelWOn);
+}(), "handleMainKey sequence-bucket overflow — regenerate with a wider idx[]");
+
+inline const std::array<SeqIdxBucket, 26>* vowelSeqBuckets(std::uint16_t key,
+                                                           std::uint16_t mask) noexcept {
+    const bool on = mask != 0;
+    switch (key) {
+        case 0x41: return on ? &kVowelAOn : &kVowelAOff;   // A
+        case 0x45: return on ? &kVowelEOn : &kVowelEOff;   // E
+        case 0x4F: return on ? &kVowelOOn : &kVowelOOff;   // O
+        case 0x57: return on ? &kVowelWOn : &kVowelWOff;   // W
+        default:   return nullptr;
+    }
+}
+
+// kVowelCombine is keyed A,E,I,O,U,Y (6 entries). Direct index replaces
+// the binary search on the forceCheckVowel / canHasEndConsonant paths.
+inline const FlatVec<FlatVec<std::uint32_t>>* vowelCombineFor(std::uint16_t ch) noexcept {
+    switch (ch) {
+        case U'A': return &kVowelCombine.entries[0].second;
+        case U'E': return &kVowelCombine.entries[1].second;
+        case U'I': return &kVowelCombine.entries[2].second;
+        case U'O': return &kVowelCombine.entries[3].second;
+        case U'U': return &kVowelCombine.entries[4].second;
+        case U'Y': return &kVowelCombine.entries[5].second;
+        default:   return nullptr;
+    }
+}
 } // namespace
 
 void TextEngine::checkSpelling(bool forceCheckVowel) {
@@ -1077,6 +1228,23 @@ void TextEngine::checkSpelling(bool forceCheckVowel) {
             spellingOK_ = true;
         }
 
+        // v1.2.2 RC1 — length-1 cheap eligibility. With a single letter the
+        // QU/GI specials cannot fire (they need index_>=2 / k < end-1), the
+        // vowel-combine walk cannot fire (k-j is at most 1), and the end-
+        // consonant walk either accepts immediately (single vowel: k>=end)
+        // or is never reached (single unmatched consonant: k==j, no vowel).
+        // Proven identical tempDisableKey_ / spellingOK_ / spellingVowelOK_
+        // to the fall-through; vowelStart_/vowelEnd_ are recomputed by
+        // findAndCalculateVowel before any later consumer.
+        if (spellingEndIndex_ == 1) {
+            if (!isConsonantAt(0)) {
+                spellingOK_ = true;
+                spellingVowelOK_ = true;
+            }
+            tempDisableKey_ = !(spellingOK_ && spellingVowelOK_);
+            return;
+        }
+
         // ---- check next vowel ----
         std::size_t k = j;
         vowelStart_ = k;
@@ -1099,9 +1267,9 @@ void TextEngine::checkSpelling(bool forceCheckVowel) {
         if (k > j) {   // has vowel
             spellingVowelOK_ = false;
             if (k - j > 1 && forceCheckVowel) {
-                const auto it = kVowelCombine.find(chr(j));
-                if (it != kVowelCombine.end()) {
-                    const auto& vowelSet = it->second;
+                const auto* vowelSetPtr = vowelCombineFor(chr(j));
+                if (vowelSetPtr != nullptr) {
+                    const auto& vowelSet = *vowelSetPtr;
                     for (std::size_t v = 0; v < vowelSet.size(); ++v) {
                         spellingFlag_ = false;
                         std::size_t ii = 1;
@@ -1291,11 +1459,13 @@ void TextEngine::findAndCalculateVowel(bool forGrammar) {
 }
 
 bool TextEngine::canHasEndConsonant() {
-    const auto it = kVowelCombine.find(chr(vowelStart_));
-    if (it == kVowelCombine.end()) {
+    // v1.2.2 RC1: direct A/E/I/O/U/Y index (vowelCombineFor) — same 6-key
+    // table as kVowelCombine.find, without the binary search.
+    const auto* voPtr = vowelCombineFor(chr(vowelStart_));
+    if (voPtr == nullptr) {
         return false;
     }
-    const auto& vo = it->second;
+    const auto& vo = *voPtr;
     for (std::size_t ii = 0; ii < vo.size(); ++ii) {
         std::size_t kk = vowelStart_;
         std::size_t iii = 1;
@@ -2166,15 +2336,14 @@ void TextEngine::handleMainKey(char32_t c, bool caps) {
     //     (The D path's "allow d after consonant" clause needs chr(index_-1)
     //     == 'D', impossible when it is 'U', so it is covered too.)
     //   * lastChr / seqMask: RC1's first per-candidate comparison was
-    //     "sequence tail (masked) == last buffer char"; testing it inline
-    //     before the call skips the call for the ~90 % of candidates that
-    //     fail there, with identical outcome.
+    //     "sequence tail (masked) == last buffer char".
+    // v1.2.2 RC1: last-character sequence buckets replace the remaining
+    // full-table walk — membership IS tailMatches (see anonymous-namespace
+    // proof); the too-short `index_ < seq.size()` continue is kept.
     const bool quTail = index_ >= 2 && chr(index_ - 1) == U'U' && chr(index_ - 2) == U'Q';
     const std::uint16_t lastChr = index_ ? chr(index_ - 1) : std::uint16_t{0};
     const std::uint16_t seqMask = opts_.quickEndConsonant ? kEndConsonantMask : std::uint16_t{0};
-    auto tailMatches = [&](const FlatVec<std::uint16_t>& seq) noexcept {
-        return static_cast<std::uint16_t>(seq[seq.size() - 1] & ~seqMask) == lastChr;
-    };
+    const bool lastIsLetter = lastChr >= U'A' && lastChr <= U'Z';
 
     if (c == U'[') {
         checkForStandaloneChar(c, caps, U'O');
@@ -2190,23 +2359,26 @@ void TextEngine::handleMainKey(char32_t c, bool caps) {
         isCorect_ = false;
         isChanged_ = false;
         int k = static_cast<int>(index_);
-        int i = 0;
-        for (; !quTail && i < static_cast<int>(kConsonantD.size()); ++i) {
-            const auto& seq = kConsonantD[static_cast<std::size_t>(i)];
-            if (index_ < seq.size() || !tailMatches(seq)) {
-                continue;
-            }
-            isCorect_ = true;
-            checkCorrectVowel(kConsonantD, i, k, c);
-            // allow d after consonant
-            if (!isCorect_ && index_ >= 2 && chr(index_ - 1) == U'D' &&
-                isConsonantAt(index_ - 2)) {
+        if (!quTail && lastIsLetter) {
+            const SeqIdxBucket& bucket = (seqMask ? kDSeqBucketsOn : kDSeqBucketsOff)[lastChr - U'A'];
+            for (std::uint8_t bi = 0; bi < bucket.count; ++bi) {
+                int i = static_cast<int>(bucket.idx[bi]);
+                const auto& seq = kConsonantD[static_cast<std::size_t>(i)];
+                if (index_ < seq.size()) {
+                    continue;
+                }
                 isCorect_ = true;
-            }
-            if (isCorect_) {
-                isChanged_ = true;
-                insertD(c, caps);
-                break;
+                checkCorrectVowel(kConsonantD, i, k, c);
+                // allow d after consonant
+                if (!isCorect_ && index_ >= 2 && chr(index_ - 1) == U'D' &&
+                    isConsonantAt(index_ - 2)) {
+                    isCorect_ = true;
+                }
+                if (isCorect_) {
+                    isChanged_ = true;
+                    insertD(c, caps);
+                    break;
+                }
             }
         }
         if (!isChanged_) {
@@ -2217,16 +2389,20 @@ void TextEngine::handleMainKey(char32_t c, bool caps) {
 
     // ---- mark keys (S F R X J / 1-5) ----
     if (isMarkKey(c)) {
-        // UPSTREAM FIX (master): iterate the map by entry, not operator[](0..5)
-        for (const auto& vowelEntry : kVowelForMark) {
-            const auto& charset = vowelEntry.second;
-            isCorect_ = false;
-            isChanged_ = false;
+        // UPSTREAM FIX (master): iterate the map by entry, not operator[](0..5).
+        // v1.2.2 RC1: flattened last-char buckets preserve that visit order
+        // (group A→Y, sequences in table order) while skipping non-tails.
+        isCorect_ = false;
+        isChanged_ = false;
+        if (!quTail && lastIsLetter) {
+            const MarkSeqBucket& bucket = (seqMask ? kMarkSeqBucketsOn : kMarkSeqBucketsOff)[lastChr - U'A'];
             int k = static_cast<int>(index_);
-            int l = 0;
-            for (; !quTail && l < static_cast<int>(charset.size()); ++l) {
+            for (std::uint8_t bi = 0; bi < bucket.count; ++bi) {
+                const MarkCand cand = bucket.cands[bi];
+                const auto& charset = kVowelForMark.entries[cand.group].second;
+                int l = static_cast<int>(cand.seq);
                 const auto& seq = charset[static_cast<std::size_t>(l)];
-                if (index_ < seq.size() || !tailMatches(seq)) {
+                if (index_ < seq.size()) {
                     continue;
                 }
                 isCorect_ = true;
@@ -2240,9 +2416,6 @@ void TextEngine::handleMainKey(char32_t c, bool caps) {
                     else if (isKeyJ(c))  { insertMark(kMark5Mask); }
                     break;
                 }
-            }
-            if (isCorect_) {
-                break;
             }
         }
         if (!isChanged_) {
@@ -2285,39 +2458,43 @@ void TextEngine::handleMainKey(char32_t c, bool caps) {
     isCorect_ = false;
     isChanged_ = false;
     int k = static_cast<int>(index_);
-    int i = 0;
-    for (; !quTail && i < static_cast<int>(charset.size()); ++i) {
-        const auto& seq = charset[static_cast<std::size_t>(i)];
-        if (index_ < seq.size() || !tailMatches(seq)) {
-            continue;
-        }
-        isCorect_ = true;
-        checkCorrectVowel(charset, i, k, c);
-        if (isCorect_) {
-            isChanged_ = true;
-            if (isKeyDouble(c)) {
-                insertAOE(keyForAEO, caps);
-            } else if (isKeyW(c)) {
-                if (opts_.inputMethod == InputMethod::Vni) {
-                    vniVowelEndValid_ = false;
-                    for (std::size_t j = index_ - 1; j != std::size_t(-1); --j) {
-                        if (chr(j) == U'O' || chr(j) == U'U' || chr(j) == U'A' ||
-                            chr(j) == U'E') {
-                            vowelEnd_ = j;
-                            vniVowelEndValid_ = true;
+    const auto* vBuckets = vowelSeqBuckets(static_cast<std::uint16_t>(keyForAEO), seqMask);
+    if (!quTail && lastIsLetter && vBuckets != nullptr && !charset.empty()) {
+        const SeqIdxBucket& bucket = (*vBuckets)[lastChr - U'A'];
+        for (std::uint8_t bi = 0; bi < bucket.count; ++bi) {
+            int i = static_cast<int>(bucket.idx[bi]);
+            const auto& seq = charset[static_cast<std::size_t>(i)];
+            if (index_ < seq.size()) {
+                continue;
+            }
+            isCorect_ = true;
+            checkCorrectVowel(charset, i, k, c);
+            if (isCorect_) {
+                isChanged_ = true;
+                if (isKeyDouble(c)) {
+                    insertAOE(keyForAEO, caps);
+                } else if (isKeyW(c)) {
+                    if (opts_.inputMethod == InputMethod::Vni) {
+                        vniVowelEndValid_ = false;
+                        for (std::size_t j = index_ - 1; j != std::size_t(-1); --j) {
+                            if (chr(j) == U'O' || chr(j) == U'U' || chr(j) == U'A' ||
+                                chr(j) == U'E') {
+                                vowelEnd_ = j;
+                                vniVowelEndValid_ = true;
+                                break;
+                            }
+                        }
+                        if (vniVowelEndValid_ &&
+                            ((c == U'7' && chr(vowelEnd_) == U'A' &&
+                              (vowelEnd_ >= 1 ? chr(vowelEnd_ - 1) != U'U' : true)) ||
+                             (c == U'8' && (chr(vowelEnd_) == U'O' || chr(vowelEnd_) == U'U')))) {
                             break;
                         }
                     }
-                    if (vniVowelEndValid_ &&
-                        ((c == U'7' && chr(vowelEnd_) == U'A' &&
-                          (vowelEnd_ >= 1 ? chr(vowelEnd_ - 1) != U'U' : true)) ||
-                         (c == U'8' && (chr(vowelEnd_) == U'O' || chr(vowelEnd_) == U'U')))) {
-                        break;
-                    }
+                    insertW(keyForAEO, caps);
                 }
-                insertW(keyForAEO, caps);
+                break;
             }
-            break;
         }
     }
 

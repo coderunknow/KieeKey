@@ -3,6 +3,59 @@
 All notable changes to KieeKey are documented here. Format based on
 Keep a Changelog; versioning: SemVer.
 
+## [1.2.2-RC1] — 2026-09-05
+
+### Performance & Runtime Efficiency
+
+> **Scope:** second-gen engine hot-path only (`src/core/TextEngine.*`).
+> v1.2.1 Stable is the frozen baseline, re-measured on this host (g++ 12.2
+> −O2, 20 M-key driver) **before** any candidate existed. Decision-identical;
+> dual-emitter `emitMtx` unchanged. Full evidence:
+> [`docs/reports/V1.2.2_RC1_PERFORMANCE_REPORT.md`](docs/reports/V1.2.2_RC1_PERFORMANCE_REPORT.md),
+> trail: [`docs/reports/V1.2.2_RC1_ENGINEERING_LOG.md`](docs/reports/V1.2.2_RC1_ENGINEERING_LOG.md);
+> raw artifacts in `docs/bench/rc1-122/` (does not overwrite `docs/bench/rc1/`).
+
+#### Changed — engine (`src/core/TextEngine.*`)
+
+* **`handleMainKey` candidate scans use constexpr last-character sequence
+  buckets.** After RC2's `tailMatches` pre-filter the three charset walks
+  (`kConsonantD` 79, `kVowelForMark` 79, `kVowel` ≤32) were still #1 in
+  gprof (13.55 ns/call). Indexing by the last cell under `seqMask` visits
+  only sequences that can match, in original table order. Equivalence:
+  membership **is** `tailMatches`; first winner is the same `i` /
+  `(group, seq)`; `checkCorrectVowel` call count unchanged (2 022 462 /
+  20 M keys).
+* **Bitmask classifiers:** `isWordBreakChar` (two 64-bit masks, every Char
+  event), `isVowelChar` (A E I O U Y), Telex `isMarkKey` (S F R J X).
+  `[` / `]` stay non-breaks (standalone ơ/ư).
+* **`checkSpelling` length-1 cheap exit** — QU/GI / vowel-combine /
+  end-consonant walks cannot fire on a one-letter word.
+* **`vowelCombineFor`** — direct A/E/I/O/U/Y index replaces
+  `kVowelCombine.find` on the force-vowel and `canHasEndConsonant` paths.
+
+#### Measured (this host, not the RC3 g++14.2 40.2 ns/key)
+
+* Frozen v1.2.1 Stable 20 M-key median **54.41 ns/key** → RC1 median
+  **43.85 ns/key** (**−19.4 %**). Fair interleaved 5-run paired Δ ≈ **−21 %**.
+  Output sink **5436924** both sides.
+* gprof self ns/call: `handleMainKey` 13.55 → 10.00; `checkSpelling`
+  10.94 → 6.02; `process` 4.50 → 3.00.
+* Host-scaled exceptional bar (34/40.2 × 54.41 ≈ 46.0 ns/key): cleared.
+  Absolute 40.2 → 38 is **not** claimed.
+
+#### Unchanged — on purpose
+
+* Engine semantics, options, profiles, encodings, hook, TSF, lifecycle,
+  `emitMtx`. E2E shim / tone / real SendInput **not re-measured** (timer
+  floor; engine is ~0.04 µs of ~10 µs p50 here — no fake E2E claim).
+
+#### Validation
+
+* 21/21 native suites PASS; `gate_correctness` 2.06 M events PASS;
+  `diff_engine_ab` vs frozen RC1 engine PASS; version gate `1.2.2 RC1`.
+* Compile warning-clean `-Wall -Wextra -Werror` at C++17/20/23. MSVC
+  windows-2022 CI is the PE gate (not executed on this host).
+
 ## [1.2.1-Stable] — 2026-09-05
 
 ### Whole-repository hardening: the Windows surface passes a real gate

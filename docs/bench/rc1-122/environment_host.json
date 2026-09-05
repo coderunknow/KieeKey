@@ -1,0 +1,13 @@
+{
+  "baseline_commit": "715c527671c5e0093cfe1ddb4a43996653d65d2c",
+  "baseline_tag": "v1.2.1-Stable",
+  "branch": "arena/01a070c5-kieekey",
+  "compiler": "g++ (Debian 12.2.0-14+deb12u1) 12.2.0",
+  "compiler_version": "12.2.0",
+  "os": "Linux 6.1.158+ x86_64",
+  "cpu": "Intel(R) Xeon(R) Processor @ 2.60GHz",
+  "logical_cpu_count": 2,
+  "ram_kb": 4034452,
+  "timestamp": "2026-09-05T08:55:10Z",
+  "working_tree": "clean"
+}

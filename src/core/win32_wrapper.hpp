@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-// KieeKey v1.2.1 RC2 - refactored and completed logic
+// KieeKey v1.2.1 RC3 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.2.1 RC2 — win32_wrapper.hpp
+// KieeKey v1.2.1 RC3 — win32_wrapper.hpp
 // The Win32 transport layer of the IME: hook lifecycle, lock-free queueing,
 // batched synthetic input, priorities, and hook self-healing.
 //
@@ -471,14 +471,47 @@ public:
     // Producer side — the push failed; the edit was emitted inline instead.
     void rollback(std::uint32_t n = 1) noexcept {
         if (n == 0) { return; }
-        pending_.fetch_sub(n, std::memory_order_acq_rel);
-        releaseIfDrained();
+        releaseClamped(n);
     }
 
     // Consumer side — n edits were applied (or definitively abandoned).
     void consume(std::uint32_t n) noexcept {
         if (n == 0) { return; }
-        pending_.fetch_sub(n, std::memory_order_acq_rel);
+        releaseClamped(n);
+    }
+
+    // v1.2.1 RC3 — SATURATING release (bug: RC2 counter underflow).
+    //
+    // A plain fetch_sub UNDERFLOWS when a lifecycle forceQuiesce() clears the
+    // count for the very edit this side is about to release. The quiesce is
+    // documented to fire "only when the caller guarantees no further edits
+    // can be produced", but the CONSUMER can still be mid-batch at that
+    // moment: it already popped n edits off the ring and is about to call
+    // consume(n) — the guarantee covers the producer, not the consumer's
+    // in-flight batch (reproduced deterministically by tests/soak_pipeline
+    // on a 2-CPU host: forced quiesce + late consume -> pending wrapped to
+    // 0xFFFFFFFF, maxPending 4294967281).
+    //
+    // The wrapped ~4.29e9 value then read as "hugely pending", so
+    // releaseIfDrained() never fired and every following pass-through
+    // keystroke burned the FULL barrier budget and could overtake the edits
+    // still in flight — the exact post-wedge stall family this class exists
+    // to prevent (same symptom class as the v1.2.0 STRANDED COUNT).
+    //
+    // The clamp is a CAS loop, not fetch_sub + fixup, so the window can never
+    // lose a concurrent publish: a late producer fetch_add that slips between
+    // the load and the store is carried into the retry instead of being
+    // overwritten (fetch_sub + conditional store would drop it).
+    void releaseClamped(std::uint32_t n) noexcept {
+        std::uint32_t cur = pending_.load(std::memory_order_acquire);
+        while (cur != 0) {
+            const std::uint32_t take = (cur < n) ? cur : n;   // count already quiesced away
+            if (pending_.compare_exchange_weak(cur, cur - take,
+                                               std::memory_order_acq_rel,
+                                               std::memory_order_acquire)) {
+                break;
+            }
+        }
         releaseIfDrained();
     }
 

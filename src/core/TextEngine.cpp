@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.2.0 - refactored and completed logic
+//   KieeKey v1.2.1 RC3 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -938,14 +938,79 @@ namespace {
 // The two masks depend only on options, so they are folded to two 16-bit
 // constants per call instead of per cell, and the comparison order
 // (mask A, then mask B) is kept so the short-circuit is identical.
-inline std::size_t matchLeadingConsonant(const std::uint32_t* word, std::size_t endIndex,
-                                         std::uint16_t maskA, std::uint16_t maskB) noexcept {
-    std::size_t j = 0;
+//
+// v1.2.1 RC3 — FIRST-LETTER ROW BUCKETS (gprof: checkSpelling was still
+// 40 % of engine time; the 33-row walk was re-audited and ~90 % of the
+// visited rows can never match the word's first letter under the active
+// masks). For every (maskA, maskB) combination a constexpr bucket table
+// maps the first letter to the subset of rows whose first cell CAN equal
+// it, in table order. Equivalence, proven from the loop above:
+//   * a row outside the bucket is exactly a row whose cell 0 mismatches
+//     under BOTH masks — the RC2 loop rejected it at cell 0 (or earlier,
+//     as too-short); skipping it cannot change which row first wins;
+//   * on TOTAL rejection the RC2 loop's last visited row is always the
+//     FINAL table row — single-cell `J|kEndConsonantMask` — which either
+//     wins (returning 1) or leaves j = 0 at its cell-0 mismatch; since
+//     nothing won here, the identical exit value is j = 0;
+//   * bucket membership only depends on (row[0], maskA, maskB), each of
+//     which has at most two runtime values — 4 static tables total.
+struct ConsonantRowBucket {
+    std::uint8_t rows[8];   // kConsonantTable row indices, table order
+    std::uint8_t count;
+};
+
+template <std::uint16_t maskA, std::uint16_t maskB>
+constexpr std::array<ConsonantRowBucket, 26> buildLeadingBuckets() {
+    std::array<ConsonantRowBucket, 26> b{};
     for (std::size_t i = 0; i < kConsonantTable.size(); ++i) {
         const auto& row = kConsonantTable[i];
+        for (std::size_t L = 0; L < 26; ++L) {
+            const std::uint16_t c = static_cast<std::uint16_t>(0x41 + L);   // 'A'+L
+            if (static_cast<std::uint16_t>(row[0] & ~maskA) == c ||
+                static_cast<std::uint16_t>(row[0] & ~maskB) == c) {
+                ConsonantRowBucket& bucket = b[L];
+                if (bucket.count < 8) { bucket.rows[bucket.count++] = static_cast<std::uint8_t>(i); }
+                break;   // a cell can match at most one letter per mask pair
+            }
+        }
+    }
+    return b;
+}
+
+// The four mask combinations actually reachable from checkSpelling
+// (maskA ∈ {0, kEndConsonantMask}, maskB ∈ {0, kConsonantAllowMask}).
+constexpr std::array<ConsonantRowBucket, 26> kLeadingBucketsA0B0 = buildLeadingBuckets<0, 0>();
+constexpr std::array<ConsonantRowBucket, 26> kLeadingBucketsA1B0 = buildLeadingBuckets<kEndConsonantMask, 0>();
+constexpr std::array<ConsonantRowBucket, 26> kLeadingBucketsA0B1 = buildLeadingBuckets<0, kConsonantAllowMask>();
+constexpr std::array<ConsonantRowBucket, 26> kLeadingBucketsA1B1 = buildLeadingBuckets<kEndConsonantMask, kConsonantAllowMask>();
+
+// Bucket sanity: no letter ever needs more than 8 rows (N is the widest at 4).
+static_assert([] {
+    for (const auto& t : {&kLeadingBucketsA0B0, &kLeadingBucketsA1B0,
+                          &kLeadingBucketsA0B1, &kLeadingBucketsA1B1}) {
+        for (const auto& bkt : *t) { if (bkt.count > 8) { return false; } }
+    }
+    return true;
+}(), "leading-consonant bucket overflow — regenerate with a wider rows[]");
+
+inline const std::array<ConsonantRowBucket, 26>& leadingBucketTable(std::uint16_t maskA,
+                                                                    std::uint16_t maskB) noexcept {
+    if (maskB == 0) { return maskA == 0 ? kLeadingBucketsA0B0 : kLeadingBucketsA1B0; }
+    return maskA == 0 ? kLeadingBucketsA0B1 : kLeadingBucketsA1B1;
+}
+
+inline std::size_t matchLeadingConsonant(const std::uint32_t* word, std::size_t endIndex,
+                                         std::uint16_t maskA, std::uint16_t maskB) noexcept {
+    const std::uint32_t c0 = word[0] & kCharMask;
+    if (c0 < U'A' || c0 > U'Z') { return 0; }   // no row can match a non-letter
+    const auto& buckets = leadingBucketTable(maskA, maskB);
+    const ConsonantRowBucket& bucket = buckets[c0 - U'A'];
+    for (std::uint8_t bi = 0; bi < bucket.count; ++bi) {
+        const auto& row = kConsonantTable[bucket.rows[bi]];
         const std::size_t n = row.size();
-        if (endIndex < n) { j = n; continue; }   // RC1: flag=true, j ends at n
+        if (endIndex < n) { continue; }   // RC1: too short — rejected
         bool reject = false;
+        std::size_t j = 0;
         for (j = 0; j < n; ++j) {
             const std::uint16_t c = static_cast<std::uint16_t>(word[j] & kCharMask);
             const std::uint16_t t = row[j];
@@ -954,8 +1019,40 @@ inline std::size_t matchLeadingConsonant(const std::uint32_t* word, std::size_t 
         }
         if (!reject) { return j; }
     }
-    return j;
+    return 0;   // total rejection — the RC2 exit value (see proof above)
 }
+
+// v1.2.1 RC3 — same bucketing for the END-consonant walk (11 rows).
+// The accept test is unchanged (cell mismatch within the tail, then
+// j >= tailLen); rows whose first cell cannot equal tail[0] under endMask
+// are exactly the rows the RC2 walk rejected at cell 0 — tailLen >= 1
+// guarantees cell 0 is always compared. `j` is dead after this loop.
+template <std::uint16_t endMask>
+constexpr std::array<ConsonantRowBucket, 26> buildEndBuckets() {
+    std::array<ConsonantRowBucket, 26> b{};
+    for (std::size_t i = 0; i < kEndConsonantTable.size(); ++i) {
+        const auto& row = kEndConsonantTable[i];
+        for (std::size_t L = 0; L < 26; ++L) {
+            const std::uint16_t c = static_cast<std::uint16_t>(0x41 + L);
+            if (static_cast<std::uint16_t>(row[0] & ~endMask) == c) {
+                ConsonantRowBucket& bucket = b[L];
+                if (bucket.count < 8) { bucket.rows[bucket.count++] = static_cast<std::uint8_t>(i); }
+                break;
+            }
+        }
+    }
+    return b;
+}
+
+constexpr std::array<ConsonantRowBucket, 26> kEndBucketsOff = buildEndBuckets<0>();
+constexpr std::array<ConsonantRowBucket, 26> kEndBucketsOn = buildEndBuckets<kEndConsonantMask>();
+
+static_assert([] {
+    for (const auto* t : {&kEndBucketsOff, &kEndBucketsOn}) {
+        for (const auto& bkt : *t) { if (bkt.count > 8) { return false; } }
+    }
+    return true;
+}(), "end-consonant bucket overflow — regenerate with a wider rows[]");
 } // namespace
 
 void TextEngine::checkSpelling(bool forceCheckVowel) {
@@ -1044,24 +1141,32 @@ void TextEngine::checkSpelling(bool forceCheckVowel) {
                 const std::uint16_t endMask = opts_.quickEndConsonant ? kEndConsonantMask : std::uint16_t{0};
                 const std::uint32_t* tail = typingWord_.data() + k;
                 const std::size_t tailLen = spellingEndIndex_ - k;
-                for (std::size_t ii = 0; ii < kEndConsonantTable.size(); ++ii) {
-                    const auto& row = kEndConsonantTable[ii];
-                    const std::size_t n = row.size();
-                    spellingFlag_ = false;
-                    for (j = 0; j < n; ++j) {
-                        if (j < tailLen &&
-                            static_cast<std::uint16_t>(row[j] & ~endMask) !=
-                                static_cast<std::uint16_t>(tail[j] & kCharMask)) {
-                            spellingFlag_ = true;
+                // v1.2.1 RC3: first-letter bucket — the row set shrinks from
+                // 11 to at most 3 (N: N/NH/NG; C: C/CH); the cell walk and
+                // the accept test (j >= tailLen) are the RC2 ones verbatim.
+                const std::uint32_t t0 = tail[0] & kCharMask;
+                if (t0 >= U'A' && t0 <= U'Z') {
+                    const auto& tailBuckets = endMask ? kEndBucketsOn : kEndBucketsOff;
+                    const ConsonantRowBucket& bucket = tailBuckets[t0 - U'A'];
+                    for (std::uint8_t bi = 0; bi < bucket.count; ++bi) {
+                        const auto& row = kEndConsonantTable[bucket.rows[bi]];
+                        const std::size_t n = row.size();
+                        spellingFlag_ = false;
+                        for (j = 0; j < n; ++j) {
+                            if (j < tailLen &&
+                                static_cast<std::uint16_t>(row[j] & ~endMask) !=
+                                    static_cast<std::uint16_t>(tail[j] & kCharMask)) {
+                                spellingFlag_ = true;
+                                break;
+                            }
+                        }
+                        if (spellingFlag_) {
+                            continue;
+                        }
+                        if (j >= tailLen) {
+                            spellingOK_ = true;
                             break;
                         }
-                    }
-                    if (spellingFlag_) {
-                        continue;
-                    }
-                    if (j >= tailLen) {
-                        spellingOK_ = true;
-                        break;
                     }
                 }
             }

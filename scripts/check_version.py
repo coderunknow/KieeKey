@@ -8,7 +8,7 @@
 #   Licensed under the GNU General Public License version 3.
 #
 # Modified work:
-#   KieeKey v1.2.0 Stable - refactored and completed logic
+#   KieeKey v1.2.1 RC3 - refactored and completed logic
 #   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 #   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 #
@@ -63,7 +63,7 @@ import pathlib
 # word; the PE VERSIONINFO needs a 4-part number, the manifest needs 4 parts,
 # and the UI shows the 3-part form plus the channel.
 DEFAULT_EXPECT = "1.2.1"
-CHANNEL = "RC2"
+CHANNEL = "RC3"
 
 
 def _fail(msg: str) -> None:
@@ -172,6 +172,23 @@ def main() -> int:
                not re.search(r"v1\.[01]\.[0-9][-a-z]|fixed|since|was|old|legacy", line, re.I):
                 stale.append(f"{rel}:{line_no}: {line[:100]}")
     problems.extend(stale)
+
+    # ---- 6. the public C++ version macros (v1.2.1 RC3: this carrier was -----
+    # missed by the RC2 release — the macro still said 1.2.0 while the app
+    # shipped 1.2.1; the whole point of this script is that this class of
+    # drift must fail the gate.
+    corehpp = read("src/core/kieekey_core.hpp")
+    if corehpp:
+        m = re.search(r"#define\s+OPENKEY_KIEEKEY_VERSION_MAJOR\s+([0-9]+)", corehpp)
+        n = re.search(r"#define\s+OPENKEY_KIEEKEY_VERSION_MINOR\s+([0-9]+)", corehpp)
+        q = re.search(r"#define\s+OPENKEY_KIEEKEY_VERSION_PATCH\s+([0-9]+)", corehpp)
+        if m and n and q:
+            got = f"{m.group(1)}.{n.group(1)}.{q.group(1)}"
+            if got != want:
+                problems.append(f"kieekey_core.hpp: VERSION {got} != {want}")
+        s = re.search(r'#define\s+OPENKEY_KIEEKEY_VERSION_STRING\s+"([^"]+)"', corehpp)
+        if s and s.group(1) != want_ui:
+            problems.append(f"kieekey_core.hpp: VERSION_STRING {s.group(1)!r} != {want_ui!r}")
 
     if problems:
         for p in problems:

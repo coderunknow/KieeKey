@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.2.0 - refactored and completed logic
+//   KieeKey v1.2.1 RC3 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -72,10 +72,12 @@
 // v1.1.0: the KieeKey release version (previously the pre-release lineage
 // numbers 3.x leaked into this public constant, contradicting the 1.0.x
 // release version used everywhere else).
+// v1.2.1 RC3: this carrier had drifted to 1.2.0 through RC1/RC2 — the
+// check_version.py gate now covers it, so it can never silently drift again.
 #define OPENKEY_KIEEKEY_VERSION_MAJOR 1
 #define OPENKEY_KIEEKEY_VERSION_MINOR 2
-#define OPENKEY_KIEEKEY_VERSION_PATCH 0
-#define OPENKEY_KIEEKEY_VERSION_STRING "1.2.0"
+#define OPENKEY_KIEEKEY_VERSION_PATCH 1
+#define OPENKEY_KIEEKEY_VERSION_STRING "1.2.1 RC3"
 
 #include "TextEngine.hpp"       // engine + options + result contract
 #include "VietnameseTables.hpp" // encoding masks (public contract of results)

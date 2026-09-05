@@ -8,7 +8,7 @@
 #   Licensed under the GNU General Public License version 3.
 #
 # Modified work:
-#   KieeKey v1.2.0 - refactored and completed logic
+#   KieeKey v1.2.1 RC3 - refactored and completed logic
 #   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 #   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 #

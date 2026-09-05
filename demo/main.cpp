@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.2.1 RC2 - refactored and completed logic
+//   KieeKey v1.2.1 RC3 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.2.1 RC2 — demo main.cpp (Windows console)
+// KieeKey v1.2.1 RC3 — demo main.cpp (Windows console)
 //
 // A runnable demonstration of the KieeKey engine. Type Vietnamese Telex/VNI
 // in the console and watch the engine compose words live — WITHOUT clipboard
@@ -68,7 +68,7 @@ void draw(const std::wstring& text, InputMethod method, bool diag) {
     ::FillConsoleOutputCharacterW(h, L' ', info.dwSize.X, {0, 0}, nullptr);
     ::SetConsoleCursorPosition(h, {0, 0});
 
-    std::wprintf(L"  KieeKey v1.2.1 RC2 - engine demo      [%s]   (F2: %s | F3: diag | Esc: clear | Ctrl+C: quit)\n",
+    std::wprintf(L"  KieeKey v1.2.1 RC3 - engine demo      [%s]   (F2: %s | F3: diag | Esc: clear | Ctrl+C: quit)\n",
                  method == InputMethod::Telex ? L"TELEX"
                  : method == InputMethod::Vni ? L"VNI" : L"SIMPLE TELEX",
                  method == InputMethod::Telex ? L"switch to VNI" : L"switch to Telex");
@@ -100,7 +100,7 @@ void printDecision(const TextInput& in, const EngineResult& r, const std::wstrin
 
 int wmain() {
     ::SetConsoleOutputCP(CP_UTF8);
-    ::SetConsoleTitleW(L"KieeKey v1.2.1 RC2 - engine demo");
+    ::SetConsoleTitleW(L"KieeKey v1.2.1 RC3 - engine demo");
 
     EngineOptions opts;
     opts.inputMethod = InputMethod::Telex;

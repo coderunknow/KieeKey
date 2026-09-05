@@ -1,0 +1,13 @@
+=== RC2 (base, frozen worktree v1.2.1-RC2) vs RC3 (cur) — medians over 3 interleaved runs ===
+[base] gate rc=0
+[cur] gate rc=0
+[cur] perf T1-decision p50 ns: vn-compose=50, mixed=51, passthrough=44, delete=46
+[base] perf T1-decision p50 ns: vn-compose=65, mixed=77, passthrough=82, delete=65
+[base] e2e burst/hot p50=9.71us p99=48.90us pipeline p50=10.00us wake p50=13.10us spikes-med=6141 rss=9.07MB
+[cur]  e2e burst/hot p50=10.12us p99=46.37us pipeline p50=10.37us wake p50=13.76us spikes-med=5260 rss=9.07MB
+       (p50 deltas invert run-to-run — host scheduler noise; tails improved: wake p99 -38.5%, spikes -14.3%, tput +3.8%)
+[base] tone edit p50 us: dbar=0.201 double-tone=0.286 heavy-word=0.270 horn-compound=0.292 mid-word=0.203 reposition=0.175 restore-reissue=0.199 tone-append=0.175 mixed[spin]=10.909 mixed[hybrid]=11.649
+[cur]  tone edit p50 us: dbar=0.202 double-tone=0.281 heavy-word=0.267 horn-compound=0.300 mid-word=0.201 reposition=0.175 restore-reissue=0.183 tone-append=0.175 mixed[spin]=10.992 mixed[hybrid]=10.998
+throughput driver (20M keys, non-pg): RC2 57.18-57.37 ns/key, RC3 40.22-40.98 ns/key (-29.5%), output sink identical (3327073)
+gprof: checkSpelling self 22.42 -> 12.03 ns/call; calls identical (18289647 per 20M keys)
+see compare_tables.md for every workload x percentile x tier row

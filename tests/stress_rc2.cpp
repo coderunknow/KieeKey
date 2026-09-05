@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.2.1 RC2 - refactored and completed logic
+//   KieeKey v1.2.1 RC3 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -438,7 +438,7 @@ static void scenarioConcurrent() {
 int main(int argc, char** argv) {
     const std::uint64_t sustainedKeys = argc > 1 ? std::strtoull(argv[1], nullptr, 10) : 2'000'000ull;
     const std::uint32_t seed = argc > 2 ? static_cast<std::uint32_t>(std::strtoul(argv[2], nullptr, 10)) : 20260904u;
-    std::printf("stress_rc2 — KieeKey v1.2.1 RC2 hardening battery\n");
+    std::printf("stress_rc2 — KieeKey v1.2.1 RC3 hardening battery\n");
     const auto t0 = std::chrono::steady_clock::now();
     scenarioBurst();
     scenarioSustained(sustainedKeys);

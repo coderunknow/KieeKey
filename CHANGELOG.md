@@ -3,6 +3,94 @@
 All notable changes to KieeKey are documented here. Format based on
 Keep a Changelog; versioning: SemVer.
 
+## [1.2.1-RC3] — 2026-09-05
+
+### Stability, Correctness & a Leaner Engine
+
+> **Scope:** one real pipeline bug fixed with a permanent regression test
+> (found by re-running the RC2 release gate on a contended 2-CPU host), one
+> high-value engine optimization (decision-identical, proven on 4.8 M
+> lockstep differential events), one stale version carrier closed, and a
+> flaky-by-host test made mechanism-strict. Full evidence, RC2-vs-RC3
+> tables, profiling and the honest regression analysis in
+> [`docs/reports/V1.2.1_RC3_RELEASE_REPORT.md`](docs/reports/V1.2.1_RC3_RELEASE_REPORT.md).
+
+#### Fixed — pipeline correctness (`src/core/win32_wrapper.hpp`)
+
+* **PendingEditCounter underflow after a forced lifecycle quiesce.**
+  `consume()`/`rollback()` used a bare `fetch_sub`. A lifecycle
+  `forceQuiesce()` (engine off, foreground auto-exclusion, power resume)
+  clears the count on its own thread, but the consumer can be mid-batch: it
+  already popped n edits off the ring and is about to call `consume(n)`.
+  The subtraction wrapped to ~4.29 × 10⁹, the value read as "hugely
+  pending", `releaseIfDrained()` never fired, and every following
+  pass-through keystroke burned the full ordering-barrier budget and could
+  overtake edits still in flight — the same post-wedge stall family the
+  class was built to prevent. Reproduced deterministically (5/5 runs,
+  `maxPending 4294967203+`, forced quiesces ≥ 2) by `tests/soak_pipeline`
+  on a 2-CPU host; fixed with a saturating CAS-clamped release that can
+  never lose a concurrent publish, and pinned by the new deterministic +
+  hammered case 7 in `tests/test_lifecycle.cpp`. Post-fix the soak's
+  pending count stays at the legitimate bound (ring + one batch) in every
+  run.
+* The pipeline soak gate itself: RC2's release gate passed 20/21 on the
+  release host; on a contended 2-CPU host `soak_pipeline` fails 5/5 — RC3
+  runs 21/21 PASS.
+
+#### Changed — performance (`src/core/TextEngine.cpp`)
+
+* **checkSpelling consonant scans use constexpr first-letter row buckets.**
+  After RC2's own optimization pass the two table walks were still 40 % of
+  engine time (gprof, 20 M-key driver): the leading scan visited all 33
+  rows and the end scan all 11, although ~90 % can never match the word's
+  first letter under the active option masks. RC3 visits at most 4 of 33
+  (letter N) and 3 of 11 rows — equivalence proven row-by-row in the source
+  (a row outside the bucket is exactly a row the RC2 loop rejected at cell
+  0; on total rejection the RC2 loop always exited at j = 0), backed by
+  `diff_engine_ab` at 4 seeds × 1.2 M events = **4.8 M lockstep events,
+  0 mismatches**, `gate_correctness` 2.06 M events PASS, and a
+  byte-identical output sink on the 20 M-key throughput driver.
+* Measured: micro benchmark p50 −23 % … −46 % across all four workloads
+  (vn-compose 65 → 50 ns, mixed 77 → 51 ns, passthrough 82 → 44 ns,
+  delete 65 → 46 ns); 20 M-key throughput driver 57.2 → 40.2 ns/key
+  (−29.5 %). checkSpelling self time 22.4 → 12.0 ns/call. E2E shim
+  latency is timer-floor-bound on the benchmark host and is reported
+  UNCHANGED (see the report — no fake end-to-end claims).
+* No engine semantics, options, or output bytes changed. Rejected after
+  profiling: further vowel-machinery restructuring (risk ≫ single-digit-ns
+  gain), double-copy elimination in saveWord/pushTypingState (~0.08 ns/key
+  — noise), any change to profile defaults.
+
+#### Fixed — release identity
+
+* `OPENKEY_KIEEKEY_VERSION_*` in `src/core/kieekey_core.hpp` still said
+  `1.2.0` (missed by RC1 and RC2); now `1.2.1 RC3`, and
+  `scripts/check_version.py` covers the macros so the class of drift fails
+  the gate instead of shipping.
+* All version carriers agree on `1.2.1 RC3`: app title/full version
+  (main.cpp), PE VERSIONINFO, manifest, CMake, README, file headers.
+
+#### Fixed — test robustness (product code unchanged)
+
+* `tests/test_lifecycle.cpp` case 6 asserted "the 1 ms barrier budget
+  always suffices", which is a host-scheduling claim: on a shared 2-CPU VM
+  the freshly created consumer thread can be descheduled past the whole
+  budget (observed 2/15 failures on unmodified RC2 code). The mechanism
+  assertions stay strict (count released; waiter released after drain);
+  only the within-1 ms part is now a reported host-slowness count,
+  mirroring the documented `waitDrainedHooked` rationale in the shim.
+
+#### Validation
+
+* 21/21 native suites PASS (`tests/run_all_tests.sh`); differential
+  decision-identity at 4 seeds; correctness gate PASS; ASan+UBSan clean on
+  the engine driver, pipeline soak, differential and lifecycle harnesses;
+  version-consistency gate PASS with extended coverage.
+* Not executable in the release environment (documented in the report):
+  Windows x64/ARM64 cross-compilation (no clang/MinGW toolchain available
+  on the host this time — the RC2 gate ran it), real SendInput/TSF
+  latency, CI matrix.
+
 ## [1.2.1-RC2] — 2026-09-04
 
 ### Performance, Optimization & Real-World Hardening

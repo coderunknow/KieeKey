@@ -1,5 +1,5 @@
 //----------------------------------------------------------------------------
-// KieeKey v1.2.1 RC2 — KieeKeyApp.rc
+// KieeKey v1.2.1 RC3 — KieeKeyApp.rc
 // Resources for the Win32 tray application: app icon, DPI/comctl32 v6
 // manifest, version info. (The settings dialog is built in code in
 // main.cpp so layout stays pixel-exact.)

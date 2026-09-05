@@ -5,7 +5,7 @@
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20ARM64-0078D6.svg)
 ![Build](https://img.shields.io/badge/build-CMake%20%3E%3D%203.28-064FAD.svg)
 
-**KieeKey v1.2.1 RC2** is a modern, low-latency Vietnamese input method
+**KieeKey v1.2.1 RC3** is a modern, low-latency Vietnamese input method
 engine (bộ gõ Tiếng Việt) for Windows, with a system-tray application, a TSF
 text-store composer and an optional WinUI 3 Fluent settings UI.
 
@@ -19,6 +19,38 @@ text-store composer and an optional WinUI 3 Fluent settings UI.
 ![KieeKey preview](src/app/KieeKeyApp-preview.png)
 
 ---
+
+## What's new in v1.2.1 RC3 — stability, correctness & a leaner engine
+
+* **Pipeline bug fixed: pending-count underflow after a wedged lifecycle
+  drain.** `PendingEditCounter::consume()/rollback()` used a bare
+  `fetch_sub`; when a lifecycle `forceQuiesce()` (engine off, auto-excluded
+  app, power resume) raced a consumer batch that had already popped its
+  edits, the counter wrapped to ~4.29 billion, read as "hugely pending", and
+  every following pass-through keystroke burned the full ordering-barrier
+  budget — the post-wedge "typing lags, then it goes away" symptom.
+  The release is now a saturating CAS-clamped release (a concurrent publish
+  can never be lost); reproduced 5/5 by the pipeline soak on a 2-CPU host,
+  fixed + pinned by a deterministic regression test.
+* **Engine decision latency −23 % … −46 % p50** across all four
+  real-world workloads of the micro benchmark (vn-compose 65 → 50 ns,
+  mixed 77 → 51 ns, passthrough 82 → 44 ns, delete 65 → 46 ns), and
+  **−29.5 %** on the 20 M-key throughput driver — from ONE optimization:
+  the two consonant table walks in `checkSpelling` (still 40 % of engine
+  time after RC2's own pass) now use constexpr first-letter row buckets,
+  visiting at most 4 of 33 leading rows and 3 of 11 end rows. Proven
+  **decision-identical to RC1/RC2** on 4.8 M lockstep differential events
+  (4 seeds × 1.2 M) with the byte-identical output sink.
+* **Version-consistency gate extended**: the public
+  `OPENKEY_KIEEKEY_VERSION_*` macros in `kieekey_core.hpp` had drifted to
+  `1.2.0` through RC1 and RC2 — every carrier now agrees on
+  `1.2.1 RC3` and the check script covers the macros.
+* 21 native suites PASS (RC2 baseline on the same host: 20/21 — the
+  pipeline soak failed 5/5); ASan/UBSan clean on engine, pipeline and
+  differential harnesses.
+
+Full evidence, RC2-vs-RC3 tables and the honest no-regression analysis:
+[docs/reports/V1.2.1_RC3_RELEASE_REPORT.md](docs/reports/V1.2.1_RC3_RELEASE_REPORT.md)
 
 ## What's new in v1.2.1 RC2 — performance, optimization & real-world hardening
 

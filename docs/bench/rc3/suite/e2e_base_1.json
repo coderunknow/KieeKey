@@ -1,0 +1,19 @@
+{
+  "schema": "e2e_bench.v2",
+  "runs": [
+    {
+      "run": 0,
+      "keys": 100000,
+      "sendInputCalls": 108,
+      "raw_us": { "p50": 10.042, "p99": 1547.99, "p999": 9599.5, "max": 13096 },
+      "burst_hot_us": { "p50": 9.694, "p99": 48.048, "p999": 71.749, "max": 93.208 },
+      "wake_pay_us": { "p50": 13.1, "p99": 1618.25, "n": 11112 },
+      "pipeline_us": { "p50": 9.98, "p99": 48.327, "p999": 72.249, "max": 98.604 },
+      "lag_spikes_keys": 2100,
+      "lag_spike_events": 87,
+      "throughput_keys_per_s": 13944.5,
+      "peak_rss_mb_total": 9.02344,
+      "pipeline_footprint_mb": 6.54388
+    }
+  ]
+}

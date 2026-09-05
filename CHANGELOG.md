@@ -69,6 +69,12 @@ Keep a Changelog; versioning: SemVer.
   the gate instead of shipping.
 * All version carriers agree on `1.2.1 RC3`: app title/full version
   (main.cpp), PE VERSIONINFO, manifest, CMake, README, file headers.
+* `SHA256SUMS.txt` regenerated for the first time since the v1.1.3 source
+  import — it had been stale through v1.2.0, RC1 and RC2 (246 entries for
+  a tree that no longer matched). Now 318 entries, every shipped file,
+  verified with `sha256sum -c` from the parent directory; the manifest
+  excludes itself (a file cannot contain its own hash) and the volatile
+  build output (`build/`, `bench_runs/`, `gmon.out`).
 
 #### Fixed — test robustness (product code unchanged)
 

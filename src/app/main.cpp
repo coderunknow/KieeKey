@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.2.1 RC3 - refactored and completed logic
+//   KieeKey v1.2.1 Stable - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.2.1 RC3 — src/app/main.cpp
+// KieeKey v1.2.1 Stable — src/app/main.cpp
 // The OpenKey-style Windows tray application (replaces the pre-tray console host):
 //
 //   * System tray icon (green = Vietnamese ON, gray = OFF) with the classic
@@ -171,8 +171,11 @@ namespace {
 // fails the build if they drift apart again.
 //===========================================================================
 constexpr wchar_t kAppVersion[]     = L"1.2.1";           // numeric, 3-part
-constexpr wchar_t kAppVersionFull[] = L"1.2.1 RC3";       // with channel
-constexpr wchar_t kAppTitle[]       = L"KieeKey v1.2.1 RC3";  // sync with kAppVersionFull
+// v1.2.1 Stable: [[maybe_unused]] — this is a documented VERSION CARRIER
+// (check_version.py reads it), not a code-level constant; the UI shows the
+// title/version forms. Keeping it zero-maintenance and warning-clean.
+[[maybe_unused]] constexpr wchar_t kAppVersionFull[] = L"1.2.1 Stable";    // with channel
+constexpr wchar_t kAppTitle[]       = L"KieeKey v1.2.1 Stable";  // sync with kAppVersionFull
 
 //===========================================================================
 // Output item: what the consumer thread must emit (trivially copyable → can
@@ -865,7 +868,11 @@ bool applyPerfStrategy(bool lockEngine, bool force = false) noexcept {
 // ≈ 5.4 KiB on the stack, zero heap. Macro expansions (D3) can be longer —
 // the loop below flushes the batch and keeps going, so ANY payload size is
 // safe (chunked, still ordered, still self-tagged).
-inline constexpr std::size_t kMaxInlineInputs = kMaxBuff * 2 + 2 * kMaxBuff * 2 + 4;
+// v1.2.1 Stable: the app-local stack-batch constant was deleted — the
+// emitter moved to the wrapper layer (ok::wrap::InlineEmitter with its own
+// kMaxInlineInputs) and this copy had been dead since v3.3.1. Nothing here
+// builds INPUT arrays any more; every inline emit goes through
+// g.hook.emitter().sendEdit(), which owns the batching.
 void sendBackspaces(std::size_t n) noexcept;    // defined below (fallback output)
 void sendUnicodeText(const std::wstring& text) noexcept;
 

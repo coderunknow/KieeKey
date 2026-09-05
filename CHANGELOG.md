@@ -3,6 +3,91 @@
 All notable changes to KieeKey are documented here. Format based on
 Keep a Changelog; versioning: SemVer.
 
+## [1.2.1-Stable] — 2026-09-05
+
+### Whole-repository hardening: the Windows surface passes a real gate
+
+> **Scope:** 8 bugs found and fixed — every one in the Windows-only surface
+> (TSF composer, hook/monitor lifecycles, WinUI 3 front-end, build
+> portability), none in the engine core (6-seed × 1.2 M lockstep
+> differential vs the frozen RC1 engine: **7.21 M events, 0 mismatches**).
+> New permanent gate: the complete Windows app now **compiles AND links**
+> as x64 + ARM64 PE under clang `-Wall -Wextra -Werror` (llvm-mingw), which
+> RC3 could not do at all. Engine byte-identical → benchmarks **UNCHANGED**
+> with byte-identical output sinks (20 M-key driver, median 43.47 ns/key on
+> both sides). Full evidence:
+> [`docs/reports/V1.2.1_STABLE_RELEASE_REPORT.md`](docs/reports/V1.2.1_STABLE_RELEASE_REPORT.md).
+
+#### Fixed — Windows correctness
+
+* **Use-after-free in the shipped TSF batch-commit path (P0).**
+  `TsfComposer::commitBatch` read `appliedCount()` AFTER the final
+  `session->Release()` — which, with TF_ES_SYNC, had already dropped the
+  last reference and deleted the session object. Benign-looking in retail,
+  undefined by the standard, and a wrong count here makes the SendInput
+  fallback re-emit the WRONG suffix of a batch (duplicated/missing text).
+  The count is now snapshotted before the release.
+* **Cross-thread handle reads in hook/monitor start (P2, ×2).**
+  `ModernKeyHook::start()` re-checked installation by reading the
+  pump-owned `keyboardHook_` handle cross-thread — the exact pattern the
+  v1.2.0 comment on `hooksInstalled_` calls undefined and claims to have
+  replaced. `start()` now polls the atomic handshake. `ProcessMonitor` had
+  the same unfixed pattern on `fgEvent_` and gained the same handshake
+  (published by the pump, re-armed in `start()`, cleared on unwind).
+* **Build portability (P1).** `ProcessMonitor.cpp` used `std::abs` on
+  `LONG` without `<cstdlib>` — MSVC's header chain hides this; a
+  conforming toolchain fails to compile the file. Found by the new
+  Windows cross-build gate on its first run.
+* **Strict-warnings cleanliness (P3).** Dead app-local `kMaxInlineInputs`
+  constant deleted; documented version carriers annotated
+  `[[maybe_unused]]` — the whole Windows surface is now clean under
+  `-Wall -Wextra -Werror`.
+
+#### Fixed — WinUI 3 front-end (UI)
+
+* **Macro expansions were silently dropped.** The consumer returned early
+  for `ReplaceMacro`, so "gõ tắt" abbreviations never expanded in this
+  front-end (the pre-v3.1 defect class the Win32 app fixed long ago).
+  Expansions are now applied per the D3 contract.
+* **TSF apartment affinity violated.** The composer attached on the UI
+  thread while every commit ran on the hook's consumer thread; STA objects
+  must live on one thread (the Win32 app documents exactly this). Attach
+  now happens lazily on the consumer thread and detach via the consumer
+  finalizer — also fixing a COM-init reference leak on failed hook start.
+* **Stale About version.** The About line said "v1.2.0 Stable" through the
+  whole 1.2.1 RC cycle. It now derives from the public version macro, and
+  `scripts/check_version.py` covers the file so it cannot drift again.
+
+#### Added — release infrastructure
+
+* **Windows PE cross-build gate** (`scripts/build_windows_cross.sh`):
+  x64 + ARM64 `KieeKeyApp.exe` — engine, hook, wrapper, monitor, TSF, app,
+  resources (VERSIONINFO 1.2.1.0 + manifest) — compile AND link clean with
+  clang/llvm-mingw under `-Wall -Wextra -Werror`. Complements the MSVC CI
+  (different standard library, different headers → different bug classes);
+  does not replace it.
+* **Version gate hardened**: stale-carrier scan now covers the WinUI 3
+  front-end and the `v1.2.0` pattern; channel set to `Stable`.
+* **Sanitizer battery**: ASan+UBSan+LSan on the oracle gate (2.06 M
+  events), the RC1 lockstep differential (leak detection), the full
+  lifecycle suite, a 500 K-iteration pipeline soak and a 1 M-key stress —
+  all clean.
+* **Repo tooling bug fixed** (`tools/crossbuild_windows.sh`): an absolute
+  `--out` path was double-prefixed with the repo root, crashing the
+  resource step with FileNotFound; the tool now completes compile +
+  resource + link on the Stable tree (a third independent toolchain
+  confirming the build).
+
+#### Unchanged — on purpose
+
+* The engine and transport layers differ from RC3 **only in release-identity
+  comment banners** (zero code lines changed — identical compiled output). Measured: micro decision p50 44–51 ns on all
+  four workloads (identical medians), 20 M-key throughput 43.47 ns/key on
+  both sides with byte-identical output sink, E2E/tone deltas within the
+  host noise band (the A/B shim sources are identical, so those deltas are
+  noise by construction). Known limitations and the honest Windows
+  validation boundary are in the release report.
+
 ## [1.2.1-RC3] — 2026-09-05
 
 ### Stability, Correctness & a Leaner Engine

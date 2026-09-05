@@ -8,7 +8,7 @@
 #   Licensed under the GNU General Public License version 3.
 #
 # Modified work:
-#   KieeKey v1.2.1 RC3 - refactored and completed logic
+#   KieeKey v1.2.1 Stable - refactored and completed logic
 #   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 #   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 #
@@ -63,7 +63,7 @@ import pathlib
 # word; the PE VERSIONINFO needs a 4-part number, the manifest needs 4 parts,
 # and the UI shows the 3-part form plus the channel.
 DEFAULT_EXPECT = "1.2.1"
-CHANNEL = "RC3"
+CHANNEL = "Stable"
 
 
 def _fail(msg: str) -> None:
@@ -151,14 +151,19 @@ def main() -> int:
                     "an upgrade would then allow two instances to run")
 
     # ---- 5. no stale version identifiers anywhere in shipped sources ---------
+    # v1.2.1 Stable: the scan now covers the WinUI 3 front-end too — its
+    # About line hardcoded "v1.2.0 Stable" through the whole 1.2.1 RC cycle
+    # (found by the Stable release audit); the front-end now derives the
+    # string from the public macros, and this scan keeps it covered.
     stale: list[str] = []
     for rel in ("src/app/main.cpp", "src/app/KieeKeyApp.rc",
                 "src/app/KieeKeyApp.manifest", "src/app/resource.h",
+                "src/ui/MainWindow.xaml.cpp",
                 "demo/main.cpp", "CMakeLists.txt"):
         text = read(rel)
         if not text:
             continue
-        for m in re.finditer(r"\b1\.1\.[0-9]\b|\b1\.0\.[0-9]\b", text):
+        for m in re.finditer(r"\b1\.1\.[0-9]\b|\b1\.0\.[0-9]\b|v1\.2\.0", text):
             line_no = text[:m.start()].count("\n") + 1
             line = text.splitlines()[line_no - 1].strip()
             # Historical "fixed in v1.1.x" comments are legitimate; only flag

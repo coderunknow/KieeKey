@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.2.1 RC3 - refactored and completed logic
+//   KieeKey v1.2.1 Stable - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.2.1 RC3 — ModernKeyHook.cpp
+// KieeKey v1.2.1 Stable — ModernKeyHook.cpp
 // See ModernKeyHook.hpp for the architecture rationale.
 //----------------------------------------------------------------------------
 #include "ModernKeyHook.hpp"
@@ -57,10 +57,13 @@ constexpr std::uint32_t kMaskCaps    = 0x10;
 constexpr std::uint32_t kMaskNum     = 0x20;
 constexpr std::uint32_t kMaskScroll  = 0x40;
 
-// Self-injection watchdog: if the queue ever saturates for > 200 ms while the
-// consumer is alive, something pathological is happening; keep dropping but
-// surface it in stats (never block the hook).
-constexpr std::uint64_t kMaxAcceptableHookLatencyNs = 200'000'000ULL;
+// v1.2.1 Stable: [[maybe_unused]] — documents the pathological-saturation
+// threshold the overflow wake policy is designed around (the saturation is
+// surfaced as overflowWakeCount, not as a latency comparison); keeping the
+// documented bound here keeps the policy rationale with the code and keeps
+// strict -Wall -Wextra -Werror builds clean on toolchains that flag unused
+// anonymous-namespace constants (MSVC does not, clang does).
+[[maybe_unused]] constexpr std::uint64_t kMaxAcceptableHookLatencyNs = 200'000'000ULL;
 
 inline std::uint64_t qpcNow() noexcept {
     LARGE_INTEGER li;
@@ -174,12 +177,20 @@ bool ModernKeyHook::start(EventHandler handler) {
             !running_.load(std::memory_order_acquire)) { break; }
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
-    if (!keyboardHook_.operator bool()) {
+    if (!hooksInstalled_.load(std::memory_order_acquire)) {
         // v1.1.0-audit fix: hook installation failed — roll back the FULL
         // lifecycle (join/detach the two workers we just spawned) before
         // reporting failure. The old code returned false with running_ still
         // set: a retry start() then hit the early-return-true at the top and
         // reported success with NO hooks installed.
+        // v1.2.1 Stable: the check above now reads the ATOMIC handshake flag.
+        // It previously read keyboardHook_.operator bool() here — the pump
+        // thread owns and writes that handle, so this was exactly the
+        // unsynchronized cross-thread read the v1.2.0 comment at
+        // hooksInstalled_ describes (and claims to have replaced); the
+        // handle read itself had survived. The flag is the same fact
+        // (keyboard hook installed or not), published with release after
+        // all three hooks are set.
         stop();
         return false;
     }

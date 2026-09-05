@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.2.1 RC3 - refactored and completed logic
+//   KieeKey v1.2.1 Stable - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -211,6 +211,11 @@ private:
     // v3.5 reliability: exit acknowledgement for the bounded shutdown in
     // stop() (stamp is the pump thread's very last action — see start()).
     std::atomic<bool> pumpExited_{false};
+    // v1.2.1 Stable: hook-installation handshake. Published by the pump
+    // thread after SetWinEventHook, polled by start() and stop() — replaces
+    // the old unsynchronized read of the fgEvent_ handle member (the same
+    // cross-thread data race ModernKeyHook eliminated in v1.2.0).
+    std::atomic<bool> hookInstalled_{false};
     // v1.1.0: set when stop()'s bounded budget expired and the pump had to
     // be detached (see stuckThreadsDetached()).
     std::atomic<bool> stuckDetached_{false};

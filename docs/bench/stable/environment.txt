@@ -1,0 +1,14 @@
+=== RELEASE BASELINE ENVIRONMENT (frozen RC3) ===
+UTC: 2026-09-05T03:44:57Z
+OS: Debian GNU/Linux 13 (trixie)
+Kernel: 5.10.134-013.8.3.kangaroo.al8.x86_64 x86_64
+CPU: Intel(R) Xeon(R) Processor
+Logical CPUs: 2
+RAM: 4.1Gi
+Compiler: g++ (Debian 14.2.0-19) 14.2.0
+CMake: cmake version 4.4.3
+Git commit: 016abac52f1ecd2bc5d42004e6993db91452e931
+Git describe: v1.2.1-RC3-1-g016abac
+Git tag list: v1.0.0 v1.0.1 v1.0.2 v1.1.0 v1.1.1 v1.1.3 v1.2.0-RC1 v1.2.0-Stable v1.2.1-RC1 v1.2.1-RC2 v1.2.1-RC3 
+CPU flags (subset): avx avx2 bmi2 fma 
+Hypervisor: docker

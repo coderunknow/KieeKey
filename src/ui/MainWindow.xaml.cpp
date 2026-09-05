@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.2.1 RC3 - refactored and completed logic
+//   KieeKey v1.2.1 Stable - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -158,7 +158,6 @@ void MainWindow::startEngine() {
     if (m_running) { return; }
 
     (void)m_monitor->start();
-    (void)m_composer->attach();     // CoInitializeEx + ActivateEx on UI thread
 
     // Capture the pipeline pieces (shared_ptr copies keep them alive across
     // the hook's threads). Raw `this` is safe: ~MainWindow calls stopEngine(),
@@ -167,8 +166,25 @@ void MainWindow::startEngine() {
     const auto monitor  = m_monitor;
     const auto composer = m_composer;
 
-    m_running = m_hook->start([this, engine, monitor, composer](const ok::hook::KeyEvent& ev) {
+    // v1.2.1 Stable — TSF THREAD-AFFINITY FIX (found by the Stable release
+    // audit of the WinUI 3 front-end). This front-end used to attach the
+    // TsfComposer HERE on the UI thread (CoInitializeEx STA + TSF
+    // ActivateEx), while every commit()/textBeforeCaret() call runs on the
+    // hook's CONSUMER thread. Apartment-threaded TSF objects created on one
+    // thread and used on another without marshaling is a COM apartment
+    // violation — the same class of bug the Win32 tray app explicitly calls
+    // out in main.cpp ("STA objects must be released on their creating
+    // thread"). The Win32 app is the correct model and it is what the
+    // shipped composer expects: attach() on the consumer thread (latched,
+    // first use) and detach() via the consumer finalizer. The stale attach
+    // here also leaked one COM init reference whenever hook start() failed
+    // (stopEngine() early-returns on !m_running, so detach() never ran).
+    m_hook->setConsumerFinalizer([composer] { composer->detach(); });
+
+    bool composerAttached = false;   // consumer-thread latch (see above)
+    m_running = m_hook->start([this, engine, monitor, composer, composerAttached](const ok::hook::KeyEvent& ev) mutable {
         // Runs on the hook's consumer thread — must never block.
+        if (!composerAttached) { composerAttached = composer->attach(); }
         if (ev.source == ok::hook::EventSource::ForegroundChanged) {
             monitor->refreshNow();
             composer->onForegroundChanged();
@@ -235,9 +251,8 @@ void MainWindow::startEngine() {
 void MainWindow::stopEngine() noexcept {
     if (!m_running) { return; }
     m_running = false;
-    if (m_hook)   { m_hook->stop(); }
+    if (m_hook)   { m_hook->stop(); }   // the consumer finalizer detaches the composer ON the consumer thread (COM affinity)
     if (m_monitor) { m_monitor->stop(); }
-    if (m_composer) { m_composer->detach(); }
 }
 
 //---------------------------------------------------------------------------
@@ -276,8 +291,27 @@ void MainWindow::commit(const std::shared_ptr<ok::text::TextEngine>& engine,
                         const std::shared_ptr<ok::tsf::TsfComposer>& composer,
                         const ok::text::TextInput& in,
                         const ok::text::EngineResult& r) noexcept {
+    (void)in;
     if (!r.consumed()) { return; }
-    if (r.code == ok::text::EngineCode::ReplaceMacro) { return; }
+    // v1.2.1 Stable — MACRO-EXPANSION FIX (found by the Stable release
+    // audit of the WinUI 3 front-end). ReplaceMacro results were silently
+    // DROPPED here: the consumer let the raw break key through and the
+    // expansion never appeared — the exact "every macro expansion is
+    // silently dropped" defect the D3 contract was created to remove (462,627
+    // gap events in the v3.1 mega differential; the Win32 app has applied
+    // the expansion since v3.1). Apply it like the Win32 app does: delete
+    // backspaceCount chars, insert macroExpansionUtf16, consume the break
+    // key (the result contract means the app suppresses the raw key).
+    if (r.code == ok::text::EngineCode::ReplaceMacro) {
+        const std::size_t bsM = r.backspaceCount;
+        const std::wstring expM = engine->macroExpansionUtf16(r);
+        if (bsM == 0 && expM.empty()) { return; }
+        if (!composer->commit(bsM, expM)) {
+            sendBackspaces(bsM);
+            sendUnicodeText(expM);
+        }
+        return;
+    }
     const std::wstring rep = engine->replacementUtf16(r);
     const std::size_t  bs  = r.backspaceCount;
     if (bs == 0 && rep.empty()) { return; }
@@ -467,7 +501,17 @@ void MainWindow::OnAdvancedSettings(IInspectable const&, RoutedEventArgs const&)
 }
 
 void MainWindow::OnAbout(IInspectable const&, RoutedEventArgs const&) {
-    StatusText().Text(L"KieeKey v1.2.0 Stable — engine C++23, hook lock-free, TSF, WinUI 3");
+    // v1.2.1 Stable — STALE-VERSION FIX: this string hardcoded "v1.2.0
+    // Stable" through the whole 1.2.1 RC cycle (the RC releases only bumped
+    // the Win32 app's carriers). The About line now derives from the public
+    // version macro so it can never drift again (check_version.py covers
+    // this file). Plain ASCII widening — no winrt string algebra needed.
+    std::wstring about(L"KieeKey v");
+    for (const char* p = OPENKEY_KIEEKEY_VERSION_STRING; *p; ++p) {
+        about += static_cast<wchar_t>(*p);
+    }
+    about += L" — engine C++23, hook lock-free, TSF, WinUI 3";
+    StatusText().Text(winrt::hstring(about));
 }
 
 } // namespace KieeKey

@@ -8,7 +8,7 @@
 #   Licensed under the GNU General Public License version 3.
 #
 # Modified work:
-#   KieeKey v1.2.1 RC3 - refactored and completed logic
+#   KieeKey v1.2.1 Stable - refactored and completed logic
 #   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 #   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 #
@@ -165,7 +165,7 @@ fi
 # both .ico files, all resolved relative to src/app/.
 echo "-- resources -----------------------------------------------------------"
 printf '  %-34s' "src/app/KieeKeyApp.rc"
-if ( cd src/app && $ZIG rc /c 65001 /fo "$REPO_ROOT/$OUT/app.res" KieeKeyApp.rc ) \
+if ( cd src/app && $ZIG rc /c 65001 /fo "$OUT/app.res" KieeKeyApp.rc ) \
         > "$OUT/rc.log" 2>&1; then
     echo "ok"
 else

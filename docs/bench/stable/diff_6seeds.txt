@@ -1,0 +1,6 @@
+seed=20260904: events=1202051 mismatches=0 VERDICT: PASS 
+seed=777: events=1202089 mismatches=0 VERDICT: PASS 
+seed=31337: events=1201475 mismatches=0 VERDICT: PASS 
+seed=99991: events=1201904 mismatches=0 VERDICT: PASS 
+seed=424242: events=1201718 mismatches=0 VERDICT: PASS 
+seed=20260905: events=1201752 mismatches=0 VERDICT: PASS 

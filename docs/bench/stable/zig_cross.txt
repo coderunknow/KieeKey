@@ -1,0 +1,21 @@
+Windows cross-build evidence — KieeKey v1.2.1 Stable
+=====================================================
+
+1) llvm-mingw gate (scripts/build_windows_cross.sh, new this release)
+   toolchain : llvm-mingw 20260826, clang 23.1.0, UCRT, mingw-w64 headers
+   flags     : -std=c++20 -O2 -Wall -Wextra -Werror
+   results   : KieeKeyApp-x86_64.exe  — PE32+ GUI, link OK, resources embedded
+               KieeKeyApp-aarch64.exe — PE32+ GUI, link OK, resources embedded
+   version   : binary carries "KieeKey v1.2.1 Stable" (UTF-16LE), zero "RC3" remnants
+   full log  : win_cross_build.log
+
+2) repository Zig tool (tools/crossbuild_windows.sh)
+   toolchain : zig 0.16.0 (pip ziglang), target x86_64-windows-gnu
+   result    : compile (6/6 TUs) + resources (zig rc, VERSIONINFO 1.2.1.0) + link OK
+               -> KieeKeyApp.exe, 1,269,760 bytes
+   fix note  : absolute --out path double-prefix bug fixed this release
+               ($REPO_ROOT/$OUT concatenation crashed the resource step)
+
+3) authoritative shipped binaries: GitHub Actions MSVC CI
+   (windows-2022, x64 + ARM64 + ARM64EC, /W4 /WX) — not executable in this
+   environment; see the release report §10 for the validation boundary.

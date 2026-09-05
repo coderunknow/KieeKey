@@ -1,0 +1,6 @@
+run1 rc3: 43.47 ns/key  sink=5436924
+run1 stable: 43.47 ns/key  sink=5436924
+run2 rc3: 43.79 ns/key  sink=5436924
+run2 stable: 43.41 ns/key  sink=5436924
+run3 rc3: 43.46 ns/key  sink=5436924
+run3 stable: 43.69 ns/key  sink=5436924

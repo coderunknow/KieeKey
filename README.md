@@ -5,7 +5,7 @@
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20ARM64-0078D6.svg)
 ![Build](https://img.shields.io/badge/build-CMake%20%3E%3D%203.28-064FAD.svg)
 
-**KieeKey v1.2.1 RC3** is a modern, low-latency Vietnamese input method
+**KieeKey v1.2.1 Stable** is a modern, low-latency Vietnamese input method
 engine (bộ gõ Tiếng Việt) for Windows, with a system-tray application, a TSF
 text-store composer and an optional WinUI 3 Fluent settings UI.
 
@@ -19,6 +19,37 @@ text-store composer and an optional WinUI 3 Fluent settings UI.
 ![KieeKey preview](src/app/KieeKeyApp-preview.png)
 
 ---
+
+## What's new in v1.2.1 Stable — the Windows surface passes a real gate
+
+* **Use-after-free fixed in the shipped TSF batch-commit path (P0).**
+  `TsfComposer::commitBatch` read `appliedCount()` after the final
+  `Release()` had already deleted the edit-session object (with TF_ES_SYNC
+  TSF's internal reference is gone when the request returns). Now
+  snapshotted before the release — one register-cached load, zero latency
+  cost, one heap-corruption risk gone.
+* **The complete Windows app now compiles AND links as x64 + ARM64 PE**
+  under clang `-Wall -Wextra -Werror` (llvm-mingw cross gate,
+  `scripts/build_windows_cross.sh`) — RC3 shipped with "Windows build NOT
+  EXECUTED". The gate's first run caught a real compile-breaking bug
+  (`std::abs` on `LONG` without `<cstdlib>` — MSVC hides it) plus three
+  strict-warning defects; all fixed.
+* **Two cross-thread handle reads removed from hook/monitor startup** (both
+  now poll the atomic installation handshake — the pattern the v1.2.0 notes
+  already mandated for `ModernKeyHook`).
+* **WinUI 3 front-end fixes**: macro expansions no longer silently dropped
+  (D3 contract), the TSF composer is created/destroyed on the consumer
+  thread it is used from (COM apartment affinity + leak fix), and the About
+  line derives from the public version macro instead of a stale "v1.2.0
+  Stable" string that survived the whole RC cycle.
+* **Engine byte-identical to RC3 — measured, not assumed**: 6-seed × 1.2 M
+  lockstep differential vs the frozen RC1 engine (7.21 M events, 0
+  mismatches), byte-identical 20 M-key output sink, identical micro
+  decision medians (44–51 ns p50), 21/21 native suites, ASan/UBSan/LSan
+  clean across the battery.
+
+Full evidence, tables and the honest Windows-validation boundary:
+[docs/reports/V1.2.1_STABLE_RELEASE_REPORT.md](docs/reports/V1.2.1_STABLE_RELEASE_REPORT.md)
 
 ## What's new in v1.2.1 RC3 — stability, correctness & a leaner engine
 

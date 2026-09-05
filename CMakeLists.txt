@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------------
-# KieeKey v1.2.1 RC3 — CMake build (modern replacement for the .sln/.vcxproj)
+# KieeKey v1.2.1 Stable — CMake build (modern replacement for the .sln/.vcxproj)
 #
 #   * C++23, /W4 + /WX (warnings as errors) for release-grade hygiene (MSVC)
 #   * x64 + ARM64 out of the box (ARM64EC possible: -A ARM64EC, VS 17.4+)

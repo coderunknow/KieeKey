@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.2.1 RC3 - refactored and completed logic
+//   KieeKey v1.2.1 Stable - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -35,6 +35,12 @@
 
 #include <algorithm>
 #include <cctype>
+// v1.2.1 Stable — portability fix (found by the new Windows cross-build
+// gate): isFullscreenOnPrimary() calls std::abs on LONG deltas. std::abs for
+// integral types is declared by <cstdlib>; MSVC's <windows.h> chain happens
+// to pull it in, but a conforming toolchain (clang/libc++ with mingw-w64
+// headers) does not — the file previously FAILED to compile off-MSVC.
+#include <cstdlib>
 
 #include <dwmapi.h>
 #include <psapi.h>
@@ -152,17 +158,28 @@ bool ProcessMonitor::start() {
 
     pumpExited_.store(false, std::memory_order_release);
     stuckDetached_.store(false, std::memory_order_release);   // v1.1.0 re-arm
+    // v1.2.1 Stable: re-arm the installation handshake (a previous
+    // start()/stop() cycle must never let this start() see a stale "installed").
+    hookInstalled_.store(false, std::memory_order_release);
     pumpThread_ = std::thread([this] {
         pumpThreadMain();
         pumpExited_.store(true, std::memory_order_release);
     });
 
     // Wait for hook installation.
+    // v1.2.1 Stable — poll the ATOMIC handshake flag (hookInstalled_), not
+    // the fgEvent_ handle member: the pump thread owns and writes that
+    // handle, and reading it from this thread was the same unsynchronized
+    // cross-thread access ModernKeyHook::start() already eliminated in
+    // v1.2.0 (its own comment documents why: a data race, benign on current
+    // hardware, undefined by the standard). The pump now publishes the same
+    // installation fact through an atomic.
     for (int i = 0; i < 2000 && pumpThread_.joinable(); ++i) {
-        if (fgEvent_ || !running_.load(std::memory_order_acquire)) { break; }
+        if (hookInstalled_.load(std::memory_order_acquire) ||
+            !running_.load(std::memory_order_acquire)) { break; }
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
-    if (!fgEvent_) {
+    if (!hookInstalled_.load(std::memory_order_acquire)) {
         // v1.1.0-audit fix: join the pump we just spawned before returning
         // failure. The old code only cleared running_ — stop() then early-
         // returned on the already-clear flag and NEVER joined, so
@@ -254,6 +271,9 @@ void ProcessMonitor::pumpThreadMain() noexcept {
     fgEvent_.reset(::SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND,
                                      nullptr, &ProcessMonitor::winEventProc, 0, 0,
                                      WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS));
+    // v1.2.1 Stable: publish the installation handshake (start() polls this
+    // atomic instead of reading the fgEvent_ handle cross-thread).
+    hookInstalled_.store(fgEvent_.operator bool(), std::memory_order_release);
     // v3.5 reliability: 1 s fallback timer — the pump ALWAYS wakes
     // periodically and re-checks running_, so a lost WM_QUIT can never turn
     // shutdown into a hang.
@@ -268,6 +288,9 @@ void ProcessMonitor::pumpThreadMain() noexcept {
     }
     ::KillTimer(nullptr, kMonitorTickTimerId);
     fgEvent_.reset();
+    // v1.2.1 Stable: the hook is gone with this thread — clear the handshake
+    // so no later observer can read a stale "installed".
+    hookInstalled_.store(false, std::memory_order_release);
     g_current = nullptr;
 }
 

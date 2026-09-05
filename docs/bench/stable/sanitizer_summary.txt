@@ -1,0 +1,5 @@
+gate_asan: VERDICT: PASS\n rc-recorded
+ab_asan: VERDICT: PASS (live engine is decision-identical to v1.2.1 RC1) rc-recorded
+lifecycle_asan: PASS rc-recorded
+soak_asan: PASS rc-recorded
+stress_asan: PASS rc-recorded

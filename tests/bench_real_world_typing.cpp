@@ -1,5 +1,5 @@
 //============================================================================
-// KieeKey v1.2.1 RC3 — tests/bench_real_world_typing.cpp
+// KieeKey v1.2.1 Stable — tests/bench_real_world_typing.cpp
 // Real-world typing latency + resource cost benchmark.
 //
 // Unlike e2e_bench.cpp (which measures burst throughput) and bench_tone_latency
@@ -307,7 +307,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    std::printf("KieeKey v1.2.1 RC3 — Real-World Typing Benchmark\n");
+    std::printf("KieeKey v1.2.1 Stable — Real-World Typing Benchmark\n");
     std::printf("  keys=%zu  runs=%d  paced=%s  workload=%s\n",
                 targetKeys, runs, paced ? "yes" : "no", workloadName.c_str());
 

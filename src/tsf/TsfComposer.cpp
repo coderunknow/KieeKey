@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.2.1 RC3 - refactored and completed logic
+//   KieeKey v1.2.1 Stable - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -565,7 +565,20 @@ bool TsfComposer::commitBatch(const std::vector<EditDelta>& deltas,
         lastCommitSlow_.store(true, std::memory_order_relaxed);
     }
 
-    if (appliedOut) { *appliedOut = session->appliedCount(); }
+    // v1.2.1 Stable — USE-AFTER-FREE FIX (found by the Stable release audit).
+    // v1.1.0 added the caller-reference Release() below, but kept the
+    // appliedCount() read AFTER it. With TF_ES_SYNC, TSF's internal session
+    // reference is already gone by the time RequestEditSession returns, so
+    // that Release() drops the LAST reference and `delete this` runs inside
+    // Release() — the appliedCount() read then touched freed memory
+    // (benign-looking in retail because the freed block is usually untouched
+    // for a while, undefined everywhere else; ASan would flag it in the
+    // shipped TSF path). appliedCount() cannot change after DoEditSession
+    // returns, so snapshot it BEFORE the release.
+    const std::uint32_t appliedCount = session->appliedCount();
+    session->Release();
+
+    if (appliedOut) { *appliedOut = appliedCount; }
     if (FAILED(hr) || FAILED(sessionHr)) {
         return false;
     }

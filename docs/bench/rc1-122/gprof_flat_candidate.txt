@@ -1,0 +1,361 @@
+Flat profile:
+
+Each sample counts as 0.01 seconds.
+  %   cumulative   self              self     total           
+ time   seconds   seconds    calls  ns/call  ns/call  name    
+ 32.98      0.16     0.16 15499374    10.00    17.84  ok::text::TextEngine::handleMainKey(char32_t, bool)
+ 23.41      0.27     0.11 18289647     6.02     6.02  ok::text::TextEngine::checkSpelling(bool)
+ 12.77      0.33     0.06 20000000     3.00    19.25  ok::text::TextEngine::process(ok::text::TextInput const&)
+ 10.64      0.38     0.05                             main
+  4.26      0.40     0.02 20000000     1.00     1.50  ok::text::TextEngine::replacementUtf16(ok::text::EngineResult const&, std::__cxx11::basic_string<wchar_t, std::char_traits<wchar_t>, std::allocator<wchar_t> >&) const
+  2.13      0.41     0.01 14282152     0.70     6.72  ok::text::TextEngine::insertKey(char32_t, bool, bool)
+  2.13      0.42     0.01  8426974     1.19     1.19  ok::text::TextEngine::pushTypingState()
+  2.13      0.43     0.01  4063674     2.46     2.46  ok::text::TextEngine::saveWord()
+  2.13      0.44     0.01  3670391     2.72     2.72  ok::text::TextEngine::findAndCalculateVowel(bool)
+  2.13      0.45     0.01  1729078     5.78     9.71  ok::text::TextEngine::checkGrammar(int)
+  2.13      0.46     0.01   730333    13.69    13.69  ok::text::TextEngine::keyCodeToCharacter(unsigned int)
+  2.13      0.47     0.01   374532    26.70    27.89  ok::text::TextEngine::saveSpecialChar()
+  1.06      0.47     0.01                             ok::text::TextEngine::checkForStandaloneChar(char32_t, bool, char32_t)
+  0.00      0.47     0.00  4026221     0.00    11.00  ok::text::TextEngine::spaceBranch(char32_t, bool)
+  0.00      0.47     0.00  4026221     0.00     0.00  ok::text::TextEngine::saveWord(char32_t, int)
+  0.00      0.47     0.00  3489369     0.00     0.00  ok::text::TextEngine::resolveChar(unsigned int) const
+  0.00      0.47     0.00  3476885     0.00     0.00  ok::text::TextEngine::getCharacterCode(unsigned int const&) const
+  0.00      0.47     0.00  2109851     0.00     0.00  std::__cxx11::basic_string<wchar_t, std::char_traits<wchar_t>, std::allocator<wchar_t> >::push_back(wchar_t)
+  0.00      0.47     0.00  2022462     0.00     0.00  ok::text::TextEngine::checkCorrectVowel(ok::text::FlatVec<ok::text::FlatVec<unsigned short> > const&, int&, int&, char32_t)
+  0.00      0.47     0.00  1523088     0.00     2.72  ok::text::TextEngine::insertMark(unsigned int, bool)
+  0.00      0.47     0.00   755303     0.00     0.00  ok::text::TextEngine::checkRestoreIfWrongSpelling(ok::text::EngineCode)
+  0.00      0.47     0.00   486889     0.00     0.00  ok::text::TextEngine::handleOldMark()
+  0.00      0.47     0.00   411985     0.00     8.78  ok::text::TextEngine::wordBreakBranch(char32_t, bool, ok::text::TextInput const&, bool)
+  0.00      0.47     0.00   411985     0.00     0.00  ok::text::TextEngine::isWordBreakAny(ok::text::TextInput const&) const
+  0.00      0.47     0.00   237202     0.00     2.72  ok::text::TextEngine::insertAOE(char32_t, bool)
+  0.00      0.47     0.00   187265     0.00     2.72  ok::text::TextEngine::insertW(char32_t, bool)
+  0.00      0.47     0.00    74906     0.00     0.00  ok::text::TextEngine::insertD(char32_t, bool)
+  0.00      0.47     0.00    62420     0.00     6.02  ok::text::TextEngine::backspaceBranch(bool)
+  0.00      0.47     0.00    37453     0.00     2.72  ok::text::TextEngine::removeMark()
+  0.00      0.47     0.00    37453     0.00     0.00  ok::text::TextEngine::canHasEndConsonant()
+  0.00      0.47     0.00       17     0.00     0.00  std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::_M_mutate(unsigned long, unsigned long, char const*, unsigned long)
+  0.00      0.47     0.00        1     0.00     0.00  ok::text::TextEngine::TextEngine(ok::text::EngineOptions)
+  0.00      0.47     0.00        1     0.00     0.00  ok::text::TextEngine::~TextEngine()
+  0.00      0.47     0.00        1     0.00     0.00  std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::_M_dispose()
+  0.00      0.47     0.00        1     0.00     0.00  std::__cxx11::basic_string<wchar_t, std::char_traits<wchar_t>, std::allocator<wchar_t> >::_M_dispose()
+
+ %         the percentage of the total running time of the
+time       program used by this function.
+
+cumulative a running sum of the number of seconds accounted
+ seconds   for by this function and those listed above it.
+
+ self      the number of seconds accounted for by this
+seconds    function alone.  This is the major sort for this
+           listing.
+
+calls      the number of times this function was invoked, if
+           this function is profiled, else blank.
+
+ self      the average number of milliseconds spent in this
+ms/call    function per call, if this function is profiled,
+	   else blank.
+
+ total     the average number of milliseconds spent in this
+ms/call    function and its descendents per call, if this
+	   function is profiled, else blank.
+
+name       the name of the function.  This is the minor sort
+           for this listing. The index shows the location of
+	   the function in the gprof listing. If the index is
+	   in parenthesis it shows where it would appear in
+	   the gprof listing if it were to be printed.
+
+Copyright (C) 2012-2023 Free Software Foundation, Inc.
+
+Copying and distribution of this file, with or without modification,
+are permitted in any medium without royalty provided the copyright
+notice and this notice are preserved.
+
+		     Call graph (explanation follows)
+
+
+granularity: each sample hit covers 2 byte(s) for 2.13% of 0.47 seconds
+
+index % time    self  children    called     name
+                                                 <spontaneous>
+[1]     98.9    0.05    0.42                 main [1]
+                0.06    0.33 20000000/20000000     ok::text::TextEngine::process(ok::text::TextInput const&) [2]
+                0.02    0.01 20000000/20000000     ok::text::TextEngine::replacementUtf16(ok::text::EngineResult const&, std::__cxx11::basic_string<wchar_t, std::char_traits<wchar_t>, std::allocator<wchar_t> >&) const [7]
+                0.00    0.00      17/17          std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::_M_mutate(unsigned long, unsigned long, char const*, unsigned long) [37]
+                0.00    0.00       1/1           ok::text::TextEngine::TextEngine(ok::text::EngineOptions) [38]
+                0.00    0.00       1/1           std::__cxx11::basic_string<wchar_t, std::char_traits<wchar_t>, std::allocator<wchar_t> >::_M_dispose() [41]
+                0.00    0.00       1/1           std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::_M_dispose() [40]
+                0.00    0.00       1/1           ok::text::TextEngine::~TextEngine() [39]
+-----------------------------------------------
+                0.06    0.33 20000000/20000000     main [1]
+[2]     81.9    0.06    0.33 20000000         ok::text::TextEngine::process(ok::text::TextInput const&) [2]
+                0.16    0.12 15499374/15499374     ok::text::TextEngine::handleMainKey(char32_t, bool) [3]
+                0.00    0.04 4026221/4026221     ok::text::TextEngine::spaceBranch(char32_t, bool) [6]
+                0.00    0.00  411985/411985      ok::text::TextEngine::wordBreakBranch(char32_t, bool, ok::text::TextInput const&, bool) [16]
+                0.00    0.00   62420/62420       ok::text::TextEngine::backspaceBranch(bool) [19]
+                0.00    0.00   18726/1729078     ok::text::TextEngine::checkGrammar(int) [8]
+                0.00    0.00 1379518/3489369     ok::text::TextEngine::resolveChar(unsigned int) const [28]
+-----------------------------------------------
+                             5873907             ok::text::TextEngine::handleMainKey(char32_t, bool) [3]
+                0.16    0.12 15499374/15499374     ok::text::TextEngine::process(ok::text::TextInput const&) [2]
+[3]     58.8    0.16    0.12 15499374+5873907 ok::text::TextEngine::handleMainKey(char32_t, bool) [3]
+                0.01    0.09 14282152/14282152     ok::text::TextEngine::insertKey(char32_t, bool, bool) [5]
+                0.01    0.01 1710352/1729078     ok::text::TextEngine::checkGrammar(int) [8]
+                0.00    0.00 4026221/8426974     ok::text::TextEngine::pushTypingState() [10]
+                0.00    0.00  717849/1523088     ok::text::TextEngine::insertMark(unsigned int, bool) [15]
+                0.00    0.00   37453/374532      ok::text::TextEngine::saveSpecialChar() [9]
+                0.00    0.00  237202/237202      ok::text::TextEngine::insertAOE(char32_t, bool) [17]
+                0.00    0.00  187265/187265      ok::text::TextEngine::insertW(char32_t, bool) [18]
+                0.00    0.00   37453/37453       ok::text::TextEngine::removeMark() [20]
+                0.00    0.00 4026221/4026221     ok::text::TextEngine::saveWord(char32_t, int) [27]
+                0.00    0.00 2022462/2022462     ok::text::TextEngine::checkCorrectVowel(ok::text::FlatVec<ok::text::FlatVec<unsigned short> > const&, int&, int&, char32_t) [31]
+                0.00    0.00   74906/74906       ok::text::TextEngine::insertD(char32_t, bool) [35]
+                             5873907             ok::text::TextEngine::handleMainKey(char32_t, bool) [3]
+-----------------------------------------------
+                0.00    0.00   62420/18289647     ok::text::TextEngine::backspaceBranch(bool) [19]
+                0.00    0.00  374532/18289647     ok::text::TextEngine::wordBreakBranch(char32_t, bool, ok::text::TextInput const&, bool) [16]
+                0.02    0.00 3570543/18289647     ok::text::TextEngine::spaceBranch(char32_t, bool) [6]
+                0.09    0.00 14282152/18289647     ok::text::TextEngine::insertKey(char32_t, bool, bool) [5]
+[4]     23.4    0.11    0.00 18289647         ok::text::TextEngine::checkSpelling(bool) [4]
+-----------------------------------------------
+                0.01    0.09 14282152/14282152     ok::text::TextEngine::handleMainKey(char32_t, bool) [3]
+[5]     20.4    0.01    0.09 14282152         ok::text::TextEngine::insertKey(char32_t, bool, bool) [5]
+                0.09    0.00 14282152/18289647     ok::text::TextEngine::checkSpelling(bool) [4]
+-----------------------------------------------
+                0.00    0.04 4026221/4026221     ok::text::TextEngine::process(ok::text::TextInput const&) [2]
+[6]      9.4    0.00    0.04 4026221         ok::text::TextEngine::spaceBranch(char32_t, bool) [6]
+                0.02    0.00 3570543/18289647     ok::text::TextEngine::checkSpelling(bool) [4]
+                0.01    0.00  337079/374532      ok::text::TextEngine::saveSpecialChar() [9]
+                0.01    0.00 3689142/4063674     ok::text::TextEngine::saveWord() [11]
+                0.00    0.00 3651689/8426974     ok::text::TextEngine::pushTypingState() [10]
+                0.00    0.00  680397/755303      ok::text::TextEngine::checkRestoreIfWrongSpelling(ok::text::EngineCode) [32]
+-----------------------------------------------
+                0.02    0.01 20000000/20000000     main [1]
+[7]      6.4    0.02    0.01 20000000         ok::text::TextEngine::replacementUtf16(ok::text::EngineResult const&, std::__cxx11::basic_string<wchar_t, std::char_traits<wchar_t>, std::allocator<wchar_t> >&) const [7]
+                0.01    0.00  730333/730333      ok::text::TextEngine::keyCodeToCharacter(unsigned int) [13]
+                0.00    0.00 2109851/3489369     ok::text::TextEngine::resolveChar(unsigned int) const [28]
+                0.00    0.00 2109851/2109851     std::__cxx11::basic_string<wchar_t, std::char_traits<wchar_t>, std::allocator<wchar_t> >::push_back(wchar_t) [30]
+-----------------------------------------------
+                0.00    0.00   18726/1729078     ok::text::TextEngine::process(ok::text::TextInput const&) [2]
+                0.01    0.01 1710352/1729078     ok::text::TextEngine::handleMainKey(char32_t, bool) [3]
+[8]      3.6    0.01    0.01 1729078         ok::text::TextEngine::checkGrammar(int) [8]
+                0.00    0.00 1685383/3670391     ok::text::TextEngine::findAndCalculateVowel(bool) [12]
+                0.00    0.00  805239/1523088     ok::text::TextEngine::insertMark(unsigned int, bool) [15]
+-----------------------------------------------
+                0.00    0.00   37453/374532      ok::text::TextEngine::handleMainKey(char32_t, bool) [3]
+                0.01    0.00  337079/374532      ok::text::TextEngine::spaceBranch(char32_t, bool) [6]
+[9]      2.2    0.01    0.00  374532         ok::text::TextEngine::saveSpecialChar() [9]
+                0.00    0.00  374532/8426974     ok::text::TextEngine::pushTypingState() [10]
+-----------------------------------------------
+                0.00    0.00  374532/8426974     ok::text::TextEngine::saveSpecialChar() [9]
+                0.00    0.00  374532/8426974     ok::text::TextEngine::wordBreakBranch(char32_t, bool, ok::text::TextInput const&, bool) [16]
+                0.00    0.00 3651689/8426974     ok::text::TextEngine::spaceBranch(char32_t, bool) [6]
+                0.00    0.00 4026221/8426974     ok::text::TextEngine::handleMainKey(char32_t, bool) [3]
+[10]     2.1    0.01    0.00 8426974         ok::text::TextEngine::pushTypingState() [10]
+-----------------------------------------------
+                0.00    0.00  374532/4063674     ok::text::TextEngine::wordBreakBranch(char32_t, bool, ok::text::TextInput const&, bool) [16]
+                0.01    0.00 3689142/4063674     ok::text::TextEngine::spaceBranch(char32_t, bool) [6]
+[11]     2.1    0.01    0.00 4063674         ok::text::TextEngine::saveWord() [11]
+-----------------------------------------------
+                0.00    0.00   37453/3670391     ok::text::TextEngine::removeMark() [20]
+                0.00    0.00  187265/3670391     ok::text::TextEngine::insertW(char32_t, bool) [18]
+                0.00    0.00  237202/3670391     ok::text::TextEngine::insertAOE(char32_t, bool) [17]
+                0.00    0.00 1523088/3670391     ok::text::TextEngine::insertMark(unsigned int, bool) [15]
+                0.00    0.00 1685383/3670391     ok::text::TextEngine::checkGrammar(int) [8]
+[12]     2.1    0.01    0.00 3670391         ok::text::TextEngine::findAndCalculateVowel(bool) [12]
+-----------------------------------------------
+                0.01    0.00  730333/730333      ok::text::TextEngine::replacementUtf16(ok::text::EngineResult const&, std::__cxx11::basic_string<wchar_t, std::char_traits<wchar_t>, std::allocator<wchar_t> >&) const [7]
+[13]     2.1    0.01    0.00  730333         ok::text::TextEngine::keyCodeToCharacter(unsigned int) [13]
+-----------------------------------------------
+                                                 <spontaneous>
+[14]     1.1    0.01    0.00                 ok::text::TextEngine::checkForStandaloneChar(char32_t, bool, char32_t) [14]
+-----------------------------------------------
+                0.00    0.00  717849/1523088     ok::text::TextEngine::handleMainKey(char32_t, bool) [3]
+                0.00    0.00  805239/1523088     ok::text::TextEngine::checkGrammar(int) [8]
+[15]     0.9    0.00    0.00 1523088         ok::text::TextEngine::insertMark(unsigned int, bool) [15]
+                0.00    0.00 1523088/3670391     ok::text::TextEngine::findAndCalculateVowel(bool) [12]
+                0.00    0.00 2940059/3476885     ok::text::TextEngine::getCharacterCode(unsigned int const&) const [29]
+                0.00    0.00  486889/486889      ok::text::TextEngine::handleOldMark() [33]
+-----------------------------------------------
+                0.00    0.00  411985/411985      ok::text::TextEngine::process(ok::text::TextInput const&) [2]
+[16]     0.8    0.00    0.00  411985         ok::text::TextEngine::wordBreakBranch(char32_t, bool, ok::text::TextInput const&, bool) [16]
+                0.00    0.00  374532/18289647     ok::text::TextEngine::checkSpelling(bool) [4]
+                0.00    0.00  374532/4063674     ok::text::TextEngine::saveWord() [11]
+                0.00    0.00  374532/8426974     ok::text::TextEngine::pushTypingState() [10]
+                0.00    0.00  411985/411985      ok::text::TextEngine::isWordBreakAny(ok::text::TextInput const&) const [34]
+                0.00    0.00   74906/755303      ok::text::TextEngine::checkRestoreIfWrongSpelling(ok::text::EngineCode) [32]
+-----------------------------------------------
+                0.00    0.00  237202/237202      ok::text::TextEngine::handleMainKey(char32_t, bool) [3]
+[17]     0.1    0.00    0.00  237202         ok::text::TextEngine::insertAOE(char32_t, bool) [17]
+                0.00    0.00  237202/3670391     ok::text::TextEngine::findAndCalculateVowel(bool) [12]
+                0.00    0.00  237202/3476885     ok::text::TextEngine::getCharacterCode(unsigned int const&) const [29]
+-----------------------------------------------
+                0.00    0.00  187265/187265      ok::text::TextEngine::handleMainKey(char32_t, bool) [3]
+[18]     0.1    0.00    0.00  187265         ok::text::TextEngine::insertW(char32_t, bool) [18]
+                0.00    0.00  187265/3670391     ok::text::TextEngine::findAndCalculateVowel(bool) [12]
+                0.00    0.00  224718/3476885     ok::text::TextEngine::getCharacterCode(unsigned int const&) const [29]
+-----------------------------------------------
+                0.00    0.00   62420/62420       ok::text::TextEngine::process(ok::text::TextInput const&) [2]
+[19]     0.1    0.00    0.00   62420         ok::text::TextEngine::backspaceBranch(bool) [19]
+                0.00    0.00   62420/18289647     ok::text::TextEngine::checkSpelling(bool) [4]
+-----------------------------------------------
+                0.00    0.00   37453/37453       ok::text::TextEngine::handleMainKey(char32_t, bool) [3]
+[20]     0.0    0.00    0.00   37453         ok::text::TextEngine::removeMark() [20]
+                0.00    0.00   37453/3670391     ok::text::TextEngine::findAndCalculateVowel(bool) [12]
+-----------------------------------------------
+                0.00    0.00 4026221/4026221     ok::text::TextEngine::handleMainKey(char32_t, bool) [3]
+[27]     0.0    0.00    0.00 4026221         ok::text::TextEngine::saveWord(char32_t, int) [27]
+-----------------------------------------------
+                0.00    0.00 1379518/3489369     ok::text::TextEngine::process(ok::text::TextInput const&) [2]
+                0.00    0.00 2109851/3489369     ok::text::TextEngine::replacementUtf16(ok::text::EngineResult const&, std::__cxx11::basic_string<wchar_t, std::char_traits<wchar_t>, std::allocator<wchar_t> >&) const [7]
+[28]     0.0    0.00    0.00 3489369         ok::text::TextEngine::resolveChar(unsigned int) const [28]
+-----------------------------------------------
+                0.00    0.00   74906/3476885     ok::text::TextEngine::insertD(char32_t, bool) [35]
+                0.00    0.00  224718/3476885     ok::text::TextEngine::insertW(char32_t, bool) [18]
+                0.00    0.00  237202/3476885     ok::text::TextEngine::insertAOE(char32_t, bool) [17]
+                0.00    0.00 2940059/3476885     ok::text::TextEngine::insertMark(unsigned int, bool) [15]
+[29]     0.0    0.00    0.00 3476885         ok::text::TextEngine::getCharacterCode(unsigned int const&) const [29]
+-----------------------------------------------
+                0.00    0.00 2109851/2109851     ok::text::TextEngine::replacementUtf16(ok::text::EngineResult const&, std::__cxx11::basic_string<wchar_t, std::char_traits<wchar_t>, std::allocator<wchar_t> >&) const [7]
+[30]     0.0    0.00    0.00 2109851         std::__cxx11::basic_string<wchar_t, std::char_traits<wchar_t>, std::allocator<wchar_t> >::push_back(wchar_t) [30]
+-----------------------------------------------
+                0.00    0.00 2022462/2022462     ok::text::TextEngine::handleMainKey(char32_t, bool) [3]
+[31]     0.0    0.00    0.00 2022462         ok::text::TextEngine::checkCorrectVowel(ok::text::FlatVec<ok::text::FlatVec<unsigned short> > const&, int&, int&, char32_t) [31]
+-----------------------------------------------
+                0.00    0.00   74906/755303      ok::text::TextEngine::wordBreakBranch(char32_t, bool, ok::text::TextInput const&, bool) [16]
+                0.00    0.00  680397/755303      ok::text::TextEngine::spaceBranch(char32_t, bool) [6]
+[32]     0.0    0.00    0.00  755303         ok::text::TextEngine::checkRestoreIfWrongSpelling(ok::text::EngineCode) [32]
+-----------------------------------------------
+                0.00    0.00  486889/486889      ok::text::TextEngine::insertMark(unsigned int, bool) [15]
+[33]     0.0    0.00    0.00  486889         ok::text::TextEngine::handleOldMark() [33]
+                0.00    0.00   37453/37453       ok::text::TextEngine::canHasEndConsonant() [36]
+-----------------------------------------------
+                0.00    0.00  411985/411985      ok::text::TextEngine::wordBreakBranch(char32_t, bool, ok::text::TextInput const&, bool) [16]
+[34]     0.0    0.00    0.00  411985         ok::text::TextEngine::isWordBreakAny(ok::text::TextInput const&) const [34]
+-----------------------------------------------
+                0.00    0.00   74906/74906       ok::text::TextEngine::handleMainKey(char32_t, bool) [3]
+[35]     0.0    0.00    0.00   74906         ok::text::TextEngine::insertD(char32_t, bool) [35]
+                0.00    0.00   74906/3476885     ok::text::TextEngine::getCharacterCode(unsigned int const&) const [29]
+-----------------------------------------------
+                0.00    0.00   37453/37453       ok::text::TextEngine::handleOldMark() [33]
+[36]     0.0    0.00    0.00   37453         ok::text::TextEngine::canHasEndConsonant() [36]
+-----------------------------------------------
+                0.00    0.00      17/17          main [1]
+[37]     0.0    0.00    0.00      17         std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::_M_mutate(unsigned long, unsigned long, char const*, unsigned long) [37]
+-----------------------------------------------
+                0.00    0.00       1/1           main [1]
+[38]     0.0    0.00    0.00       1         ok::text::TextEngine::TextEngine(ok::text::EngineOptions) [38]
+-----------------------------------------------
+                0.00    0.00       1/1           main [1]
+[39]     0.0    0.00    0.00       1         ok::text::TextEngine::~TextEngine() [39]
+-----------------------------------------------
+                0.00    0.00       1/1           main [1]
+[40]     0.0    0.00    0.00       1         std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::_M_dispose() [40]
+-----------------------------------------------
+                0.00    0.00       1/1           main [1]
+[41]     0.0    0.00    0.00       1         std::__cxx11::basic_string<wchar_t, std::char_traits<wchar_t>, std::allocator<wchar_t> >::_M_dispose() [41]
+-----------------------------------------------
+
+ This table describes the call tree of the program, and was sorted by
+ the total amount of time spent in each function and its children.
+
+ Each entry in this table consists of several lines.  The line with the
+ index number at the left hand margin lists the current function.
+ The lines above it list the functions that called this function,
+ and the lines below it list the functions this one called.
+ This line lists:
+     index	A unique number given to each element of the table.
+		Index numbers are sorted numerically.
+		The index number is printed next to every function name so
+		it is easier to look up where the function is in the table.
+
+     % time	This is the percentage of the `total' time that was spent
+		in this function and its children.  Note that due to
+		different viewpoints, functions excluded by options, etc,
+		these numbers will NOT add up to 100%.
+
+     self	This is the total amount of time spent in this function.
+
+     children	This is the total amount of time propagated into this
+		function by its children.
+
+     called	This is the number of times the function was called.
+		If the function called itself recursively, the number
+		only includes non-recursive calls, and is followed by
+		a `+' and the number of recursive calls.
+
+     name	The name of the current function.  The index number is
+		printed after it.  If the function is a member of a
+		cycle, the cycle number is printed between the
+		function's name and the index number.
+
+
+ For the function's parents, the fields have the following meanings:
+
+     self	This is the amount of time that was propagated directly
+		from the function into this parent.
+
+     children	This is the amount of time that was propagated from
+		the function's children into this parent.
+
+     called	This is the number of times this parent called the
+		function `/' the total number of times the function
+		was called.  Recursive calls to the function are not
+		included in the number after the `/'.
+
+     name	This is the name of the parent.  The parent's index
+		number is printed after it.  If the parent is a
+		member of a cycle, the cycle number is printed between
+		the name and the index number.
+
+ If the parents of the function cannot be determined, the word
+ `<spontaneous>' is printed in the `name' field, and all the other
+ fields are blank.
+
+ For the function's children, the fields have the following meanings:
+
+     self	This is the amount of time that was propagated directly
+		from the child into the function.
+
+     children	This is the amount of time that was propagated from the
+		child's children to the function.
+
+     called	This is the number of times the function called
+		this child `/' the total number of times the child
+		was called.  Recursive calls by the child are not
+		listed in the number after the `/'.
+
+     name	This is the name of the child.  The child's index
+		number is printed after it.  If the child is a
+		member of a cycle, the cycle number is printed
+		between the name and the index number.
+
+ If there are any cycles (circles) in the call graph, there is an
+ entry for the cycle-as-a-whole.  This entry shows who called the
+ cycle (as parents) and the members of the cycle (as children.)
+ The `+' recursive calls entry shows the number of function calls that
+ were internal to the cycle, and the calls entry for each member shows,
+ for that member, how many times it was called from other members of
+ the cycle.
+
+Copyright (C) 2012-2023 Free Software Foundation, Inc.
+
+Copying and distribution of this file, with or without modification,
+are permitted in any medium without royalty provided the copyright
+notice and this notice are preserved.
+
+Index by function name
+
+  [15] ok::text::TextEngine::insertMark(unsigned int, bool) [36] ok::text::TextEngine::canHasEndConsonant() [38] ok::text::TextEngine::TextEngine(ok::text::EngineOptions)
+  [20] ok::text::TextEngine::removeMark() [13] ok::text::TextEngine::keyCodeToCharacter(unsigned int) [39] ok::text::TextEngine::~TextEngine()
+   [6] ok::text::TextEngine::spaceBranch(char32_t, bool) [12] ok::text::TextEngine::findAndCalculateVowel(bool) [28] ok::text::TextEngine::resolveChar(unsigned int) const
+   [8] ok::text::TextEngine::checkGrammar(int) [14] ok::text::TextEngine::checkForStandaloneChar(char32_t, bool, char32_t) [34] ok::text::TextEngine::isWordBreakAny(ok::text::TextInput const&) const
+   [4] ok::text::TextEngine::checkSpelling(bool) [32] ok::text::TextEngine::checkRestoreIfWrongSpelling(ok::text::EngineCode) [29] ok::text::TextEngine::getCharacterCode(unsigned int const&) const
+   [3] ok::text::TextEngine::handleMainKey(char32_t, bool) [35] ok::text::TextEngine::insertD(char32_t, bool) [7] ok::text::TextEngine::replacementUtf16(ok::text::EngineResult const&, std::__cxx11::basic_string<wchar_t, std::char_traits<wchar_t>, std::allocator<wchar_t> >&) const
+  [33] ok::text::TextEngine::handleOldMark() [18] ok::text::TextEngine::insertW(char32_t, bool) [40] std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::_M_dispose()
+  [19] ok::text::TextEngine::backspaceBranch(bool) [2] ok::text::TextEngine::process(ok::text::TextInput const&) [37] std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::_M_mutate(unsigned long, unsigned long, char const*, unsigned long)
+  [10] ok::text::TextEngine::pushTypingState() [27] ok::text::TextEngine::saveWord(char32_t, int) [41] std::__cxx11::basic_string<wchar_t, std::char_traits<wchar_t>, std::allocator<wchar_t> >::_M_dispose()
+   [9] ok::text::TextEngine::saveSpecialChar() [11] ok::text::TextEngine::saveWord() [30] std::__cxx11::basic_string<wchar_t, std::char_traits<wchar_t>, std::allocator<wchar_t> >::push_back(wchar_t)
+  [16] ok::text::TextEngine::wordBreakBranch(char32_t, bool, ok::text::TextInput const&, bool) [17] ok::text::TextEngine::insertAOE(char32_t, bool) [1] main
+  [31] ok::text::TextEngine::checkCorrectVowel(ok::text::FlatVec<ok::text::FlatVec<unsigned short> > const&, int&, int&, char32_t) [5] ok::text::TextEngine::insertKey(char32_t, bool, bool)

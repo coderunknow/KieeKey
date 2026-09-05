@@ -76,8 +76,8 @@
 // check_version.py gate now covers it, so it can never silently drift again.
 #define OPENKEY_KIEEKEY_VERSION_MAJOR 1
 #define OPENKEY_KIEEKEY_VERSION_MINOR 2
-#define OPENKEY_KIEEKEY_VERSION_PATCH 1
-#define OPENKEY_KIEEKEY_VERSION_STRING "1.2.1 Stable"
+#define OPENKEY_KIEEKEY_VERSION_PATCH 2
+#define OPENKEY_KIEEKEY_VERSION_STRING "1.2.2 RC1"
 
 #include "TextEngine.hpp"       // engine + options + result contract
 #include "VietnameseTables.hpp" // encoding masks (public contract of results)

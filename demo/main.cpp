@@ -68,7 +68,7 @@ void draw(const std::wstring& text, InputMethod method, bool diag) {
     ::FillConsoleOutputCharacterW(h, L' ', info.dwSize.X, {0, 0}, nullptr);
     ::SetConsoleCursorPosition(h, {0, 0});
 
-    std::wprintf(L"  KieeKey v1.2.1 Stable - engine demo      [%s]   (F2: %s | F3: diag | Esc: clear | Ctrl+C: quit)\n",
+    std::wprintf(L"  KieeKey v1.2.2 RC1 - engine demo      [%s]   (F2: %s | F3: diag | Esc: clear | Ctrl+C: quit)\n",
                  method == InputMethod::Telex ? L"TELEX"
                  : method == InputMethod::Vni ? L"VNI" : L"SIMPLE TELEX",
                  method == InputMethod::Telex ? L"switch to VNI" : L"switch to Telex");
@@ -100,7 +100,7 @@ void printDecision(const TextInput& in, const EngineResult& r, const std::wstrin
 
 int wmain() {
     ::SetConsoleOutputCP(CP_UTF8);
-    ::SetConsoleTitleW(L"KieeKey v1.2.1 Stable - engine demo");
+    ::SetConsoleTitleW(L"KieeKey v1.2.2 RC1 - engine demo");
 
     EngineOptions opts;
     opts.inputMethod = InputMethod::Telex;

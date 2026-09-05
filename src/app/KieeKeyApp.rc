@@ -22,8 +22,8 @@ IDI_APPICON_OFF ICON "KieeKeyApp-off.ico"
 IDR_MANIFEST RT_MANIFEST "KieeKeyApp.manifest"
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION     1,2,1,0
- PRODUCTVERSION  1,2,1,0
+ FILEVERSION     1,2,2,0
+ PRODUCTVERSION  1,2,2,0
  FILEFLAGSMASK   0x3fL
 #ifdef _DEBUG
  FILEFLAGS       0x1L
@@ -40,11 +40,11 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "KieeKey"
             VALUE "FileDescription",  "KieeKey — Bộ gõ Tiếng Việt"
-            VALUE "FileVersion",      "1.2.1.0"
+            VALUE "FileVersion",      "1.2.2.0"
             VALUE "InternalName",     "KieeKey"
             VALUE "OriginalFilename", "KieeKeyApp.exe"
             VALUE "ProductName",      "KieeKey"
-            VALUE "ProductVersion",   "1.2.1.0"
+            VALUE "ProductVersion",   "1.2.2.0"
         END
     END
     BLOCK "VarFileInfo"

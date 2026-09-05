@@ -1,0 +1,19 @@
+# Fair A/B — same host, same flags, same tput_driver.cpp
+# g++ (Debian 12.2.0-14+deb12u1) 12.2.0  -std=c++20 -O2
+# orig = git HEAD 715c527 src/core/TextEngine.{hpp,cpp}
+# cand = working-tree candidate-1
+# 20M keys, mode=1 (process + replacementUtf16), sink must match
+#
+# Frozen baseline (pre-edit, 3 runs, median 54.41):
+#   54.61  54.41  54.24   sink=5436924
+#
+# Interleaved 5-run (orig then cand, same session):
+#   orig: 54.27  54.54  57.55  56.95  56.91   sink=5436924
+#   cand: 42.72  42.71  43.51  44.64  44.50   sink=5436924
+#   paired Δ: −21.3% −21.7% −24.4% −21.6% −21.8%
+#
+# Post-suite quiet 3-run:
+#   orig: 54.62  54.33  54.32   median 54.33   sink=5436924
+#   cand: 43.85  43.18  45.15   median 43.85   sink=5436924
+#   Δ vs this orig median: −19.3%
+#   Δ vs frozen median 54.41: −19.4%

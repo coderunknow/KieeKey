@@ -1,0 +1,11 @@
+# Uninstrumented tput driver, g++ 12.2 -std=c++20 -O2, 20M keys mode=1
+# sink=5436924 on every run (byte-identical to v1.2.1 Stable on this host)
+#
+# First candidate 3-run (pre-suite, quiet):
+43.76
+43.01
+42.81
+# Post-suite quiet 3-run (interleaved orig session):
+43.85
+43.18
+45.15

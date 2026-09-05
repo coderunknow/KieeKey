@@ -1,4 +1,29 @@
-# Raw benchmark artifacts — v1.2.1 RC1 baseline vs v1.2.1 RC2
+# Raw benchmark artifacts
+
+## v1.2.2 RC1 (engine A/B vs v1.2.1 Stable)
+
+`rc1-122/` is the frozen v1.2.1 Stable baseline **plus** the v1.2.2 RC1
+candidate on this host (g++ 12.2 −O2). It is a new directory on purpose:
+`rc1/` below is the **v1.2.1 RC1** baseline from the RC1-vs-RC2 campaign
+and must not be overwritten.
+
+| path | what |
+|---|---|
+| `rc1-122/environment_host.json` | compiler, OS, CPU, RAM, baseline commit `715c527` / tag `v1.2.1-Stable` |
+| `rc1-122/tput_driver.cpp` | clock-free 20 M-key driver (`g++ -std=c++20 -O2 -Isrc/core tput_driver.cpp src/core/TextEngine.cpp`) |
+| `rc1-122/tput_baseline.txt` | uninstrumented 3-run, frozen tree (median 54.41 ns/key) |
+| `rc1-122/tput_candidate.txt` | uninstrumented candidate runs |
+| `rc1-122/tput_ab.txt` | fair interleaved orig-vs-cand numbers + sinks |
+| `rc1-122/gprof_flat_baseline.txt` | gprof flat profile of v1.2.1 Stable |
+| `rc1-122/gprof_flat_candidate.txt` | gprof flat profile of v1.2.2 RC1 |
+| `rc1-122/tput_pg_*.log` | instrumented (`-pg`) 20 M-key logs (same sink) |
+
+Reports: [`docs/reports/V1.2.2_RC1_PERFORMANCE_REPORT.md`](../reports/V1.2.2_RC1_PERFORMANCE_REPORT.md),
+[`docs/reports/V1.2.2_RC1_ENGINEERING_LOG.md`](../reports/V1.2.2_RC1_ENGINEERING_LOG.md).
+
+---
+
+# v1.2.1 RC1 baseline vs v1.2.1 RC2
 
 Committed on purpose (exception to the "regenerable evidence is not
 shipped" policy) because the RC2 release claims are made *against* these

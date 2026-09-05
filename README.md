@@ -5,7 +5,7 @@
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20ARM64-0078D6.svg)
 ![Build](https://img.shields.io/badge/build-CMake%20%3E%3D%203.28-064FAD.svg)
 
-**KieeKey v1.2.1 Stable** is a modern, low-latency Vietnamese input method
+**KieeKey v1.2.2 RC1** is a modern, low-latency Vietnamese input method
 engine (bộ gõ Tiếng Việt) for Windows, with a system-tray application, a TSF
 text-store composer and an optional WinUI 3 Fluent settings UI.
 
@@ -19,6 +19,31 @@ text-store composer and an optional WinUI 3 Fluent settings UI.
 ![KieeKey preview](src/app/KieeKeyApp-preview.png)
 
 ---
+
+## What's new in v1.2.2 RC1 — Performance & Runtime Efficiency
+
+* **Engine decision CPU −19 % … −21 %** on this host's frozen 20 M-key
+  driver (g++ 12.2 −O2: v1.2.1 Stable median 54.41 → 43.85 ns/key), with a
+  **byte-identical** output sink (`5436924`). Fair interleaved A/B against
+  `git HEAD` sources, same flags, same driver.
+* **One surface:** `TextEngine` only. Last-character sequence buckets in
+  `handleMainKey` (the analog of RC3's first-letter consonant buckets),
+  bitmask `isWordBreakChar` / `isVowelChar` / Telex `isMarkKey`, a length-1
+  `checkSpelling` exit, and a 6-way `kVowelCombine` index.
+* **Decision-identical** to v1.2.1 Stable / frozen RC1 engine: correctness
+  gate 2.06 M events PASS, lockstep `diff_engine_ab` PASS, native suite
+  21/21 PASS. Dual-emitter `emitMtx` **unchanged**.
+* **Honest bounds:** the 40.2 → ≤38 ns/key brief was a g++ 14.2 number;
+  this host's v1.2.1 Stable is 54.41. Host-scaled exceptional bar (≤46.0)
+  is cleared. E2E shim / TSF / SendInput were **not** re-measured — the
+  engine is ~0.04 µs of a ~10 µs timer floor here; no fake end-to-end claim.
+
+Full evidence, tables and the rejected list:
+[docs/reports/V1.2.2_RC1_PERFORMANCE_REPORT.md](docs/reports/V1.2.2_RC1_PERFORMANCE_REPORT.md)
+— engineering trail:
+[docs/reports/V1.2.2_RC1_ENGINEERING_LOG.md](docs/reports/V1.2.2_RC1_ENGINEERING_LOG.md)
+— raw artifacts in [`docs/bench/rc1-122/`](docs/bench/rc1-122/) (does not
+overwrite the v1.2.1 RC1 baseline under `docs/bench/rc1/`).
 
 ## What's new in v1.2.1 Stable — the Windows surface passes a real gate
 

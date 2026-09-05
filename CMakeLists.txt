@@ -33,7 +33,7 @@
 cmake_minimum_required(VERSION 3.28)
 
 project(KieeKey
-        VERSION 1.2.1
+        VERSION 1.2.2
         DESCRIPTION "KieeKey — Vietnamese input method (modern core)"
         LANGUAGES CXX)
 

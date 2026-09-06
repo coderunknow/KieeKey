@@ -8,7 +8,7 @@
 #   Licensed under the GNU General Public License version 3.
 #
 # Modified work:
-#   KieeKey v1.2.1 Stable - refactored and completed logic
+#   KieeKey - refactored and completed logic
 #   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 #   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 #
@@ -194,6 +194,83 @@ def main() -> int:
         s = re.search(r'#define\s+OPENKEY_KIEEKEY_VERSION_STRING\s+"([^"]+)"', corehpp)
         if s and s.group(1) != want_ui:
             problems.append(f"kieekey_core.hpp: VERSION_STRING {s.group(1)!r} != {want_ui!r}")
+
+    # ---- 7. the README headline (v1.2.2 RC3: the README still announced ----
+    # "KieeKey v1.2.2 RC1" two RCs later, and its newest "What's new" section
+    # was RC1 — the first thing every visitor reads was a stale release.
+    readme = read("README.md")
+    if readme:
+        m = re.search(r"\*\*KieeKey v([0-9][0-9.]*(?: (?:Stable|RC[0-9]+))?)\*\* is a modern", readme)
+        if not m:
+            problems.append("README.md: headline '**KieeKey vX.Y.Z …** is a modern' not found")
+        elif m.group(1) != want_ui:
+            problems.append(f"README.md: headline version {m.group(1)!r} != {want_ui!r}")
+
+        # The newest "What's new in vX" section must be THIS release.
+        secs = re.findall(r"^## What's new in v([0-9][0-9.]*(?: (?:Stable|RC[0-9]+))?)",
+                          readme, re.M)
+        if not secs:
+            problems.append("README.md: no \"What's new in v…\" section found")
+        elif secs[0] != want_ui:
+            problems.append(
+                f"README.md: newest \"What's new\" section is {secs[0]!r}, "
+                f"expected {want_ui!r} (the current release must be documented first)")
+
+    # ---- 8. the demo banner (v1.2.2 RC3: demo/main.cpp hardcoded its own ---
+    # "KieeKey v1.2.2 RC1 - engine demo" string and drifted two RCs behind).
+    # It now derives from OPENKEY_KIEEKEY_VERSION_STRING; this check makes
+    # re-hardcoding a gate failure rather than a silent regression.
+    demo = read("demo/main.cpp")
+    if demo:
+        demo_code = "\n".join(l for l in demo.splitlines()
+                              if not l.lstrip().startswith(("//", "*", "/*")))
+        if "OPENKEY_KIEEKEY_VERSION_STRING" not in demo_code:
+            problems.append(
+                "demo/main.cpp: banner no longer derives from "
+                "OPENKEY_KIEEKEY_VERSION_STRING (it must not hardcode a version)")
+        # Any string literal carrying an X.Y[.Z] number is a hardcoded
+        # version, including the split form L"KieeKey v" L"1.2.2 RC1".
+        # Comments are documentation (this file's own history note quotes the
+        # stale string on purpose), so only real code lines are scanned.
+        for lineno, line in enumerate(demo.splitlines(), 1):
+            if line.lstrip().startswith(("//", "*", "/*")):
+                continue
+            for m in re.finditer(r'L?"([^"\\]*[0-9]+\.[0-9]+(?:\.[0-9]+)?[^"\\]*)"', line):
+                problems.append(
+                    f"demo/main.cpp:{lineno}: hardcoded version in string literal "
+                    f"{m.group(0)} — derive it from OPENKEY_KIEEKEY_VERSION_STRING instead")
+
+    # ---- 9. license-header boilerplate must be VERSION-FREE -----------------
+    # Every shipped file repeats a GPL header whose "Modified work:" line used
+    # to name a release. Nobody bumps ~80 headers per release, so they rotted
+    # into EIGHT different versions at once (1.1.0 … 1.2.2 RC3) inside a
+    # single tree. The line is now version-free by policy; the banner comment
+    # under it ("// KieeKey — <file>") likewise. Frozen reference snapshots
+    # under tests/reference/ are historical artifacts and are exempt.
+    boiler: list[str] = []
+    exts = {".cpp", ".hpp", ".h", ".rc", ".py", ".sh", ".cmake", ".txt", ".yml", ".manifest"}
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.suffix not in exts:
+            continue
+        rel = path.relative_to(root).as_posix()
+        if rel.startswith((".git/", "docs/", "tests/reference/", "out/", "build/")):
+            continue
+        # .github/workflows/ is exempt: updating it requires a token with the
+        # `workflows` scope, which routine doc/version maintenance does not
+        # have, so a finding here would be unfixable in the normal flow. Its
+        # header comment is cosmetic and carries no shipped identifier.
+        if rel.startswith(".github/"):
+            continue
+        try:
+            head = path.read_text(encoding="utf-8", errors="ignore")[:4000]
+        except OSError:
+            continue
+        for m in re.finditer(
+                r"^\s*(?://|#)\s*KieeKey v[0-9][0-9.]*(?: (?:Stable|RC[0-9]+))?\s*(?:-|—)",
+                head, re.M):
+            line = head[m.start():head.find("\n", m.start())].strip()
+            boiler.append(f"{rel}: versioned header boilerplate — {line[:80]}")
+    problems.extend(boiler)
 
     if problems:
         for p in problems:

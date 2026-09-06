@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.2.2 — Performance Preference Profiles test (RC2)
+//   KieeKey — Performance Preference Profiles test (added in v1.2.2 RC2)
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //

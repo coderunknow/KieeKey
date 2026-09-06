@@ -1,5 +1,5 @@
 //============================================================================
-// KieeKey v1.2.0 — tests/gate_correctness.cpp
+// KieeKey — tests/gate_correctness.cpp
 // Differential correctness gate for the benchmark pipeline.
 //
 // Derived from tests/mega_correctness.cpp (same repo, GPL-3.0-or-later,

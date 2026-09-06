@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.2.1 Stable - refactored and completed logic
+//   KieeKey - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.1.3 — VietnameseTables.source.hpp (GENERATOR SOURCE ONLY)
+// KieeKey — VietnameseTables.source.hpp (GENERATOR SOURCE ONLY)
 //
 // Legacy std::map/vector phonetics literals — the validated data, preserved
 // verbatim as the input format of tools/gen_flat_tables.py (which emits

@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.2.1 Stable - refactored and completed logic
+//   KieeKey - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.2.0 Stable — tests/soak_pipeline.cpp
+// KieeKey — tests/soak_pipeline.cpp
 // LONG-RUNNING SOAK of the producer→ring→consumer→barrier pipeline.
 //
 // Companion to tests/soak_engine.cpp (which soaks the ENGINE). This one soaks

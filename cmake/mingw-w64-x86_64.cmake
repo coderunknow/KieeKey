@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------------
-# KieeKey v3.3.1 — MinGW-w64 x86_64 cross toolchain file
+# KieeKey — MinGW-w64 x86_64 cross toolchain file
 #
 # Produces a fully STATIC Windows x64 build from any Linux/macOS host (and
 # from Windows hosts that only have a Linux-style MinGW toolchain installed).

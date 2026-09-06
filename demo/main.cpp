@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.2.1 Stable - refactored and completed logic
+//   KieeKey - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.2.1 Stable — demo main.cpp (Windows console)
+// KieeKey — demo main.cpp (Windows console)
 //
 // A runnable demonstration of the KieeKey engine. Type Vietnamese Telex/VNI
 // in the console and watch the engine compose words live — WITHOUT clipboard
@@ -55,7 +55,14 @@
 #include <cwchar>
 #include <string>
 
-#include "TextEngine.hpp"
+#include "kieekey_core.hpp"   // OPENKEY_KIEEKEY_VERSION_STRING (single source of truth)
+
+// The demo's banner used to hardcode its own version string and drifted a
+// whole RC behind the app (it still said "1.2.2 RC1" at 1.2.2 RC3). It is
+// now derived from the public macro, so it cannot drift again.
+#define KK_WIDEN2(x) L##x
+#define KK_WIDEN(x)  KK_WIDEN2(x)
+#define KK_DEMO_TITLE L"KieeKey v" KK_WIDEN(OPENKEY_KIEEKEY_VERSION_STRING) L" - engine demo"
 
 using namespace ok::text;
 
@@ -68,7 +75,7 @@ void draw(const std::wstring& text, InputMethod method, bool diag) {
     ::FillConsoleOutputCharacterW(h, L' ', info.dwSize.X, {0, 0}, nullptr);
     ::SetConsoleCursorPosition(h, {0, 0});
 
-    std::wprintf(L"  KieeKey v1.2.2 RC1 - engine demo      [%s]   (F2: %s | F3: diag | Esc: clear | Ctrl+C: quit)\n",
+    std::wprintf(L"  " KK_DEMO_TITLE L"      [%s]   (F2: %s | F3: diag | Esc: clear | Ctrl+C: quit)\n",
                  method == InputMethod::Telex ? L"TELEX"
                  : method == InputMethod::Vni ? L"VNI" : L"SIMPLE TELEX",
                  method == InputMethod::Telex ? L"switch to VNI" : L"switch to Telex");
@@ -100,7 +107,7 @@ void printDecision(const TextInput& in, const EngineResult& r, const std::wstrin
 
 int wmain() {
     ::SetConsoleOutputCP(CP_UTF8);
-    ::SetConsoleTitleW(L"KieeKey v1.2.2 RC1 - engine demo");
+    ::SetConsoleTitleW(KK_DEMO_TITLE);
 
     EngineOptions opts;
     opts.inputMethod = InputMethod::Telex;

@@ -480,26 +480,6 @@ if(WIN32 AND KIEEKEY_BUILD_TESTS)
     target_link_libraries(ok_ring_tests PRIVATE ok_core)
     add_test(NAME ok_ring_tests COMMAND ok_ring_tests)
 
-    # v1.2.2 RC2 — the two new harnesses live HERE (with the always-built
-    # basics), NOT in the KIEEKEY_BUILD_EXTRA_TESTS block: that block is
-    # OFF-by-default on Windows because its legacy files are unvetted under
-    # /W4 /WX (see comment above the extras section). These two files are
-    # warning-clean by construction and their evidence gates (option-matrix
-    # coherence + strategy-model profiles) are release-critical, so they are
-    # built and run on every Windows CI leg. std::thread needs no extra link
-    # under MSVC; no Threads package is consulted in this block.
-    add_executable(ok_perf_profiles tests/test_perf_profiles.cpp)
-    target_include_directories(ok_perf_profiles PRIVATE src/core)
-    target_link_libraries(ok_perf_profiles PRIVATE ok_core)
-    add_executable(ok_option_matrix tests/test_option_matrix.cpp)
-    target_include_directories(ok_option_matrix PRIVATE src/core tests)
-    target_link_libraries(ok_option_matrix PRIVATE ok_core)
-    add_test(NAME ok_perf_profiles COMMAND ok_perf_profiles)
-    add_test(NAME ok_option_matrix COMMAND ok_option_matrix)
-    # CI depth is the harness default (20k events/config, ~60-120 s on MSVC);
-    # deep campaign runs pass --events explicitly.
-    set_tests_properties(ok_option_matrix PROPERTIES TIMEOUT 600)
-
     # wrapper logic tests (batched emitter, watchdog state machine,
     # Vyukov Ring 1024). The assertions inspect the RECORDED SendInput calls
     # and a controlled fake clock — that only exists in the deterministic

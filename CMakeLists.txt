@@ -484,16 +484,32 @@ if(WIN32 AND KIEEKEY_BUILD_TESTS)
     # basics), NOT in the KIEEKEY_BUILD_EXTRA_TESTS block: that block is
     # OFF-by-default on Windows because its legacy files are unvetted under
     # /W4 /WX (see comment above the extras section). These two files are
-    # warning-clean by construction and their evidence gates (option-matrix
-    # coherence + strategy-model profiles) are release-critical, so they are
-    # built and run on every Windows CI leg. std::thread needs no extra link
-    # under MSVC; no Threads package is consulted in this block.
+    # their evidence gates (option-matrix coherence + strategy-model
+    # profiles) are release-critical, so they are built and run on every
+    # Windows CI leg. std::thread needs no extra link under MSVC; no Threads
+    # package is consulted in this block.
     add_executable(ok_perf_profiles tests/test_perf_profiles.cpp)
     target_include_directories(ok_perf_profiles PRIVATE src/core)
     target_link_libraries(ok_perf_profiles PRIVATE ok_core)
     add_executable(ok_option_matrix tests/test_option_matrix.cpp)
     target_include_directories(ok_option_matrix PRIVATE src/core tests)
     target_link_libraries(ok_option_matrix PRIVATE ok_core)
+    if(MSVC)
+        # Harness-scoped /wd, not source edits: these two TUs legitimately
+        # hammer size_t<->uint32 boundaries (event counts, stream offsets,
+        # RNG folds — C4244/C4267/C4310), use constant conditions and shadowed
+        # loop indices freely in test scaffolding (C4100/C4189/C4456-9), and
+        # call [[nodiscard]] engine members while driving state, discarding
+        # the result on purpose (C4834 — the exact class the extras-off
+        # rationale names). The g++ gates (-Wall -Wextra, and the suite's
+        # -Wpedantic run) stay warning-clean, so nothing hides there.
+        foreach(_okrc2_tgt IN ITEMS ok_perf_profiles ok_option_matrix)
+            target_compile_options(${_okrc2_tgt} PRIVATE
+                /wd4244 /wd4267 /wd4310 /wd4100 /wd4189
+                /wd4456 /wd4457 /wd4458 /wd4459
+                /wd4701 /wd4702 /wd4505 /wd4834)
+        endforeach()
+    endif()
     add_test(NAME ok_perf_profiles COMMAND ok_perf_profiles)
     add_test(NAME ok_option_matrix COMMAND ok_option_matrix)
     # CI depth is the harness default (20k events/config, ~60-120 s on MSVC);

@@ -270,6 +270,23 @@ public:
 
     void startNewSession() noexcept;
 
+    // v1.2.2 RC2 — configuration-change reset. startNewSession() deliberately
+    // keeps cross-word bookkeeping (the undo ring, pending special chars,
+    // the space run) because word-break and resync flows legitimately read
+    // those fields back AFTER it returns. An OPTIONS CHANGE has no such
+    // continuation, and RC1's reconfigure path left them live: the option
+    // matrix tier-3 CONTRACT check caught a hot Grammar OFF->ON switch and a
+    // hot useDictionaryRestore ON switch both inheriting pre-switch state
+    // (the first composed word after the dialog could re-emit or "restore"
+    // against stale scratch). Call this INSTEAD of startNewSession() right
+    // after setOptions() in any reconfiguration path; it leaves every
+    // session-scoped field identical to a freshly constructed engine.
+    // Consumer-side state is deliberately NOT reset: the resolvers stay
+    // installed, opts_ is whatever setOptions received, and the visible
+    // character account keeps mirroring the consumer document (which the
+    // settings dialog does not erase).
+    void resetForConfigurationChange() noexcept;
+
     // English-mode macro hook (mirror of vEnglishMode; macro table lives in
     // the consumer). Returns true when the key should be suppressed.
     [[nodiscard]] const EngineResult& processEnglishMode(const TextInput& in);

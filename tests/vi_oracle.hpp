@@ -414,8 +414,13 @@ private:
         return isConsonantChar(static_cast<char32_t>(chr(i)));
     }
     bool isQuickTelexKey(char32_t c) const noexcept {
-        return index_ > 0 && (c == U'C' || c == U'G' || c == U'K' || c == U'N' ||
-                              c == U'Q' || c == U'P' || c == U'T') &&
+        // v1.2.0 syllable-initial guard (TextEngine.hpp isQuickTelexKey):
+        // quick-telex only fires as the FIRST repeated consonant of the
+        // syllable — "pphong"→"phong" yes, mid-word "ngg" does NOT expand
+        // to "ngh". Missing this guard made the oracle over-trigger on
+        // any repeated trailing consonant.
+        return index_ == 1 && (c == U'C' || c == U'G' || c == U'K' || c == U'N' ||
+                               c == U'Q' || c == U'P' || c == U'T') &&
                chr(index_ - 1) == c;
     }
     bool isWordBreakAny(const Event& in) const noexcept {
@@ -1312,7 +1317,14 @@ private:
                 hasHandleQuickConsonant_ = true;
                 std::array<std::uint32_t, kMaxBuff> tail{};
                 std::uint32_t n = 0;
-                for (std::uint32_t i = index_ - 1; i != std::uint32_t(-1); --i) {
+                // v1.2.2 RC2 mirror fix: the engine fills newChars[] with the
+                // whole tail but CONSUMERS read only newCharCount entries
+                // (replacementUtf16 loops i < newCharCount). A quickEnd-only
+                // transform emits exactly the rewritten pair; emitting the
+                // full word here diverged the reference from the engine (and
+                // from every canonical consumer, incl. the release gate).
+                const std::uint32_t emitN = res_.newCharCount;
+                for (std::uint32_t i = index_ - 1; n < emitN; --i) {
                     tail[n++] = static_cast<char32_t>(getCharacterCode(typingWord_[i]));
                 }
                 buildReplacementFromTail(tail, n);

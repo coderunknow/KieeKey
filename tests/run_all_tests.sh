@@ -177,6 +177,10 @@ build ok_tests            -std=c++2b -O2 $INC tests/test_textengine.cpp   $ENGIN
 build diff_engine_ab      -std=c++2b -O2 $INC -Itests tests/diff_engine_ab.cpp \
                           $ENGINE23 $ENGINE_RC1                                     || rc=1
 build test_notifications  -std=c++2b -O2 $INC tests/test_notifications.cpp $ENGINE23 || rc=1
+# v1.2.2 RC2: pure-header perf-profile resolver test + full option-matrix harness.
+build test_perf_profiles    -std=c++2b -O2 $INC tests/test_perf_profiles.cpp              || rc=1
+build test_option_matrix    -std=c++2b -O2 -pthread $INC -Itests \
+                            tests/test_option_matrix.cpp $ENGINE23                        || rc=1
 build stress_rc2          -std=c++2b -O2 -pthread $INC tests/stress_rc2.cpp $ENGINE23  || rc=1
 build test_hotfix_asan    -std=c++2b -O1 -g -fsanitize=address,undefined \
                           -fno-omit-frame-pointer $INC tests/test_hotfix.cpp $ENGINE_ASAN || rc=1
@@ -273,6 +277,8 @@ dispatch_runs() {
 # job-level limit kills it.
 run ok_tests             120
 run diff_engine_ab       300
+run test_perf_profiles    60
+run test_option_matrix    1200
 run test_notifications   120
 run stress_rc2           300
 run test_hotfix_asan     300

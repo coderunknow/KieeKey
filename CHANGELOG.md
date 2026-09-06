@@ -3,6 +3,80 @@
 All notable changes to KieeKey are documented here. Format based on
 Keep a Changelog; versioning: SemVer.
 
+## [1.2.2-RC2] — 2026-09-05
+
+### Option-matrix hardening + performance-preference surface lockdown
+
+> **Scope:** correctness follow-through of RC1's performance work. Two
+> engine-level coherence fixes, one new public reset API wired into every
+> reconfiguration path, and two new always-on test layers. No hot-path
+> behaviour changed for any shipped configuration; the throughput floor
+> re-verified (see V1.2.2_RC2_PERFORMANCE_REPORT.md).
+
+#### Changed — engine (`src/core/TextEngine.*`)
+
+* **VIQR output encoding precedence.** `OutputEncoding::Viqr` is defined on
+  the precomposed-Unicode pipeline: when a LEGACY code table (TCVN3 /
+  VNI-Windows / UnicodeCompound / CP1258) is selected, the table rendering
+  wins and no mnemonic conversion is layered on top. Pre-RC2 the conversion
+  ran over whatever the table resolver produced — accidentally coherent for
+  TCVN3/VNI (their bytes miss the map), but UnicodeCompound/CP1258 emitted
+  MIXED content (an â became ASCII `a^` while a compound ă+tilde stayed raw
+  combining marks — breaking VIQR's pure-ASCII channel contract, the same
+  class the v1.2.0 macro-parity fix closed). Decisions are untouched;
+  Unicode+VIQR output is byte-identical to before. This is the one
+  map completion: `kViqrMap` gained its one missing entry, **U+0168 Ũ →
+  "U~"** (lowercase ũ was present; deep option-matrix streams caught the
+  raw-Ũ leak into the supposedly pure-ASCII channel). The two sanctioned
+  render divergences are the engine's own VIQR feature only (never legacy
+  behaviour): `diff_engine_ab` exempts VIQR renderings and reports the
+  count (`viqrPrecedenceRenderSkips`); every decision, code table render
+  without VIQR, accounting field and scratch size stays compared exactly.
+* **`TextEngine::resetForConfigurationChange()`** — full session reset for
+  *reconfiguration* (clears the undo ring, pending special chars, space run,
+  grammar/spelling scratch and the result record; keeps resolvers and the
+  visible-character account). `startNewSession()` deliberately keeps its
+  narrower contract: word-break and backspace flows legitimately read those
+  fields back AFTER it returns, so they cannot move into it. The RC2
+  option-matrix CONTRACT tier caught both repro families this fixes: a hot
+  `checkSpelling` OFF->ON and a hot `useDictionaryRestore` ON switch let the
+  next composed word inherit pre-switch state. All Win32-dialog and WinUI
+  reconfigure paths now call the new reset (the WinUI code-table combo had
+  NO reset at all — now it has the right one).
+
+#### Added — tests
+
+* **`tests/test_option_matrix.cpp`** (registered in `run_all_tests.sh` +
+  CTest as `ok_option_matrix`): method × code-table × output-encoding
+  Cartesian (30 configs, oracle lockstep incl. per-event VIQR projection),
+  pairwise-complete covering array over the 11 semantic booleans (grammar,
+  macros, dict), runtime-transition matrices (contract / live-switch /
+  render / roundtrip / ABA), queue hot-option stress, index/mask/cache
+  staleness probe, and the documented-difference goldens. Quick mode: 318
+  configs, 3.49 M events, 265 live switches, 0 failures.
+* **`tests/test_perf_profiles.cpp`** (`ok_perf_profiles`): pins the whole
+  `PerfProfile` strategy model — base table field-by-field, hybrid-flag
+  semantics and collisions, the adaptive telemetry ladder with
+  off-by-one boundary sweeps and rule ORDER, registry encoding clamps,
+  per-field `operator==` completeness (the app's skip-reapply fast path
+  depends on it), the one-way `dictionaryRestore` engine mapping, and a
+  2 560-point invariant sweep. 10 639 checks.
+* `--events` now truly drives **every** tier of `test_option_matrix` (T1-only
+  before; the per-tier literals silently overrode it) — CI depth 20k/config,
+  deep runs use the flag.
+* **`tests/bench_tput_floor.cpp`**: the throughput-floor driver is now
+  versioned in-repo (RC1's was ad-hoc) — 20 M-key mixed stream, decisions +
+  renders folded into one sink, floor re-measured against it.
+
+#### Fixed — reference oracle (`tests/vi_oracle.hpp`)
+
+* quick-telex now carries the v1.2.0 **syllable-initial guard** (engine:
+  `index_ == 1`) — the oracle over-fired `pp→ph`-style expansions at any
+  repeated trailing consonant; and quick-END consonant re-emission emits
+  the rewritten PAIR (`newCharCount` units), not the whole word, matching
+  the engine buffer + every canonical consumer. Both were reference-side
+  gaps: the live engine was self-consistent and legacy-exact.
+
 ## [1.2.2-RC1] — 2026-09-05
 
 ### Performance & Runtime Efficiency

@@ -86,6 +86,33 @@ void TextEngine::startNewSession() noexcept {
     result_.newCharCount = 0;
 }
 
+void TextEngine::resetForConfigurationChange() noexcept {
+    startNewSession();
+    // Word-break / backspace flows read specialChar_ / spaceCount_ / the
+    // undo ring back AFTER startNewSession() (the commit path pushes the
+    // terminating char there before resetting), so those clears belong to
+    // THIS caller, not to startNewSession itself.
+    specialChar_.clear();
+    spaceCount_ = 0;
+    typingStates_.clear();
+    typingStatesData_.clear();
+    isRestoredW_        = false;
+    isCheckedGrammar_   = false;
+    isCorect_           = false;
+    isChanged_          = false;
+    isCharKeyCode_      = false;
+    vniVowelEndValid_   = false;
+    rawReplay_          = false;
+    willTempOffEngine_  = false;
+    upperCaseStatus_    = 0;
+    vowelCount_ = vowelStart_ = vowelEnd_ = vowelWillSetMark_ = 0;
+    spellingOK_ = spellingFlag_ = false;
+    spellingVowelOK_ = true;
+    spellingEndIndex_ = 0;
+    result_ = EngineResult{};   // full result, not just the two counts
+    useSpellingBefore_ = opts_.checkSpelling;
+}
+
 bool TextEngine::resumeFromText(const std::wstring& rawWord) noexcept {
     startNewSession();
     if (rawWord.empty()) { return false; }
@@ -2705,6 +2732,15 @@ inline constexpr ViqrPair kViqrMap[] = {
     {0x00D9, "U`"}, {0x00F9, "u`"}, {0x00DA, "U'"}, {0x00FA, "u'"},
     {0x1EE6, "U?"}, {0x1EE7, "u?"}, {0x00DB, "U~"}, {0x0169, "u~"},
     {0x1EE4, "U."}, {0x1EE5, "u."},
+    // v1.2.2 RC2: U+0168 (LATIN CAPITAL LETTER U WITH TILDE) — the ONLY
+    // non-ASCII value the Unicode pipeline can produce that this map had
+    // missed (lowercase ũ=U+0169 was present, so the leak was reachable but
+    // one-sided: a VIQR-channel consumer received a raw U+0168, breaking the
+    // pure-ASCII guarantee; ok_option_matrix tier-3 caught it on deep random
+    // streams). U+1EE6 keeps its historical "U?" rendering: the table's two
+    // Ũ code points mapping differently is a legacy quirk that
+    // diff_engine_ab pins — frozen behaviour, documented in DIVERGENCES §8.
+    {0x0168, "U~"},
     {0x01AF, "U+"}, {0x01B0, "u+"}, {0x1EE8, "U+'"}, {0x1EE9, "u+'"},
     {0x1EEA, "U+`"}, {0x1EEB, "u+`"}, {0x1EEC, "U+?"}, {0x1EED, "u+?"},
     {0x1EEE, "U+~"}, {0x1EEF, "u+~"}, {0x1EF0, "U+."}, {0x1EF1, "u+."},
@@ -2777,7 +2813,23 @@ void TextEngine::replacementUtf16(const EngineResult& r, std::wstring& out) cons
             if (markIdx > 0 && markIdx <= kUnicodeCompoundMarks.size()) {
                 appendUtf16(out, static_cast<char32_t>(kUnicodeCompoundMarks[markIdx - 1]));
             }
-        } else if (opts_.outputEncoding == OutputEncoding::Viqr) {
+        } else if (opts_.outputEncoding == OutputEncoding::Viqr &&
+                   opts_.codeTable == CodeTable::Unicode) {
+            // v1.2.2 RC2 — encoding precedence (option-matrix hardening).
+            // VIQR is defined on the PRECOMPOSED UNICODE pipeline: a legacy
+            // code table and a VIQR channel are mutually exclusive renderings
+            // of the same composition. Pre-RC2 the VIQR map was applied on
+            // top of WHATEVER the table resolver produced, which by luck was
+            // consistent for TCVN3/VniWindows (their bytes are not in the
+            // map, so they passed through) but produced MIXED CONTENT for
+            // UnicodeCompound/Cp1258: an â became ASCII "a^" while a Ẫ stayed
+            // a raw pre-mark U+DEE3 and a compound ă+tilde split into a
+            // combining sequence — neither pure-ASCII (the VIQR contract) nor
+            // the full table rendering. The precedence is now explicit and
+            // table-symmetric: the code table wins whenever one is selected,
+            // VIQR converts only the Unicode path (identical decisions and
+            // identical renderings in every previously-sane configuration;
+            // only previously-mixed configurations change, toward coherence).
             appendViqr(out, static_cast<char32_t>(v));
         } else {
             appendUtf16(out, static_cast<char32_t>(v));

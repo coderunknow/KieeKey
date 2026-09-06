@@ -350,6 +350,22 @@ else()
         target_compile_features(ok_soak_pipeline PRIVATE cxx_std_23)
         target_link_libraries(ok_soak_pipeline PRIVATE Threads::Threads)
 
+        # v1.2.2 RC2 — performance-preference strategy model (pure header,
+        # every field pinned incl. the adaptive telemetry ladder and the ONE
+        # engine-visible mapping) + the full option-matrix harness (30 method
+        # x table x encoding configs, pairwise-complete grammar-boolean cover,
+        # live/contract option-switch matrices, VIQR channel contract) locked
+        # step against the reference oracle.
+        add_executable(ok_perf_profiles tests/test_perf_profiles.cpp)
+        target_include_directories(ok_perf_profiles PRIVATE src/core)
+        target_compile_features(ok_perf_profiles PRIVATE cxx_std_23)
+
+        add_executable(ok_option_matrix
+            tests/test_option_matrix.cpp src/core/TextEngine.cpp)
+        target_include_directories(ok_option_matrix PRIVATE src/core tests)
+        target_compile_features(ok_option_matrix PRIVATE cxx_std_23)
+        target_link_libraries(ok_option_matrix PRIVATE Threads::Threads)
+
         add_test(NAME ok_outputitem_tests COMMAND ok_outputitem_tests)
         add_test(NAME ok_hotfix_tests    COMMAND ok_hotfix_tests)
         add_test(NAME ok_diff_ab_tests   COMMAND ok_diff_ab_tests)
@@ -366,6 +382,10 @@ else()
         add_test(NAME ok_state_tests     COMMAND ok_state_tests)
         add_test(NAME ok_lifecycle_tests COMMAND ok_lifecycle_tests)
         add_test(NAME ok_soak_pipeline   COMMAND ok_soak_pipeline 300000 30000)
+        add_test(NAME ok_perf_profiles   COMMAND ok_perf_profiles)
+        # default depth = 20k random events/config; deeper runs are manual:
+        #   ctest -R ok_option_matrix --extra-args ... or run the exe directly
+        add_test(NAME ok_option_matrix   COMMAND ok_option_matrix)
 
         # Every registered test gets a hard cap. A regression that turns a
         # barrier/wait path into an infinite block must fail the gate in
@@ -375,8 +395,9 @@ else()
             ok_outputitem_tests ok_hotfix_tests ok_diff_ab_tests ok_notify_tests ok_stress_rc2 ok_v331_tests
             ok_stress_tests ok_soak_tests ok_queue_stress_tests
             ok_gate_tests ok_key_tests ok_state_tests ok_lifecycle_tests
-            ok_soak_pipeline
+            ok_soak_pipeline ok_perf_profiles
             PROPERTIES TIMEOUT 300)
+        set_tests_properties(ok_option_matrix PROPERTIES TIMEOUT 600)
 
         # Version-identifier consistency (release-gate requirement: no mixed
         # version strings). Skipped when no interpreter is available.
@@ -458,6 +479,42 @@ if(WIN32 AND KIEEKEY_BUILD_TESTS)
     add_executable(ok_ring_tests tests/test_ringbuffer.cpp)
     target_link_libraries(ok_ring_tests PRIVATE ok_core)
     add_test(NAME ok_ring_tests COMMAND ok_ring_tests)
+
+    # v1.2.2 RC2 — the two new harnesses live HERE (with the always-built
+    # basics), NOT in the KIEEKEY_BUILD_EXTRA_TESTS block: that block is
+    # OFF-by-default on Windows because its legacy files are unvetted under
+    # /W4 /WX (see comment above the extras section). These two files are
+    # their evidence gates (option-matrix coherence + strategy-model
+    # profiles) are release-critical, so they are built and run on every
+    # Windows CI leg. std::thread needs no extra link under MSVC; no Threads
+    # package is consulted in this block.
+    add_executable(ok_perf_profiles tests/test_perf_profiles.cpp)
+    target_include_directories(ok_perf_profiles PRIVATE src/core)
+    target_link_libraries(ok_perf_profiles PRIVATE ok_core)
+    add_executable(ok_option_matrix tests/test_option_matrix.cpp)
+    target_include_directories(ok_option_matrix PRIVATE src/core tests)
+    target_link_libraries(ok_option_matrix PRIVATE ok_core)
+    if(MSVC)
+        # Harness-scoped /wd, not source edits: these two TUs legitimately
+        # hammer size_t<->uint32 boundaries (event counts, stream offsets,
+        # RNG folds — C4244/C4267/C4310), use constant conditions and shadowed
+        # loop indices freely in test scaffolding (C4100/C4189/C4456-9), and
+        # call [[nodiscard]] engine members while driving state, discarding
+        # the result on purpose (C4834 — the exact class the extras-off
+        # rationale names). The g++ gates (-Wall -Wextra, and the suite's
+        # -Wpedantic run) stay warning-clean, so nothing hides there.
+        foreach(_okrc2_tgt IN ITEMS ok_perf_profiles ok_option_matrix)
+            target_compile_options(${_okrc2_tgt} PRIVATE
+                /wd4244 /wd4267 /wd4310 /wd4100 /wd4189
+                /wd4456 /wd4457 /wd4458 /wd4459
+                /wd4701 /wd4702 /wd4505 /wd4834)
+        endforeach()
+    endif()
+    add_test(NAME ok_perf_profiles COMMAND ok_perf_profiles)
+    add_test(NAME ok_option_matrix COMMAND ok_option_matrix)
+    # CI depth is the harness default (20k events/config, ~60-120 s on MSVC);
+    # deep campaign runs pass --events explicitly.
+    set_tests_properties(ok_option_matrix PROPERTIES TIMEOUT 600)
 
     # wrapper logic tests (batched emitter, watchdog state machine,
     # Vyukov Ring 1024). The assertions inspect the RECORDED SendInput calls

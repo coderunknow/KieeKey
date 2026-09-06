@@ -1,0 +1,7 @@
+=== RC2 FLOOR (quiet) ===
+keys=20000000 mode=1 total=1428.6 ms  71.43 ns/key (median of 3)  sink=2905520108639366859
+  run0: 71.32 ns/key
+  run1: 71.43 ns/key
+  run2: 76.04 ns/key
+floor rc=0
+ALLDONE

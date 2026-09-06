@@ -421,7 +421,7 @@ void MainWindow::OnInputMethodChanged(IInspectable const&, SelectionChangedEvent
         auto opts = e->options();
         opts.inputMethod = static_cast<ok::text::InputMethod>(idx);
         e->setOptions(opts);
-        e->startNewSession();
+        e->resetForConfigurationChange();  // v1.2.2 RC2
     }
     if (auto key = settingsKey(); key) {
         key.setDword(L"InputMethod", static_cast<DWORD>(idx));
@@ -436,6 +436,7 @@ void MainWindow::OnCodeTableChanged(IInspectable const&, SelectionChangedEventAr
         auto opts = e->options();
         opts.codeTable = static_cast<ok::text::CodeTable>(idx);
         e->setOptions(opts);
+        e->resetForConfigurationChange();  // v1.2.2 RC2 (was: no reset at all)
     }
     if (auto key = settingsKey(); key) {
         key.setDword(L"CodeTable", static_cast<DWORD>(idx));
@@ -455,7 +456,7 @@ void MainWindow::OnOptionChanged(IInspectable const&, RoutedEventArgs const&) {
     // registry value as the Win32 app — one choice, both front-ends).
     opts.digitsAreLiteral     = DigitsLiteral().IsChecked().value_or(true);
     m_engine->setOptions(opts);
-    m_engine->startNewSession();
+    m_engine->resetForConfigurationChange();  // v1.2.2 RC2
 
     if (auto key = settingsKey(); key) {
         key.setDword(L"ModernOrthography", opts.useModernOrthography ? 1 : 0);

@@ -174,8 +174,8 @@ constexpr wchar_t kAppVersion[]     = L"1.2.2";           // numeric, 3-part
 // v1.2.2 RC1: [[maybe_unused]] — this is a documented VERSION CARRIER
 // (check_version.py reads it), not a code-level constant; the UI shows the
 // title/version forms. Keeping it zero-maintenance and warning-clean.
-[[maybe_unused]] constexpr wchar_t kAppVersionFull[] = L"1.2.2 RC1";    // with channel
-constexpr wchar_t kAppTitle[]       = L"KieeKey v1.2.2 RC1";  // sync with kAppVersionFull
+[[maybe_unused]] constexpr wchar_t kAppVersionFull[] = L"1.2.2 RC2";    // with channel
+constexpr wchar_t kAppTitle[]       = L"KieeKey v1.2.2 RC2";  // sync with kAppVersionFull
 
 //===========================================================================
 // Output item: what the consumer thread must emit (trivially copyable → can
@@ -2142,7 +2142,7 @@ void showTrayMenu() noexcept {
                 std::lock_guard<std::mutex> lk(g.engineMtx);
                 g.options.inputMethod = m;
                 g.engine.setOptions(g.options);
-                g.engine.startNewSession();
+                g.engine.resetForConfigurationChange();  // v1.2.2 RC2
             }
             saveSettings();
             updateTrayIcon();
@@ -2311,7 +2311,7 @@ void onNotificationClicked() {
                 std::lock_guard<std::mutex> lk(g.engineMtx);
                 g.options.quickTelex = false;
                 g.engine.setOptions(g.options);
-                g.engine.startNewSession();
+                g.engine.resetForConfigurationChange();  // v1.2.2 RC2
                 g.quickTelexDetector.reset();
             }
             g.notify.resolve(n.id, Action::TurnOff);
@@ -2879,7 +2879,7 @@ void settingsFromControls() {
                            (hybDict ? ok::perf::kHybridExtraCorrect : 0u), std::memory_order_relaxed);
         g.notify.setSessionMuted(!notifyOn);
         g.engine.setOptions(g.options);
-        g.engine.startNewSession();
+        g.engine.resetForConfigurationChange();  // v1.2.2 RC2
         applyPerfStrategy(/*lockEngine=*/false, /*force=*/true);   // already under engineMtx
         g.monitor.setExcludeIde(g.exclIde);
         g.monitor.setExcludeGame(g.exclGame);

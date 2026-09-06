@@ -1,0 +1,11 @@
+{
+ "schema": "kieekey.option_matrix.v1",
+ "tier": "all",
+ "events": 106830503,
+ "configs": 318,
+ "transitions": 265,
+ "failures": 0,
+ "staleAbandon": 0,
+ "rows": [
+  {"tier":"1","name":"t1-cartesian","configs":60,"mismatches":0,"overBackspace":0,"goldens":0,"transitions":0,"digest":"51efc4b  {"tier":"2","name":"t2-pairwise","configs":30,"mismatches":0,"overBackspace":0,"goldens":0,"transitions":0,"digest":"ea20baab  {"tier":"3","name":"t3-transitions","configs":141,"mismatches":0,"overBackspace":0,"goldens":0,"transitions":263,"digest":"53  {"tier":"4","name":"t4-profiles","configs":80,"mismatches":0,"overBackspace":0,"goldens":0,"transitions":0,"digest":"ee7c7bfc  {"tier":"5","name":"t5-pipeline","configs":9,"mismatches":0,"overBackspace":0,"goldens":0,"transitions":1237,"digest":"556153  {"tier":"g","name":"goldens","configs":14,"mismatches":0,"overBackspace":0,"goldens":14,"transitions":0,"digest":"00000000000  {"tier":"i","name":"t-index-staleness","configs":0,"mismatches":0,"overBackspace":0,"goldens":0,"transitions":0,"digest":"70e]
+}

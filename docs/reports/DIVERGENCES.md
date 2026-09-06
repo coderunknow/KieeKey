@@ -114,3 +114,56 @@ absorbed) in the mega differential's Cat A/B/D are marked.
 - The shipped default differs from 2.0.5's: `restoreIfWrongSpelling = true` (that is the
   as-shipped config the 3-way benchmark measured; matched-config parity is preserved with it
   off).
+
+## 8. v1.2.2 RC2 — VIQR precedence over legacy code tables (sanctioned render change)
+
+`OutputEncoding::Viqr` is defined on the precomposed-Unicode pipeline. Combined with a
+LEGACY `CodeTable` (TCVN3 / VNI-Windows / UnicodeCompound / CP1258) the table rendering
+now wins outright: `replacementUtf16()` applies the VIQR mnemonic map **only** when
+`codeTable == Unicode`. Pre-RC2 the map was layered on top of whatever the table
+resolver emitted, which by luck was self-consistent for TCVN3/VNI-Windows (their code
+points miss the map and passed through untouched) but produced MIXED content for
+UnicodeCompound/CP1258 (precomposed entries became ASCII mnemonics while base+mark and
+pre-mark entries leaked raw combining sequences) — violating the pure-ASCII channel
+contract that the v1.2.0 macro-parity fix established on the macro path.
+
+`kViqrMap` was also audited for completeness against the FULL value domain of the Unicode
+code tables (FlatTables data): exactly one reachable non-ASCII value missed the map —
+U+0168 Ũ, present lowercase-only (U+0169 → "u~"). RC2 adds Ũ → "U~". The pre-existing
+double mapping of Ũ's other code point (U+1EE6 → "U?", the historical row) is kept frozen:
+it is what the shipped pre-RC2 engine emitted and the differential pins it.
+
+Reachability: the shipped app never sets `outputEncoding` (library-only option), so
+there is no product-visible change; the differential `diff_engine_ab` reports the
+exempted cell count (`viqrPrecedenceRenderSkips`, 15 026 / 1.2 M events — all in the
+legacy-table × VIQR matrix cells) and verifies decision-identity everywhere else.
+Pinned by `ok_option_matrix` tier 1 (projection at Unicode, table-precedence lockstep
+at every legacy table) and tier 3 RENDER (per-event projection identity + pure-ASCII
+channel assertion). `macroExpansionUtf16()` remains table-independent by design: the
+expansion payload is final Unicode code points, not table-resolved glyphs.
+
+## 9. v1.2.2 RC2 — configuration-change reset vs startNewSession()
+
+`startNewSession()` keeps its RC1 contract (word-break / backspace flows legitimately
+read `specialChar_`, `spaceCount_` and the undo ring back AFTER it returns — clearing
+there would corrupt the commit path). A RECONFIGURATION has no such continuation and
+must not inherit pre-switch scratch: `resetForConfigurationChange()` is the dedicated,
+full reset for that pattern (keeps resolvers, `opts_`, and the visible-character
+account, which mirrors the consumer document, not the session). The Win32 settings
+dialogs and all WinUI reconfigure handlers (including the code-table combo, which had
+no reset at all pre-RC2) call it immediately after `setOptions()`. Repro families and
+coverage: `ok_option_matrix` tier 3 CONTRACT mode (hot switch + app-contract reset ≡
+fresh engine, 141 pairs × 4 switch points).
+
+## 10. Audit: `getCharacterCode` and the VIQR output encoding (RESOLVED — no defect)
+
+A review note flagged that `getCharacterCode` "overrides VIQR with Unicode" at
+`TextEngine.cpp` near the function body. Verified this pass: the function is **character-
+identical to the frozen 1.2.1 implementation** (`difflib` byte-compare of the extracted
+bodies → equal). There is no silent override: `getCharacterCode` decodes the internal
+*codepoint model* (Unicode is the engine's canonical internal representation), and
+VIQR encoding is applied at render time in `replacementUtf16` only — which is exactly
+the layering the sanctioned §8 render-contract changes also live at. The two callers'
+families (old-backspace re-emits) feed the result through the normal output path, so
+they re-acquire VIQR correctly. Nothing to fix; documented here so the note dies with
+evidence instead of folklore.

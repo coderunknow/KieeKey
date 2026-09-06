@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.2.2 RC3 - refactored and completed logic
+//   KieeKey - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.2.2 RC3 — tests/test_option_matrix.cpp
+// KieeKey — tests/test_option_matrix.cpp
 // OPTION-MATRIX DIFFERENTIAL TESTING SYSTEM (RC2 §3, §4, §5, §13).
 //
 // WHY THIS FILE EXISTS

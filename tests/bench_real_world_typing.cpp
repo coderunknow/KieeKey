@@ -1,5 +1,5 @@
 //============================================================================
-// KieeKey v1.2.1 Stable — tests/bench_real_world_typing.cpp
+// KieeKey — tests/bench_real_world_typing.cpp
 // Real-world typing latency + resource cost benchmark.
 //
 // Unlike e2e_bench.cpp (which measures burst throughput) and bench_tone_latency

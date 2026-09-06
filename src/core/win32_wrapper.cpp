@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.2.1 Stable - refactored and completed logic
+//   KieeKey - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v3.3.1 — win32_wrapper.cpp
+// KieeKey — win32_wrapper.cpp
 // Transport-layer implementation: batched synthetic input (InlineEmitter)
 // and the assembled pipeline (Win32Wrapper). See win32_wrapper.hpp for the
 // architecture and the v3.3 contract this layer preserves.

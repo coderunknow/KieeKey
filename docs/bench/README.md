@@ -1,5 +1,52 @@
 # Raw benchmark artifacts
 
+Directories are named `<side>[-<version>]`. The **`-122` suffix marks the
+v1.2.2 campaign**; the bare `rc1/`, `rc2/`, `rc3/` trees are the older
+v1.2.1 campaign and must not be overwritten by v1.2.2 runs.
+
+| directory | campaign | documented in |
+|---|---|---|
+| `rc1-122/` | v1.2.2 RC1 engine A/B vs v1.2.1 Stable | this file, below |
+| `rc2-122/` | v1.2.2 RC2 throughput floor + option matrix | this file, below |
+| `rc3-122/` | v1.2.2 RC3 end-to-end pipeline campaign | [`rc3-122/README.md`](rc3-122/README.md) |
+| `rc1/`, `rc2/` | v1.2.1 RC1-vs-RC2 | this file, below |
+| `rc3/` | v1.2.1 RC2-vs-RC3 | this file, below |
+| `stable/` | v1.2.1 RC3-vs-Stable | this file, below |
+
+## v1.2.2 RC3 (end-to-end pipeline campaign)
+
+`rc3-122/` holds the RC3 evidence tree and is **self-documented** — see
+[`rc3-122/README.md`](rc3-122/README.md) for the full layout, the host
+record and the per-question decision tables (including every rejected
+optimization candidate). Summary of the top-level entries:
+
+| path | what |
+|---|---|
+| `rc3-122/rc2-suite/` | RC2 baseline artifacts on the same host/session (env, summary, `e2e_cur_1..3`, `perf_cur_1..3`, gate/tone, `bin/` = the frozen binaries actually run) |
+| `rc3-122/rc3-pair/` | RC3 A/B evidence, earlier `e2e_bench.v3` schema (model, spin-cap, contention, paced variants) |
+| `rc3-122/final/` | FINAL `e2e_bench.v4` runs (adds p95): production / all-model / spin100 / spin1000, ×3 at 100 k keys |
+| `rc3-122/rc3-suite/` | final-tree gates: option-matrix full/asan/clean, floor-rc3, tsan + native-suite logs, CPU trade-off |
+| `rc3-122/floor-rc2.txt` | RC2 throughput floor re-measured on this host (comparison point) |
+| `rc3-122/tools/cpu_tradeoff.py` | CPU% sampler (mean/peak) used for the spin-cap trade-off |
+
+Reports: [`docs/reports/V1.2.2_RC3_PERFORMANCE_REPORT.md`](../reports/V1.2.2_RC3_PERFORMANCE_REPORT.md),
+[`docs/reports/V1.2.2_RC3_ENGINEERING_LOG.md`](../reports/V1.2.2_RC3_ENGINEERING_LOG.md).
+
+---
+
+## v1.2.2 RC2 (throughput floor + option matrix)
+
+| path | what |
+|---|---|
+| `rc2-122/floor-rc2.txt` | RC2 throughput floor, quiet host (`tests/bench_tput_floor.cpp`, 20 M keys, mode=1) |
+| `rc2-122/floor-paired-ab.txt` | fair interleaved RC1-vs-RC2 floor runs ×5 with the shared output sink (identical sinks = decision-identical) |
+| `rc2-122/option-matrix-full-120k.json` | `tests/test_option_matrix.cpp` full run, 120 k events/config |
+| `rc2-122/option-matrix-full-300k.json` | same harness, 300 k events/config (deep run) |
+
+Report: [`docs/reports/V1.2.2_RC2_PERFORMANCE_REPORT.md`](../reports/V1.2.2_RC2_PERFORMANCE_REPORT.md).
+
+---
+
 ## v1.2.2 RC1 (engine A/B vs v1.2.1 Stable)
 
 `rc1-122/` is the frozen v1.2.1 Stable baseline **plus** the v1.2.2 RC1
@@ -23,7 +70,7 @@ Reports: [`docs/reports/V1.2.2_RC1_PERFORMANCE_REPORT.md`](../reports/V1.2.2_RC1
 
 ---
 
-# v1.2.1 RC1 baseline vs v1.2.1 RC2
+## v1.2.1 RC1 baseline vs v1.2.1 RC2
 
 Committed on purpose (exception to the "regenerable evidence is not
 shipped" policy) because the RC2 release claims are made *against* these
@@ -43,3 +90,34 @@ RC1 side = commit `0884c64` (`v1.2.1-RC1`); RC2 side = commit recorded in
 `rc2/suite/env.json`. Same host, same compiler, same flags, same corpora,
 same seeds; runs were interleaved-by-side where the script supports it.
 Binaries (`suite/bin/`, `realworld`, `bench_profiles*`) are not committed.
+
+---
+
+## v1.2.1 RC2 baseline vs v1.2.1 RC3
+
+| path | what |
+|---|---|
+| `rc3/suite/` | `tests/run_bench_suite.sh`: `env.json`, `perf_base_1`/`perf_cur_1`, `e2e_base_1`/`e2e_cur_1`, `summary.{txt,json}` — base side = RC2, cur side = RC3 |
+| `rc3/compare_tables.md` | auto-generated RC2-vs-RC3 tables with per-row faster/unchanged/slower verdicts |
+
+Report: [`docs/reports/V1.2.1_RC3_RELEASE_REPORT.md`](../reports/V1.2.1_RC3_RELEASE_REPORT.md).
+
+---
+
+## v1.2.1 RC3 vs v1.2.1 Stable
+
+The Stable release touched the Windows surface only (the engine was
+untouched), so this tree is a *no-regression* record rather than a
+performance campaign.
+
+| path | what |
+|---|---|
+| `stable/env.json`, `stable/environment.txt` | host, compiler, flags, commit record |
+| `stable/rc3_baseline_summary.txt` | the frozen RC3 baseline side |
+| `stable/ab_rc3_vs_stable_summary.{txt,json}` | RC3-vs-Stable A/B summary (byte-identical sinks → UNCHANGED, evidenced) |
+| `stable/tput_20m_ab.txt` | 20 M-key throughput A/B |
+| `stable/diff_6seeds.txt` | 6-seed differential, 7.21 M events, 0 mismatches |
+| `stable/sanitizer_summary.txt` | ASan/UBSan/TSan run summary |
+| `stable/zig_cross.txt` | Windows x64 + ARM64 PE cross-build gate log |
+
+Report: [`docs/reports/V1.2.1_STABLE_RELEASE_REPORT.md`](../reports/V1.2.1_STABLE_RELEASE_REPORT.md).

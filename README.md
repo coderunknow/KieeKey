@@ -5,7 +5,7 @@
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20ARM64-0078D6.svg)
 ![Build](https://img.shields.io/badge/build-CMake%20%3E%3D%203.28-064FAD.svg)
 
-**KieeKey v1.2.2 RC1** is a modern, low-latency Vietnamese input method
+**KieeKey v1.2.2 RC3** is a modern, low-latency Vietnamese input method
 engine (bộ gõ Tiếng Việt) for Windows, with a system-tray application, a TSF
 text-store composer and an optional WinUI 3 Fluent settings UI.
 
@@ -19,6 +19,67 @@ text-store composer and an optional WinUI 3 Fluent settings UI.
 ![KieeKey preview](src/app/KieeKeyApp-preview.png)
 
 ---
+
+## What's new in v1.2.2 RC3 — pipeline measurement & a WinUI dead-input fix
+
+* **WinUI 3 front-end received NO events (P0).** With no producer handler
+  registered — the front-end's consumer-callback-only wiring — the hook's
+  default `ProducerDecision{}` meant `wakeConsumer=false`, so every key,
+  mouse and foreground event was counted pass-through and the consumer
+  callback never ran. The no-handler default is now
+  `ProducerDecision{false, true}` at all three entry points; the Win32 app
+  is unaffected (it always registers `onHookEvent`).
+* **The full keyboard→visible-text pipeline was measured before optimizing**
+  — and the shipped Win32 wiring is already sub-µs (p50 0.183 µs /
+  p99 0.980 µs; real-user p99.9 55 µs, dominated by OS scheduler
+  deschedules). **No hot-path optimization was adopted:** every candidate
+  (spin-cap 100/200/1000 both ways, queue/wake/batching/copy removals,
+  engine changes) was A/B-measured and rejected with evidence.
+* **Tier 6 option torture** (`tests/test_option_matrix.cpp`): a long-lived
+  engine hammered with seeded full-space `EngineOptions` flips, verified
+  three independent ways per round — FRESH (post-`setOptions` +
+  `resetForConfigurationChange` decision identity), ORACLE (live lockstep),
+  INVAR (D1/D2/CNT under in-flight flips) — plus a two-seed determinism
+  fold. The matrix JSON writer's truncation bug is fixed.
+* `tests/e2e_bench.cpp` gained `--model=production|all` (production mirrors
+  the shipped hook: pass-through keys counted, not enqueued) and p95;
+  JSON schema `e2e_bench.v4`.
+* **Honest bounds:** Windows/WinUI builds were not executed on this host (no
+  cross-toolchain); CI's Windows jobs compile the Win32 target. Real-Windows
+  SendInput/TSF costs remain unmeasured (inherited caveat).
+
+Full evidence and the rejected list:
+[docs/reports/V1.2.2_RC3_PERFORMANCE_REPORT.md](docs/reports/V1.2.2_RC3_PERFORMANCE_REPORT.md)
+— engineering trail:
+[docs/reports/V1.2.2_RC3_ENGINEERING_LOG.md](docs/reports/V1.2.2_RC3_ENGINEERING_LOG.md)
+— raw artifacts in [`docs/bench/rc3-122/`](docs/bench/rc3-122/).
+
+## What's new in v1.2.2 RC2 — option-matrix hardening
+
+* **VIQR output encoding precedence fixed.** When a LEGACY code table
+  (TCVN3 / VNI-Windows / UnicodeCompound / CP1258) is selected, the table
+  rendering wins and no mnemonic conversion is layered on top. Pre-RC2,
+  UnicodeCompound/CP1258 + VIQR emitted MIXED content, breaking VIQR's
+  pure-ASCII channel contract. `kViqrMap` also gained its one missing
+  entry, **U+0168 Ũ → `U~`**. Decisions untouched; Unicode+VIQR output is
+  byte-identical to before.
+* **`TextEngine::resetForConfigurationChange()`** — a full session reset for
+  *reconfiguration*, wired into every Win32-dialog and WinUI reconfigure
+  path (the WinUI code-table combo previously had no reset at all). Fixes
+  the next composed word inheriting pre-switch state after a hot
+  `checkSpelling` or `useDictionaryRestore` change.
+* **Two new always-on test layers**: `tests/test_option_matrix.cpp`
+  (method × code-table × output-encoding Cartesian, pairwise covering array
+  over 11 semantic booleans, runtime-transition matrices — 318 configs,
+  3.49 M events) and `tests/test_perf_profiles.cpp` (10 639 checks pinning
+  the whole `PerfProfile` strategy model).
+* Reference-oracle gaps closed in `tests/vi_oracle.hpp` (quick-telex
+  syllable-initial guard, quick-END pair re-emission); the throughput-floor
+  driver is now versioned in-repo as `tests/bench_tput_floor.cpp`.
+
+Full evidence:
+[docs/reports/V1.2.2_RC2_PERFORMANCE_REPORT.md](docs/reports/V1.2.2_RC2_PERFORMANCE_REPORT.md)
+— raw artifacts in [`docs/bench/rc2-122/`](docs/bench/rc2-122/).
 
 ## What's new in v1.2.2 RC1 — Performance & Runtime Efficiency
 

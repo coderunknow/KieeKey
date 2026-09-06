@@ -8,7 +8,7 @@
 #   Licensed under the GNU General Public License version 3.
 #
 # Modified work:
-#   KieeKey v1.2.1 Stable - refactored and completed logic
+#   KieeKey - refactored and completed logic
 #   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 #   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 #
@@ -223,6 +223,21 @@ if command -v python3 >/dev/null 2>&1; then
     fi
 fi
 
+# --- release manifest matches the tracked tree ------------------------------
+# SHA256SUMS.txt used to be hand-maintained and silently rotted (stale hashes
+# for 16 files, ~62 tracked files missing). It is generated now, so the gate
+# can simply assert it is in sync.
+if git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    printf '  [check] %-22s' "SHA256SUMS manifest"
+    if "$REPO_ROOT/scripts/gen_sha256sums.sh" --check \
+            > "$OUT/logs/sha256sums.log" 2>&1; then
+        printf ' ok\n'
+    else
+        printf ' FAILED — %s\n' "$OUT/logs/sha256sums.log"
+        rc=1
+    fi
+fi
+
 dispatch_builds
 
 if [ "$rc" -ne 0 ]; then
@@ -314,7 +329,8 @@ fi
 dispatch_runs
 
 # Keep the generated reports out of the working tree (they are artifacts).
-for rep in EDGE_BEHAVIORS_REPORT.md DIRTY_INPUT_REPORT.md REAL_PASSAGES_REPORT.md; do
+for rep in EDGE_BEHAVIORS_REPORT.md DIRTY_INPUT_REPORT.md REAL_PASSAGES_REPORT.md \
+           MEGA_BENCH_REPORT.md; do
     [ -f "$REPO_ROOT/$rep" ] && mv "$REPO_ROOT/$rep" "$OUT/$rep"
 done
 

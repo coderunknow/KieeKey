@@ -1,6 +1,6 @@
 #!/bin/bash
 #============================================================================
-# KieeKey v1.2.1 Stable — Windows PE cross-build gate (llvm-mingw).
+# KieeKey — Windows PE cross-build gate (llvm-mingw).
 #
 # WHAT THIS VALIDATES
 #   The complete shipped Windows application (KieeKeyApp.exe) — hook, engine,

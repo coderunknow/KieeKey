@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.2.1 Stable - refactored and completed logic
+//   KieeKey - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v3.3.1 — tests/test_v331_features.cpp
+// KieeKey — tests/test_v331_features.cpp
 // Native unit tests for the two v3.3.1 core features:
 //   1. switchToneStyle() — seamless "hoá" <-> "hóa" conversion of the
 //      PENDING word directly inside the state buffer (no corruption, no

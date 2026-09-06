@@ -2,7 +2,8 @@ bin/ — build output placeholder
 ===============================
 
 This directory is reserved for locally built binaries and is intentionally
-EMPTY in the source release (and git-ignored by .gitignore).
+EMPTY in the source release: .gitignore ignores everything under bin/
+except this README, so anything you drop here stays out of git.
 
 How to get binaries:
   1. Build locally:

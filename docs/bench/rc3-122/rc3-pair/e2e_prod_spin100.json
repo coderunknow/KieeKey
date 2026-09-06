@@ -1,0 +1,51 @@
+{
+  "schema": "e2e_bench.v3",
+  "model": "production",
+  "runs": [
+    {
+      "run": 0,
+      "model": "production",
+      "keys": 100000,
+      "sendInputCalls": 108,
+      "raw_us": { "p50": 0.223, "p99": 1.17, "p999": 54.838, "max": 201.069 },
+      "burst_hot_us": { "p50": 0.204, "p99": 0.887, "p999": 20.29, "max": 98.207 },
+      "wake_pay_us": { "p50": 0.588, "p99": 1.697, "n": 11112 },
+      "pipeline_us": { "p50": 0.223, "p99": 1.158, "p999": 19.834, "max": 98.207 },
+      "lag_spikes_keys": 45,
+      "lag_spike_events": 45,
+      "throughput_keys_per_s": 13543,
+      "peak_rss_mb_total": 8.51562,
+      "pipeline_footprint_mb": 6.03607
+    }
+    ,{
+      "run": 1,
+      "model": "production",
+      "keys": 100000,
+      "sendInputCalls": 108,
+      "raw_us": { "p50": 0.208, "p99": 1.036, "p999": 58.458, "max": 2745.29 },
+      "burst_hot_us": { "p50": 0.19, "p99": 0.774, "p999": 9.652, "max": 98.878 },
+      "wake_pay_us": { "p50": 0.521, "p99": 1.508, "n": 11112 },
+      "pipeline_us": { "p50": 0.207, "p99": 1.023, "p999": 7.261, "max": 98.878 },
+      "lag_spikes_keys": 50,
+      "lag_spike_events": 50,
+      "throughput_keys_per_s": 13676.2,
+      "peak_rss_mb_total": 8.67969,
+      "pipeline_footprint_mb": 6.20013
+    }
+    ,{
+      "run": 2,
+      "model": "production",
+      "keys": 100000,
+      "sendInputCalls": 108,
+      "raw_us": { "p50": 0.201, "p99": 1.016, "p999": 55.641, "max": 186.17 },
+      "burst_hot_us": { "p50": 0.184, "p99": 0.762, "p999": 14.776, "max": 99.656 },
+      "wake_pay_us": { "p50": 0.506, "p99": 1.467, "n": 11112 },
+      "pipeline_us": { "p50": 0.201, "p99": 1.004, "p999": 14.086, "max": 99.656 },
+      "lag_spikes_keys": 51,
+      "lag_spike_events": 51,
+      "throughput_keys_per_s": 13667.4,
+      "peak_rss_mb_total": 8.67969,
+      "pipeline_footprint_mb": 6.20013
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "schema": "bench_perf.v2",
+  "label": "cur-bc0a20aa23",
+  "method": "per-key steady_clock ns; warmup 200000 keys; session reset per workload; sorted percentiles; T0-control = timer+loop overhead floor (reported, not subtracted); R runs with deterministic seeded workload-order shuffle; full decile+tail recorded",
+  "keys_per_workload": 2000000,
+  "warmup_keys": 200000,
+  "runs": 1,
+  "seed": 1003,
+  "run_records": [
+    {
+      "run": 0,
+      "T0_control_ns": { "n": 2000000, "min": 21, "mean": 23.2202, "p50": 23, "p99": 24, "max": 79286 },
+      "workloads": [
+        {
+          "name": "vn-compose",
+          "tiers": [
+            {"tier": "T1-decision", "n": 2000000, "min": 36, "mean": 57.4127, "p50": 52, "p90": 77, "p99": 109, "p999": 187, "max": 131092, "dist_ns": [42,44,46,49,52,54,57,61,77,131092,109,187,3192]}
+            ,{"tier": "T1+encode", "n": 2000000, "min": 60, "mean": 89.159, "p50": 78, "p90": 104, "p99": 266, "p999": 289, "max": 131231, "dist_ns": [68,70,73,76,78,81,84,89,104,131231,266,289,14300]}
+          ]
+        }
+        ,{
+          "name": "passthrough",
+          "tiers": [
+            {"tier": "T1-decision", "n": 2000000, "min": 33, "mean": 45.6085, "p50": 42, "p90": 53, "p99": 67, "p999": 124, "max": 26982, "dist_ns": [38,39,40,41,42,44,46,50,53,26982,67,124,3102]}
+            ,{"tier": "T1+encode", "n": 2000000, "min": 58, "mean": 73.5731, "p50": 69, "p90": 82, "p99": 98, "p999": 186, "max": 38623, "dist_ns": [63,64,66,67,69,72,75,77,82,38623,98,186,8531]}
+          ]
+        }
+        ,{
+          "name": "delete",
+          "tiers": [
+            {"tier": "T1-decision", "n": 2000000, "min": 39, "mean": 51.8119, "p50": 48, "p90": 58, "p99": 74, "p999": 154, "max": 43299, "dist_ns": [45,46,46,47,48,49,53,56,58,43299,74,154,3076]}
+            ,{"tier": "T1+encode", "n": 2000000, "min": 63, "mean": 79.2572, "p50": 74, "p90": 86, "p99": 106, "p999": 200, "max": 88263, "dist_ns": [70,71,72,73,74,76,81,82,86,88263,106,200,6355]}
+          ]
+        }
+        ,{
+          "name": "mixed",
+          "tiers": [
+            {"tier": "T1-decision", "n": 2000000, "min": 36, "mean": 58.673, "p50": 53, "p90": 81, "p99": 139, "p999": 178, "max": 54387, "dist_ns": [41,43,45,47,53,57,62,65,81,54387,139,178,3152]}
+            ,{"tier": "T1+encode", "n": 2000000, "min": 60, "mean": 96.2935, "p50": 81, "p90": 137, "p99": 333, "p999": 350, "max": 124943, "dist_ns": [66,69,71,77,81,86,90,94,137,124943,333,350,15520]}
+          ]
+        }
+      ]
+    }
+  ]
+}

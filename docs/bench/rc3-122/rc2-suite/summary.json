@@ -1,0 +1,221 @@
+{
+ "schema": "run_bench_suite.summary.v1",
+ "sides": {
+  "cur": {
+   "perf": {
+    "T0_control_ns": {
+     "min": 21,
+     "mean": 23.3312,
+     "p50": 23,
+     "p99": 24,
+     "max": 45515
+    },
+    "vn-compose": {
+     "T1-decision": {
+      "min": 36,
+      "mean": 57.6935,
+      "p50": 52,
+      "p90": 77,
+      "p99": 110,
+      "p999": 199,
+      "max": 87806
+     },
+     "T1+encode": {
+      "min": 60,
+      "mean": 88.106,
+      "p50": 77,
+      "p90": 104,
+      "p99": 261,
+      "p999": 300,
+      "max": 87891
+     }
+    },
+    "mixed": {
+     "T1-decision": {
+      "min": 35,
+      "mean": 59.1532,
+      "p50": 53,
+      "p90": 81,
+      "p99": 140,
+      "p999": 187,
+      "max": 46472
+     },
+     "T1+encode": {
+      "min": 61,
+      "mean": 96.3351,
+      "p50": 81,
+      "p90": 137,
+      "p99": 332,
+      "p999": 350,
+      "max": 95840
+     }
+    },
+    "passthrough": {
+     "T1-decision": {
+      "min": 33,
+      "mean": 45.6483,
+      "p50": 42,
+      "p90": 53,
+      "p99": 67,
+      "p999": 127,
+      "max": 58000
+     },
+     "T1+encode": {
+      "min": 58,
+      "mean": 72.2378,
+      "p50": 67,
+      "p90": 79,
+      "p99": 98,
+      "p999": 186,
+      "max": 58088
+     }
+    },
+    "delete": {
+     "T1-decision": {
+      "min": 39,
+      "mean": 52.4653,
+      "p50": 48,
+      "p90": 58,
+      "p99": 93,
+      "p999": 167,
+      "max": 134358
+     },
+     "T1+encode": {
+      "min": 63,
+      "mean": 79.2572,
+      "p50": 73,
+      "p90": 84,
+      "p99": 134,
+      "p999": 208,
+      "max": 134439
+     }
+    }
+   },
+   "e2e": {
+    "raw_us": {
+     "p50": 27.75,
+     "p99": 71.414,
+     "p999": 590.146,
+     "max": 1782.42
+    },
+    "burst_hot_us": {
+     "p50": 27.034,
+     "p99": 66.776,
+     "p999": 87.828,
+     "max": 99.867
+    },
+    "pipeline_us": {
+     "p50": 27.736,
+     "p99": 68.893,
+     "p999": 89.421,
+     "max": 99.867
+    },
+    "wake_pay_us": {
+     "p50": 43.04,
+     "p99": 81.949
+    },
+    "lag_spikes_median": 229,
+    "throughput_keys_per_s_median": 13571,
+    "peak_rss_mb_total_median": 8.69922,
+    "burst_p50_target_ok": false,
+    "burst_p99_target_ok": false
+   },
+   "tone": {
+    "tone-append": {
+     "spin": {
+      "edit_p50_us": 0.193,
+      "edit_p99_us": 2.499
+     },
+     "hybrid": {
+      "edit_p50_us": 0.196,
+      "edit_p99_us": 1.57
+     }
+    },
+    "dbar": {
+     "spin": {
+      "edit_p50_us": 0.191,
+      "edit_p99_us": 1.466
+     },
+     "hybrid": {
+      "edit_p50_us": 0.19,
+      "edit_p99_us": 1.622
+     }
+    },
+    "reposition": {
+     "spin": {
+      "edit_p50_us": 0.198,
+      "edit_p99_us": 1.653
+     },
+     "hybrid": {
+      "edit_p50_us": 0.203,
+      "edit_p99_us": 1.646
+     }
+    },
+    "restore-reissue": {
+     "spin": {
+      "edit_p50_us": 0.209,
+      "edit_p99_us": 1.863
+     },
+     "hybrid": {
+      "edit_p50_us": 0.209,
+      "edit_p99_us": 2.023
+     }
+    },
+    "double-tone": {
+     "spin": {
+      "edit_p50_us": 0.313,
+      "edit_p99_us": 2.168
+     },
+     "hybrid": {
+      "edit_p50_us": 0.312,
+      "edit_p99_us": 2.287
+     }
+    },
+    "mid-word": {
+     "spin": {
+      "edit_p50_us": 0.217,
+      "edit_p99_us": 1.736
+     },
+     "hybrid": {
+      "edit_p50_us": 0.219,
+      "edit_p99_us": 1.741
+     }
+    },
+    "horn-compound": {
+     "spin": {
+      "edit_p50_us": 0.291,
+      "edit_p99_us": 1.704
+     },
+     "hybrid": {
+      "edit_p50_us": 0.29,
+      "edit_p99_us": 1.806
+     }
+    },
+    "heavy-word": {
+     "spin": {
+      "edit_p50_us": 0.268,
+      "edit_p99_us": 2.277
+     },
+     "hybrid": {
+      "edit_p50_us": 0.271,
+      "edit_p99_us": 2.23
+     }
+    },
+    "mixed": {
+     "spin": {
+      "edit_p50_us": 8.633,
+      "edit_p99_us": 12.752
+     },
+     "hybrid": {
+      "edit_p50_us": 7.612,
+      "edit_p99_us": 10.732
+     }
+    }
+   },
+   "gate": {
+    "rc": 0,
+    "log": "gate_cur.log"
+   }
+  }
+ }
+}

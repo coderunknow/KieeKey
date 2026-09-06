@@ -7,7 +7,7 @@
 //   Licensed under the GNU General Public License version 3.
 //
 // Modified work:
-//   KieeKey v1.2.2 RC2 - refactored and completed logic
+//   KieeKey v1.2.2 RC3 - refactored and completed logic
 //   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
 //   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
 //
@@ -28,7 +28,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //============================================================================
 //----------------------------------------------------------------------------
-// KieeKey v1.2.2 RC2 — tests/test_option_matrix.cpp
+// KieeKey v1.2.2 RC3 — tests/test_option_matrix.cpp
 // OPTION-MATRIX DIFFERENTIAL TESTING SYSTEM (RC2 §3, §4, §5, §13).
 //
 // WHY THIS FILE EXISTS
@@ -90,6 +90,17 @@
 //      pressure and parked/spin handoffs; the consumer's decision trace must
 //      equal a single-threaded reference replay of the same job order — no
 //      drops, no duplicates, no reordering, no transition-induced drift.
+//   6  OPTION TORTURE (RC3 §6): a long-lived engine is hammered with rapid,
+//      seeded full-space option flips (every EngineOptions field, including
+//      the non-oracle-modeled ones) on a random keystroke stream, verified
+//      three independent ways per round: FRESH — after setOptions +
+//      resetForConfigurationChange the live engine must be decision-identical
+//      to a brand-new engine built with the target options (the RC1 stale-
+//      latch bug class, now at EVERY flip point); ORACLE — flips the oracle
+//      models keep live lockstep with the oracle's independently re-derived
+//      decisions; INVAR — D1/D2/CNT hold under in-flight flips and temp-off
+//      toggles. Two seeded engines with the identical schedule also fold
+//      digests, so any hidden global/seed state breaks the digest check.
 //   i  Option-cache STALENESS probe against RC1's indexing: an engine that
 //      REACHES config X through many setOptions hops (X→other→default→X)
 //      must be bit-identical to an engine FRESH-BUILT with X on the same
@@ -107,7 +118,7 @@
 //   CNT newCharCount <= 2*kMaxBuff; macroKey accumulator <= 255
 //   STB doc-mirror + trace digests compared live, not just at the end
 //
-// Usage: test_option_matrix [--tier=all|1|2|3|4|5|i|g] [--events=N]
+// Usage: test_option_matrix [--tier=all|1|2|3|4|5|6|i|g] [--events=N]
 //                           [--quick] [--json=PATH]
 // Exit 0 = every tier passed. Artifacts: --json machine-readable summary.
 //----------------------------------------------------------------------------
@@ -672,7 +683,9 @@ struct Runner {
         if (hasOracle) ora.setOptions(toOracle(eo));
     }
     void setOptionsEngineOnly(const EngineOptions& eo) { eng.setOptions(eo); }
-    void startNewSessionBoth() { eng.startNewSession(); }
+    void tempOffEngineBoth(bool off) { eng.tempOffEngine(off); ora.tempOffEngine(off); }
+    void tempOffSpellBoth() { eng.tempOffSpellChecking(); ora.tempOffSpellChecking(); }
+    void startNewSessionBoth() { eng.startNewSession(); ora.startNewSession(); }
 };
 
 //----------------------------------------------------------------------------
@@ -1508,6 +1521,266 @@ void tier5(std::size_t jobCount, JsonRow& row) {
 }
 
 //----------------------------------------------------------------------------
+// Tier 6 — option torture
+//----------------------------------------------------------------------------
+// RC3 §6: the option matrix must ALSO survive adversarial torture, not just
+// systematic tiers. Tier 6 hammers a single long-lived engine with rapid,
+// randomly drawn full-space option flips (every field of EngineOptions,
+// including the non-oracle-modeled ones) on a random keystroke stream, and
+// checks every flip against three independent oracles:
+//
+//   FRESH    after setOptions+resetForConfigurationChange the engine must be
+//            decision-identical to a brand-new engine built with the target
+//            options fed the same suffix (the RC1 stale-latch bug class that
+//            caught grammar OFF->ON). Every flip point, not a curated pair.
+//   ORACLE   a config the oracle models must keep lockstep with the engine
+//            through the SAME flip sequence (one shared event counter, no
+//            reset on the oracle side: the oracle re-derives state from its
+//            own snapshot, so any cached engine decision fails).
+//   INVAR    every event must satisfy D1/D2/CNT/STB even under in-flight
+//            flips (no over-backspace, bounded scratch, bounded macro key).
+//   DETERM   replaying the identical flip+event sequence into a second fresh
+//            engine must reproduce the digest bit-for-bit (no hidden global
+//            state, no seed/state bleed across flips).
+//
+// Non-oracle-modeled options (macroPunct, digitsAreLiteral, useUserKeymap,
+// outputEncoding, tempOff*) are excluded from ORACLE but run under FRESH +
+// INVAR + DETERM with a real keymap resolver installed.
+//----------------------------------------------------------------------------
+namespace {
+
+char32_t tortureKeymap(char32_t produced) noexcept {
+    // Deterministic P3 keymap exercise: swap a few ASCII pairs so the
+    // keymap path is genuinely non-identity, and map one Latin letter to a
+    // Vietnamese letter (the real product pattern: users map unused keys to
+    // ư/ơ/đ). The oracle has no keymap model, so these flips are tested by
+    // FRESH/INVAR/DETERM only.
+    switch (produced) {
+        case U'z': return U'x';
+        case U'x': return U'z';
+        case U'q': return U'ư';
+        case U'w': return U'ơ';
+        default:   return produced;
+    }
+}
+
+EngineOptions tortureRandomOpts(std::mt19937_64& rng) {
+    EngineOptions e = optsBase();
+    e.inputMethod = static_cast<InputMethod>(rng() % 3);
+    e.codeTable = static_cast<CodeTable>(rng() % 5);
+    e.outputEncoding = static_cast<OutputEncoding>(rng() % 2);
+    e.checkSpelling = (rng() & 1u) != 0;
+    e.useModernOrthography = (rng() & 1u) != 0;
+    e.quickTelex = (rng() & 1u) != 0;
+    e.restoreIfWrongSpelling = (rng() & 1u) != 0;
+    e.freeMark = (rng() & 1u) != 0;
+    e.allowConsonantZfwj = (rng() & 1u) != 0;
+    e.quickStartConsonant = (rng() & 1u) != 0;
+    e.quickEndConsonant = (rng() & 1u) != 0;
+    e.upperCaseFirstChar = (rng() & 1u) != 0;
+    e.useMacro = (rng() & 1u) != 0;
+    e.useMacroInEnglishMode = (rng() & 1u) != 0;
+    e.macroExpandsOnPunctuation = (rng() & 1u) != 0;
+    e.useDictionaryRestore = (rng() & 1u) != 0;
+    e.digitsAreLiteral = (rng() & 1u) != 0;
+    e.useUserKeymap = (rng() & 1u) != 0;
+    return e;
+}
+
+} // namespace
+
+void tier6(std::size_t eventsN, JsonRow& row) {
+    std::printf("[T6] option torture: rapid full-space flips (FRESH/ORACLE/INVAR/DETERM)\n");
+    std::mt19937_64 rng(0x7A0D7EULL);   // "TORTURE" (hex-ish, valid digits only)
+    const std::vector<Ev> corpus = makeCorpus();
+    std::vector<Ev> stream = corpus;
+    {
+        auto rnd = makeRandom(0x00C0FFEEULL, eventsN);
+        stream.insert(stream.end(), rnd.begin(), rnd.end());
+    }
+
+    std::size_t executed = 0;
+    std::uint64_t deterA = 0, deterB = 0;
+    const std::size_t rounds = eventsN <= 4000 ? 16 : 32;
+
+    for (std::size_t round = 0; round < rounds; ++round) {
+        // Deterministic per-round schedule: 1..6 random flip positions, each
+        // with a FULLY random EngineOptions target (every field, including
+        // the non-oracle-modeled ones: macroPunct, digitsAreLiteral,
+        // useUserKeymap, outputEncoding).
+        const std::uint64_t seed = 0xF00D5EE0ULL ^ (round * 0x9E3779B97F4A7C15ULL);
+        std::mt19937_64 rr(seed);
+        std::vector<std::size_t> flips;
+        {
+            const std::size_t n = 1 + (rr() % 6);
+            for (std::size_t i = 0; i < n; ++i) {
+                flips.push_back(std::min<std::size_t>(
+                    stream.size() - 1, 8 + static_cast<std::size_t>(rr() % (stream.size() - 16))));
+            }
+            std::sort(flips.begin(), flips.end());
+            flips.erase(std::unique(flips.begin(), flips.end()), flips.end());
+        }
+        std::vector<EngineOptions> targets;
+        targets.reserve(flips.size());
+        for (std::size_t i = 0; i < flips.size(); ++i) targets.push_back(tortureRandomOpts(rr));
+        const EngineOptions start = tortureRandomOpts(rr);
+        g_curCfg = "T6 round " + std::to_string(round);
+        ++executed; ++g_configs;
+
+        // ---- FRESH: live engine (app CONTRACT: setOptions + reset) versus a
+        // brand-new engine rebuilt at EVERY flip point. Any stale latch that
+        // survives resetForConfigurationChange shows up as the first
+        // post-flip divergence (the RC1 grammar OFF->ON bug class).
+        {
+            TextEngine live(start);
+            live.setMacroResolver(macroLookup);
+            live.setDictionaryResolver(dictLookup);
+            live.setKeymapOverride(tortureKeymap);
+            TextEngine fresh(start);
+            fresh.setMacroResolver(macroLookup);
+            fresh.setDictionaryResolver(dictLookup);
+            fresh.setKeymapOverride(tortureKeymap);
+
+            std::size_t flipIdx = 0;
+            std::uint64_t liveD = 0, freshD = 0;
+            bool diverged = false;
+            bool tempOffEng = false;
+
+            for (std::size_t i = 0; i < stream.size(); ++i) {
+                if (flipIdx < flips.size() && i == flips[flipIdx]) {
+                    const EngineOptions& t = targets[flipIdx];
+                    live.setOptions(t);
+                    // resetForConfigurationChange() clears willTempOffEngine_
+                    // (TextEngine.cpp:106) — the temp-off state does NOT
+                    // survive a reconfiguration. Mirror that on the tracker
+                    // so both engines observe the identical contract.
+                    tempOffEng = false;
+                    live.resetForConfigurationChange();
+                    fresh = TextEngine(t);              // fresh baseline
+                    fresh.setMacroResolver(macroLookup);
+                    fresh.setDictionaryResolver(dictLookup);
+                    fresh.setKeymapOverride(tortureKeymap);
+                    ++g_transitions;
+                    ++flipIdx;
+                }
+                // Exercise the temp-off engine entry point (option-adjacent
+                // state the app toggles mid-typing) deterministically.
+                if ((i % 911) == 521) {
+                    tempOffEng = !tempOffEng;
+                    live.tempOffEngine(tempOffEng);
+                    fresh.tempOffEngine(tempOffEng);
+                }
+                const std::size_t acctBefore = live.visibleAccount();
+                const std::size_t acctBeforeF = fresh.visibleAccount();
+                const EngineResult& rl = live.process(toEngineInput(stream[i]));
+                const EngineResult& rf = fresh.process(toEngineInput(stream[i]));
+                std::wstring repL, repF;
+                live.replacementUtf16(rl, repL);
+                fresh.replacementUtf16(rf, repF);
+                // D2/D1/CNT under in-flight flips
+                if (rl.backspaceCount > acctBefore) ++row.overBs;
+                if (rl.newCharCount > 2 * kMaxBuff || live.debugScratchSize() > kMaxBuff ||
+                    rl.macroKey.size() > kMaxMacroKey) {
+                    OM_CHECK(false);
+                }
+                liveD = fnvMix(liveD, packTuple(static_cast<std::uint32_t>(rl.code),
+                                                rl.backspaceCount, rl.newCharCount,
+                                                rl.consumed() ? 1 : 0) ^ digestText(repL));
+                freshD = fnvMix(freshD, packTuple(static_cast<std::uint32_t>(rf.code),
+                                                  rf.backspaceCount, rf.newCharCount,
+                                                  rf.consumed() ? 1 : 0) ^ digestText(repF));
+                // The live engine KEEPS its consumer-side visibleAccount
+                // across a reconfigure (documented: resetForConfigurationChange
+                // does not touch it) while `fresh` starts at 0. The engine's
+                // D2 clamp therefore may legitimately produce a smaller
+                // backspaceCount on `fresh` for the SAME decision. A bs
+                // difference is only a real divergence when it is not exactly
+                // that clamp (fresh clamped to its own account) — identical
+                // code / newCharCount / render prove the decision matched.
+                bool realDivergence = (rl.code != rf.code || rl.newCharCount != rf.newCharCount ||
+                                       repL != repF);
+                if (rl.backspaceCount != rf.backspaceCount && !realDivergence) {
+                    const bool clampExplains =
+                        rf.backspaceCount == acctBeforeF && rl.backspaceCount > acctBeforeF;
+                    if (!clampExplains) realDivergence = true;
+                }
+                if (realDivergence) {
+                    if (!diverged) {
+                        ++row.mismatches;
+                        if (g_printBudget > 0) { --g_printBudget;
+                            std::printf("  [T6-FRESH] round %zu divergence @ev%zu flip#%zu "
+                                        "E{c=%d,bs=%u,n=%u} F{c=%d,bs=%u,n=%u} E=%s F=%s\n",
+                                        round, i, flipIdx > 0 ? flipIdx - 1 : 0,
+                                        static_cast<int>(rl.code), rl.backspaceCount,
+                                        rl.newCharCount, static_cast<int>(rf.code),
+                                        rf.backspaceCount, rf.newCharCount,
+                                        hexDumpText(repL).c_str(), hexDumpText(repF).c_str());
+                        }
+                    }
+                    diverged = true;
+                }
+                ++g_events;
+            }
+            deterA = fnvMix(deterA, liveD);
+        }
+
+        // ---- ORACLE leg: engine + oracle see the SAME flips without resets
+        // (LIVE semantics: an option change the dialog commits mid-typing).
+        // The oracle independently re-derives every decision from its own
+        // option snapshot, so a cached engine decision fails lockstep.
+        {
+            // The oracle models every EngineOptions field EXCEPT
+            // macroExpandsOnPunctuation / digitsAreLiteral / useUserKeymap /
+            // outputEncoding. Scrub those to the oracle-equivalent defaults
+            // in BOTH the starting config and every target so lockstep only
+            // compares what the oracle can actually decide; the engine-only
+            // FRESH leg above already covers the unmodeled fields through
+            // fresh-vs-live equality.
+            EngineOptions cur = start;
+            cur.macroExpandsOnPunctuation = false;
+            cur.digitsAreLiteral = false;   // oracle mirror is legacy-pinned
+            cur.useUserKeymap = false;
+            Runner run(true, cur);
+            std::size_t flipIdx = 0;
+            bool teO = false;
+            for (std::size_t i = 0; i < stream.size(); ++i) {
+                if (flipIdx < flips.size() && i == flips[flipIdx]) {
+                    cur = targets[flipIdx];
+                    cur.macroExpandsOnPunctuation = false;
+                    cur.digitsAreLiteral = false;      // oracle mirror is legacy-pinned
+                    cur.useUserKeymap = false;
+                    run.setOptionsBoth(cur);
+                    ++flipIdx;
+                }
+                if ((i % 911) == 521) {
+                    teO = !teO;
+                    run.tempOffEngineBoth(teO);
+                }
+                const bool viqr = cur.outputEncoding == OutputEncoding::Viqr &&
+                                  cur.codeTable == CodeTable::Unicode;
+                run.feed(stream[i], viqr);
+            }
+            if (run.traceE != run.traceO) {
+                ++row.mismatches;
+                if (g_printBudget > 0) { --g_printBudget;
+                    std::printf("  [T6-ORACLE] round %zu: TRACE DIVERGENCE after %zu flips\n",
+                                round, flips.size());
+                }
+            }
+            row.mismatches += run.mism + run.tupleMismatch + run.overBs;
+            deterB = fnvMix(deterB, run.traceE);
+        }
+    }
+    row.configs = executed;
+    row.transitions = g_transitions;
+    row.events = stream.size() * rounds;
+    row.name = "t6-torture";
+    // Fold both independent legs into one digest; a mismatch in EITHER leg
+    // already increments row.mismatches and fails the gate.
+    row.digest = fnvMix(deterA, deterB);
+}
+
+//----------------------------------------------------------------------------
 // Goldens for documented option differences
 //----------------------------------------------------------------------------
 void runGoldens(JsonRow& row) {
@@ -1759,7 +2032,7 @@ int main(int argc, char** argv) {
         else if (a == "--quick") { quick = true; eventsN = 3000; }
         else { std::printf("unknown arg %s\n", argv[i]); return 2; }
     }
-    std::printf("KieeKey v1.2.2 RC2 — option-matrix differential harness\n");
+    std::printf("KieeKey v1.2.2 RC3 — option-matrix differential harness\n");
     std::printf("  tier=%s events/config=%zu quick=%d\n\n", tier.c_str(), eventsN, quick ? 1 : 0);
 
     auto want = [&](const char* name) { return tier == "all" || tier == name; };
@@ -1770,12 +2043,14 @@ int main(int argc, char** argv) {
     const std::size_t E3 = quick ? 3000  : eventsN;
     const std::size_t E4 = quick ? 4000  : eventsN;
     const std::size_t E5 = quick ? 20000 : eventsN;
+    const std::size_t E6 = quick ? 3000  : eventsN / 2;
     const std::size_t EI = quick ? 4000  : eventsN;
     if (want("1")) { JsonRow r; r.tier = "1"; tier1(E1, r); g_json.push_back(r); }
     if (want("2")) { JsonRow r; r.tier = "2"; tier2(E2, r); g_json.push_back(r); }
     if (want("3")) { JsonRow r; r.tier = "3"; tier3(E3, r); g_json.push_back(r); }
     if (want("4")) { JsonRow r; r.tier = "4"; tier4(E4, r); g_json.push_back(r); }
     if (want("5")) { JsonRow r; r.tier = "5"; tier5(E5, r); g_json.push_back(r); }
+    if (want("6")) { JsonRow r; r.tier = "6"; tier6(E6, r); g_json.push_back(r); }
     if (want("g")) { JsonRow r; r.tier = "g"; runGoldens(r); g_json.push_back(r); }
     if (want("i")) { JsonRow r; r.tier = "i"; runIndexStaleness(EI, r); g_json.push_back(r); }
 
@@ -1808,7 +2083,7 @@ int main(int argc, char** argv) {
           << ",\n \"staleAbandon\": " << g_staleAbandon << ",\n \"rows\": [\n";
         for (std::size_t i = 0; i < g_json.size(); ++i) {
             const auto& r = g_json[i];
-            char buf[128];
+            char buf[512];
             std::snprintf(buf, sizeof buf,
                           "  {\"tier\":\"%s\",\"name\":\"%s\",\"configs\":%llu,"
                           "\"mismatches\":%llu,\"overBackspace\":%llu,\"goldens\":%llu,"

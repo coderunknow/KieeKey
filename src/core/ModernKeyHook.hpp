@@ -160,6 +160,14 @@ public:
 
     // Set/clear the producer-side decision callback (may be called before
     // start; the callback runs on the hook thread, so set it before start).
+    //
+    // OPTIONAL. When no handler is registered the hook keeps the plain
+    // consumer-callback contract: every event is delivered to the consumer
+    // (wakeConsumer = true). Only when a handler exists does its
+    // ProducerDecision{} ("no consumer work") let the hook skip the
+    // enqueue+SetEvent pass for pass-through keys. consumer-callback-only
+    // front-ends (e.g. WinUI 3) must never be degraded to a silent no-op by
+    // simply omitting this optimization.
     void setProducerHandler(ProducerHandler h) noexcept { producerHandler_ = std::move(h); }
     [[nodiscard]] bool hasProducerHandler() const noexcept { return producerHandler_ != nullptr; }
 

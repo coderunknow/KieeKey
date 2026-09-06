@@ -4,7 +4,10 @@
 #
 # What CI builds (KIEEKEY_BUILD_UI=none — the default, dependency-free
 # configuration): KieeKeyApp.exe (Win32 tray app) + the static core +
-# the test harness (ctest: ok_tests, ok_ring_tests, ok_wrap_tests).
+# the test harness (ctest: ok_tests, ok_ring_tests, ok_wrap_tests, plus the
+# v1.2.2 RC2 release-critical gates ok_perf_profiles + ok_option_matrix, which
+# live in the always-built basics block — the KIEEKEY_BUILD_EXTRA_TESTS set
+# remains OFF-by-default per its unvetted-under-/W4-/WX contract).
 #
 # The optional WinUI 3 front-end (KIEEKEY_BUILD_UI=winui3) is NOT built in
 # CI: it requires the Windows App SDK NuGet package (Microsoft.WindowsAppSDK)

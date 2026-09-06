@@ -823,8 +823,14 @@ LRESULT CALLBACK ModernKeyHook::keyboardProc(int nCode, WPARAM wParam, LPARAM lP
     // any output item BEFORE the KeyEvent is enqueued — otherwise the
     // consumer could drain the output ring before the item exists (the last
     // suppressed key of a word would never be emitted). Must be fast.
+    //
+    // No producer handler registered → preserve the consumer-callback
+    // contract: deliver every event to the consumer (see mouseProc — the
+    // producer handler is an OPTIONAL optimization; ProducerDecision{} means
+    // "no consumer work" only when a handler was actually consulted).
     const ProducerDecision d = self->producerHandler_
-        ? self->producerHandler_(ev) : ProducerDecision{};
+        ? self->producerHandler_(ev)
+        : ProducerDecision{/*suppressKey=*/false, /*wakeConsumer=*/true};
 
     // Remember suppressed KeyDowns so their KeyUp can be swallowed above.
     // Modifiers are never suppressed (the producer handler returns PD{} for
@@ -878,8 +884,17 @@ LRESULT CALLBACK ModernKeyHook::mouseProc(int nCode, WPARAM wParam, LPARAM lPara
             // (mouseProc previously delivered buttons only). The handler
             // runs the engine's word break and (TSF mode) queues a Resync;
             // enqueue only when that Resync actually landed in the out-ring.
+            //
+            // No producer handler registered: PRESERVE the consumer-callback
+            // contract — every event is delivered to the consumer. The
+            // producer handler is an OPTIONAL optimization (the Win32 app
+            // registers one); a consumer-callback-only front-end (WinUI 3)
+            // must not silently degrade to pass-through-everything.
+            // (ProducerDecision{} means "no consumer work" and is only
+            // correct when a handler was actually consulted.)
             const ProducerDecision d = self->producerHandler_
-                ? self->producerHandler_(ev) : ProducerDecision{};
+                ? self->producerHandler_(ev)
+                : ProducerDecision{/*suppressKey=*/false, /*wakeConsumer=*/true};
             if (d.wakeConsumer) { self->enqueue(ev); }
             else               { self->countPassThrough(ev); }
             break;
@@ -911,8 +926,11 @@ void CALLBACK ModernKeyHook::winEventProc(HWINEVENTHOOK, DWORD ev, HWND hwnd,
     // from this field.
     fg.wParam       = static_cast<std::uint32_t>(
         reinterpret_cast<std::uintptr_t>(hwnd) & 0xFFFF'FFFFu);   // foreground HWND
+    // No producer handler registered → consumer-callback contract: every
+    // foreground change is delivered (see keyboardProc).
     const ProducerDecision d = self->producerHandler_
-        ? self->producerHandler_(fg) : ProducerDecision{};
+        ? self->producerHandler_(fg)
+        : ProducerDecision{/*suppressKey=*/false, /*wakeConsumer=*/true};
     if (d.wakeConsumer) { self->enqueue(fg); }                  // serialized on hook pump thread
     else               { self->countPassThrough(fg); }
 }

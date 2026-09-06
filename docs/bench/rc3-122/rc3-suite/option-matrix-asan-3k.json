@@ -1,0 +1,19 @@
+{
+ "schema": "kieekey.option_matrix.v1",
+ "tier": "all",
+ "events": 3427679,
+ "configs": 334,
+ "transitions": 315,
+ "failures": 0,
+ "staleAbandon": 0,
+ "rows": [
+  {"tier":"1","name":"t1-cartesian","configs":60,"mismatches":0,"overBackspace":0,"goldens":0,"transitions":0,"digest":"d688433ec521c85b"},
+  {"tier":"2","name":"t2-pairwise","configs":30,"mismatches":0,"overBackspace":0,"goldens":0,"transitions":0,"digest":"5a729b1d675fbdf7"},
+  {"tier":"3","name":"t3-transitions","configs":141,"mismatches":0,"overBackspace":0,"goldens":0,"transitions":263,"digest":"7799ffd7e58b7250"},
+  {"tier":"4","name":"t4-profiles","configs":80,"mismatches":0,"overBackspace":0,"goldens":0,"transitions":0,"digest":"b73b7556e29f9de4"},
+  {"tier":"5","name":"t5-pipeline","configs":9,"mismatches":0,"overBackspace":0,"goldens":0,"transitions":30,"digest":"260b37b0e9553044"},
+  {"tier":"6","name":"t6-torture","configs":16,"mismatches":0,"overBackspace":0,"goldens":0,"transitions":315,"digest":"36c62b27a23e7368"},
+  {"tier":"g","name":"goldens","configs":14,"mismatches":0,"overBackspace":0,"goldens":14,"transitions":0,"digest":"0000000000000000"},
+  {"tier":"i","name":"t-index-staleness","configs":0,"mismatches":0,"overBackspace":0,"goldens":0,"transitions":0,"digest":"70e60cf774642d80"}
+]
+}

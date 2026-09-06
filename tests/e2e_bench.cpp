@@ -44,6 +44,30 @@
 //     → InlineEmitter batch construction (ONE SendInput call per edit)
 //   batch-ready(QPC t1)   T_E2E = t1 - t0
 //
+// Pipeline model (--model=, default "all"):
+//   * "all"        — EVERY keystroke rides the wake ring to the consumer:
+//                    the consumer-callback-only wiring (no producer handler
+//                    registered — the WinUI 3 front-end and the historical
+//                    model of this chain). After the RC3 ModernKeyHook fix,
+//                    the no-handler default delivers every event
+//                    (ProducerDecision suppress=false, wake=true), so this
+//                    model measures the ACTUAL consumer-callback contract,
+//                    not a hypothetical one.
+//                    Conservative upper bound for the Win32 app: it adds a
+//                    consumer hop to the ~99.9 % of keystrokes that are
+//                    pass-through.
+//   * "production" — mirrors the SHIPPED hook (ModernKeyHook::keyboardProc):
+//                    only suppressed edits enqueue a KeyEvent; pass-through
+//                    keys are counted and delivered straight to the app
+//                    (countPassThrough). Pass-through latency is then
+//                    measured producer-side (engine decision + ring push,
+//                    minus the LL-hook machinery) and the wake ring only
+//                    carries edits — the actual production wiring. The
+//                    ordering barrier (edit pending → pass-through wait,
+//                    EditDrainBarrier, ≤1 ms) is NOT part of this model:
+//                    it is measured separately by the tone bench
+//                    (--commit=) because it needs a commit cost in flight.
+//
 // (On real Windows the chain ends in the actual SendInput kernel call,
 // ~1–2 µs serial — outside this process's control and identical for any
 // IME; everything above it is what v3.3.1 owns, and all of it is measured.)
@@ -157,12 +181,18 @@ struct BenchPipeline {
     WakeRing wakeRing;
     ok::wrap::InlineEmitter emitter{nullptr};
 
-    // Adaptive-spin cap override (µs). Production value: 200 — the idle-CPU
-    // tradeoff. The bench can raise it (--spin=) to keep the consumer hot
-    // across the inter-burst pauses so the measured numbers isolate the
-    // pipeline (queue→engine→emit) from the OS thread-wake cost, which is
-    // reported separately (WAKE-PAY population).
+    // Adaptive-spin cap override (µs). The production value is PROFILE-
+    // specific (src/core/PerfProfile.hpp): Balanced (the startup default)
+    // = 100 µs, Fastest/LeastFlicker = 200 µs, LowCpu hybrid = 20 µs,
+    // single-core = 4 µs. The bench default of 200 is NOT "the production
+    // value" — it matches the hot profiles and is 2× the Balanced default;
+    // --spin= overrides. See PerfProfile.hpp for the authoritative table.
     std::uint64_t spinCapUs = 200;
+
+    // --model=production: pass-through keys bypass the wake ring exactly
+    // like the shipped hook (countPassThrough); their completion timestamp
+    // is recorded producer-side.
+    bool skipPassThrough = false;
 
     // stateful auto-reset event (mirror of SetEvent / WaitForSingleObject)
     std::atomic<bool> evt_{false};
@@ -212,8 +242,13 @@ struct BenchPipeline {
             for (std::size_t i = 0; i < n; ++i) { it.text[i] = repScratch[i]; }
             while (!outRing.try_push(it)) {}     // never drop (bench: bound = 1024 ≫ 1 edit)
             while (!wakeRing.try_push(serial)) {} // complete stats: spin, never drop
-        } else {
+        } else if (!skipPassThrough) {
             while (!wakeRing.try_push(serial)) {}
+        } else {
+            // production wiring: countPassThrough — delivered to the app
+            // straight from the hook callback; consumer is not involved.
+            if (serial < doneSerial.size()) { doneSerial[serial] = qpcNs(); }
+            return;   // no enqueue => no SetEvent, exactly like production
         }
         evt_.store(true, std::memory_order_release);   // SetEvent (if parked)
         if (parked.load(std::memory_order_acquire)) {
@@ -314,8 +349,8 @@ struct RunSummary {
     long run = 0;
     std::size_t keys = 0;
     std::uint64_t sendInputCalls = 0;
-    double rawP50 = 0, rawP99 = 0, rawP999 = 0, rawMax = 0;
-    double hotP50 = 0, hotP99 = 0, hotP999 = 0, hotMax = 0;
+    double rawP50 = 0, rawP95 = 0, rawP99 = 0, rawP999 = 0, rawMax = 0;
+    double hotP50 = 0, hotP95 = 0, hotP99 = 0, hotP999 = 0, hotMax = 0;
     double wakeP50 = 0, wakeP99 = 0; std::size_t wakeN = 0;
     double plP50 = 0, plP99 = 0, plP999 = 0, plMax = 0;
     std::uint64_t spikes = 0, events = 0;
@@ -325,7 +360,8 @@ struct RunSummary {
 
 RunSummary runOnce(long runIdx, long keys, bool paced, unsigned long long spinCapUs,
                    long rateHz, const std::string& stream,
-                   const std::vector<ok::text::EngineOptions>& optsDummy) {
+                   const std::vector<ok::text::EngineOptions>& optsDummy,
+                   bool skipPassThrough) {
     (void)optsDummy;
     RunSummary sum;
     sum.run = runIdx;
@@ -367,6 +403,7 @@ RunSummary runOnce(long runIdx, long keys, bool paced, unsigned long long spinCa
     std::vector<std::uint64_t> lat(static_cast<std::size_t>(keys), 0);
     BenchPipeline pipe(eng, lat);
     pipe.spinCapUs = spinCapUs;
+    pipe.skipPassThrough = skipPassThrough;
     pipe.startSerial.assign(static_cast<std::size_t>(keys), 0);
     pipe.doneSerial.assign(static_cast<std::size_t>(keys), 0);
 
@@ -513,12 +550,12 @@ RunSummary runOnce(long runIdx, long keys, bool paced, unsigned long long spinCa
 
     std::printf("[e2e] keys=%zu edits-batched sendInputCalls=%llu\n",
                 sorted.size(), static_cast<unsigned long long>(pipe.emitter.sendInputCalls()));
-    std::printf("[e2e] RAW      p50=%.3f us  p99=%.3f us  p99.9=%.3f us  max=%.3f us\n",
-                pct(sorted, 0.50), pct(sorted, 0.99), pct(sorted, 0.999),
+    std::printf("[e2e] RAW      p50=%.3f us  p95=%.3f us  p99=%.3f us  p99.9=%.3f us  max=%.3f us\n",
+                pct(sorted, 0.50), pct(sorted, 0.95), pct(sorted, 0.99), pct(sorted, 0.999),
                 sorted.empty() ? 0.0 : static_cast<double>(sorted.back()) / 1000.0);
     std::printf("[e2e] BURST/HOT (wake-free, the burst-mode population)\n");
-    std::printf("[e2e]          p50=%.3f us  p99=%.3f us  p99.9=%.3f us  max=%.3f us\n",
-                pct(hotOnly, 0.50), pct(hotOnly, 0.99), pct(hotOnly, 0.999),
+    std::printf("[e2e]          p50=%.3f us  p95=%.3f us  p99=%.3f us  p99.9=%.3f us  max=%.3f us\n",
+                pct(hotOnly, 0.50), pct(hotOnly, 0.95), pct(hotOnly, 0.99), pct(hotOnly, 0.999),
                 hotOnly.empty() ? 0.0 : static_cast<double>(hotOnly.back()) / 1000.0);
     std::printf("[e2e] WAKE-PAY (first key after a pause - OS wake cost, host-dependent)\n");
     std::printf("[e2e]          p50=%.3f us  p99=%.3f us  n=%zu\n",
@@ -543,10 +580,12 @@ RunSummary runOnce(long runIdx, long keys, bool paced, unsigned long long spinCa
 
     sum.keys = sorted.size();
     sum.sendInputCalls = static_cast<std::uint64_t>(pipe.emitter.sendInputCalls());
-    sum.rawP50 = pct(sorted, 0.50); sum.rawP99 = pct(sorted, 0.99);
+    sum.rawP50 = pct(sorted, 0.50); sum.rawP95 = pct(sorted, 0.95);
+    sum.rawP99 = pct(sorted, 0.99);
     sum.rawP999 = pct(sorted, 0.999);
     sum.rawMax = sorted.empty() ? 0.0 : static_cast<double>(sorted.back()) / 1000.0;
-    sum.hotP50 = pct(hotOnly, 0.50); sum.hotP99 = pct(hotOnly, 0.99);
+    sum.hotP50 = pct(hotOnly, 0.50); sum.hotP95 = pct(hotOnly, 0.95);
+    sum.hotP99 = pct(hotOnly, 0.99);
     sum.hotP999 = pct(hotOnly, 0.999);
     sum.hotMax = hotOnly.empty() ? 0.0 : static_cast<double>(hotOnly.back()) / 1000.0;
     sum.wakeP50 = pct(wakeOnly, 0.50); sum.wakeP99 = pct(wakeOnly, 0.99); sum.wakeN = wakeOnly.size();
@@ -573,6 +612,7 @@ int main(int argc, char** argv) {
                            // v3.0 burst convention (word bursts, 300-800 us
                            // inter-burst pauses - the regime the IME runs in).
     long runs = 1;
+    bool skipPassThrough = false;   // --model=production
     std::string jsonPath;
     for (int i = 1; i < argc; ++i) {
         if (!std::strncmp(argv[i], "--keys=", 7)) { keys = std::atol(argv[i] + 7); }
@@ -580,22 +620,28 @@ int main(int argc, char** argv) {
         else if (!std::strncmp(argv[i], "--rate=", 7)) { rateHz = std::atol(argv[i] + 7); }
         else if (!std::strncmp(argv[i], "--spin=", 7)) { spinCapOpt = std::strtoul(argv[i] + 7, nullptr, 10); }
         else if (!std::strncmp(argv[i], "--runs=", 7)) { runs = std::atol(argv[i] + 7); }
+        else if (!std::strncmp(argv[i], "--model=", 8)) {
+            if (!std::strcmp(argv[i] + 8, "production")) { skipPassThrough = true; }
+            else if (!std::strcmp(argv[i] + 8, "all")) { skipPassThrough = false; }
+            else { std::fprintf(stderr, "[e2e] unknown --model=%s (all|production)\n", argv[i] + 8); return 2; }
+        }
         else if (!std::strncmp(argv[i], "--json=", 7)) { jsonPath = argv[i] + 7; }
     }
     if (runs < 1) { runs = 1; }
 
     std::printf("[e2e] KieeKey - Win32 wrapper E2E latency\n");
-    std::printf("[e2e] workload: %ld keys, %s, spin-cap=%llu us, runs=%ld%s%s\n", keys,
+    std::printf("[e2e] workload: %ld keys, %s, spin-cap=%llu us, model=%s, runs=%ld%s%s\n", keys,
                 paced ? "150 WPM paced"
                       : (rateHz > 0 ? "constant-rate injection probe"
                                     : "burst (word bursts + inter-burst pauses, v3.0 convention)"),
-                spinCapOpt, runs, jsonPath.empty() ? "" : ", json=", jsonPath.c_str());
+                spinCapOpt, skipPassThrough ? "production" : "all",
+                runs, jsonPath.empty() ? "" : ", json=", jsonPath.c_str());
 
     const std::string stream = buildKeystream(keys);
     std::vector<RunSummary> summaries;
     const std::vector<ok::text::EngineOptions> optsDummy;   // (kept for future per-run options)
     for (long r = 0; r < runs; ++r) {
-        summaries.push_back(runOnce(r, keys, paced, spinCapOpt, rateHz, stream, optsDummy));
+        summaries.push_back(runOnce(r, keys, paced, spinCapOpt, rateHz, stream, optsDummy, skipPassThrough));
     }
 
     // ---- multi-run aggregation ---------------------------------------------
@@ -627,17 +673,21 @@ int main(int argc, char** argv) {
     if (!jsonPath.empty()) {
         std::ofstream jf(jsonPath);
         if (!jf) { std::fprintf(stderr, "[e2e] cannot open %s\n", jsonPath.c_str()); return 2; }
-        jf << "{\n  \"schema\": \"e2e_bench.v2\",\n";
+        jf << "{\n  \"schema\": \"e2e_bench.v4\",\n";
+        jf << "  \"model\": \"" << (skipPassThrough ? "production" : "all") << "\",\n";
         jf << "  \"runs\": [\n";
         for (std::size_t r = 0; r < summaries.size(); ++r) {
             const RunSummary& s = summaries[r];
             jf << (r == 0 ? "    {\n" : "    ,{\n");
             jf << "      \"run\": " << s.run << ",\n";
+            jf << "      \"model\": \"" << (skipPassThrough ? "production" : "all") << "\",\n";
             jf << "      \"keys\": " << s.keys << ",\n";
             jf << "      \"sendInputCalls\": " << s.sendInputCalls << ",\n";
-            jf << "      \"raw_us\": { \"p50\": " << s.rawP50 << ", \"p99\": " << s.rawP99
+            jf << "      \"raw_us\": { \"p50\": " << s.rawP50 << ", \"p95\": " << s.rawP95
+               << ", \"p99\": " << s.rawP99
                << ", \"p999\": " << s.rawP999 << ", \"max\": " << s.rawMax << " },\n";
-            jf << "      \"burst_hot_us\": { \"p50\": " << s.hotP50 << ", \"p99\": " << s.hotP99
+            jf << "      \"burst_hot_us\": { \"p50\": " << s.hotP50 << ", \"p95\": " << s.hotP95
+               << ", \"p99\": " << s.hotP99
                << ", \"p999\": " << s.hotP999 << ", \"max\": " << s.hotMax << " },\n";
             jf << "      \"wake_pay_us\": { \"p50\": " << s.wakeP50 << ", \"p99\": " << s.wakeP99
                << ", \"n\": " << s.wakeN << " },\n";

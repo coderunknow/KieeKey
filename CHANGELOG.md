@@ -3,6 +3,53 @@
 All notable changes to KieeKey are documented here. Format based on
 Keep a Changelog; versioning: SemVer.
 
+## [1.2.2-RC3] — 2026-09-06
+
+### Pipeline measurement, WinUI consumer-callback fix, option-torture gate
+
+> **Scope:** the RC3 latency/runtime campaign. The full keyboard→visible-text
+> pipeline was measured end-to-end before any optimization was attempted; the
+> result is that the shipped Win32 wiring is already sub-µs (p50 0.183 /
+> p99 0.980 µs, real-user p99.9 55 µs dominated by OS scheduler deschedules),
+> so **no hot-path optimization was adopted** — every candidate (spin-cap
+> 100/200/1000 both ways, queue/wake/batching/copy removals, engine changes)
+> was A/B-measured and rejected with evidence. See
+> `V1.2.2_RC3_PERFORMANCE_REPORT.md` and `V1.2.2_RC3_ENGINEERING_LOG.md`.
+
+#### Fixed — hook (`src/core/ModernKeyHook.cpp`)
+
+* **WinUI 3 front-end received NO events.** When no producer handler is
+  registered (the WinUI front-end's consumer-callback-only wiring), the
+  hook's default `ProducerDecision{}` meant `wakeConsumer=false`, so every
+  key/mouse/foreground event was counted pass-through and the consumer
+  callback never ran — the front-end was inert. The no-handler default is
+  now `ProducerDecision{false, true}` at all three entry points; the
+  producer handler remains an optional optimization for apps that register
+  one (the Win32 app is unaffected — it always registers `onHookEvent`).
+
+#### Added — regression gate (`tests/test_option_matrix.cpp`)
+
+* **Tier 6 option torture**: a long-lived engine hammered with seeded
+  full-space option flips (every `EngineOptions` field, including
+  non-oracle-modeled ones), verified three independent ways per round —
+  FRESH (post-`setOptions`+`resetForConfigurationChange` decision-identity
+  with a brand-new engine), ORACLE (live lockstep), INVAR (D1/D2/CNT under
+  in-flight flips and temp-off toggles) — plus DETERM (two seeded engines
+  fold identical digests). Also fixed the matrix JSON writer (truncation).
+
+#### Measurement — `tests/e2e_bench.cpp`
+
+* `--model=production|all`: production mirrors the shipped hook (pass-through
+  keys counted, not enqueued); all is the consumer-callback-only wiring.
+  p95 added to the output; JSON schema `e2e_bench.v4`.
+
+#### Version
+
+* 1.2.2 RC2 → **1.2.2 RC3** (all version carriers; gate PASS).
+* Windows/WinUI builds not executed on this host (no cross-toolchain);
+  CI's Windows jobs compile the Win32 target. Real-Windows SendInput/TSF
+  costs remain unmeasured (inherited caveat).
+
 ## [1.2.2-RC2] — 2026-09-05
 
 ### Option-matrix hardening + performance-preference surface lockdown

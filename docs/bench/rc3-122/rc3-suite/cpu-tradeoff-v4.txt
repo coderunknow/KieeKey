@@ -1,0 +1,4 @@
+spin=100 model=production wall=manual mean_cpu=5.7% peak_cpu=39.7% n=145
+spin=1000 model=production wall=manual mean_cpu=6.0% peak_cpu=39.7% n=145
+spin=100 model=all wall=manual mean_cpu=7.2% peak_cpu=59.6% n=147
+spin=1000 model=all wall=manual mean_cpu=5.1% peak_cpu=139.0% n=145

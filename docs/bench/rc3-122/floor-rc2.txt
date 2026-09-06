@@ -1,0 +1,6 @@
+keys=20000000 mode=1 total=1443.8 ms  72.19 ns/key (median of 5)  sink=2905520108639366859
+  run0: 71.81 ns/key
+  run1: 72.14 ns/key
+  run2: 72.19 ns/key
+  run3: 72.23 ns/key
+  run4: 73.55 ns/key

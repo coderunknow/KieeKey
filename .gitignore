@@ -27,6 +27,11 @@ cmake_install.cmake
 *.so
 *.dylib
 
+# ---------- Temporary files ----------
+*.tmp
+*.temp
+*~
+
 # ---------- Installers / packages ----------
 *.msi
 *.appx

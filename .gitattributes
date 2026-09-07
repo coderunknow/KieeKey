@@ -1,0 +1,6 @@
+# Enforce Unix line endings for text files that must be byte-identical across platforms
+SHA256SUMS.txt text eol=lf
+scripts/*.sh text eol=lf
+
+# Default to auto-detection for other files
+* text=auto

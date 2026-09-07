@@ -57,7 +57,8 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MANIFEST="SHA256SUMS.txt"
-PREFIX="$(basename "$REPO_ROOT")"
+# Use hardcoded prefix for deterministic output regardless of checkout directory name
+PREFIX="KieeKey"
 
 cd "$REPO_ROOT"
 

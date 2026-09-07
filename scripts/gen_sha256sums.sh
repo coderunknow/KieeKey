@@ -68,6 +68,8 @@ if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
 fi
 
 generate() {
+    # Hash files as Git stores them (normalized content), not as checked out on disk.
+    # This ensures consistent hashes regardless of platform line ending conversion.
     # -z keeps paths with spaces/unicode intact; LC_ALL=C gives a stable order
     # so an unchanged tree always produces a byte-identical manifest.
     git ls-files -z \
@@ -76,7 +78,12 @@ generate() {
         | LC_ALL=C sort \
         | while IFS= read -r f; do
               [ -f "$f" ] || continue
-              printf '%s  %s/%s\n' "$(sha256sum -- "$f" | cut -d' ' -f1)" "$PREFIX" "$f"
+              # Hash the Git-normalized content (as stored in the repository)
+              # This is platform-independent: always hashes the LF-normalized version
+              hash=$(git show "HEAD:$f" 2>/dev/null | sha256sum | cut -d' ' -f1)
+              # Normalize path separators to forward slashes (Windows compatibility)
+              normalized_path=$(printf '%s' "$f" | tr '\\' '/')
+              printf '%s  %s/%s\n' "$hash" "$PREFIX" "$normalized_path"
           done
 }
 

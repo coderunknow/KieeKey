@@ -683,14 +683,8 @@ public:
     [[nodiscard]] std::uint32_t lastRehookTickMs() const noexcept { return lastRehookTickMs_.load(std::memory_order_relaxed); }
 
 private:
-    [[nodiscard]] std::uint32_t latestSeenTick() const noexcept {
-        std::uint32_t t = kbSeen_.load(std::memory_order_relaxed);
-        const std::uint32_t m = mouseSeen_.load(std::memory_order_relaxed);
-        if (static_cast<std::int32_t>(m - t) > 0) { t = m; }
-        const std::uint32_t s = selfInject_.load(std::memory_order_relaxed);
-        if (static_cast<std::int32_t>(s - t) > 0) { t = s; }
-        return t;
-    }
+    // v1.2.2 RC4 (B-7): removed latestSeenTick() — private helper unreferenced
+    // since the v1.1.3 per-hook watchdog rework (grep-verified RC4).
 
     Env& env_;
     Config cfg_;

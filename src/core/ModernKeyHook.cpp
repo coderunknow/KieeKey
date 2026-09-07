@@ -154,6 +154,17 @@ bool ModernKeyHook::start(EventHandler handler) {
     consumerExited_.store(false, std::memory_order_release);
     stuckDetached_.store(false, std::memory_order_release);   // v1.1.0 re-arm
 
+    // v1.2.2 RC4 (P2-3): quiescent-state reset. The previous session may
+    // have parked a keystroke in the ring after its consumer already exited
+    // (the pump runs until WM_QUIT lands) — replaying it into the next
+    // session would inject a stale edit into whatever app is focused. No
+    // producer/consumer is running at this point, so a quiescent reset is
+    // exact. Same for the producer-side edge/suppression bitmaps (a stale
+    // "was down" bit would swallow one KeyUp of the new session).
+    queue_.reset_quiescent();
+    suppressedDown_.fill(0);
+    for (auto& w : toggleKeyDown_) { w.store(0, std::memory_order_relaxed); }
+
     // Consumer first (it must exist before the first event can be pushed).
     // The exited flags are stamped as the thread's VERY LAST action (not
     // inside the member functions) so stop()'s bounded wait is exact.
@@ -310,6 +321,16 @@ void ModernKeyHook::hookThreadMain() noexcept {
     fgWinEvent_.reset(::SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND,
                                         nullptr, &ModernKeyHook::winEventProc, 0, 0,
                                         WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS));
+    // v1.2.2 RC4 (P2-2): the foreground WinEvent hook's validity is tracked
+    // explicitly. A SetWinEventHook failure used to be silently ignored —
+    // typing worked, but mouse word-break resync, modifier re-seeding and
+    // smart-switch all died with no diagnostic. The install handshake still
+    // keys on the keyboard hook (a missing fg hook must not brick startup),
+    // but the fact is now observable and the watchdog reinstall path keys
+    // on it too.
+    const bool fgOk = fgWinEvent_.operator bool();
+    fgHookInstalled_.store(fgOk, std::memory_order_release);
+    if (!fgOk) { fgHookFailures_.fetch_add(1, std::memory_order_relaxed); }
     // v1.2.0 Stable: publish the installation handshake AFTER all three hooks
     // are set (start() waits on this flag, never on the handles themselves).
     hooksInstalled_.store(keyboardHook_.operator bool(), std::memory_order_release);
@@ -406,6 +427,10 @@ bool ModernKeyHook::reinstallHooksOnPump() noexcept {
     fgWinEvent_.reset(::SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND,
                                         nullptr, &ModernKeyHook::winEventProc, 0, 0,
                                         WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS));
+    // v1.2.2 RC4 (P2-2): same fg-hook tracking as hookThreadMain.
+    const bool fgOk = fgWinEvent_.operator bool();
+    fgHookInstalled_.store(fgOk, std::memory_order_release);
+    if (!fgOk) { fgHookFailures_.fetch_add(1, std::memory_order_relaxed); }
     const bool ok = keyboardHook_.operator bool();
     hooksInstalled_.store(ok, std::memory_order_release);
     if (ok) {
@@ -450,7 +475,10 @@ void ModernKeyHook::resyncModifiersFromOs() noexcept {
     // tracked level out of phase forever. Clearing the bitmap re-arms edge
     // detection; a benign 32-bit tear is impossible (aligned word stores) and
     // the worst case is one suppressed XOR — corrected by the next resync.
-    toggleKeyDown_.fill(0);
+    // v1.2.2 RC4 (P1-2): atomic relaxed stores now — the UI thread may run
+    // this while the pump thread RMWs the same words in applyModifierDelta;
+    // the previous plain fill(0) was a data race (UB).
+    for (auto& w : toggleKeyDown_) { w.store(0, std::memory_order_relaxed); }
 }
 
 //===========================================================================
@@ -727,18 +755,43 @@ void ModernKeyHook::applyModifierDelta(const KeyEvent& ev) noexcept {
     }
 }
 
-// ---- toggle-key edge bitmap (hook-thread-affine) --------------------------
+// ---- producer-handler fault isolation (v1.2.2 RC4, P1-1) ------------------
+// The consumer thread's handler has been fault-isolated since v1.2.0
+// (handlerExceptions_); the producer side was missed. The LL/WinEvent
+// callbacks run inside Win32's non-unwinding dispatch frames: an escaping
+// std::bad_alloc from the engine would fail-fast the process mid-keystroke.
+// Catch, count, degrade to pass-through + wake.
+ModernKeyHook::ProducerDecision
+ModernKeyHook::runProducerHandler(const KeyEvent& ev) noexcept {
+    if (!producerHandler_) {
+        return ProducerDecision{/*suppressKey=*/false, /*wakeConsumer=*/true};
+    }
+    try {
+        return producerHandler_(ev);
+    } catch (...) {
+        producerExceptions_.fetch_add(1, std::memory_order_relaxed);
+        return ProducerDecision{/*suppressKey=*/false, /*wakeConsumer=*/true};
+    }
+}
+
+// ---- toggle-key edge bitmap -------------------------------------------------
+// v1.2.2 RC4 (P1-2): relaxed atomics — the UI thread may bulk-clear this
+// bitmap from resyncModifiersFromOs() while the pump thread RMWs single bits
+// here. modifierBits_ carries the actual synchronization; the bitmap is an
+// edge-detection aid whose worst-case degradation (one suppressed XOR,
+// corrected by the next resync) is documented as acceptable.
 bool ModernKeyHook::wasToggleKeyDown(std::uint32_t vk) const noexcept {
     if (vk >= 256) { return false; }
-    return (toggleKeyDown_[vk >> 5] & (1u << (vk & 31u))) != 0;
+    return (toggleKeyDown_[vk >> 5].load(std::memory_order_relaxed)
+            & (1u << (vk & 31u))) != 0;
 }
 void ModernKeyHook::setToggleKeyDown(std::uint32_t vk) noexcept {
     if (vk >= 256) { return; }
-    toggleKeyDown_[vk >> 5] |= (1u << (vk & 31u));
+    toggleKeyDown_[vk >> 5].fetch_or((1u << (vk & 31u)), std::memory_order_relaxed);
 }
 void ModernKeyHook::clearToggleKeyDown(std::uint32_t vk) noexcept {
     if (vk >= 256) { return; }
-    toggleKeyDown_[vk >> 5] &= ~(1u << (vk & 31u));
+    toggleKeyDown_[vk >> 5].fetch_and(~(1u << (vk & 31u)), std::memory_order_relaxed);
 }
 
 // ---- suppressed-KeyDown bitmap (hook-thread-affine) -----------------------
@@ -824,13 +877,21 @@ LRESULT CALLBACK ModernKeyHook::keyboardProc(int nCode, WPARAM wParam, LPARAM lP
     // consumer could drain the output ring before the item exists (the last
     // suppressed key of a word would never be emitted). Must be fast.
     //
+    // v1.2.2 RC4 (P2-3): once stop() has been requested, do not consult the
+    // engine or enqueue — the consumer may have already exited (it drains
+    // and leaves), and a keystroke pushed into the ring here would sit there
+    // with nobody to drain it until the NEXT start() (where the quiescent
+    // reset discards it). Pass the key through untouched instead: shutdown
+    // traffic reaches the app untransformed, exactly like a stopped IME.
+    if (!self->running_.load(std::memory_order_acquire)) {
+        return ::CallNextHookEx(nullptr, nCode, wParam, lParam);
+    }
+    //
     // No producer handler registered → preserve the consumer-callback
     // contract: deliver every event to the consumer (see mouseProc — the
     // producer handler is an OPTIONAL optimization; ProducerDecision{} means
     // "no consumer work" only when a handler was actually consulted).
-    const ProducerDecision d = self->producerHandler_
-        ? self->producerHandler_(ev)
-        : ProducerDecision{/*suppressKey=*/false, /*wakeConsumer=*/true};
+    const ProducerDecision d = self->runProducerHandler(ev);
 
     // Remember suppressed KeyDowns so their KeyUp can be swallowed above.
     // Modifiers are never suppressed (the producer handler returns PD{} for
@@ -892,9 +953,7 @@ LRESULT CALLBACK ModernKeyHook::mouseProc(int nCode, WPARAM wParam, LPARAM lPara
             // must not silently degrade to pass-through-everything.
             // (ProducerDecision{} means "no consumer work" and is only
             // correct when a handler was actually consulted.)
-            const ProducerDecision d = self->producerHandler_
-                ? self->producerHandler_(ev)
-                : ProducerDecision{/*suppressKey=*/false, /*wakeConsumer=*/true};
+            const ProducerDecision d = self->runProducerHandler(ev);
             if (d.wakeConsumer) { self->enqueue(ev); }
             else               { self->countPassThrough(ev); }
             break;
@@ -928,9 +987,7 @@ void CALLBACK ModernKeyHook::winEventProc(HWINEVENTHOOK, DWORD ev, HWND hwnd,
         reinterpret_cast<std::uintptr_t>(hwnd) & 0xFFFF'FFFFu);   // foreground HWND
     // No producer handler registered → consumer-callback contract: every
     // foreground change is delivered (see keyboardProc).
-    const ProducerDecision d = self->producerHandler_
-        ? self->producerHandler_(fg)
-        : ProducerDecision{/*suppressKey=*/false, /*wakeConsumer=*/true};
+    const ProducerDecision d = self->runProducerHandler(fg);
     if (d.wakeConsumer) { self->enqueue(fg); }                  // serialized on hook pump thread
     else               { self->countPassThrough(fg); }
 }

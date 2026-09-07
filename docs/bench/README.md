@@ -6,12 +6,29 @@ v1.2.1 campaign and must not be overwritten by v1.2.2 runs.
 
 | directory | campaign | documented in |
 |---|---|---|
+| `rc4-122/` | v1.2.2 RC4 stable-qualification campaign | this file, below |
 | `rc1-122/` | v1.2.2 RC1 engine A/B vs v1.2.1 Stable | this file, below |
 | `rc2-122/` | v1.2.2 RC2 throughput floor + option matrix | this file, below |
 | `rc3-122/` | v1.2.2 RC3 end-to-end pipeline campaign | [`rc3-122/README.md`](rc3-122/README.md) |
 | `rc1/`, `rc2/` | v1.2.1 RC1-vs-RC2 | this file, below |
 | `rc3/` | v1.2.1 RC2-vs-RC3 | this file, below |
 | `stable/` | v1.2.1 RC3-vs-Stable | this file, below |
+
+## v1.2.2 RC4 (stable-qualification campaign)
+
+`rc4-122/` holds the RC4 evidence tree:
+`environment.txt` (host/toolchain capture), `baseline_ctest_rc3.log` (frozen
+RC3 baseline re-run), `asan_ubsan_rc4.log` + `tsan_rc4.log` (sanitizer
+campaigns), `single_core_rc4.log`, `determinism/` (triple-run digests +
+clean-vs-ASan explanation), `ab/` (strict RC3↔RC4 e2e/tone/tput/real-world
+A/B + analysis JSON), `cross-version/` (v1.2.0/1.2.1/RC1/RC2 re-measurements
+with comparability labels), `windows-cross/` (KieeKeyApp.exe PE32+ + SHA256),
+`competitor_three_engines.log` (5 × 2M-key runs vs OpenKey 2.0.5 / UniKey),
+option-matrix deep-run JSON. Reports:
+[`docs/reports/V1.2.2_RC4_PERFORMANCE_REPORT.md`](../reports/V1.2.2_RC4_PERFORMANCE_REPORT.md),
+[`docs/reports/V1.2.2_RC4_RELEASE_REPORT.md`](../reports/V1.2.2_RC4_RELEASE_REPORT.md).
+
+---
 
 ## v1.2.2 RC3 (end-to-end pipeline campaign)
 

@@ -1,0 +1,19 @@
+Test project /home/z/my-project/kieekey-extracted/KieeKey/build/rc3-baseline
+    Start  6: ok_diff_ab_tests
+1/7 Test  #6: ok_diff_ab_tests .................   Passed    0.28 sec
+    Start  8: ok_stress_rc2
+2/7 Test  #8: ok_stress_rc2 ....................   Passed    2.09 sec
+    Start 10: ok_stress_tests
+3/7 Test #10: ok_stress_tests ..................   Passed    0.22 sec
+    Start 12: ok_queue_stress_tests
+4/7 Test #12: ok_queue_stress_tests ............   Passed    0.13 sec
+    Start 16: ok_lifecycle_tests
+5/7 Test #16: ok_lifecycle_tests ...............   Passed    4.64 sec
+    Start 17: ok_soak_pipeline
+6/7 Test #17: ok_soak_pipeline .................   Passed    0.05 sec
+    Start 19: ok_option_matrix
+7/7 Test #19: ok_option_matrix .................   Passed   85.41 sec
+
+100% tests passed out of 7
+
+Total Test time (real) =  92.82 sec

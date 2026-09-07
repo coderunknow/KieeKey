@@ -1,0 +1,175 @@
+===== competitor run 1 =====
+## 2. Real passages — exact match vs intended Vietnamese text
+
+| engine | exact vs intended | of 15 |
+|---|---|---|
+| KieeKey (v3.0) | **15** | 15 |
+| OpenKey 2.0.5 (legacy) | **14** | 15 |
+| UniKey (4.x UKEngine) | **14** | 15 |
+
+## 3. Latency — engine decision per key (ns)
+
+| engine | mean | p50 | p90 | p99 | max | sampled keys |
+|---|---|---|---|---|---|---|
+| KieeKey (v3.0) | 163.1 | 121 | 211 | 445 | 3085365 | 2000000 |
+| OpenKey 2.0.5 (legacy) | 262.9 | 212 | 391 | 841 | 1857718 | 2000000 |
+| UniKey (4.x UKEngine) | 118.5 | 111 | 138 | 182 | 459536 | 2000000 |
+
+Includes ~20–40 ns of per-sample timing overhead, identical for all engines — the relative ranking is exact. `keys` from the correctness run: 6176 / 6176 / 6176.
+
+## 4. Engine state — memory footprint
+
+| engine | core object | internal buffers | approx total |
+|---|---|---|---|
+| KieeKey (v3.0) | `TextEngine` 9064 B | raw-word buffer (kMaxBuff=32), undo history 64×32 | 9064 B (+ heap history) |
+| OpenKey 2.0.5 (legacy) | engine globals | TypingWord[80], word/state histories | ~8 KiB |
+| UniKey (4.x UKEngine) | `UkEngine` 7752 B + `UkSharedMem` 141384 B | m_buffer[128] WordInfo, m_keyStrokes[128], macro store | 149136 B |
+
+## Notes
+
+- **"Delay when typing accents":** engine decision is 60–400 ns/key on all three engines — imperceptible. The perceived delay in the shipped app is the producer→consumer TSF hop (one synchronous edit session per edit). The fix shipped in this segment batches consecutive edits into ONE `TF_ES_SYNC` session and adds the producer-side ordering barrier; see `notes/fix_design.md`.
+- **Ghosting/sticking when typing and deleting quickly:** fixed by (1) swallowing the KeyUp of a suppressed KeyDown (phantom key-up) and (2) draining pending edits before a pass-through key reaches the app. Both live in the shipped Windows exe; the engine-level semantics are locked by `tests/test_hotfix.cpp` and this benchmark.
+- **Passage-11 (`confirm`)** and the fuzz show KieeKey's shipped spelling auto-restore (`restoreIfWrongSpelling=true`): non-Vietnamese words keep their raw letters, while the 2.0.5/UniKey defaults mark them (`cònirm`, `ẹuhrkt`). Turn the option off and all three agree.
+- **UniKey upstream engine limit:** its `UKEngine` uses a fixed 128-entry word buffer; words longer than that overflow its state machine (OOB read, ASAN-confirmed in the vendored reference). No human-typed word can exceed it — the comparative streams cap words at 11 letters, the realistic maximum — and the issue is documented here rather than patched into the unmodified reference.
+- **OpenKey 2.0.5 reference defect:** `checkForStandaloneChar` reads `TypingWord[_index - 1]` without an `_index > 0` guard (Engine.cpp:995). Under ASan this is a global-buffer-overflow READ (4 bytes before the 128-byte `TypingWord`), reproducible on the fuzz-5k stream. Release builds read benign adjacent memory and output is unaffected — the differential agreement is unchanged — but the unmodified vendored reference carries this pre-existing UB. It is documented here, not patched, to keep the reference pristine.
+- Correctness differences between engines are the documented rule differences (free-marking, auto-restore defaults, tone placement). The exhaustive KieeKey vs 2.0.5 differential is `MEGA_BENCH_REPORT.md`; this benchmark adds UniKey.
+===== competitor run 2 =====
+## 2. Real passages — exact match vs intended Vietnamese text
+
+| engine | exact vs intended | of 15 |
+|---|---|---|
+| KieeKey (v3.0) | **15** | 15 |
+| OpenKey 2.0.5 (legacy) | **14** | 15 |
+| UniKey (4.x UKEngine) | **14** | 15 |
+
+## 3. Latency — engine decision per key (ns)
+
+| engine | mean | p50 | p90 | p99 | max | sampled keys |
+|---|---|---|---|---|---|---|
+| KieeKey (v3.0) | 136.8 | 113 | 187 | 401 | 1871113 | 2000000 |
+| OpenKey 2.0.5 (legacy) | 264.2 | 213 | 392 | 851 | 1534770 | 2000000 |
+| UniKey (4.x UKEngine) | 119.1 | 111 | 138 | 183 | 474198 | 2000000 |
+
+Includes ~20–40 ns of per-sample timing overhead, identical for all engines — the relative ranking is exact. `keys` from the correctness run: 6176 / 6176 / 6176.
+
+## 4. Engine state — memory footprint
+
+| engine | core object | internal buffers | approx total |
+|---|---|---|---|
+| KieeKey (v3.0) | `TextEngine` 9064 B | raw-word buffer (kMaxBuff=32), undo history 64×32 | 9064 B (+ heap history) |
+| OpenKey 2.0.5 (legacy) | engine globals | TypingWord[80], word/state histories | ~8 KiB |
+| UniKey (4.x UKEngine) | `UkEngine` 7752 B + `UkSharedMem` 141384 B | m_buffer[128] WordInfo, m_keyStrokes[128], macro store | 149136 B |
+
+## Notes
+
+- **"Delay when typing accents":** engine decision is 60–400 ns/key on all three engines — imperceptible. The perceived delay in the shipped app is the producer→consumer TSF hop (one synchronous edit session per edit). The fix shipped in this segment batches consecutive edits into ONE `TF_ES_SYNC` session and adds the producer-side ordering barrier; see `notes/fix_design.md`.
+- **Ghosting/sticking when typing and deleting quickly:** fixed by (1) swallowing the KeyUp of a suppressed KeyDown (phantom key-up) and (2) draining pending edits before a pass-through key reaches the app. Both live in the shipped Windows exe; the engine-level semantics are locked by `tests/test_hotfix.cpp` and this benchmark.
+- **Passage-11 (`confirm`)** and the fuzz show KieeKey's shipped spelling auto-restore (`restoreIfWrongSpelling=true`): non-Vietnamese words keep their raw letters, while the 2.0.5/UniKey defaults mark them (`cònirm`, `ẹuhrkt`). Turn the option off and all three agree.
+- **UniKey upstream engine limit:** its `UKEngine` uses a fixed 128-entry word buffer; words longer than that overflow its state machine (OOB read, ASAN-confirmed in the vendored reference). No human-typed word can exceed it — the comparative streams cap words at 11 letters, the realistic maximum — and the issue is documented here rather than patched into the unmodified reference.
+- **OpenKey 2.0.5 reference defect:** `checkForStandaloneChar` reads `TypingWord[_index - 1]` without an `_index > 0` guard (Engine.cpp:995). Under ASan this is a global-buffer-overflow READ (4 bytes before the 128-byte `TypingWord`), reproducible on the fuzz-5k stream. Release builds read benign adjacent memory and output is unaffected — the differential agreement is unchanged — but the unmodified vendored reference carries this pre-existing UB. It is documented here, not patched, to keep the reference pristine.
+- Correctness differences between engines are the documented rule differences (free-marking, auto-restore defaults, tone placement). The exhaustive KieeKey vs 2.0.5 differential is `MEGA_BENCH_REPORT.md`; this benchmark adds UniKey.
+===== competitor run 3 =====
+## 2. Real passages — exact match vs intended Vietnamese text
+
+| engine | exact vs intended | of 15 |
+|---|---|---|
+| KieeKey (v3.0) | **15** | 15 |
+| OpenKey 2.0.5 (legacy) | **14** | 15 |
+| UniKey (4.x UKEngine) | **14** | 15 |
+
+## 3. Latency — engine decision per key (ns)
+
+| engine | mean | p50 | p90 | p99 | max | sampled keys |
+|---|---|---|---|---|---|---|
+| KieeKey (v3.0) | 137.0 | 113 | 188 | 403 | 2279939 | 2000000 |
+| OpenKey 2.0.5 (legacy) | 267.4 | 213 | 396 | 866 | 1608029 | 2000000 |
+| UniKey (4.x UKEngine) | 118.9 | 111 | 138 | 184 | 447138 | 2000000 |
+
+Includes ~20–40 ns of per-sample timing overhead, identical for all engines — the relative ranking is exact. `keys` from the correctness run: 6176 / 6176 / 6176.
+
+## 4. Engine state — memory footprint
+
+| engine | core object | internal buffers | approx total |
+|---|---|---|---|
+| KieeKey (v3.0) | `TextEngine` 9064 B | raw-word buffer (kMaxBuff=32), undo history 64×32 | 9064 B (+ heap history) |
+| OpenKey 2.0.5 (legacy) | engine globals | TypingWord[80], word/state histories | ~8 KiB |
+| UniKey (4.x UKEngine) | `UkEngine` 7752 B + `UkSharedMem` 141384 B | m_buffer[128] WordInfo, m_keyStrokes[128], macro store | 149136 B |
+
+## Notes
+
+- **"Delay when typing accents":** engine decision is 60–400 ns/key on all three engines — imperceptible. The perceived delay in the shipped app is the producer→consumer TSF hop (one synchronous edit session per edit). The fix shipped in this segment batches consecutive edits into ONE `TF_ES_SYNC` session and adds the producer-side ordering barrier; see `notes/fix_design.md`.
+- **Ghosting/sticking when typing and deleting quickly:** fixed by (1) swallowing the KeyUp of a suppressed KeyDown (phantom key-up) and (2) draining pending edits before a pass-through key reaches the app. Both live in the shipped Windows exe; the engine-level semantics are locked by `tests/test_hotfix.cpp` and this benchmark.
+- **Passage-11 (`confirm`)** and the fuzz show KieeKey's shipped spelling auto-restore (`restoreIfWrongSpelling=true`): non-Vietnamese words keep their raw letters, while the 2.0.5/UniKey defaults mark them (`cònirm`, `ẹuhrkt`). Turn the option off and all three agree.
+- **UniKey upstream engine limit:** its `UKEngine` uses a fixed 128-entry word buffer; words longer than that overflow its state machine (OOB read, ASAN-confirmed in the vendored reference). No human-typed word can exceed it — the comparative streams cap words at 11 letters, the realistic maximum — and the issue is documented here rather than patched into the unmodified reference.
+- **OpenKey 2.0.5 reference defect:** `checkForStandaloneChar` reads `TypingWord[_index - 1]` without an `_index > 0` guard (Engine.cpp:995). Under ASan this is a global-buffer-overflow READ (4 bytes before the 128-byte `TypingWord`), reproducible on the fuzz-5k stream. Release builds read benign adjacent memory and output is unaffected — the differential agreement is unchanged — but the unmodified vendored reference carries this pre-existing UB. It is documented here, not patched, to keep the reference pristine.
+- Correctness differences between engines are the documented rule differences (free-marking, auto-restore defaults, tone placement). The exhaustive KieeKey vs 2.0.5 differential is `MEGA_BENCH_REPORT.md`; this benchmark adds UniKey.
+===== competitor run 4 =====
+## 2. Real passages — exact match vs intended Vietnamese text
+
+| engine | exact vs intended | of 15 |
+|---|---|---|
+| KieeKey (v3.0) | **15** | 15 |
+| OpenKey 2.0.5 (legacy) | **14** | 15 |
+| UniKey (4.x UKEngine) | **14** | 15 |
+
+## 3. Latency — engine decision per key (ns)
+
+| engine | mean | p50 | p90 | p99 | max | sampled keys |
+|---|---|---|---|---|---|---|
+| KieeKey (v3.0) | 135.9 | 112 | 187 | 401 | 1508851 | 2000000 |
+| OpenKey 2.0.5 (legacy) | 263.4 | 213 | 392 | 850 | 1798054 | 2000000 |
+| UniKey (4.x UKEngine) | 118.6 | 112 | 137 | 183 | 490611 | 2000000 |
+
+Includes ~20–40 ns of per-sample timing overhead, identical for all engines — the relative ranking is exact. `keys` from the correctness run: 6176 / 6176 / 6176.
+
+## 4. Engine state — memory footprint
+
+| engine | core object | internal buffers | approx total |
+|---|---|---|---|
+| KieeKey (v3.0) | `TextEngine` 9064 B | raw-word buffer (kMaxBuff=32), undo history 64×32 | 9064 B (+ heap history) |
+| OpenKey 2.0.5 (legacy) | engine globals | TypingWord[80], word/state histories | ~8 KiB |
+| UniKey (4.x UKEngine) | `UkEngine` 7752 B + `UkSharedMem` 141384 B | m_buffer[128] WordInfo, m_keyStrokes[128], macro store | 149136 B |
+
+## Notes
+
+- **"Delay when typing accents":** engine decision is 60–400 ns/key on all three engines — imperceptible. The perceived delay in the shipped app is the producer→consumer TSF hop (one synchronous edit session per edit). The fix shipped in this segment batches consecutive edits into ONE `TF_ES_SYNC` session and adds the producer-side ordering barrier; see `notes/fix_design.md`.
+- **Ghosting/sticking when typing and deleting quickly:** fixed by (1) swallowing the KeyUp of a suppressed KeyDown (phantom key-up) and (2) draining pending edits before a pass-through key reaches the app. Both live in the shipped Windows exe; the engine-level semantics are locked by `tests/test_hotfix.cpp` and this benchmark.
+- **Passage-11 (`confirm`)** and the fuzz show KieeKey's shipped spelling auto-restore (`restoreIfWrongSpelling=true`): non-Vietnamese words keep their raw letters, while the 2.0.5/UniKey defaults mark them (`cònirm`, `ẹuhrkt`). Turn the option off and all three agree.
+- **UniKey upstream engine limit:** its `UKEngine` uses a fixed 128-entry word buffer; words longer than that overflow its state machine (OOB read, ASAN-confirmed in the vendored reference). No human-typed word can exceed it — the comparative streams cap words at 11 letters, the realistic maximum — and the issue is documented here rather than patched into the unmodified reference.
+- **OpenKey 2.0.5 reference defect:** `checkForStandaloneChar` reads `TypingWord[_index - 1]` without an `_index > 0` guard (Engine.cpp:995). Under ASan this is a global-buffer-overflow READ (4 bytes before the 128-byte `TypingWord`), reproducible on the fuzz-5k stream. Release builds read benign adjacent memory and output is unaffected — the differential agreement is unchanged — but the unmodified vendored reference carries this pre-existing UB. It is documented here, not patched, to keep the reference pristine.
+- Correctness differences between engines are the documented rule differences (free-marking, auto-restore defaults, tone placement). The exhaustive KieeKey vs 2.0.5 differential is `MEGA_BENCH_REPORT.md`; this benchmark adds UniKey.
+===== competitor run 5 =====
+## 2. Real passages — exact match vs intended Vietnamese text
+
+| engine | exact vs intended | of 15 |
+|---|---|---|
+| KieeKey (v3.0) | **15** | 15 |
+| OpenKey 2.0.5 (legacy) | **14** | 15 |
+| UniKey (4.x UKEngine) | **14** | 15 |
+
+## 3. Latency — engine decision per key (ns)
+
+| engine | mean | p50 | p90 | p99 | max | sampled keys |
+|---|---|---|---|---|---|---|
+| KieeKey (v3.0) | 139.3 | 114 | 192 | 414 | 1553419 | 2000000 |
+| OpenKey 2.0.5 (legacy) | 264.0 | 213 | 392 | 852 | 1868197 | 2000000 |
+| UniKey (4.x UKEngine) | 119.1 | 112 | 138 | 183 | 639153 | 2000000 |
+
+Includes ~20–40 ns of per-sample timing overhead, identical for all engines — the relative ranking is exact. `keys` from the correctness run: 6176 / 6176 / 6176.
+
+## 4. Engine state — memory footprint
+
+| engine | core object | internal buffers | approx total |
+|---|---|---|---|
+| KieeKey (v3.0) | `TextEngine` 9064 B | raw-word buffer (kMaxBuff=32), undo history 64×32 | 9064 B (+ heap history) |
+| OpenKey 2.0.5 (legacy) | engine globals | TypingWord[80], word/state histories | ~8 KiB |
+| UniKey (4.x UKEngine) | `UkEngine` 7752 B + `UkSharedMem` 141384 B | m_buffer[128] WordInfo, m_keyStrokes[128], macro store | 149136 B |
+
+## Notes
+
+- **"Delay when typing accents":** engine decision is 60–400 ns/key on all three engines — imperceptible. The perceived delay in the shipped app is the producer→consumer TSF hop (one synchronous edit session per edit). The fix shipped in this segment batches consecutive edits into ONE `TF_ES_SYNC` session and adds the producer-side ordering barrier; see `notes/fix_design.md`.
+- **Ghosting/sticking when typing and deleting quickly:** fixed by (1) swallowing the KeyUp of a suppressed KeyDown (phantom key-up) and (2) draining pending edits before a pass-through key reaches the app. Both live in the shipped Windows exe; the engine-level semantics are locked by `tests/test_hotfix.cpp` and this benchmark.
+- **Passage-11 (`confirm`)** and the fuzz show KieeKey's shipped spelling auto-restore (`restoreIfWrongSpelling=true`): non-Vietnamese words keep their raw letters, while the 2.0.5/UniKey defaults mark them (`cònirm`, `ẹuhrkt`). Turn the option off and all three agree.
+- **UniKey upstream engine limit:** its `UKEngine` uses a fixed 128-entry word buffer; words longer than that overflow its state machine (OOB read, ASAN-confirmed in the vendored reference). No human-typed word can exceed it — the comparative streams cap words at 11 letters, the realistic maximum — and the issue is documented here rather than patched into the unmodified reference.
+- **OpenKey 2.0.5 reference defect:** `checkForStandaloneChar` reads `TypingWord[_index - 1]` without an `_index > 0` guard (Engine.cpp:995). Under ASan this is a global-buffer-overflow READ (4 bytes before the 128-byte `TypingWord`), reproducible on the fuzz-5k stream. Release builds read benign adjacent memory and output is unaffected — the differential agreement is unchanged — but the unmodified vendored reference carries this pre-existing UB. It is documented here, not patched, to keep the reference pristine.
+- Correctness differences between engines are the documented rule differences (free-marking, auto-restore defaults, tone placement). The exhaustive KieeKey vs 2.0.5 differential is `MEGA_BENCH_REPORT.md`; this benchmark adds UniKey.

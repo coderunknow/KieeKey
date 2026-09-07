@@ -1,0 +1,6 @@
+seed=0xC0FFEE build=rc3-baseline digest=ea6203357c961dd1
+seed=0xC0FFEE build=asan digest=43e3af540a406255
+seed=12345 build=rc3-baseline digest=dfc83c03b023d4b2
+seed=12345 build=asan digest=58fbbd27895574b4
+seed=987654321 build=rc3-baseline digest=79918a0b667af28b
+seed=987654321 build=asan digest=0579666b9be0c79e

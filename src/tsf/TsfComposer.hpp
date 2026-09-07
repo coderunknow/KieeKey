@@ -108,6 +108,13 @@ public:
     [[nodiscard]] bool commitOne(std::size_t backspaceCount,
                                  const std::wstring& replacement) noexcept;
 
+    // v1.2.2 RC4 (P2-1): throwing inner bodies of the noexcept entry points.
+    // The public methods wrap these in try/catch and degrade gracefully on
+    // allocation failure (OOM must never terminate the consumer thread).
+    bool commitOneInner(std::size_t backspaceCount, const std::wstring& replacement);
+    bool commitBatchInner(const std::vector<EditDelta>& deltas, std::size_t* appliedOut);
+    bool textBeforeCaretInner(std::wstring& out);
+
     // Apply a batch of edits in ONE synchronous TSF edit session, in order.
     // Each delta is relative to the document state left by the previous one
     // (the engine produces sequential deltas on its own buffer). Batching

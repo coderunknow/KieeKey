@@ -193,19 +193,29 @@ public:
 
     // ---- ITfEditSession ----
     STDMETHODIMP DoEditSession(TfEditCookie ec) noexcept override {
-        HRESULT hr = S_OK;
-        if (isSingle_) {
-            hr = applyDelta(ctx_, inserter_, ec, single_);
-            applied_ = SUCCEEDED(hr) ? 1u : 0u;
-        } else {
-            for (const EditDelta& d : deltas_) {
-                hr = applyDelta(ctx_, inserter_, ec, d);
-                if (FAILED(hr)) { break; }
-                ++applied_;
+        // v1.2.2 RC4 (P2-1): this COM entry point is noexcept and applyDelta
+        // builds std::wstring output — an escaping bad_alloc would
+        // std::terminate the consumer thread mid-typing. Degrade to a failed
+        // session instead: the caller re-emits the unapplied suffix via the
+        // SendInput fallback (the same contract as a failing delta).
+        try {
+            HRESULT hr = S_OK;
+            if (isSingle_) {
+                hr = applyDelta(ctx_, inserter_, ec, single_);
+                applied_ = SUCCEEDED(hr) ? 1u : 0u;
+            } else {
+                for (const EditDelta& d : deltas_) {
+                    hr = applyDelta(ctx_, inserter_, ec, d);
+                    if (FAILED(hr)) { break; }
+                    ++applied_;
+                }
             }
+            if (resultOut_) { *resultOut_ = hr; }
+            return hr;
+        } catch (...) {
+            if (resultOut_) { *resultOut_ = E_OUTOFMEMORY; }
+            return E_OUTOFMEMORY;
         }
-        if (resultOut_) { *resultOut_ = hr; }
-        return hr;
     }
 
     // v1.1.3 — how many deltas were COMMITTED before the session stopped
@@ -257,6 +267,19 @@ public:
     }
 
     STDMETHODIMP DoEditSession(TfEditCookie ec) noexcept override {
+        // v1.2.2 RC4 (P2-1): own_.assign allocates inside this noexcept COM
+        // entry point — an escaping bad_alloc would std::terminate. Report
+        // E_OUTOFMEMORY; the caller degrades to the empty-buffer model
+        // (startNewSession — the safe degradation).
+        try {
+            return runReadSession(ec);
+        } catch (...) {
+            if (resultOut_) { *resultOut_ = E_OUTOFMEMORY; }
+            return E_OUTOFMEMORY;
+        }
+    }
+
+    HRESULT runReadSession(TfEditCookie ec) {
         HRESULT hr = E_FAIL;
         TF_SELECTION sel{};
         ULONG fetched = 0;
@@ -481,6 +504,20 @@ bool TsfComposer::commitOne(std::size_t backspaceCount,
                             const std::wstring& replacement) noexcept {
     if (!attached_ || threadMgr_ == nullptr || !ensureContext()) { return false; }
 
+    // v1.2.2 RC4 (P2-1): this noexcept method allocates (the session ctor
+    // copies the replacement std::wstring). An escaping bad_alloc would
+    // std::terminate the consumer thread and defeat both the app's try/catch
+    // and the consumer fault isolation. Degrade to "commit failed" — the
+    // caller falls back to inline SendInput, the documented OOM contract.
+    try {
+        return commitOneInner(backspaceCount, replacement);
+    } catch (...) {
+        return false;
+    }
+}
+
+bool TsfComposer::commitOneInner(std::size_t backspaceCount,
+                                 const std::wstring& replacement) {
     // v1.1.0 — slow-commit watchdog: measure the synchronous session. The
     // normal commit is a few µs; a multi-ms (worst case: unbounded) session
     // means the foreground app's STA is starving. The consumer flags it and
@@ -535,6 +572,17 @@ bool TsfComposer::commitBatch(const std::vector<EditDelta>& deltas,
         return okR;
     }
 
+    // v1.2.2 RC4 (P2-1): same noexcept-allocation contract as commitOne —
+    // the session ctor copies the whole delta vector. Degrade on OOM.
+    try {
+        return commitBatchInner(deltas, appliedOut);
+    } catch (...) {
+        return false;
+    }
+}
+
+bool TsfComposer::commitBatchInner(const std::vector<EditDelta>& deltas,
+                                   std::size_t* appliedOut) {
     // v1.1.0 — slow-commit watchdog (same instrumentation as commitOne).
     LARGE_INTEGER t0{};
     ::QueryPerformanceCounter(&t0);
@@ -552,9 +600,6 @@ bool TsfComposer::commitBatch(const std::vector<EditDelta>& deltas,
     HRESULT hr = context_->RequestEditSession(clientId_, session,
                                               TF_ES_READWRITE | TF_ES_SYNC,
                                               &sessionHr);
-    // v1.1.0 — release the caller's initial reference (see commitOne:
-    // without this, one session object leaked per batched commit).
-    session->Release();
 
     LARGE_INTEGER t1{};
     ::QueryPerformanceCounter(&t1);
@@ -575,6 +620,16 @@ bool TsfComposer::commitBatch(const std::vector<EditDelta>& deltas,
     // for a while, undefined everywhere else; ASan would flag it in the
     // shipped TSF path). appliedCount() cannot change after DoEditSession
     // returns, so snapshot it BEFORE the release.
+    //
+    // v1.2.2 RC4 — P0 FIX (release audit): the v1.2.1 fix was left
+    // HALF-APPLIED. The `session->Release()` from v1.1.0 still ran BEFORE
+    // the snapshot, so the object was already destroyed at line "snapshot"
+    // (UAF) and the second Release() at the end double-released it — on
+    // EVERY multi-delta batch commit. commitOne (the single-delta path)
+    // always had the correct one-Release shape. The single Release() below
+    // is the caller's initial reference and the last one standing after the
+    // synchronous request; snapshot first, release once, and NEVER touch
+    // the session afterwards.
     const std::uint32_t appliedCount = session->appliedCount();
     session->Release();
 
@@ -589,6 +644,17 @@ bool TsfComposer::textBeforeCaret(std::wstring& out) noexcept {
     out.clear();
     if (!attached_ || !ensureContext()) { return false; }
 
+    // v1.2.2 RC4 (P2-1): the copy-out below allocates (out = session->result()).
+    // Degrade to "unavailable" on OOM — the same contract as an empty read.
+    try {
+        return textBeforeCaretInner(out);
+    } catch (...) {
+        out.clear();
+        return false;
+    }
+}
+
+bool TsfComposer::textBeforeCaretInner(std::wstring& out) {
     // v1.1.0 — the session OWNS the read buffer (see ReadBeforeCaretSession).
     // A synchronous READ-ONLY session runs inside RequestEditSession, so the
     // copy-out below is safe.

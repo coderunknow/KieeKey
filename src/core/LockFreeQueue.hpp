@@ -127,6 +127,20 @@ public:
         return head_.load(std::memory_order_acquire) == tail_.load(std::memory_order_acquire);
     }
 
+    // v1.2.2 RC4 (P2-3): return the ring to its freshly-constructed state.
+    // QUiescent-state ONLY: no producer may be mid-push and no consumer
+    // mid-pop (this is a lifecycle primitive, e.g. ModernKeyHook::start()
+    // before the pump/consumer threads are spawned — a keystroke parked in
+    // the ring by a previous session must never be replayed into the next
+    // session). Re-arms every slot's sequence word exactly like the ctor.
+    void reset_quiescent() noexcept {
+        head_.store(0, std::memory_order_relaxed);
+        tail_.store(0, std::memory_order_relaxed);
+        for (std::size_t i = 0; i < Capacity; ++i) {
+            slots_[i].seq.store(static_cast<std::intptr_t>(i), std::memory_order_relaxed);
+        }
+    }
+
 private:
     struct alignas(cacheline) Slot {
         std::atomic<std::intptr_t> seq{0};   // 0 = never used
@@ -216,7 +230,9 @@ private:
 // Latency/stats helpers shared by producers and consumers.
 struct QueueStats {
     std::atomic<std::uint64_t> pushed{0};
-    std::atomic<std::uint64_t> popped{0};
+    // v1.2.2 RC4 (B-7): removed `popped` — never written by anyone
+    // (grep-verified); the consumer reports latency/peak stats instead, so
+    // the field was a lying diagnostic. Add it back WITH a writer if needed.
     std::atomic<std::uint64_t> droppedOverflow{0};
     std::atomic<std::int64_t>  lastLatencyUs{0};   // consumer-measured E2E latency
 };

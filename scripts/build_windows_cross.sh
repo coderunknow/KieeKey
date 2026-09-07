@@ -33,7 +33,7 @@ else echo "ERROR: llvm-mingw toolchain not found (set LLVM_MINGW=/path)" >&2; ex
 SRCS="src/core/TextEngine.cpp src/core/ModernKeyHook.cpp src/core/win32_wrapper.cpp
       src/core/ProcessMonitor.cpp src/tsf/TsfComposer.cpp src/app/main.cpp"
 LIBS="-luser32 -lgdi32 -lshell32 -lole32 -ldwmapi -lpsapi -lversion -lwinmm -ladvapi32 -lwtsapi32 -lurlmon -lcomctl32 -luuid"
-FLAGS="-std=c++20 -O2 -DUNICODE -D_UNICODE -Wall -Wextra -Werror -Isrc/core -Isrc/tsf -Isrc/app"
+FLAGS="-std=c++23 -O2 -DUNICODE -D_UNICODE -Wall -Wextra -Werror -Isrc/core -Isrc/tsf -Isrc/app"
 RCFLAGS="-c 65001"
 fail=0
 mkdir -p "$OUT"

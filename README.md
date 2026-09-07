@@ -5,7 +5,7 @@
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20ARM64-0078D6.svg)
 ![Build](https://img.shields.io/badge/build-CMake%20%3E%3D%203.28-064FAD.svg)
 
-**KieeKey v1.2.2 RC3** is a modern, low-latency Vietnamese input method
+**KieeKey v1.2.2 RC4** is a modern, low-latency Vietnamese input method
 engine (bộ gõ Tiếng Việt) for Windows, with a system-tray application, a TSF
 text-store composer and an optional WinUI 3 Fluent settings UI.
 
@@ -19,6 +19,49 @@ text-store composer and an optional WinUI 3 Fluent settings UI.
 ![KieeKey preview](src/app/KieeKeyApp-preview.png)
 
 ---
+
+## What's new in v1.2.2 RC4 — stable-qualification campaign
+
+RC4 is a **production-readiness / stable-qualification release** over the
+frozen RC3 baseline: the engine hot path is byte-identical to RC3 (verified:
+`git diff` empty for `TextEngine.*` / tables / profiles), and every accepted
+change is a correctness, stability or release-engineering fix proven by the
+re-run campaign.
+
+* **P0 fixed — TSF double-Release / use-after-free in `commitBatch`.**
+  The v1.2.1 "use-after-free fix" was left half-applied: a first
+  `session->Release()` still ran before the `appliedCount()` snapshot, so
+  EVERY multi-delta batch commit read freed memory and double-released the
+  edit session. Now snapshot-once, release-once (the `commitOne` shape).
+* **P1 fixed — producer-side fault isolation.** An exception escaping the
+  low-level hook callbacks (e.g. `bad_alloc` in the engine handler) crossed
+  the Win32 dispatch frames — UB / process fail-fast mid-keystroke. All
+  three producer-handler call sites now catch, count
+  (`producerExceptions_`) and degrade to pass-through + wake.
+* **P1 fixed — modifier-toggle data race.** `resyncModifiersFromOs()` is
+  documented and called from the UI thread while the hook pump thread
+  read-modify-writes the same `toggleKeyDown_` words; the plain bitmap is
+  now relaxed-atomic (data race eliminated).
+* **Hardening:** noexcept TSF entry points degrade instead of
+  `std::terminate` on OOM; foreground WinEvent-hook validity and
+  ProcessMonitor start failures are surfaced (new `AutoExcludeUnavailable`
+  notification); `start()` after `stop()` resets the ring and producer
+  bitmaps (no stale keystroke replay); ProcessMonitor re-validates the
+  foreground PID before publishing.
+* **Release engineering:** table generators emit the GPL header +
+  version-free banner (regeneration proven byte-identical); CMake presets
+  default to the dependency-free build; CI now enforces `SHA256SUMS.txt`;
+  dead code removed; version carriers synchronized (this file, the app,
+  VERSIONINFO, manifest, macros, gate).
+* **Evidence:** full native suite 20/20, ASan/UBSan/LSan + TSan clean,
+  single-core stress pass, determinism digests stable, strict RC3↔RC4 A/B
+  (hot p50 +0.15 %, throughput −0.04 % — noise), competitor engine benchmark
+  re-measured. Real-Windows runtime validation remains **NOT AVAILABLE**
+  on this host (documented — see the release report).
+
+Full evidence: [docs/reports/V1.2.2_RC4_RELEASE_REPORT.md](docs/reports/V1.2.2_RC4_RELEASE_REPORT.md)
+— performance: [docs/reports/V1.2.2_RC4_PERFORMANCE_REPORT.md](docs/reports/V1.2.2_RC4_PERFORMANCE_REPORT.md)
+— raw artifacts in [`docs/bench/rc4-122/`](docs/bench/rc4-122/).
 
 ## What's new in v1.2.2 RC3 — pipeline measurement & a WinUI dead-input fix
 

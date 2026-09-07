@@ -1,0 +1,28 @@
+=== KieeKey v1.2.2 RC4 campaign environment ===
+Captured: 2026-09-06T12:27:21Z
+
+--- OS ---
+Linux c-6a9d5676-14d96228-84581b35c999 5.10.134-013.8.3.kangaroo.al8.x86_64 #1 SMP Fri May 29 08:22:43 UTC 2026 x86_64 GNU/Linux
+PRETTY_NAME="Debian GNU/Linux 13 (trixie)"
+NAME="Debian GNU/Linux"
+
+--- CPU ---
+2
+model name	: Intel(R) Xeon(R) Processor
+
+--- Memory ---
+Mem:           4.1Gi       460Mi       2.9Gi        44Ki       882Mi       3.6Gi
+
+--- Toolchain ---
+g++ (Debian 14.2.0-19) 14.2.0
+x86_64-w64-mingw32-g++-posix (GCC) 14-posix
+cmake version 4.4.3
+Python 3.12.14
+
+--- Build flags (native) ---
+CMAKE_BUILD_TYPE=Release; -O2; g++ 14.2; native x86_64 Linux
+--- Build flags (Windows cross) ---
+x86_64-w64-mingw32-g++-posix (GCC 14-posix), static libgcc
+
+--- CPU governor/state (if available) ---
+UNKNOWN (containerized)

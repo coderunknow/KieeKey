@@ -1,0 +1,741 @@
+--- run 1
+RC3 [tone] KieeKey v1.2.0 Stable — tone-population latency benchmark
+RC3 [tone] mixed pace(s)=150,250 reps=1 (--fast for one pace/one rep, --full for the exhaustive matrix)
+RC3 [tone] composition validation: 8 populations OK
+RC3 [pop] tone-append     path=inline          barrier=spin   commit=0ns n=6000
+RC3       desc: as -> a-acute (1 tone key = 1 edit)
+RC3       EDIT  n=2000  E2E(t5) p50=  0.168 p99=   2.167 p99.9=    6.705 max=   10.636 us
+RC3             t1(decision) p50= 0.064  t2(push/emit) p50=  0.168  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=4000  delivery(t2) p50=  0.089 p99=   0.157 max=   24.708 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 2000 sendInputCalls: 2000
+RC3 [pop] tone-append     path=inline          barrier=hybrid commit=0ns n=6000
+RC3       desc: as -> a-acute (1 tone key = 1 edit)
+RC3       EDIT  n=2000  E2E(t5) p50=  0.168 p99=   1.787 p99.9=    4.828 max=   21.318 us
+RC3             t1(decision) p50= 0.064  t2(push/emit) p50=  0.168  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=4000  delivery(t2) p50=  0.088 p99=   0.097 max=    9.339 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 2000 sendInputCalls: 2000
+RC3 [pop] dbar            path=inline          barrier=spin   commit=0ns n=6000
+RC3       desc: dd -> d-stroke (d-bar edit)
+RC3       EDIT  n=2000  E2E(t5) p50=  0.161 p99=   1.605 p99.9=    7.490 max=   29.240 us
+RC3             t1(decision) p50= 0.057  t2(push/emit) p50=  0.161  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=4000  delivery(t2) p50=  0.092 p99=   0.123 max=    2.703 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 2000 sendInputCalls: 2000
+RC3 [pop] dbar            path=inline          barrier=hybrid commit=0ns n=6000
+RC3       desc: dd -> d-stroke (d-bar edit)
+RC3       EDIT  n=2000  E2E(t5) p50=  0.161 p99=   1.446 p99.9=    5.791 max=    9.947 us
+RC3             t1(decision) p50= 0.057  t2(push/emit) p50=  0.161  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=4000  delivery(t2) p50=  0.088 p99=   0.097 max=    5.853 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 2000 sendInputCalls: 2000
+RC3 [pop] reposition      path=inline          barrier=spin   commit=0ns n=8000
+RC3       desc: asa -> a-circumflex-acute (sac reposition)
+RC3       EDIT  n=4000  E2E(t5) p50=  0.170 p99=   1.510 p99.9=    6.949 max=   98.241 us
+RC3             t1(decision) p50= 0.066  t2(push/emit) p50=  0.170  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=4000  delivery(t2) p50=  0.093 p99=   0.108 max=    6.715 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 4000 sendInputCalls: 4000
+RC3 [pop] reposition      path=inline          barrier=hybrid commit=0ns n=8000
+RC3       desc: asa -> a-circumflex-acute (sac reposition)
+RC3       EDIT  n=4000  E2E(t5) p50=  0.171 p99=   1.663 p99.9=    5.003 max=   16.125 us
+RC3             t1(decision) p50= 0.066  t2(push/emit) p50=  0.171  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=4000  delivery(t2) p50=  0.095 p99=   0.130 max=   11.712 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 4000 sendInputCalls: 4000
+RC3 [pop] restore-reissue path=inline          barrier=spin   commit=0ns n=10000
+RC3       desc: asas -> Restore chain: 2 edits + Restore-reissue + space-Restore-reissue
+RC3       EDIT  n=8000  E2E(t5) p50=  0.173 p99=   1.793 p99.9=    6.199 max=  220.602 us
+RC3             t1(decision) p50= 0.069  t2(push/emit) p50=  0.173  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=2000  delivery(t2) p50=  0.080 p99=   0.130 max=    9.696 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 8000 sendInputCalls: 8000
+RC3 [pop] restore-reissue path=inline          barrier=hybrid commit=0ns n=10000
+RC3       desc: asas -> Restore chain: 2 edits + Restore-reissue + space-Restore-reissue
+RC3       EDIT  n=8000  E2E(t5) p50=  0.173 p99=   1.641 p99.9=    7.297 max=   10.432 us
+RC3             t1(decision) p50= 0.069  t2(push/emit) p50=  0.173  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=2000  delivery(t2) p50=  0.080 p99=   0.086 max=    3.300 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 8000 sendInputCalls: 8000
+RC3 [pop] double-tone     path=inline          barrier=spin   commit=0ns n=12000
+RC3       desc: oasas -> double-tone family + Restore chain
+RC3       EDIT  n=8000  E2E(t5) p50=  0.261 p99=   2.363 p99.9=    5.458 max=  330.579 us
+RC3             t1(decision) p50= 0.123  t2(push/emit) p50=  0.261  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=4000  delivery(t2) p50=  0.079 p99=   0.127 max=    3.441 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 8000 sendInputCalls: 8000
+RC3 [pop] double-tone     path=inline          barrier=hybrid commit=0ns n=12000
+RC3       desc: oasas -> double-tone family + Restore chain
+RC3       EDIT  n=8000  E2E(t5) p50=  0.261 p99=   2.397 p99.9=    6.267 max=   13.285 us
+RC3             t1(decision) p50= 0.123  t2(push/emit) p50=  0.261  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=4000  delivery(t2) p50=  0.079 p99=   0.118 max=    2.652 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 8000 sendInputCalls: 8000
+RC3 [pop] mid-word        path=inline          barrier=spin   commit=0ns n=16000
+RC3       desc: ddawjng -> dang-nang (d-bar + breve + nang; trailing ng re-typed)
+RC3       EDIT  n=6000  E2E(t5) p50=  0.183 p99=   1.485 p99.9=    4.891 max=    7.768 us
+RC3             t1(decision) p50= 0.078  t2(push/emit) p50=  0.183  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=10000 delivery(t2) p50=  0.128 p99=   0.233 max=   11.169 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 6000 sendInputCalls: 6000
+RC3 [pop] mid-word        path=inline          barrier=hybrid commit=0ns n=16000
+RC3       desc: ddawjng -> dang-nang (d-bar + breve + nang; trailing ng re-typed)
+RC3       EDIT  n=6000  E2E(t5) p50=  0.183 p99=   1.583 p99.9=    4.514 max=    9.371 us
+RC3             t1(decision) p50= 0.078  t2(push/emit) p50=  0.183  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=10000 delivery(t2) p50=  0.129 p99=   0.241 max=    8.541 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 6000 sendInputCalls: 6000
+RC3 [pop] horn-compound   path=inline          barrier=spin   commit=0ns n=10000
+RC3       desc: uows -> uo-horn + acute (horn compound + mark)
+RC3       EDIT  n=4000  E2E(t5) p50=  0.238 p99=   1.876 p99.9=    4.539 max=    9.674 us
+RC3             t1(decision) p50= 0.099  t2(push/emit) p50=  0.238  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=6000  delivery(t2) p50=  0.080 p99=   0.139 max=    8.712 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 4000 sendInputCalls: 4000
+RC3 [pop] horn-compound   path=inline          barrier=hybrid commit=0ns n=10000
+RC3       desc: uows -> uo-horn + acute (horn compound + mark)
+RC3       EDIT  n=4000  E2E(t5) p50=  0.238 p99=   1.953 p99.9=    5.067 max=  707.809 us
+RC3             t1(decision) p50= 0.100  t2(push/emit) p50=  0.238  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=6000  delivery(t2) p50=  0.080 p99=   0.150 max=    4.135 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 4000 sendInputCalls: 4000
+RC3 [pop] heavy-word      path=inline          barrier=spin   commit=0ns n=16000
+RC3       desc: dduowcj -> duoc (d-bar + horn + nang: the heaviest)
+RC3       EDIT  n=6000  E2E(t5) p50=  0.224 p99=   2.419 p99.9=    5.272 max=   11.129 us
+RC3             t1(decision) p50= 0.085  t2(push/emit) p50=  0.224  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=10000 delivery(t2) p50=  0.091 p99=   0.198 max=   12.915 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 6000 sendInputCalls: 6000
+RC3 [pop] heavy-word      path=inline          barrier=hybrid commit=0ns n=16000
+RC3       desc: dduowcj -> duoc (d-bar + horn + nang: the heaviest)
+RC3       EDIT  n=6000  E2E(t5) p50=  0.223 p99=   2.291 p99.9=    5.122 max=   12.644 us
+RC3             t1(decision) p50= 0.085  t2(push/emit) p50=  0.223  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=10000 delivery(t2) p50=  0.091 p99=   0.217 max=   11.305 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 6000 sendInputCalls: 6000
+RC3 [pop] mixed           path=inline          barrier=spin   commit=0ns n=173
+RC3       desc: mixed@150wpm
+RC3       EDIT  n=25    E2E(t5) p50= 12.021 p99=  16.074 p99.9=   16.074 max=   18.215 us
+RC3             t1(decision) p50= 5.886  t2(push/emit) p50= 12.021  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=148   delivery(t2) p50=  4.602 p99=   8.972 max=   14.116 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 25 sendInputCalls: 25
+RC3 [pop] mixed           path=inline          barrier=hybrid commit=0ns n=173
+RC3       desc: mixed@150wpm
+RC3       EDIT  n=25    E2E(t5) p50= 13.832 p99=  17.015 p99.9=   17.015 max=   17.730 us
+RC3             t1(decision) p50= 6.002  t2(push/emit) p50= 13.832  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=148   delivery(t2) p50=  4.945 p99=   9.642 max=   12.513 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 25 sendInputCalls: 25
+RC3 [pop] mixed           path=inline          barrier=spin   commit=0ns n=173
+RC3       desc: mixed@250wpm
+RC3       EDIT  n=25    E2E(t5) p50= 11.994 p99=  15.054 p99.9=   15.054 max=   16.855 us
+RC3             t1(decision) p50= 5.418  t2(push/emit) p50= 11.994  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=148   delivery(t2) p50=  3.936 p99=   9.145 max= 3841.100 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 25 sendInputCalls: 25
+RC3 [pop] mixed           path=inline          barrier=hybrid commit=0ns n=173
+RC3       desc: mixed@250wpm
+RC3       EDIT  n=25    E2E(t5) p50= 11.037 p99=  14.549 p99.9=   14.549 max=   15.304 us
+RC3             t1(decision) p50= 4.754  t2(push/emit) p50= 11.037  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=148   delivery(t2) p50=  3.853 p99=   9.078 max=   10.134 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 25 sendInputCalls: 25
+RC4 [tone] KieeKey v1.2.0 Stable — tone-population latency benchmark
+RC4 [tone] mixed pace(s)=150,250 reps=1 (--fast for one pace/one rep, --full for the exhaustive matrix)
+RC4 [tone] composition validation: 8 populations OK
+RC4 [pop] tone-append     path=inline          barrier=spin   commit=0ns n=6000
+RC4       desc: as -> a-acute (1 tone key = 1 edit)
+RC4       EDIT  n=2000  E2E(t5) p50=  0.168 p99=   2.068 p99.9=   11.355 max=   20.745 us
+RC4             t1(decision) p50= 0.064  t2(push/emit) p50=  0.168  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=4000  delivery(t2) p50=  0.090 p99=   0.158 max=   15.093 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 2000 sendInputCalls: 2000
+RC4 [pop] tone-append     path=inline          barrier=hybrid commit=0ns n=6000
+RC4       desc: as -> a-acute (1 tone key = 1 edit)
+RC4       EDIT  n=2000  E2E(t5) p50=  0.168 p99=   1.889 p99.9=    5.763 max=   19.485 us
+RC4             t1(decision) p50= 0.064  t2(push/emit) p50=  0.168  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=4000  delivery(t2) p50=  0.090 p99=   0.116 max=    5.965 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 2000 sendInputCalls: 2000
+RC4 [pop] dbar            path=inline          barrier=spin   commit=0ns n=6000
+RC4       desc: dd -> d-stroke (d-bar edit)
+RC4       EDIT  n=2000  E2E(t5) p50=  0.161 p99=   1.577 p99.9=    7.175 max=   34.145 us
+RC4             t1(decision) p50= 0.057  t2(push/emit) p50=  0.161  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=4000  delivery(t2) p50=  0.088 p99=   0.099 max=   10.845 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 2000 sendInputCalls: 2000
+RC4 [pop] dbar            path=inline          barrier=hybrid commit=0ns n=6000
+RC4       desc: dd -> d-stroke (d-bar edit)
+RC4       EDIT  n=2000  E2E(t5) p50=  0.161 p99=   1.997 p99.9=    4.908 max=   13.595 us
+RC4             t1(decision) p50= 0.057  t2(push/emit) p50=  0.161  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=4000  delivery(t2) p50=  0.090 p99=   0.100 max=   12.561 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 2000 sendInputCalls: 2000
+RC4 [pop] reposition      path=inline          barrier=spin   commit=0ns n=8000
+RC4       desc: asa -> a-circumflex-acute (sac reposition)
+RC4       EDIT  n=4000  E2E(t5) p50=  0.171 p99=   1.555 p99.9=    4.930 max=  108.042 us
+RC4             t1(decision) p50= 0.066  t2(push/emit) p50=  0.171  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=4000  delivery(t2) p50=  0.095 p99=   0.126 max=   11.679 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 4000 sendInputCalls: 4000
+RC4 [pop] reposition      path=inline          barrier=hybrid commit=0ns n=8000
+RC4       desc: asa -> a-circumflex-acute (sac reposition)
+RC4       EDIT  n=4000  E2E(t5) p50=  0.170 p99=   1.514 p99.9=    5.150 max=   15.132 us
+RC4             t1(decision) p50= 0.066  t2(push/emit) p50=  0.170  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=4000  delivery(t2) p50=  0.093 p99=   0.104 max=    5.981 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 4000 sendInputCalls: 4000
+RC4 [pop] restore-reissue path=inline          barrier=spin   commit=0ns n=10000
+RC4       desc: asas -> Restore chain: 2 edits + Restore-reissue + space-Restore-reissue
+RC4       EDIT  n=8000  E2E(t5) p50=  0.173 p99=   1.833 p99.9=    8.873 max=  191.903 us
+RC4             t1(decision) p50= 0.069  t2(push/emit) p50=  0.173  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=2000  delivery(t2) p50=  0.080 p99=   0.108 max=    0.629 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 8000 sendInputCalls: 8000
+RC4 [pop] restore-reissue path=inline          barrier=hybrid commit=0ns n=10000
+RC4       desc: asas -> Restore chain: 2 edits + Restore-reissue + space-Restore-reissue
+RC4       EDIT  n=8000  E2E(t5) p50=  0.174 p99=   1.915 p99.9=    6.218 max=   11.887 us
+RC4             t1(decision) p50= 0.070  t2(push/emit) p50=  0.174  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=2000  delivery(t2) p50=  0.080 p99=   0.131 max=   12.746 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 8000 sendInputCalls: 8000
+RC4 [pop] double-tone     path=inline          barrier=spin   commit=0ns n=12000
+RC4       desc: oasas -> double-tone family + Restore chain
+RC4       EDIT  n=8000  E2E(t5) p50=  0.261 p99=   2.362 p99.9=    6.439 max=  408.659 us
+RC4             t1(decision) p50= 0.122  t2(push/emit) p50=  0.261  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=4000  delivery(t2) p50=  0.079 p99=   0.120 max=    3.276 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 8000 sendInputCalls: 8000
+RC4 [pop] double-tone     path=inline          barrier=hybrid commit=0ns n=12000
+RC4       desc: oasas -> double-tone family + Restore chain
+RC4       EDIT  n=8000  E2E(t5) p50=  0.260 p99=   2.285 p99.9=    5.763 max=   11.674 us
+RC4             t1(decision) p50= 0.122  t2(push/emit) p50=  0.260  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=4000  delivery(t2) p50=  0.079 p99=   0.110 max=    2.200 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 8000 sendInputCalls: 8000
+RC4 [pop] mid-word        path=inline          barrier=spin   commit=0ns n=16000
+RC4       desc: ddawjng -> dang-nang (d-bar + breve + nang; trailing ng re-typed)
+RC4       EDIT  n=6000  E2E(t5) p50=  0.183 p99=   1.433 p99.9=    4.660 max=    7.610 us
+RC4             t1(decision) p50= 0.078  t2(push/emit) p50=  0.183  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=10000 delivery(t2) p50=  0.130 p99=   0.215 max=   10.435 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 6000 sendInputCalls: 6000
+RC4 [pop] mid-word        path=inline          barrier=hybrid commit=0ns n=16000
+RC4       desc: ddawjng -> dang-nang (d-bar + breve + nang; trailing ng re-typed)
+RC4       EDIT  n=6000  E2E(t5) p50=  0.183 p99=   1.447 p99.9=    5.344 max=    9.176 us
+RC4             t1(decision) p50= 0.078  t2(push/emit) p50=  0.183  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=10000 delivery(t2) p50=  0.129 p99=   0.232 max=   10.928 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 6000 sendInputCalls: 6000
+RC4 [pop] horn-compound   path=inline          barrier=spin   commit=0ns n=10000
+RC4       desc: uows -> uo-horn + acute (horn compound + mark)
+RC4       EDIT  n=4000  E2E(t5) p50=  0.238 p99=   1.478 p99.9=    4.678 max=    9.157 us
+RC4             t1(decision) p50= 0.099  t2(push/emit) p50=  0.238  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=6000  delivery(t2) p50=  0.080 p99=   0.127 max=    5.437 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 4000 sendInputCalls: 4000
+RC4 [pop] horn-compound   path=inline          barrier=hybrid commit=0ns n=10000
+RC4       desc: uows -> uo-horn + acute (horn compound + mark)
+RC4       EDIT  n=4000  E2E(t5) p50=  0.240 p99=   1.542 p99.9=    3.048 max=  659.556 us
+RC4             t1(decision) p50= 0.102  t2(push/emit) p50=  0.240  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=6000  delivery(t2) p50=  0.080 p99=   0.165 max=    0.888 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 4000 sendInputCalls: 4000
+RC4 [pop] heavy-word      path=inline          barrier=spin   commit=0ns n=16000
+RC4       desc: dduowcj -> duoc (d-bar + horn + nang: the heaviest)
+RC4       EDIT  n=6000  E2E(t5) p50=  0.224 p99=   1.707 p99.9=    5.018 max=   13.477 us
+RC4             t1(decision) p50= 0.085  t2(push/emit) p50=  0.224  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=10000 delivery(t2) p50=  0.091 p99=   0.196 max=    7.558 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 6000 sendInputCalls: 6000
+RC4 [pop] heavy-word      path=inline          barrier=hybrid commit=0ns n=16000
+RC4       desc: dduowcj -> duoc (d-bar + horn + nang: the heaviest)
+RC4       EDIT  n=6000  E2E(t5) p50=  0.224 p99=   1.923 p99.9=    5.384 max=   16.506 us
+RC4             t1(decision) p50= 0.085  t2(push/emit) p50=  0.224  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=10000 delivery(t2) p50=  0.091 p99=   0.198 max=    6.823 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 6000 sendInputCalls: 6000
+RC4 [pop] mixed           path=inline          barrier=spin   commit=0ns n=173
+RC4       desc: mixed@150wpm
+RC4       EDIT  n=25    E2E(t5) p50= 13.230 p99=  18.195 p99.9=   18.195 max=   26.021 us
+RC4             t1(decision) p50= 6.398  t2(push/emit) p50= 13.230  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=148   delivery(t2) p50=  5.034 p99=  10.306 max=   13.915 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 25 sendInputCalls: 25
+RC4 [pop] mixed           path=inline          barrier=hybrid commit=0ns n=173
+RC4       desc: mixed@150wpm
+RC4       EDIT  n=25    E2E(t5) p50= 14.439 p99=  22.106 p99.9=   22.106 max=   29.233 us
+RC4             t1(decision) p50= 6.506  t2(push/emit) p50= 14.439  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=148   delivery(t2) p50=  4.913 p99=   9.874 max=   12.660 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 25 sendInputCalls: 25
+RC4 [pop] mixed           path=inline          barrier=spin   commit=0ns n=173
+RC4       desc: mixed@250wpm
+RC4       EDIT  n=25    E2E(t5) p50= 12.271 p99=  16.368 p99.9=   16.368 max=   16.633 us
+RC4             t1(decision) p50= 4.942  t2(push/emit) p50= 12.271  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=148   delivery(t2) p50=  3.334 p99=   9.053 max=    9.836 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 25 sendInputCalls: 25
+RC4 [pop] mixed           path=inline          barrier=hybrid commit=0ns n=173
+RC4       desc: mixed@250wpm
+RC4       EDIT  n=25    E2E(t5) p50= 11.120 p99=  16.935 p99.9=   16.935 max=   17.073 us
+RC4             t1(decision) p50= 5.073  t2(push/emit) p50= 11.120  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=148   delivery(t2) p50=  3.295 p99=   9.346 max=   12.898 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 25 sendInputCalls: 25
+--- run 2
+RC3 [tone] KieeKey v1.2.0 Stable — tone-population latency benchmark
+RC3 [tone] mixed pace(s)=150,250 reps=1 (--fast for one pace/one rep, --full for the exhaustive matrix)
+RC3 [tone] composition validation: 8 populations OK
+RC3 [pop] tone-append     path=inline          barrier=spin   commit=0ns n=6000
+RC3       desc: as -> a-acute (1 tone key = 1 edit)
+RC3       EDIT  n=2000  E2E(t5) p50=  0.168 p99=   2.360 p99.9=    9.035 max=   20.307 us
+RC3             t1(decision) p50= 0.064  t2(push/emit) p50=  0.168  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=4000  delivery(t2) p50=  0.088 p99=   0.098 max=    4.310 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 2000 sendInputCalls: 2000
+RC3 [pop] tone-append     path=inline          barrier=hybrid commit=0ns n=6000
+RC3       desc: as -> a-acute (1 tone key = 1 edit)
+RC3       EDIT  n=2000  E2E(t5) p50=  0.168 p99=   1.574 p99.9=    5.221 max=   13.259 us
+RC3             t1(decision) p50= 0.064  t2(push/emit) p50=  0.168  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=4000  delivery(t2) p50=  0.089 p99=   0.115 max=    3.327 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 2000 sendInputCalls: 2000
+RC3 [pop] dbar            path=inline          barrier=spin   commit=0ns n=6000
+RC3       desc: dd -> d-stroke (d-bar edit)
+RC3       EDIT  n=2000  E2E(t5) p50=  0.161 p99=   1.443 p99.9=    3.461 max=   34.913 us
+RC3             t1(decision) p50= 0.057  t2(push/emit) p50=  0.161  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=4000  delivery(t2) p50=  0.089 p99=   0.111 max=    8.863 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 2000 sendInputCalls: 2000
+RC3 [pop] dbar            path=inline          barrier=hybrid commit=0ns n=6000
+RC3       desc: dd -> d-stroke (d-bar edit)
+RC3       EDIT  n=2000  E2E(t5) p50=  0.161 p99=   2.287 p99.9=    5.018 max=    6.376 us
+RC3             t1(decision) p50= 0.057  t2(push/emit) p50=  0.161  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=4000  delivery(t2) p50=  0.089 p99=   0.106 max=   12.321 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 2000 sendInputCalls: 2000
+RC3 [pop] reposition      path=inline          barrier=spin   commit=0ns n=8000
+RC3       desc: asa -> a-circumflex-acute (sac reposition)
+RC3       EDIT  n=4000  E2E(t5) p50=  0.170 p99=   1.436 p99.9=    4.994 max=  119.780 us
+RC3             t1(decision) p50= 0.066  t2(push/emit) p50=  0.170  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=4000  delivery(t2) p50=  0.094 p99=   0.119 max=    9.303 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 4000 sendInputCalls: 4000
+RC3 [pop] reposition      path=inline          barrier=hybrid commit=0ns n=8000
+RC3       desc: asa -> a-circumflex-acute (sac reposition)
+RC3       EDIT  n=4000  E2E(t5) p50=  0.170 p99=   1.624 p99.9=    4.889 max=   10.564 us
+RC3             t1(decision) p50= 0.066  t2(push/emit) p50=  0.170  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=4000  delivery(t2) p50=  0.095 p99=   0.117 max=    0.885 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 4000 sendInputCalls: 4000
+RC3 [pop] restore-reissue path=inline          barrier=spin   commit=0ns n=10000
+RC3       desc: asas -> Restore chain: 2 edits + Restore-reissue + space-Restore-reissue
+RC3       EDIT  n=8000  E2E(t5) p50=  0.173 p99=   1.764 p99.9=    7.663 max=  182.087 us
+RC3             t1(decision) p50= 0.069  t2(push/emit) p50=  0.173  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=2000  delivery(t2) p50=  0.080 p99=   0.122 max=    3.345 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 8000 sendInputCalls: 8000
+RC3 [pop] restore-reissue path=inline          barrier=hybrid commit=0ns n=10000
+RC3       desc: asas -> Restore chain: 2 edits + Restore-reissue + space-Restore-reissue
+RC3       EDIT  n=8000  E2E(t5) p50=  0.173 p99=   1.814 p99.9=    5.603 max=   14.326 us
+RC3             t1(decision) p50= 0.069  t2(push/emit) p50=  0.173  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=2000  delivery(t2) p50=  0.080 p99=   0.128 max=   12.754 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 8000 sendInputCalls: 8000
+RC3 [pop] double-tone     path=inline          barrier=spin   commit=0ns n=12000
+RC3       desc: oasas -> double-tone family + Restore chain
+RC3       EDIT  n=8000  E2E(t5) p50=  0.260 p99=   2.318 p99.9=    8.592 max=  357.304 us
+RC3             t1(decision) p50= 0.122  t2(push/emit) p50=  0.260  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=4000  delivery(t2) p50=  0.079 p99=   0.126 max=   11.762 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 8000 sendInputCalls: 8000
+RC3 [pop] double-tone     path=inline          barrier=hybrid commit=0ns n=12000
+RC3       desc: oasas -> double-tone family + Restore chain
+RC3       EDIT  n=8000  E2E(t5) p50=  0.260 p99=   2.399 p99.9=    5.887 max=   11.775 us
+RC3             t1(decision) p50= 0.122  t2(push/emit) p50=  0.260  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=4000  delivery(t2) p50=  0.079 p99=   0.121 max=    9.988 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 8000 sendInputCalls: 8000
+RC3 [pop] mid-word        path=inline          barrier=spin   commit=0ns n=16000
+RC3       desc: ddawjng -> dang-nang (d-bar + breve + nang; trailing ng re-typed)
+RC3       EDIT  n=6000  E2E(t5) p50=  0.183 p99=   1.533 p99.9=    5.854 max=   14.277 us
+RC3             t1(decision) p50= 0.078  t2(push/emit) p50=  0.183  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=10000 delivery(t2) p50=  0.128 p99=   0.229 max=    9.723 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 6000 sendInputCalls: 6000
+RC3 [pop] mid-word        path=inline          barrier=hybrid commit=0ns n=16000
+RC3       desc: ddawjng -> dang-nang (d-bar + breve + nang; trailing ng re-typed)
+RC3       EDIT  n=6000  E2E(t5) p50=  0.183 p99=   1.626 p99.9=    4.392 max=    8.829 us
+RC3             t1(decision) p50= 0.078  t2(push/emit) p50=  0.183  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=10000 delivery(t2) p50=  0.129 p99=   0.242 max=    9.869 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 6000 sendInputCalls: 6000
+RC3 [pop] horn-compound   path=inline          barrier=spin   commit=0ns n=10000
+RC3       desc: uows -> uo-horn + acute (horn compound + mark)
+RC3       EDIT  n=4000  E2E(t5) p50=  0.295 p99=   1.933 p99.9=    5.580 max=   10.048 us
+RC3             t1(decision) p50= 0.127  t2(push/emit) p50=  0.295  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=6000  delivery(t2) p50=  0.103 p99=   0.183 max=   11.414 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 4000 sendInputCalls: 4000
+RC3 [pop] horn-compound   path=inline          barrier=hybrid commit=0ns n=10000
+RC3       desc: uows -> uo-horn + acute (horn compound + mark)
+RC3       EDIT  n=4000  E2E(t5) p50=  0.238 p99=   2.064 p99.9=    8.403 max=  757.411 us
+RC3             t1(decision) p50= 0.100  t2(push/emit) p50=  0.238  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=6000  delivery(t2) p50=  0.080 p99=   0.155 max=    3.768 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 4000 sendInputCalls: 4000
+RC3 [pop] heavy-word      path=inline          barrier=spin   commit=0ns n=16000
+RC3       desc: dduowcj -> duoc (d-bar + horn + nang: the heaviest)
+RC3       EDIT  n=6000  E2E(t5) p50=  0.224 p99=   2.306 p99.9=    5.731 max=   16.762 us
+RC3             t1(decision) p50= 0.085  t2(push/emit) p50=  0.224  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=10000 delivery(t2) p50=  0.091 p99=   0.219 max=    8.133 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 6000 sendInputCalls: 6000
+RC3 [pop] heavy-word      path=inline          barrier=hybrid commit=0ns n=16000
+RC3       desc: dduowcj -> duoc (d-bar + horn + nang: the heaviest)
+RC3       EDIT  n=6000  E2E(t5) p50=  0.224 p99=   2.242 p99.9=    5.354 max=   10.706 us
+RC3             t1(decision) p50= 0.086  t2(push/emit) p50=  0.224  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=10000 delivery(t2) p50=  0.091 p99=   0.245 max=    7.164 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 6000 sendInputCalls: 6000
+RC3 [pop] mixed           path=inline          barrier=spin   commit=0ns n=173
+RC3       desc: mixed@150wpm
+RC3       EDIT  n=25    E2E(t5) p50= 11.792 p99=  16.062 p99.9=   16.062 max=   18.247 us
+RC3             t1(decision) p50= 6.259  t2(push/emit) p50= 11.792  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=148   delivery(t2) p50=  5.129 p99=   9.962 max=   12.795 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 25 sendInputCalls: 25
+RC3 [pop] mixed           path=inline          barrier=hybrid commit=0ns n=173
+RC3       desc: mixed@150wpm
+RC3       EDIT  n=25    E2E(t5) p50= 14.135 p99=  18.271 p99.9=   18.271 max=   19.402 us
+RC3             t1(decision) p50= 6.957  t2(push/emit) p50= 14.135  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=148   delivery(t2) p50=  5.133 p99=  11.849 max=   12.775 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 25 sendInputCalls: 25
+RC3 [pop] mixed           path=inline          barrier=spin   commit=0ns n=173
+RC3       desc: mixed@250wpm
+RC3       EDIT  n=25    E2E(t5) p50= 12.421 p99=  16.527 p99.9=   16.527 max=   16.778 us
+RC3             t1(decision) p50= 5.611  t2(push/emit) p50= 12.421  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=148   delivery(t2) p50=  3.869 p99=  10.632 max=   11.953 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 25 sendInputCalls: 25
+RC3 [pop] mixed           path=inline          barrier=hybrid commit=0ns n=173
+RC3       desc: mixed@250wpm
+RC3       EDIT  n=25    E2E(t5) p50= 12.179 p99=  21.187 p99.9=   21.187 max=  753.643 us
+RC3             t1(decision) p50= 5.417  t2(push/emit) p50= 12.179  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=148   delivery(t2) p50=  4.328 p99=   9.840 max=   14.665 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 25 sendInputCalls: 25
+RC4 [tone] KieeKey v1.2.0 Stable — tone-population latency benchmark
+RC4 [tone] mixed pace(s)=150,250 reps=1 (--fast for one pace/one rep, --full for the exhaustive matrix)
+RC4 [tone] composition validation: 8 populations OK
+RC4 [pop] tone-append     path=inline          barrier=spin   commit=0ns n=6000
+RC4       desc: as -> a-acute (1 tone key = 1 edit)
+RC4       EDIT  n=2000  E2E(t5) p50=  0.168 p99=   1.946 p99.9=    8.136 max=   16.699 us
+RC4             t1(decision) p50= 0.064  t2(push/emit) p50=  0.168  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=4000  delivery(t2) p50=  0.090 p99=   0.207 max=   21.246 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 2000 sendInputCalls: 2000
+RC4 [pop] tone-append     path=inline          barrier=hybrid commit=0ns n=6000
+RC4       desc: as -> a-acute (1 tone key = 1 edit)
+RC4       EDIT  n=2000  E2E(t5) p50=  0.168 p99=   1.881 p99.9=    8.981 max=   31.896 us
+RC4             t1(decision) p50= 0.064  t2(push/emit) p50=  0.168  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=4000  delivery(t2) p50=  0.089 p99=   0.115 max=    3.282 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 2000 sendInputCalls: 2000
+RC4 [pop] dbar            path=inline          barrier=spin   commit=0ns n=6000
+RC4       desc: dd -> d-stroke (d-bar edit)
+RC4       EDIT  n=2000  E2E(t5) p50=  0.162 p99=   1.644 p99.9=    3.573 max=   35.572 us
+RC4             t1(decision) p50= 0.057  t2(push/emit) p50=  0.162  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=4000  delivery(t2) p50=  0.088 p99=   0.097 max=    6.945 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 2000 sendInputCalls: 2000
+RC4 [pop] dbar            path=inline          barrier=hybrid commit=0ns n=6000
+RC4       desc: dd -> d-stroke (d-bar edit)
+RC4       EDIT  n=2000  E2E(t5) p50=  0.161 p99=   2.316 p99.9=    4.860 max=    5.486 us
+RC4             t1(decision) p50= 0.057  t2(push/emit) p50=  0.161  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=4000  delivery(t2) p50=  0.090 p99=   0.105 max=   14.750 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 2000 sendInputCalls: 2000
+RC4 [pop] reposition      path=inline          barrier=spin   commit=0ns n=8000
+RC4       desc: asa -> a-circumflex-acute (sac reposition)
+RC4       EDIT  n=4000  E2E(t5) p50=  0.171 p99=   1.691 p99.9=    6.027 max=  106.745 us
+RC4             t1(decision) p50= 0.067  t2(push/emit) p50=  0.171  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=4000  delivery(t2) p50=  0.095 p99=   0.152 max=    2.551 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 4000 sendInputCalls: 4000
+RC4 [pop] reposition      path=inline          barrier=hybrid commit=0ns n=8000
+RC4       desc: asa -> a-circumflex-acute (sac reposition)
+RC4       EDIT  n=4000  E2E(t5) p50=  0.170 p99=   1.619 p99.9=    5.415 max=   16.296 us
+RC4             t1(decision) p50= 0.066  t2(push/emit) p50=  0.170  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=4000  delivery(t2) p50=  0.093 p99=   0.111 max=    1.120 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 4000 sendInputCalls: 4000
+RC4 [pop] restore-reissue path=inline          barrier=spin   commit=0ns n=10000
+RC4       desc: asas -> Restore chain: 2 edits + Restore-reissue + space-Restore-reissue
+RC4       EDIT  n=8000  E2E(t5) p50=  0.174 p99=   1.969 p99.9=    6.881 max=  222.606 us
+RC4             t1(decision) p50= 0.069  t2(push/emit) p50=  0.174  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=2000  delivery(t2) p50=  0.080 p99=   0.151 max=    4.610 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 8000 sendInputCalls: 8000
+RC4 [pop] restore-reissue path=inline          barrier=hybrid commit=0ns n=10000
+RC4       desc: asas -> Restore chain: 2 edits + Restore-reissue + space-Restore-reissue
+RC4       EDIT  n=8000  E2E(t5) p50=  0.173 p99=   1.989 p99.9=    8.537 max=   14.093 us
+RC4             t1(decision) p50= 0.069  t2(push/emit) p50=  0.173  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=2000  delivery(t2) p50=  0.080 p99=   0.134 max=    0.682 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 8000 sendInputCalls: 8000
+RC4 [pop] double-tone     path=inline          barrier=spin   commit=0ns n=12000
+RC4       desc: oasas -> double-tone family + Restore chain
+RC4       EDIT  n=8000  E2E(t5) p50=  0.261 p99=   2.161 p99.9=    9.492 max=  418.322 us
+RC4             t1(decision) p50= 0.122  t2(push/emit) p50=  0.261  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=4000  delivery(t2) p50=  0.079 p99=   0.137 max=    3.467 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 8000 sendInputCalls: 8000
+RC4 [pop] double-tone     path=inline          barrier=hybrid commit=0ns n=12000
+RC4       desc: oasas -> double-tone family + Restore chain
+RC4       EDIT  n=8000  E2E(t5) p50=  0.260 p99=   2.088 p99.9=    7.155 max=   12.055 us
+RC4             t1(decision) p50= 0.121  t2(push/emit) p50=  0.260  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=4000  delivery(t2) p50=  0.079 p99=   0.109 max=    7.197 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 8000 sendInputCalls: 8000
+RC4 [pop] mid-word        path=inline          barrier=spin   commit=0ns n=16000
+RC4       desc: ddawjng -> dang-nang (d-bar + breve + nang; trailing ng re-typed)
+RC4       EDIT  n=6000  E2E(t5) p50=  0.183 p99=   1.549 p99.9=    3.106 max=   11.406 us
+RC4             t1(decision) p50= 0.078  t2(push/emit) p50=  0.183  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=10000 delivery(t2) p50=  0.130 p99=   0.251 max=   11.451 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 6000 sendInputCalls: 6000
+RC4 [pop] mid-word        path=inline          barrier=hybrid commit=0ns n=16000
+RC4       desc: ddawjng -> dang-nang (d-bar + breve + nang; trailing ng re-typed)
+RC4       EDIT  n=6000  E2E(t5) p50=  0.183 p99=   1.492 p99.9=    3.977 max=    7.916 us
+RC4             t1(decision) p50= 0.078  t2(push/emit) p50=  0.183  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=10000 delivery(t2) p50=  0.129 p99=   0.241 max=   12.348 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 6000 sendInputCalls: 6000
+RC4 [pop] horn-compound   path=inline          barrier=spin   commit=0ns n=10000
+RC4       desc: uows -> uo-horn + acute (horn compound + mark)
+RC4       EDIT  n=4000  E2E(t5) p50=  0.237 p99=   1.505 p99.9=    5.715 max=   10.799 us
+RC4             t1(decision) p50= 0.099  t2(push/emit) p50=  0.237  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=6000  delivery(t2) p50=  0.080 p99=   0.139 max=    1.351 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 4000 sendInputCalls: 4000
+RC4 [pop] horn-compound   path=inline          barrier=hybrid commit=0ns n=10000
+RC4       desc: uows -> uo-horn + acute (horn compound + mark)
+RC4       EDIT  n=4000  E2E(t5) p50=  0.237 p99=   1.540 p99.9=    4.977 max=  499.908 us
+RC4             t1(decision) p50= 0.099  t2(push/emit) p50=  0.237  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=6000  delivery(t2) p50=  0.080 p99=   0.140 max=    6.361 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 4000 sendInputCalls: 4000
+RC4 [pop] heavy-word      path=inline          barrier=spin   commit=0ns n=16000
+RC4       desc: dduowcj -> duoc (d-bar + horn + nang: the heaviest)
+RC4       EDIT  n=6000  E2E(t5) p50=  0.224 p99=   2.263 p99.9=    5.016 max=   12.748 us
+RC4             t1(decision) p50= 0.085  t2(push/emit) p50=  0.224  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=10000 delivery(t2) p50=  0.091 p99=   0.197 max=    9.447 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 6000 sendInputCalls: 6000
+RC4 [pop] heavy-word      path=inline          barrier=hybrid commit=0ns n=16000
+RC4       desc: dduowcj -> duoc (d-bar + horn + nang: the heaviest)
+RC4       EDIT  n=6000  E2E(t5) p50=  0.224 p99=   2.137 p99.9=    5.277 max=   16.500 us
+RC4             t1(decision) p50= 0.085  t2(push/emit) p50=  0.224  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=10000 delivery(t2) p50=  0.091 p99=   0.226 max=   10.458 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 6000 sendInputCalls: 6000
+RC4 [pop] mixed           path=inline          barrier=spin   commit=0ns n=173
+RC4       desc: mixed@150wpm
+RC4       EDIT  n=25    E2E(t5) p50= 14.151 p99=  22.162 p99.9=   22.162 max=  980.886 us
+RC4             t1(decision) p50= 7.032  t2(push/emit) p50= 14.151  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=148   delivery(t2) p50=  4.767 p99=  10.128 max=   13.357 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 25 sendInputCalls: 25
+RC4 [pop] mixed           path=inline          barrier=hybrid commit=0ns n=173
+RC4       desc: mixed@150wpm
+RC4       EDIT  n=25    E2E(t5) p50= 14.057 p99=  17.423 p99.9=   17.423 max=   18.361 us
+RC4             t1(decision) p50= 6.538  t2(push/emit) p50= 14.057  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=148   delivery(t2) p50=  4.814 p99=  10.184 max=   11.042 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 25 sendInputCalls: 25
+RC4 [pop] mixed           path=inline          barrier=spin   commit=0ns n=173
+RC4       desc: mixed@250wpm
+RC4       EDIT  n=25    E2E(t5) p50= 14.144 p99=  17.690 p99.9=   17.690 max=   18.192 us
+RC4             t1(decision) p50= 6.007  t2(push/emit) p50= 14.144  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=148   delivery(t2) p50=  3.823 p99=   9.111 max=   10.453 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 25 sendInputCalls: 25
+RC4 [pop] mixed           path=inline          barrier=hybrid commit=0ns n=173
+RC4       desc: mixed@250wpm
+RC4       EDIT  n=25    E2E(t5) p50= 13.469 p99=  19.271 p99.9=   19.271 max=   20.313 us
+RC4             t1(decision) p50= 5.218  t2(push/emit) p50= 13.469  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=148   delivery(t2) p50=  3.678 p99=  10.112 max=   12.113 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 25 sendInputCalls: 25
+--- run 3
+RC3 [tone] KieeKey v1.2.0 Stable — tone-population latency benchmark
+RC3 [tone] mixed pace(s)=150,250 reps=1 (--fast for one pace/one rep, --full for the exhaustive matrix)
+RC3 [tone] composition validation: 8 populations OK
+RC3 [pop] tone-append     path=inline          barrier=spin   commit=0ns n=6000
+RC3       desc: as -> a-acute (1 tone key = 1 edit)
+RC3       EDIT  n=2000  E2E(t5) p50=  0.236 p99=   3.698 p99.9=   12.520 max=   30.662 us
+RC3             t1(decision) p50= 0.105  t2(push/emit) p50=  0.236  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=4000  delivery(t2) p50=  0.125 p99=   0.301 max=   27.769 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 2000 sendInputCalls: 2000
+RC3 [pop] tone-append     path=inline          barrier=hybrid commit=0ns n=6000
+RC3       desc: as -> a-acute (1 tone key = 1 edit)
+RC3       EDIT  n=2000  E2E(t5) p50=  0.233 p99=   3.459 p99.9=   10.201 max=   47.460 us
+RC3             t1(decision) p50= 0.105  t2(push/emit) p50=  0.233  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=4000  delivery(t2) p50=  0.126 p99=   0.227 max=   12.806 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 2000 sendInputCalls: 2000
+RC3 [pop] dbar            path=inline          barrier=spin   commit=0ns n=6000
+RC3       desc: dd -> d-stroke (d-bar edit)
+RC3       EDIT  n=2000  E2E(t5) p50=  0.233 p99=   3.629 p99.9=   48.765 max=   60.295 us
+RC3             t1(decision) p50= 0.095  t2(push/emit) p50=  0.233  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=4000  delivery(t2) p50=  0.133 p99=   0.308 max=   17.116 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 2000 sendInputCalls: 2000
+RC3 [pop] dbar            path=inline          barrier=hybrid commit=0ns n=6000
+RC3       desc: dd -> d-stroke (d-bar edit)
+RC3       EDIT  n=2000  E2E(t5) p50=  0.223 p99=   3.667 p99.9=   11.548 max=   52.671 us
+RC3             t1(decision) p50= 0.092  t2(push/emit) p50=  0.223  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=4000  delivery(t2) p50=  0.127 p99=   0.270 max=   26.915 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 2000 sendInputCalls: 2000
+RC3 [pop] reposition      path=inline          barrier=spin   commit=0ns n=8000
+RC3       desc: asa -> a-circumflex-acute (sac reposition)
+RC3       EDIT  n=4000  E2E(t5) p50=  0.243 p99=   3.159 p99.9=   25.795 max=  138.488 us
+RC3             t1(decision) p50= 0.111  t2(push/emit) p50=  0.243  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=4000  delivery(t2) p50=  0.135 p99=   0.307 max=   16.595 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 4000 sendInputCalls: 4000
+RC3 [pop] reposition      path=inline          barrier=hybrid commit=0ns n=8000
+RC3       desc: asa -> a-circumflex-acute (sac reposition)
+RC3       EDIT  n=4000  E2E(t5) p50=  0.244 p99=   2.774 p99.9=    7.275 max=   65.000 us
+RC3             t1(decision) p50= 0.111  t2(push/emit) p50=  0.244  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=4000  delivery(t2) p50=  0.135 p99=   0.310 max=   37.053 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 4000 sendInputCalls: 4000
+RC3 [pop] restore-reissue path=inline          barrier=spin   commit=0ns n=10000
+RC3       desc: asas -> Restore chain: 2 edits + Restore-reissue + space-Restore-reissue
+RC3       EDIT  n=8000  E2E(t5) p50=  0.265 p99=   3.465 p99.9=   16.945 max=  256.599 us
+RC3             t1(decision) p50= 0.132  t2(push/emit) p50=  0.265  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=2000  delivery(t2) p50=  0.128 p99=   0.308 max=   17.821 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 8000 sendInputCalls: 8000
+RC3 [pop] restore-reissue path=inline          barrier=hybrid commit=0ns n=10000
+RC3       desc: asas -> Restore chain: 2 edits + Restore-reissue + space-Restore-reissue
+RC3       EDIT  n=8000  E2E(t5) p50=  0.259 p99=   3.558 p99.9=   13.615 max=   67.688 us
+RC3             t1(decision) p50= 0.128  t2(push/emit) p50=  0.259  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=2000  delivery(t2) p50=  0.126 p99=   0.366 max=   14.796 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 8000 sendInputCalls: 8000
+RC3 [pop] double-tone     path=inline          barrier=spin   commit=0ns n=12000
+RC3       desc: oasas -> double-tone family + Restore chain
+RC3       EDIT  n=8000  E2E(t5) p50=  0.393 p99=   4.125 p99.9=   18.311 max=  623.433 us
+RC3             t1(decision) p50= 0.222  t2(push/emit) p50=  0.393  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=4000  delivery(t2) p50=  0.125 p99=   0.315 max=   12.132 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 8000 sendInputCalls: 8000
+RC3 [pop] double-tone     path=inline          barrier=hybrid commit=0ns n=12000
+RC3       desc: oasas -> double-tone family + Restore chain
+RC3       EDIT  n=8000  E2E(t5) p50=  0.356 p99=   3.333 p99.9=    8.195 max=   21.803 us
+RC3             t1(decision) p50= 0.187  t2(push/emit) p50=  0.356  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=4000  delivery(t2) p50=  0.084 p99=   0.220 max=    3.043 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 8000 sendInputCalls: 8000
+RC3 [pop] mid-word        path=inline          barrier=spin   commit=0ns n=16000
+RC3       desc: ddawjng -> dang-nang (d-bar + breve + nang; trailing ng re-typed)
+RC3       EDIT  n=6000  E2E(t5) p50=  0.182 p99=   1.520 p99.9=    5.280 max=   11.482 us
+RC3             t1(decision) p50= 0.078  t2(push/emit) p50=  0.182  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=10000 delivery(t2) p50=  0.129 p99=   0.232 max=   12.080 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 6000 sendInputCalls: 6000
+RC3 [pop] mid-word        path=inline          barrier=hybrid commit=0ns n=16000
+RC3       desc: ddawjng -> dang-nang (d-bar + breve + nang; trailing ng re-typed)
+RC3       EDIT  n=6000  E2E(t5) p50=  0.182 p99=   1.657 p99.9=    6.372 max=   22.977 us
+RC3             t1(decision) p50= 0.078  t2(push/emit) p50=  0.182  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=10000 delivery(t2) p50=  0.129 p99=   0.189 max=   13.813 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 6000 sendInputCalls: 6000
+RC3 [pop] horn-compound   path=inline          barrier=spin   commit=0ns n=10000
+RC3       desc: uows -> uo-horn + acute (horn compound + mark)
+RC3       EDIT  n=4000  E2E(t5) p50=  0.238 p99=   1.866 p99.9=    5.726 max=   14.842 us
+RC3             t1(decision) p50= 0.099  t2(push/emit) p50=  0.238  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=6000  delivery(t2) p50=  0.080 p99=   0.124 max=   28.987 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 4000 sendInputCalls: 4000
+RC3 [pop] horn-compound   path=inline          barrier=hybrid commit=0ns n=10000
+RC3       desc: uows -> uo-horn + acute (horn compound + mark)
+RC3       EDIT  n=4000  E2E(t5) p50=  0.238 p99=   1.997 p99.9=    5.440 max=  775.645 us
+RC3             t1(decision) p50= 0.099  t2(push/emit) p50=  0.238  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=6000  delivery(t2) p50=  0.080 p99=   0.128 max=   13.649 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 4000 sendInputCalls: 4000
+RC3 [pop] heavy-word      path=inline          barrier=spin   commit=0ns n=16000
+RC3       desc: dduowcj -> duoc (d-bar + horn + nang: the heaviest)
+RC3       EDIT  n=6000  E2E(t5) p50=  0.225 p99=   2.635 p99.9=   11.171 max=   28.346 us
+RC3             t1(decision) p50= 0.086  t2(push/emit) p50=  0.225  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=10000 delivery(t2) p50=  0.092 p99=   0.330 max=   41.587 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 6000 sendInputCalls: 6000
+RC3 [pop] heavy-word      path=inline          barrier=hybrid commit=0ns n=16000
+RC3       desc: dduowcj -> duoc (d-bar + horn + nang: the heaviest)
+RC3       EDIT  n=6000  E2E(t5) p50=  0.347 p99=   3.829 p99.9=   18.169 max=   79.430 us
+RC3             t1(decision) p50= 0.162  t2(push/emit) p50=  0.347  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=10000 delivery(t2) p50=  0.141 p99=   0.498 max=   30.475 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 6000 sendInputCalls: 6000
+RC3 [pop] mixed           path=inline          barrier=spin   commit=0ns n=173
+RC3       desc: mixed@150wpm
+RC3       EDIT  n=25    E2E(t5) p50= 12.918 p99=  15.534 p99.9=   15.534 max=   17.149 us
+RC3             t1(decision) p50= 6.557  t2(push/emit) p50= 12.918  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=148   delivery(t2) p50=  5.210 p99=  10.276 max=   14.106 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 25 sendInputCalls: 25
+RC3 [pop] mixed           path=inline          barrier=hybrid commit=0ns n=173
+RC3       desc: mixed@150wpm
+RC3       EDIT  n=25    E2E(t5) p50= 14.690 p99=  18.841 p99.9=   18.841 max=   20.296 us
+RC3             t1(decision) p50= 7.359  t2(push/emit) p50= 14.690  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=148   delivery(t2) p50=  5.766 p99=  12.458 max=   34.834 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 25 sendInputCalls: 25
+RC3 [pop] mixed           path=inline          barrier=spin   commit=0ns n=173
+RC3       desc: mixed@250wpm
+RC3       EDIT  n=25    E2E(t5) p50= 11.689 p99=  16.933 p99.9=   16.933 max=   17.145 us
+RC3             t1(decision) p50= 5.823  t2(push/emit) p50= 11.689  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=148   delivery(t2) p50=  3.875 p99=   9.877 max=   10.475 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 25 sendInputCalls: 25
+RC3 [pop] mixed           path=inline          barrier=hybrid commit=0ns n=173
+RC3       desc: mixed@250wpm
+RC3       EDIT  n=25    E2E(t5) p50= 11.092 p99=  13.835 p99.9=   13.835 max=   18.321 us
+RC3             t1(decision) p50= 5.218  t2(push/emit) p50= 11.092  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC3       PASS  n=148   delivery(t2) p50=  3.890 p99=  10.171 max=   11.602 us | barrier p50=  0.000 max=    0.000 us
+RC3       edits: 25 sendInputCalls: 25
+RC4 [tone] KieeKey v1.2.0 Stable — tone-population latency benchmark
+RC4 [tone] mixed pace(s)=150,250 reps=1 (--fast for one pace/one rep, --full for the exhaustive matrix)
+RC4 [tone] composition validation: 8 populations OK
+RC4 [pop] tone-append     path=inline          barrier=spin   commit=0ns n=6000
+RC4       desc: as -> a-acute (1 tone key = 1 edit)
+RC4       EDIT  n=2000  E2E(t5) p50=  0.168 p99=   2.298 p99.9=   10.330 max=   21.433 us
+RC4             t1(decision) p50= 0.064  t2(push/emit) p50=  0.168  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=4000  delivery(t2) p50=  0.090 p99=   0.145 max=   10.089 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 2000 sendInputCalls: 2000
+RC4 [pop] tone-append     path=inline          barrier=hybrid commit=0ns n=6000
+RC4       desc: as -> a-acute (1 tone key = 1 edit)
+RC4       EDIT  n=2000  E2E(t5) p50=  0.169 p99=   2.235 p99.9=    7.057 max=   29.660 us
+RC4             t1(decision) p50= 0.064  t2(push/emit) p50=  0.169  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=4000  delivery(t2) p50=  0.091 p99=   0.146 max=    3.253 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 2000 sendInputCalls: 2000
+RC4 [pop] dbar            path=inline          barrier=spin   commit=0ns n=6000
+RC4       desc: dd -> d-stroke (d-bar edit)
+RC4       EDIT  n=2000  E2E(t5) p50=  0.161 p99=   1.758 p99.9=   11.757 max=   41.574 us
+RC4             t1(decision) p50= 0.057  t2(push/emit) p50=  0.161  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=4000  delivery(t2) p50=  0.091 p99=   0.122 max=    0.899 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 2000 sendInputCalls: 2000
+RC4 [pop] dbar            path=inline          barrier=hybrid commit=0ns n=6000
+RC4       desc: dd -> d-stroke (d-bar edit)
+RC4       EDIT  n=2000  E2E(t5) p50=  0.162 p99=   1.930 p99.9=    6.703 max=   18.638 us
+RC4             t1(decision) p50= 0.057  t2(push/emit) p50=  0.162  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=4000  delivery(t2) p50=  0.090 p99=   0.106 max=    0.660 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 2000 sendInputCalls: 2000
+RC4 [pop] reposition      path=inline          barrier=spin   commit=0ns n=8000
+RC4       desc: asa -> a-circumflex-acute (sac reposition)
+RC4       EDIT  n=4000  E2E(t5) p50=  0.171 p99=   1.581 p99.9=    5.163 max=  103.228 us
+RC4             t1(decision) p50= 0.067  t2(push/emit) p50=  0.171  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=4000  delivery(t2) p50=  0.095 p99=   0.131 max=   10.575 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 4000 sendInputCalls: 4000
+RC4 [pop] reposition      path=inline          barrier=hybrid commit=0ns n=8000
+RC4       desc: asa -> a-circumflex-acute (sac reposition)
+RC4       EDIT  n=4000  E2E(t5) p50=  0.170 p99=   1.590 p99.9=    5.002 max=   17.714 us
+RC4             t1(decision) p50= 0.066  t2(push/emit) p50=  0.170  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=4000  delivery(t2) p50=  0.094 p99=   0.113 max=    6.203 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 4000 sendInputCalls: 4000
+RC4 [pop] restore-reissue path=inline          barrier=spin   commit=0ns n=10000
+RC4       desc: asas -> Restore chain: 2 edits + Restore-reissue + space-Restore-reissue
+RC4       EDIT  n=8000  E2E(t5) p50=  0.173 p99=   1.805 p99.9=    5.749 max=  211.881 us
+RC4             t1(decision) p50= 0.069  t2(push/emit) p50=  0.173  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=2000  delivery(t2) p50=  0.080 p99=   0.115 max=    8.292 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 8000 sendInputCalls: 8000
+RC4 [pop] restore-reissue path=inline          barrier=hybrid commit=0ns n=10000
+RC4       desc: asas -> Restore chain: 2 edits + Restore-reissue + space-Restore-reissue
+RC4       EDIT  n=8000  E2E(t5) p50=  0.173 p99=   1.895 p99.9=    8.872 max=   14.875 us
+RC4             t1(decision) p50= 0.069  t2(push/emit) p50=  0.173  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=2000  delivery(t2) p50=  0.080 p99=   0.115 max=    8.427 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 8000 sendInputCalls: 8000
+RC4 [pop] double-tone     path=inline          barrier=spin   commit=0ns n=12000
+RC4       desc: oasas -> double-tone family + Restore chain
+RC4       EDIT  n=8000  E2E(t5) p50=  0.261 p99=   2.483 p99.9=    8.679 max=  400.218 us
+RC4             t1(decision) p50= 0.122  t2(push/emit) p50=  0.261  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=4000  delivery(t2) p50=  0.079 p99=   0.133 max=    5.735 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 8000 sendInputCalls: 8000
+RC4 [pop] double-tone     path=inline          barrier=hybrid commit=0ns n=12000
+RC4       desc: oasas -> double-tone family + Restore chain
+RC4       EDIT  n=8000  E2E(t5) p50=  0.260 p99=   2.515 p99.9=    7.207 max=   19.852 us
+RC4             t1(decision) p50= 0.122  t2(push/emit) p50=  0.260  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=4000  delivery(t2) p50=  0.079 p99=   0.113 max=    2.699 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 8000 sendInputCalls: 8000
+RC4 [pop] mid-word        path=inline          barrier=spin   commit=0ns n=16000
+RC4       desc: ddawjng -> dang-nang (d-bar + breve + nang; trailing ng re-typed)
+RC4       EDIT  n=6000  E2E(t5) p50=  0.182 p99=   1.527 p99.9=    4.945 max=   14.493 us
+RC4             t1(decision) p50= 0.078  t2(push/emit) p50=  0.182  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=10000 delivery(t2) p50=  0.129 p99=   0.223 max=   10.671 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 6000 sendInputCalls: 6000
+RC4 [pop] mid-word        path=inline          barrier=hybrid commit=0ns n=16000
+RC4       desc: ddawjng -> dang-nang (d-bar + breve + nang; trailing ng re-typed)
+RC4       EDIT  n=6000  E2E(t5) p50=  0.182 p99=   1.444 p99.9=    3.904 max=    9.897 us
+RC4             t1(decision) p50= 0.078  t2(push/emit) p50=  0.182  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=10000 delivery(t2) p50=  0.128 p99=   0.195 max=   20.817 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 6000 sendInputCalls: 6000
+RC4 [pop] horn-compound   path=inline          barrier=spin   commit=0ns n=10000
+RC4       desc: uows -> uo-horn + acute (horn compound + mark)
+RC4       EDIT  n=4000  E2E(t5) p50=  0.238 p99=   1.693 p99.9=    4.886 max=    6.549 us
+RC4             t1(decision) p50= 0.100  t2(push/emit) p50=  0.238  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=6000  delivery(t2) p50=  0.080 p99=   0.164 max=   16.162 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 4000 sendInputCalls: 4000
+RC4 [pop] horn-compound   path=inline          barrier=hybrid commit=0ns n=10000
+RC4       desc: uows -> uo-horn + acute (horn compound + mark)
+RC4       EDIT  n=4000  E2E(t5) p50=  0.238 p99=   2.082 p99.9=    5.560 max=  665.037 us
+RC4             t1(decision) p50= 0.099  t2(push/emit) p50=  0.238  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=6000  delivery(t2) p50=  0.080 p99=   0.140 max=    5.195 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 4000 sendInputCalls: 4000
+RC4 [pop] heavy-word      path=inline          barrier=spin   commit=0ns n=16000
+RC4       desc: dduowcj -> duoc (d-bar + horn + nang: the heaviest)
+RC4       EDIT  n=6000  E2E(t5) p50=  0.224 p99=   2.483 p99.9=    6.256 max=   12.919 us
+RC4             t1(decision) p50= 0.085  t2(push/emit) p50=  0.224  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=10000 delivery(t2) p50=  0.092 p99=   0.239 max=    3.328 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 6000 sendInputCalls: 6000
+RC4 [pop] heavy-word      path=inline          barrier=hybrid commit=0ns n=16000
+RC4       desc: dduowcj -> duoc (d-bar + horn + nang: the heaviest)
+RC4       EDIT  n=6000  E2E(t5) p50=  0.224 p99=   2.278 p99.9=    5.405 max=   10.747 us
+RC4             t1(decision) p50= 0.085  t2(push/emit) p50=  0.224  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=10000 delivery(t2) p50=  0.092 p99=   0.222 max=    8.707 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 6000 sendInputCalls: 6000
+RC4 [pop] mixed           path=inline          barrier=spin   commit=0ns n=173
+RC4       desc: mixed@150wpm
+RC4       EDIT  n=25    E2E(t5) p50= 12.730 p99=  17.228 p99.9=   17.228 max=   20.020 us
+RC4             t1(decision) p50= 6.292  t2(push/emit) p50= 12.730  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=148   delivery(t2) p50=  5.033 p99=  15.037 max= 2038.493 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 25 sendInputCalls: 25
+RC4 [pop] mixed           path=inline          barrier=hybrid commit=0ns n=173
+RC4       desc: mixed@150wpm
+RC4       EDIT  n=25    E2E(t5) p50= 13.463 p99= 842.686 p99.9=  842.686 max= 2554.797 us
+RC4             t1(decision) p50= 6.846  t2(push/emit) p50= 13.463  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=148   delivery(t2) p50=  5.133 p99=  14.537 max= 1955.674 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 25 sendInputCalls: 25
+RC4 [pop] mixed           path=inline          barrier=spin   commit=0ns n=173
+RC4       desc: mixed@250wpm
+RC4       EDIT  n=25    E2E(t5) p50= 13.949 p99=  20.070 p99.9=   20.070 max=  955.621 us
+RC4             t1(decision) p50= 5.887  t2(push/emit) p50= 13.949  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=148   delivery(t2) p50=  4.152 p99=1742.880 max= 2541.744 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 25 sendInputCalls: 25
+RC4 [pop] mixed           path=inline          barrier=hybrid commit=0ns n=173
+RC4       desc: mixed@250wpm
+RC4       EDIT  n=25    E2E(t5) p50= 13.275 p99=  17.140 p99.9=   17.140 max=   17.488 us
+RC4             t1(decision) p50= 5.511  t2(push/emit) p50= 13.275  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+RC4       PASS  n=148   delivery(t2) p50=  4.110 p99=   9.664 max=   11.427 us | barrier p50=  0.000 max=    0.000 us
+RC4       edits: 25 sendInputCalls: 25

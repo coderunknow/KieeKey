@@ -1,0 +1,27 @@
+--- run 1
+RC3 keys=20000000 mode=1 total=1323.4 ms  66.17 ns/key (median of 3)  sink=2905520108639366859
+RC3   run0: 65.99 ns/key
+RC3   run1: 66.17 ns/key
+RC3   run2: 66.24 ns/key
+RC4 keys=20000000 mode=1 total=1312.2 ms  65.61 ns/key (median of 3)  sink=2905520108639366859
+RC4   run0: 65.31 ns/key
+RC4   run1: 65.61 ns/key
+RC4   run2: 68.64 ns/key
+--- run 2
+RC3 keys=20000000 mode=1 total=1317.2 ms  65.86 ns/key (median of 3)  sink=2905520108639366859
+RC3   run0: 65.45 ns/key
+RC3   run1: 65.86 ns/key
+RC3   run2: 68.18 ns/key
+RC4 keys=20000000 mode=1 total=1302.8 ms  65.14 ns/key (median of 3)  sink=2905520108639366859
+RC4   run0: 64.84 ns/key
+RC4   run1: 65.14 ns/key
+RC4   run2: 65.19 ns/key
+--- run 3
+RC3 keys=20000000 mode=1 total=1307.2 ms  65.36 ns/key (median of 3)  sink=2905520108639366859
+RC3   run0: 65.17 ns/key
+RC3   run1: 65.36 ns/key
+RC3   run2: 65.38 ns/key
+RC4 keys=20000000 mode=1 total=1312.4 ms  65.62 ns/key (median of 3)  sink=2905520108639366859
+RC4   run0: 65.50 ns/key
+RC4   run1: 65.62 ns/key
+RC4   run2: 65.86 ns/key

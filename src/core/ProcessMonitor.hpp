@@ -38,8 +38,11 @@
 //   * The snapshot is a std::shared_ptr<const ForegroundInfo>; readers
 //     copy the pointer (brief reader lock) and read an immutable object —
 //     the writer runs only on a foreground change.
-//   * PID-reuse-safe: tracks process creation time, so a recycled PID cannot
-//     produce a stale classification.
+//   * PID-reuse guarded: the owner PID is re-queried right before the
+//     snapshot is published (v1.2.2 RC4), and the process creation time is
+//     recorded in ForegroundInfo, so a PID recycled mid-snapshot cannot be
+//     classified as the old process (the snapshot is discarded instead and
+//     the next foreground event retries).
 //   * Classification is O(1) after the snapshot exists: constexpr exe-name
 //     tables + cheap window-geometry heuristics for fullscreen games.
 //

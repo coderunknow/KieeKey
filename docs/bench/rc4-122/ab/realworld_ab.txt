@@ -1,0 +1,315 @@
+--- run 1
+RC3 KieeKey v1.2.1 Stable — Real-World Typing Benchmark
+RC3   keys=50000  runs=1  paced=no  workload=all
+RC3 
+RC3 === burst_200wpm ===
+RC3   Keys processed:   50000
+RC3   Wall time:        4.1 ms (12305290 keys/s)
+RC3   Engine decision latency (ns):
+RC3     mean=56  p50=53  p90=69  p95=72  p99=83  p99.9=99  max=7086
+RC3   CPU cost per key: 56 ns
+RC3   CPU per 1000 keys: 56.0 us (0.056 ms)
+RC3 
+RC3 === normal_60wpm ===
+RC3   Keys processed:   50000
+RC3   Wall time:        4.1 ms (12323858 keys/s)
+RC3   Engine decision latency (ns):
+RC3     mean=56  p50=53  p90=68  p95=71  p99=82  p99.9=98  max=7081
+RC3   CPU cost per key: 56 ns
+RC3   CPU per 1000 keys: 56.2 us (0.056 ms)
+RC3 
+RC3 === slow_30wpm ===
+RC3   Keys processed:   50000
+RC3   Wall time:        4.1 ms (12269409 keys/s)
+RC3   Engine decision latency (ns):
+RC3     mean=56  p50=53  p90=68  p95=71  p99=82  p99.9=100  max=6791
+RC3   CPU cost per key: 56 ns
+RC3   CPU per 1000 keys: 56.0 us (0.056 ms)
+RC3 
+RC3 === burst_pause ===
+RC3   Keys processed:   50000
+RC3   Wall time:        4.1 ms (12325863 keys/s)
+RC3   Engine decision latency (ns):
+RC3     mean=56  p50=53  p90=68  p95=71  p99=80  p99.9=93  max=7332
+RC3   CPU cost per key: 56 ns
+RC3   CPU per 1000 keys: 55.9 us (0.056 ms)
+RC3 
+RC3 === single_keys ===
+RC3   Keys processed:   50000
+RC3   Wall time:        3.5 ms (14212257 keys/s)
+RC3   Engine decision latency (ns):
+RC3     mean=45  p50=44  p90=49  p95=55  p99=67  p99.9=83  max=5015
+RC3   CPU cost per key: 45 ns
+RC3   CPU per 1000 keys: 45.0 us (0.045 ms)
+RC3 
+RC3 === mixed ===
+RC3   Keys processed:   50000
+RC3   Wall time:        4.4 ms (11379288 keys/s)
+RC3   Engine decision latency (ns):
+RC3     mean=62  p50=58  p90=78  p95=102  p99=157  p99.9=269  max=4344
+RC3   CPU cost per key: 62 ns
+RC3   CPU per 1000 keys: 62.4 us (0.062 ms)
+RC3 
+RC3 [done] Real-world typing benchmark complete.
+RC4 KieeKey v1.2.1 Stable — Real-World Typing Benchmark
+RC4   keys=50000  runs=1  paced=no  workload=all
+RC4 
+RC4 === burst_200wpm ===
+RC4   Keys processed:   50000
+RC4   Wall time:        6.9 ms (7204349 keys/s)
+RC4   Engine decision latency (ns):
+RC4     mean=99  p50=86  p90=115  p95=128  p99=184  p99.9=3333  max=42517
+RC4   CPU cost per key: 99 ns
+RC4   CPU per 1000 keys: 99.3 us (0.099 ms)
+RC4 
+RC4 === normal_60wpm ===
+RC4   Keys processed:   50000
+RC4   Wall time:        4.1 ms (12300226 keys/s)
+RC4   Engine decision latency (ns):
+RC4     mean=56  p50=53  p90=68  p95=71  p99=80  p99.9=92  max=5552
+RC4   CPU cost per key: 56 ns
+RC4   CPU per 1000 keys: 55.8 us (0.056 ms)
+RC4 
+RC4 === slow_30wpm ===
+RC4   Keys processed:   50000
+RC4   Wall time:        4.1 ms (12051010 keys/s)
+RC4   Engine decision latency (ns):
+RC4     mean=57  p50=54  p90=69  p95=73  p99=91  p99.9=127  max=16113
+RC4   CPU cost per key: 57 ns
+RC4   CPU per 1000 keys: 57.3 us (0.057 ms)
+RC4 
+RC4 === burst_pause ===
+RC4   Keys processed:   50000
+RC4   Wall time:        4.0 ms (12381966 keys/s)
+RC4   Engine decision latency (ns):
+RC4     mean=56  p50=53  p90=68  p95=71  p99=82  p99.9=97  max=8044
+RC4   CPU cost per key: 56 ns
+RC4   CPU per 1000 keys: 55.9 us (0.056 ms)
+RC4 
+RC4 === single_keys ===
+RC4   Keys processed:   50000
+RC4   Wall time:        6.2 ms (8103602 keys/s)
+RC4   Engine decision latency (ns):
+RC4     mean=85  p50=74  p90=102  p95=114  p99=160  p99.9=3137  max=17999
+RC4   CPU cost per key: 85 ns
+RC4   CPU per 1000 keys: 85.1 us (0.085 ms)
+RC4 
+RC4 === mixed ===
+RC4   Keys processed:   50000
+RC4   Wall time:        7.2 ms (6948010 keys/s)
+RC4   Engine decision latency (ns):
+RC4     mean=106  p50=88  p90=128  p95=163  p99=271  p99.9=3309  max=18768
+RC4   CPU cost per key: 106 ns
+RC4   CPU per 1000 keys: 106.2 us (0.106 ms)
+RC4 
+RC4 [done] Real-world typing benchmark complete.
+--- run 2
+RC3 KieeKey v1.2.1 Stable — Real-World Typing Benchmark
+RC3   keys=50000  runs=1  paced=no  workload=all
+RC3 
+RC3 === burst_200wpm ===
+RC3   Keys processed:   50000
+RC3   Wall time:        4.2 ms (11935427 keys/s)
+RC3   Engine decision latency (ns):
+RC3     mean=58  p50=54  p90=70  p95=74  p99=90  p99.9=156  max=8593
+RC3   CPU cost per key: 58 ns
+RC3   CPU per 1000 keys: 57.9 us (0.058 ms)
+RC3 
+RC3 === normal_60wpm ===
+RC3   Keys processed:   50000
+RC3   Wall time:        4.1 ms (12276238 keys/s)
+RC3   Engine decision latency (ns):
+RC3     mean=56  p50=53  p90=68  p95=71  p99=82  p99.9=97  max=10999
+RC3   CPU cost per key: 56 ns
+RC3   CPU per 1000 keys: 56.2 us (0.056 ms)
+RC3 
+RC3 === slow_30wpm ===
+RC3   Keys processed:   50000
+RC3   Wall time:        4.1 ms (12336879 keys/s)
+RC3   Engine decision latency (ns):
+RC3     mean=56  p50=53  p90=68  p95=71  p99=80  p99.9=93  max=8242
+RC3   CPU cost per key: 56 ns
+RC3   CPU per 1000 keys: 55.8 us (0.056 ms)
+RC3 
+RC3 === burst_pause ===
+RC3   Keys processed:   50000
+RC3   Wall time:        4.0 ms (12402212 keys/s)
+RC3   Engine decision latency (ns):
+RC3     mean=56  p50=53  p90=68  p95=71  p99=82  p99.9=95  max=7780
+RC3   CPU cost per key: 56 ns
+RC3   CPU per 1000 keys: 55.6 us (0.056 ms)
+RC3 
+RC3 === single_keys ===
+RC3   Keys processed:   50000
+RC3   Wall time:        3.5 ms (14137857 keys/s)
+RC3   Engine decision latency (ns):
+RC3     mean=45  p50=44  p90=50  p95=56  p99=69  p99.9=86  max=5613
+RC3   CPU cost per key: 45 ns
+RC3   CPU per 1000 keys: 45.3 us (0.045 ms)
+RC3 
+RC3 === mixed ===
+RC3   Keys processed:   50000
+RC3   Wall time:        4.4 ms (11299175 keys/s)
+RC3   Engine decision latency (ns):
+RC3     mean=62  p50=57  p90=78  p95=100  p99=159  p99.9=280  max=9599
+RC3   CPU cost per key: 62 ns
+RC3   CPU per 1000 keys: 62.3 us (0.062 ms)
+RC3 
+RC3 [done] Real-world typing benchmark complete.
+RC4 KieeKey v1.2.1 Stable — Real-World Typing Benchmark
+RC4   keys=50000  runs=1  paced=no  workload=all
+RC4 
+RC4 === burst_200wpm ===
+RC4   Keys processed:   50000
+RC4   Wall time:        5.0 ms (9933116 keys/s)
+RC4   Engine decision latency (ns):
+RC4     mean=70  p50=61  p90=95  p95=108  p99=138  p99.9=648  max=22376
+RC4   CPU cost per key: 70 ns
+RC4   CPU per 1000 keys: 70.3 us (0.070 ms)
+RC4 
+RC4 === normal_60wpm ===
+RC4   Keys processed:   50000
+RC4   Wall time:        4.1 ms (12160959 keys/s)
+RC4   Engine decision latency (ns):
+RC4     mean=56  p50=53  p90=68  p95=71  p99=82  p99.9=108  max=11234
+RC4   CPU cost per key: 56 ns
+RC4   CPU per 1000 keys: 56.3 us (0.056 ms)
+RC4 
+RC4 === slow_30wpm ===
+RC4   Keys processed:   50000
+RC4   Wall time:        4.1 ms (12204299 keys/s)
+RC4   Engine decision latency (ns):
+RC4     mean=57  p50=53  p90=69  p95=72  p99=85  p99.9=111  max=7325
+RC4   CPU cost per key: 57 ns
+RC4   CPU per 1000 keys: 56.5 us (0.057 ms)
+RC4 
+RC4 === burst_pause ===
+RC4   Keys processed:   50000
+RC4   Wall time:        4.1 ms (12327200 keys/s)
+RC4   Engine decision latency (ns):
+RC4     mean=56  p50=53  p90=68  p95=71  p99=84  p99.9=107  max=7666
+RC4   CPU cost per key: 56 ns
+RC4   CPU per 1000 keys: 56.3 us (0.056 ms)
+RC4 
+RC4 === single_keys ===
+RC4   Keys processed:   50000
+RC4   Wall time:        3.5 ms (14110498 keys/s)
+RC4   Engine decision latency (ns):
+RC4     mean=46  p50=44  p90=49  p95=57  p99=70  p99.9=85  max=7173
+RC4   CPU cost per key: 46 ns
+RC4   CPU per 1000 keys: 45.6 us (0.046 ms)
+RC4 
+RC4 === mixed ===
+RC4   Keys processed:   50000
+RC4   Wall time:        4.4 ms (11387950 keys/s)
+RC4   Engine decision latency (ns):
+RC4     mean=62  p50=57  p90=78  p95=101  p99=158  p99.9=278  max=9243
+RC4   CPU cost per key: 62 ns
+RC4   CPU per 1000 keys: 62.3 us (0.062 ms)
+RC4 
+RC4 [done] Real-world typing benchmark complete.
+--- run 3
+RC3 KieeKey v1.2.1 Stable — Real-World Typing Benchmark
+RC3   keys=50000  runs=1  paced=no  workload=all
+RC3 
+RC3 === burst_200wpm ===
+RC3   Keys processed:   50000
+RC3   Wall time:        4.1 ms (12219878 keys/s)
+RC3   Engine decision latency (ns):
+RC3     mean=56  p50=53  p90=68  p95=72  p99=85  p99.9=113  max=8606
+RC3   CPU cost per key: 56 ns
+RC3   CPU per 1000 keys: 56.5 us (0.056 ms)
+RC3 
+RC3 === normal_60wpm ===
+RC3   Keys processed:   50000
+RC3   Wall time:        4.1 ms (12300444 keys/s)
+RC3   Engine decision latency (ns):
+RC3     mean=56  p50=53  p90=68  p95=71  p99=81  p99.9=102  max=7730
+RC3   CPU cost per key: 56 ns
+RC3   CPU per 1000 keys: 56.1 us (0.056 ms)
+RC3 
+RC3 === slow_30wpm ===
+RC3   Keys processed:   50000
+RC3   Wall time:        4.1 ms (12319431 keys/s)
+RC3   Engine decision latency (ns):
+RC3     mean=56  p50=53  p90=68  p95=71  p99=81  p99.9=96  max=7560
+RC3   CPU cost per key: 56 ns
+RC3   CPU per 1000 keys: 55.8 us (0.056 ms)
+RC3 
+RC3 === burst_pause ===
+RC3   Keys processed:   50000
+RC3   Wall time:        4.1 ms (12261207 keys/s)
+RC3   Engine decision latency (ns):
+RC3     mean=56  p50=54  p90=68  p95=72  p99=84  p99.9=104  max=5327
+RC3   CPU cost per key: 56 ns
+RC3   CPU per 1000 keys: 56.1 us (0.056 ms)
+RC3 
+RC3 === single_keys ===
+RC3   Keys processed:   50000
+RC3   Wall time:        3.5 ms (14198963 keys/s)
+RC3   Engine decision latency (ns):
+RC3     mean=45  p50=44  p90=49  p95=56  p99=68  p99.9=75  max=5302
+RC3   CPU cost per key: 45 ns
+RC3   CPU per 1000 keys: 45.3 us (0.045 ms)
+RC3 
+RC3 === mixed ===
+RC3   Keys processed:   50000
+RC3   Wall time:        4.4 ms (11261989 keys/s)
+RC3   Engine decision latency (ns):
+RC3     mean=63  p50=58  p90=79  p95=102  p99=160  p99.9=285  max=5343
+RC3   CPU cost per key: 63 ns
+RC3   CPU per 1000 keys: 62.9 us (0.063 ms)
+RC3 
+RC3 [done] Real-world typing benchmark complete.
+RC4 KieeKey v1.2.1 Stable — Real-World Typing Benchmark
+RC4   keys=50000  runs=1  paced=no  workload=all
+RC4 
+RC4 === burst_200wpm ===
+RC4   Keys processed:   50000
+RC4   Wall time:        4.2 ms (12046663 keys/s)
+RC4   Engine decision latency (ns):
+RC4     mean=56  p50=53  p90=68  p95=71  p99=81  p99.9=100  max=9816
+RC4   CPU cost per key: 56 ns
+RC4   CPU per 1000 keys: 56.5 us (0.056 ms)
+RC4 
+RC4 === normal_60wpm ===
+RC4   Keys processed:   50000
+RC4   Wall time:        4.4 ms (11454659 keys/s)
+RC4   Engine decision latency (ns):
+RC4     mean=56  p50=53  p90=69  p95=72  p99=85  p99.9=108  max=8767
+RC4   CPU cost per key: 56 ns
+RC4   CPU per 1000 keys: 56.4 us (0.056 ms)
+RC4 
+RC4 === slow_30wpm ===
+RC4   Keys processed:   50000
+RC4   Wall time:        4.1 ms (12285085 keys/s)
+RC4   Engine decision latency (ns):
+RC4     mean=56  p50=53  p90=68  p95=71  p99=80  p99.9=98  max=5017
+RC4   CPU cost per key: 56 ns
+RC4   CPU per 1000 keys: 55.7 us (0.056 ms)
+RC4 
+RC4 === burst_pause ===
+RC4   Keys processed:   50000
+RC4   Wall time:        4.1 ms (12260091 keys/s)
+RC4   Engine decision latency (ns):
+RC4     mean=56  p50=53  p90=69  p95=72  p99=84  p99.9=109  max=7050
+RC4   CPU cost per key: 56 ns
+RC4   CPU per 1000 keys: 56.5 us (0.056 ms)
+RC4 
+RC4 === single_keys ===
+RC4   Keys processed:   50000
+RC4   Wall time:        3.6 ms (14029291 keys/s)
+RC4   Engine decision latency (ns):
+RC4     mean=45  p50=44  p90=49  p95=55  p99=68  p99.9=74  max=7540
+RC4   CPU cost per key: 45 ns
+RC4   CPU per 1000 keys: 45.4 us (0.045 ms)
+RC4 
+RC4 === mixed ===
+RC4   Keys processed:   50000
+RC4   Wall time:        4.4 ms (11419433 keys/s)
+RC4   Engine decision latency (ns):
+RC4     mean=62  p50=57  p90=78  p95=100  p99=157  p99.9=281  max=6829
+RC4   CPU cost per key: 62 ns
+RC4   CPU per 1000 keys: 62.2 us (0.062 ms)
+RC4 
+RC4 [done] Real-world typing benchmark complete.

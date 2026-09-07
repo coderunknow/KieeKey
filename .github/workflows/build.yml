@@ -1,10 +1,15 @@
 #----------------------------------------------------------------------------
-# KieeKey v1.1.1 — CI/CD: x64 + ARM64 + ARM64EC release binaries on every
+# KieeKey — CI/CD: x64 + ARM64 + ARM64EC release binaries on every
 # push/PR/tag.
 #
 # What CI builds (KIEEKEY_BUILD_UI=none — the default, dependency-free
 # configuration): KieeKeyApp.exe (Win32 tray app) + the static core +
-# the test harness (ctest: ok_tests, ok_ring_tests, ok_wrap_tests).
+# the full native test harness (ctest: 20 tests incl. ok_tests, ok_ring_tests,
+# ok_wrap_tests, the correctness gate, differential A/B, option matrix,
+# performance profiles and the ok_version_check release gate).
+#
+# v1.2.2 RC4: the x64 job additionally enforces `SHA256SUMS.txt --check`
+# so the release manifest cannot silently rot between RCs.
 #
 # The optional WinUI 3 front-end (KIEEKEY_BUILD_UI=winui3) is NOT built in
 # CI: it requires the Windows App SDK NuGet package (Microsoft.WindowsAppSDK)
@@ -32,7 +37,7 @@ name: build
 
 on:
   push:
-    branches: [ main, dev ]
+    branches: [ main ]
     tags: [ 'v*' ]
   pull_request:
     branches: [ main ]
@@ -68,6 +73,13 @@ jobs:
       - name: Run unit tests
         if: matrix.platform == 'x64'
         run: ctest --test-dir out/${{ matrix.platform }} -C Release --output-on-failure
+
+      # v1.2.2 RC4 (B-5): the SHA256 release manifest must stay in sync with
+      # the tree it ships from — the same gate tests/run_all_tests.sh runs.
+      - name: Verify SHA256SUMS manifest
+        if: matrix.platform == 'x64'
+        shell: bash
+        run: bash scripts/gen_sha256sums.sh --check
 
       - name: Collect artifacts
         shell: pwsh

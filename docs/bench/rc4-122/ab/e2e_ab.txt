@@ -1,0 +1,165 @@
+--- run 1
+RC3 [e2e] KieeKey - Win32 wrapper E2E latency
+RC3 [e2e] workload: 200000 keys, burst (word bursts + inter-burst pauses, v3.0 convention), spin-cap=200 us, model=all, runs=1
+RC3 [e2e] ---- run 0 ----
+RC3 [e2e] SCHED_FIFO unavailable (rc=1, need root) - Windows uses THREAD_PRIORITY_TIME_CRITICAL + HIGH_PRIORITY_CLASS instead
+RC3 [e2e] keys=200000 edits-batched sendInputCalls=216
+RC3 [e2e] RAW      p50=9.699 us  p95=30.323 us  p99=170.064 us  p99.9=3230.708 us  max=7681.879 us
+RC3 [e2e] BURST/HOT (wake-free, the burst-mode population)
+RC3 [e2e]          p50=9.385 us  p95=25.717 us  p99=44.380 us  p99.9=75.985 us  max=99.951 us
+RC3 [e2e] WAKE-PAY (first key after a pause - OS wake cost, host-dependent)
+RC3 [e2e]          p50=12.494 us  p99=182.132 us  n=22224
+RC3 [e2e] PIPELINE (all keys, deschedule-excluded)
+RC3 [e2e]          p50=9.664 us  p99=44.740 us  p99.9=75.985 us  max=99.951 us
+RC3 [e2e] lag spikes (>100 us): 2416 keys in 142 contiguous scheduler deschedule events (1.2080%)
+RC3 [e2e] throughput: 14435 keys/s (includes burst pacing)
+RC3 [e2e] peak RSS: 14.34 MB total; IME pipeline footprint ~9.38 MB (excl. 5.0 MB harness arrays; engine-only baseline 2.00 MB)
+RC3 [e2e] TARGETS (burst mode median of 1 run(s), wake-free population): p50 FAIL (9.385 <= 2.5)  p99 FAIL (44.380 <= 7.0)
+RC4 [e2e] KieeKey - Win32 wrapper E2E latency
+RC4 [e2e] workload: 200000 keys, burst (word bursts + inter-burst pauses, v3.0 convention), spin-cap=200 us, model=all, runs=1
+RC4 [e2e] ---- run 0 ----
+RC4 [e2e] SCHED_FIFO unavailable (rc=1, need root) - Windows uses THREAD_PRIORITY_TIME_CRITICAL + HIGH_PRIORITY_CLASS instead
+RC4 [e2e] keys=200000 edits-batched sendInputCalls=216
+RC4 [e2e] RAW      p50=9.770 us  p95=29.656 us  p99=533.583 us  p99.9=3108.681 us  max=6081.381 us
+RC4 [e2e] BURST/HOT (wake-free, the burst-mode population)
+RC4 [e2e]          p50=9.461 us  p95=21.258 us  p99=44.509 us  p99.9=76.742 us  max=99.141 us
+RC4 [e2e] WAKE-PAY (first key after a pause - OS wake cost, host-dependent)
+RC4 [e2e]          p50=12.564 us  p99=593.360 us  n=22224
+RC4 [e2e] PIPELINE (all keys, deschedule-excluded)
+RC4 [e2e]          p50=9.717 us  p99=44.886 us  p99.9=76.798 us  max=99.264 us
+RC4 [e2e] lag spikes (>100 us): 3944 keys in 214 contiguous scheduler deschedule events (1.9720%)
+RC4 [e2e] throughput: 14284 keys/s (includes burst pacing)
+RC4 [e2e] peak RSS: 14.31 MB total; IME pipeline footprint ~9.35 MB (excl. 5.0 MB harness arrays; engine-only baseline 2.00 MB)
+RC4 [e2e] TARGETS (burst mode median of 1 run(s), wake-free population): p50 FAIL (9.461 <= 2.5)  p99 FAIL (44.509 <= 7.0)
+--- run 2
+RC3 [e2e] KieeKey - Win32 wrapper E2E latency
+RC3 [e2e] workload: 200000 keys, burst (word bursts + inter-burst pauses, v3.0 convention), spin-cap=200 us, model=all, runs=1
+RC3 [e2e] ---- run 0 ----
+RC3 [e2e] SCHED_FIFO unavailable (rc=1, need root) - Windows uses THREAD_PRIORITY_TIME_CRITICAL + HIGH_PRIORITY_CLASS instead
+RC3 [e2e] keys=200000 edits-batched sendInputCalls=216
+RC3 [e2e] RAW      p50=10.042 us  p95=39.419 us  p99=1102.449 us  p99.9=4417.443 us  max=9934.268 us
+RC3 [e2e] BURST/HOT (wake-free, the burst-mode population)
+RC3 [e2e]          p50=9.649 us  p95=27.067 us  p99=44.630 us  p99.9=73.555 us  max=99.971 us
+RC3 [e2e] WAKE-PAY (first key after a pause - OS wake cost, host-dependent)
+RC3 [e2e]          p50=12.778 us  p99=1198.389 us  n=22224
+RC3 [e2e] PIPELINE (all keys, deschedule-excluded)
+RC3 [e2e]          p50=9.946 us  p99=44.970 us  p99.9=73.649 us  max=99.971 us
+RC3 [e2e] lag spikes (>100 us): 6200 keys in 242 contiguous scheduler deschedule events (3.1000%)
+RC3 [e2e] throughput: 14104 keys/s (includes burst pacing)
+RC3 [e2e] peak RSS: 13.95 MB total; IME pipeline footprint ~8.99 MB (excl. 5.0 MB harness arrays; engine-only baseline 2.00 MB)
+RC3 [e2e] TARGETS (burst mode median of 1 run(s), wake-free population): p50 FAIL (9.649 <= 2.5)  p99 FAIL (44.630 <= 7.0)
+RC4 [e2e] KieeKey - Win32 wrapper E2E latency
+RC4 [e2e] workload: 200000 keys, burst (word bursts + inter-burst pauses, v3.0 convention), spin-cap=200 us, model=all, runs=1
+RC4 [e2e] ---- run 0 ----
+RC4 [e2e] SCHED_FIFO unavailable (rc=1, need root) - Windows uses THREAD_PRIORITY_TIME_CRITICAL + HIGH_PRIORITY_CLASS instead
+RC4 [e2e] keys=200000 edits-batched sendInputCalls=216
+RC4 [e2e] RAW      p50=9.990 us  p95=33.343 us  p99=945.257 us  p99.9=4104.770 us  max=11017.119 us
+RC4 [e2e] BURST/HOT (wake-free, the burst-mode population)
+RC4 [e2e]          p50=9.668 us  p95=19.216 us  p99=45.155 us  p99.9=79.516 us  max=99.938 us
+RC4 [e2e] WAKE-PAY (first key after a pause - OS wake cost, host-dependent)
+RC4 [e2e]          p50=12.916 us  p99=964.800 us  n=22224
+RC4 [e2e] PIPELINE (all keys, deschedule-excluded)
+RC4 [e2e]          p50=9.920 us  p99=45.570 us  p99.9=79.164 us  max=99.938 us
+RC4 [e2e] lag spikes (>100 us): 5364 keys in 191 contiguous scheduler deschedule events (2.6820%)
+RC4 [e2e] throughput: 14143 keys/s (includes burst pacing)
+RC4 [e2e] peak RSS: 14.31 MB total; IME pipeline footprint ~9.35 MB (excl. 5.0 MB harness arrays; engine-only baseline 2.00 MB)
+RC4 [e2e] TARGETS (burst mode median of 1 run(s), wake-free population): p50 FAIL (9.668 <= 2.5)  p99 FAIL (45.155 <= 7.0)
+--- run 3
+RC3 [e2e] KieeKey - Win32 wrapper E2E latency
+RC3 [e2e] workload: 200000 keys, burst (word bursts + inter-burst pauses, v3.0 convention), spin-cap=200 us, model=all, runs=1
+RC3 [e2e] ---- run 0 ----
+RC3 [e2e] SCHED_FIFO unavailable (rc=1, need root) - Windows uses THREAD_PRIORITY_TIME_CRITICAL + HIGH_PRIORITY_CLASS instead
+RC3 [e2e] keys=200000 edits-batched sendInputCalls=216
+RC3 [e2e] RAW      p50=10.115 us  p95=41.228 us  p99=818.744 us  p99.9=3532.618 us  max=6590.492 us
+RC3 [e2e] BURST/HOT (wake-free, the burst-mode population)
+RC3 [e2e]          p50=9.688 us  p95=33.499 us  p99=47.174 us  p99.9=85.621 us  max=99.894 us
+RC3 [e2e] WAKE-PAY (first key after a pause - OS wake cost, host-dependent)
+RC3 [e2e]          p50=13.302 us  p99=820.600 us  n=22224
+RC3 [e2e] PIPELINE (all keys, deschedule-excluded)
+RC3 [e2e]          p50=10.024 us  p99=47.565 us  p99.9=85.740 us  max=99.894 us
+RC3 [e2e] lag spikes (>100 us): 4925 keys in 233 contiguous scheduler deschedule events (2.4625%)
+RC3 [e2e] throughput: 14127 keys/s (includes burst pacing)
+RC3 [e2e] peak RSS: 14.07 MB total; IME pipeline footprint ~9.11 MB (excl. 5.0 MB harness arrays; engine-only baseline 2.00 MB)
+RC3 [e2e] TARGETS (burst mode median of 1 run(s), wake-free population): p50 FAIL (9.688 <= 2.5)  p99 FAIL (47.174 <= 7.0)
+RC4 [e2e] KieeKey - Win32 wrapper E2E latency
+RC4 [e2e] workload: 200000 keys, burst (word bursts + inter-burst pauses, v3.0 convention), spin-cap=200 us, model=all, runs=1
+RC4 [e2e] ---- run 0 ----
+RC4 [e2e] SCHED_FIFO unavailable (rc=1, need root) - Windows uses THREAD_PRIORITY_TIME_CRITICAL + HIGH_PRIORITY_CLASS instead
+RC4 [e2e] keys=200000 edits-batched sendInputCalls=216
+RC4 [e2e] RAW      p50=10.201 us  p95=512.935 us  p99=1923.816 us  p99.9=6492.648 us  max=13768.599 us
+RC4 [e2e] BURST/HOT (wake-free, the burst-mode population)
+RC4 [e2e]          p50=9.651 us  p95=28.629 us  p99=49.717 us  p99.9=88.779 us  max=99.916 us
+RC4 [e2e] WAKE-PAY (first key after a pause - OS wake cost, host-dependent)
+RC4 [e2e]          p50=13.061 us  p99=1840.635 us  n=22224
+RC4 [e2e] PIPELINE (all keys, deschedule-excluded)
+RC4 [e2e]          p50=9.920 us  p99=50.173 us  p99.9=88.779 us  max=99.916 us
+RC4 [e2e] lag spikes (>100 us): 16644 keys in 371 contiguous scheduler deschedule events (8.3220%)
+RC4 [e2e] throughput: 14227 keys/s (includes burst pacing)
+RC4 [e2e] peak RSS: 14.03 MB total; IME pipeline footprint ~9.07 MB (excl. 5.0 MB harness arrays; engine-only baseline 2.00 MB)
+RC4 [e2e] TARGETS (burst mode median of 1 run(s), wake-free population): p50 FAIL (9.651 <= 2.5)  p99 FAIL (49.717 <= 7.0)
+--- run 4
+RC3 [e2e] KieeKey - Win32 wrapper E2E latency
+RC3 [e2e] workload: 200000 keys, burst (word bursts + inter-burst pauses, v3.0 convention), spin-cap=200 us, model=all, runs=1
+RC3 [e2e] ---- run 0 ----
+RC3 [e2e] SCHED_FIFO unavailable (rc=1, need root) - Windows uses THREAD_PRIORITY_TIME_CRITICAL + HIGH_PRIORITY_CLASS instead
+RC3 [e2e] keys=200000 edits-batched sendInputCalls=216
+RC3 [e2e] RAW      p50=9.986 us  p95=52.011 us  p99=1391.267 us  p99.9=5135.114 us  max=9028.650 us
+RC3 [e2e] BURST/HOT (wake-free, the burst-mode population)
+RC3 [e2e]          p50=9.592 us  p95=24.114 us  p99=46.653 us  p99.9=88.660 us  max=99.785 us
+RC3 [e2e] WAKE-PAY (first key after a pause - OS wake cost, host-dependent)
+RC3 [e2e]          p50=12.610 us  p99=1360.095 us  n=22224
+RC3 [e2e] PIPELINE (all keys, deschedule-excluded)
+RC3 [e2e]          p50=9.855 us  p99=47.080 us  p99.9=88.526 us  max=99.833 us
+RC3 [e2e] lag spikes (>100 us): 8978 keys in 256 contiguous scheduler deschedule events (4.4890%)
+RC3 [e2e] throughput: 14319 keys/s (includes burst pacing)
+RC3 [e2e] peak RSS: 14.09 MB total; IME pipeline footprint ~9.13 MB (excl. 5.0 MB harness arrays; engine-only baseline 2.00 MB)
+RC3 [e2e] TARGETS (burst mode median of 1 run(s), wake-free population): p50 FAIL (9.592 <= 2.5)  p99 FAIL (46.653 <= 7.0)
+RC4 [e2e] KieeKey - Win32 wrapper E2E latency
+RC4 [e2e] workload: 200000 keys, burst (word bursts + inter-burst pauses, v3.0 convention), spin-cap=200 us, model=all, runs=1
+RC4 [e2e] ---- run 0 ----
+RC4 [e2e] SCHED_FIFO unavailable (rc=1, need root) - Windows uses THREAD_PRIORITY_TIME_CRITICAL + HIGH_PRIORITY_CLASS instead
+RC4 [e2e] keys=200000 edits-batched sendInputCalls=216
+RC4 [e2e] RAW      p50=10.230 us  p95=49.182 us  p99=1333.711 us  p99.9=6624.980 us  max=15303.223 us
+RC4 [e2e] BURST/HOT (wake-free, the burst-mode population)
+RC4 [e2e]          p50=9.813 us  p95=29.211 us  p99=46.332 us  p99.9=84.783 us  max=99.977 us
+RC4 [e2e] WAKE-PAY (first key after a pause - OS wake cost, host-dependent)
+RC4 [e2e]          p50=13.275 us  p99=1281.844 us  n=22224
+RC4 [e2e] PIPELINE (all keys, deschedule-excluded)
+RC4 [e2e]          p50=10.094 us  p99=46.828 us  p99.9=84.898 us  max=99.977 us
+RC4 [e2e] lag spikes (>100 us): 8487 keys in 251 contiguous scheduler deschedule events (4.2435%)
+RC4 [e2e] throughput: 14288 keys/s (includes burst pacing)
+RC4 [e2e] peak RSS: 14.06 MB total; IME pipeline footprint ~9.10 MB (excl. 5.0 MB harness arrays; engine-only baseline 2.00 MB)
+RC4 [e2e] TARGETS (burst mode median of 1 run(s), wake-free population): p50 FAIL (9.813 <= 2.5)  p99 FAIL (46.332 <= 7.0)
+--- run 5
+RC3 [e2e] KieeKey - Win32 wrapper E2E latency
+RC3 [e2e] workload: 200000 keys, burst (word bursts + inter-burst pauses, v3.0 convention), spin-cap=200 us, model=all, runs=1
+RC3 [e2e] ---- run 0 ----
+RC3 [e2e] SCHED_FIFO unavailable (rc=1, need root) - Windows uses THREAD_PRIORITY_TIME_CRITICAL + HIGH_PRIORITY_CLASS instead
+RC3 [e2e] keys=200000 edits-batched sendInputCalls=216
+RC3 [e2e] RAW      p50=10.397 us  p95=411.040 us  p99=2451.893 us  p99.9=5543.038 us  max=10167.011 us
+RC3 [e2e] BURST/HOT (wake-free, the burst-mode population)
+RC3 [e2e]          p50=9.873 us  p95=29.550 us  p99=47.169 us  p99.9=83.598 us  max=99.965 us
+RC3 [e2e] WAKE-PAY (first key after a pause - OS wake cost, host-dependent)
+RC3 [e2e]          p50=13.562 us  p99=2316.365 us  n=22224
+RC3 [e2e] PIPELINE (all keys, deschedule-excluded)
+RC3 [e2e]          p50=10.168 us  p99=47.741 us  p99.9=84.025 us  max=99.965 us
+RC3 [e2e] lag spikes (>100 us): 13301 keys in 307 contiguous scheduler deschedule events (6.6505%)
+RC3 [e2e] throughput: 14232 keys/s (includes burst pacing)
+RC3 [e2e] peak RSS: 14.22 MB total; IME pipeline footprint ~9.26 MB (excl. 5.0 MB harness arrays; engine-only baseline 2.00 MB)
+RC3 [e2e] TARGETS (burst mode median of 1 run(s), wake-free population): p50 FAIL (9.873 <= 2.5)  p99 FAIL (47.169 <= 7.0)
+RC4 [e2e] KieeKey - Win32 wrapper E2E latency
+RC4 [e2e] workload: 200000 keys, burst (word bursts + inter-burst pauses, v3.0 convention), spin-cap=200 us, model=all, runs=1
+RC4 [e2e] ---- run 0 ----
+RC4 [e2e] SCHED_FIFO unavailable (rc=1, need root) - Windows uses THREAD_PRIORITY_TIME_CRITICAL + HIGH_PRIORITY_CLASS instead
+RC4 [e2e] keys=200000 edits-batched sendInputCalls=216
+RC4 [e2e] RAW      p50=10.178 us  p95=49.697 us  p99=1871.258 us  p99.9=4789.046 us  max=12370.001 us
+RC4 [e2e] BURST/HOT (wake-free, the burst-mode population)
+RC4 [e2e]          p50=9.664 us  p95=34.217 us  p99=47.968 us  p99.9=79.634 us  max=99.857 us
+RC4 [e2e] WAKE-PAY (first key after a pause - OS wake cost, host-dependent)
+RC4 [e2e]          p50=12.897 us  p99=1815.123 us  n=22224
+RC4 [e2e] PIPELINE (all keys, deschedule-excluded)
+RC4 [e2e]          p50=10.009 us  p99=48.482 us  p99.9=79.634 us  max=99.857 us
+RC4 [e2e] lag spikes (>100 us): 8378 keys in 346 contiguous scheduler deschedule events (4.1890%)
+RC4 [e2e] throughput: 13925 keys/s (includes burst pacing)
+RC4 [e2e] peak RSS: 13.99 MB total; IME pipeline footprint ~9.03 MB (excl. 5.0 MB harness arrays; engine-only baseline 2.00 MB)
+RC4 [e2e] TARGETS (burst mode median of 1 run(s), wake-free population): p50 FAIL (9.664 <= 2.5)  p99 FAIL (47.968 <= 7.0)

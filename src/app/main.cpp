@@ -174,8 +174,8 @@ constexpr wchar_t kAppVersion[]     = L"1.2.2";           // numeric, 3-part
 // v1.2.2 RC1: [[maybe_unused]] — this is a documented VERSION CARRIER
 // (check_version.py reads it), not a code-level constant; the UI shows the
 // title/version forms. Keeping it zero-maintenance and warning-clean.
-[[maybe_unused]] constexpr wchar_t kAppVersionFull[] = L"1.2.2 RC3";    // with channel
-constexpr wchar_t kAppTitle[]       = L"KieeKey v1.2.2 RC3";  // sync with kAppVersionFull
+[[maybe_unused]] constexpr wchar_t kAppVersionFull[] = L"1.2.2 RC4";    // with channel
+constexpr wchar_t kAppTitle[]       = L"KieeKey v1.2.2 RC4";  // sync with kAppVersionFull
 
 //===========================================================================
 // Output item: what the consumer thread must emit (trivially copyable → can
@@ -2283,6 +2283,14 @@ void presentNotification(const ok::notify::Notification& n) {
             showTrayBalloon(L"KieeKey — Hook bàn phím đã tự phục hồi",
                 L"Windows đã gỡ hook bàn phím cấp thấp và KieeKey đã cài lại. Không cần thao tác gì.");
             break;
+        case Id::AutoExcludeUnavailable:
+            // v1.2.2 RC4 (P2-2): the process monitor failed to start, so
+            // auto-exclusion (fullscreen games, elevated apps) is off for
+            // this session. Say so once instead of failing silently.
+            showTrayBalloon(L"KieeKey — Tự động loại trừ ứng dụng không khả dụng",
+                L"Không theo dõi được cửa sổ đang chạy phía trước nên tính năng tự tắt khi chơi game "
+                L"toàn màn hình / ứng dụng quản trị bị vô hiệu trong phiên này. Các chế độ gõ vẫn hoạt động.");
+            break;
         default: break;
     }
 }
@@ -3791,7 +3799,12 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     (void)::WTSRegisterSessionNotification(g.hMain, NOTIFY_FOR_THIS_SESSION);
 
     // Process monitor (foreground detection, zero idle CPU)
-    (void)g.monitor.start();
+    // v1.2.2 RC4 (P2-2): surface a failed start. Auto-exclusion silently off
+    // for the whole session used to be invisible; the balloon notifies once
+    // when the UI is up (the notify center holds it until the tray exists).
+    if (!g.monitor.start()) {
+        g.notify.raise(ok::notify::Id::AutoExcludeUnavailable, 90, 0, ::GetTickCount64());
+    }
     g.monitor.refreshNow();
     updateExclusionCache();
     updateForegroundPolicy();

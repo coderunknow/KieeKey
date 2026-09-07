@@ -72,6 +72,7 @@ enum class Id : std::uint8_t {
     TsfSlowDowngrade,        // "Ứng dụng này chậm với TSF — đã chuyển SendInput"
     BarrierTimeouts,         // "Máy đang quá tải; một số phím bị trễ"
     HookReinstalled,         // "Hook bàn phím đã tự phục hồi"
+    AutoExcludeUnavailable,  // v1.2.2 RC4 (P2-2): process monitor failed to start
     kCount
 };
 

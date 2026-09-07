@@ -1,0 +1,60 @@
+--- run1 v1.2.0-Stable
+v1.2.0-Stable [e2e] BURST/HOT (wake-free, the burst-mode population)
+v1.2.0-Stable [e2e] throughput: 14414 keys/s (includes burst pacing)
+v1.2.0-Stable [e2e] peak RSS: 14.00 MB total; IME pipeline footprint ~9.04 MB (excl. 5.0 MB harness arrays; engine-only baseline 2.00 MB)
+--- run1 v1.2.1-Stable
+v1.2.1-Stable [e2e] BURST/HOT (wake-free, the burst-mode population)
+v1.2.1-Stable [e2e] throughput: 14383 keys/s (includes burst pacing)
+v1.2.1-Stable [e2e] peak RSS: 14.32 MB total; IME pipeline footprint ~9.36 MB (excl. 5.0 MB harness arrays; engine-only baseline 2.00 MB)
+--- run1 v1.2.2-RC1
+v1.2.2-RC1 [e2e] BURST/HOT (wake-free, the burst-mode population)
+v1.2.2-RC1 [e2e] throughput: 14520 keys/s (includes burst pacing)
+v1.2.2-RC1 [e2e] peak RSS: 14.05 MB total; IME pipeline footprint ~9.09 MB (excl. 5.0 MB harness arrays; engine-only baseline 2.00 MB)
+--- run1 v1.2.2-RC2
+v1.2.2-RC2 [e2e] BURST/HOT (wake-free, the burst-mode population)
+v1.2.2-RC2 [e2e] throughput: 14329 keys/s (includes burst pacing)
+v1.2.2-RC2 [e2e] peak RSS: 13.93 MB total; IME pipeline footprint ~8.97 MB (excl. 5.0 MB harness arrays; engine-only baseline 2.00 MB)
+--- run1 RC4(current)
+RC4 [e2e] BURST/HOT (wake-free, the burst-mode population)
+RC4 [e2e] throughput: 12930 keys/s (includes burst pacing)
+RC4 [e2e] peak RSS: 14.12 MB total; IME pipeline footprint ~9.17 MB (excl. 5.0 MB harness arrays; engine-only baseline 2.00 MB)
+--- run2 v1.2.0-Stable
+v1.2.0-Stable [e2e] BURST/HOT (wake-free, the burst-mode population)
+v1.2.0-Stable [e2e] throughput: 14369 keys/s (includes burst pacing)
+v1.2.0-Stable [e2e] peak RSS: 14.29 MB total; IME pipeline footprint ~9.33 MB (excl. 5.0 MB harness arrays; engine-only baseline 2.00 MB)
+--- run2 v1.2.1-Stable
+v1.2.1-Stable [e2e] BURST/HOT (wake-free, the burst-mode population)
+v1.2.1-Stable [e2e] throughput: 14305 keys/s (includes burst pacing)
+v1.2.1-Stable [e2e] peak RSS: 14.03 MB total; IME pipeline footprint ~9.07 MB (excl. 5.0 MB harness arrays; engine-only baseline 2.00 MB)
+--- run2 v1.2.2-RC1
+v1.2.2-RC1 [e2e] BURST/HOT (wake-free, the burst-mode population)
+v1.2.2-RC1 [e2e] throughput: 14166 keys/s (includes burst pacing)
+v1.2.2-RC1 [e2e] peak RSS: 14.31 MB total; IME pipeline footprint ~9.35 MB (excl. 5.0 MB harness arrays; engine-only baseline 2.00 MB)
+--- run2 v1.2.2-RC2
+v1.2.2-RC2 [e2e] BURST/HOT (wake-free, the burst-mode population)
+v1.2.2-RC2 [e2e] throughput: 14274 keys/s (includes burst pacing)
+v1.2.2-RC2 [e2e] peak RSS: 14.02 MB total; IME pipeline footprint ~9.06 MB (excl. 5.0 MB harness arrays; engine-only baseline 2.00 MB)
+--- run2 RC4(current)
+RC4 [e2e] BURST/HOT (wake-free, the burst-mode population)
+RC4 [e2e] throughput: 13926 keys/s (includes burst pacing)
+RC4 [e2e] peak RSS: 14.02 MB total; IME pipeline footprint ~9.06 MB (excl. 5.0 MB harness arrays; engine-only baseline 2.00 MB)
+--- run3 v1.2.0-Stable
+v1.2.0-Stable [e2e] BURST/HOT (wake-free, the burst-mode population)
+v1.2.0-Stable [e2e] throughput: 14220 keys/s (includes burst pacing)
+v1.2.0-Stable [e2e] peak RSS: 14.09 MB total; IME pipeline footprint ~9.13 MB (excl. 5.0 MB harness arrays; engine-only baseline 2.00 MB)
+--- run3 v1.2.1-Stable
+v1.2.1-Stable [e2e] BURST/HOT (wake-free, the burst-mode population)
+v1.2.1-Stable [e2e] throughput: 14107 keys/s (includes burst pacing)
+v1.2.1-Stable [e2e] peak RSS: 14.03 MB total; IME pipeline footprint ~9.07 MB (excl. 5.0 MB harness arrays; engine-only baseline 2.00 MB)
+--- run3 v1.2.2-RC1
+v1.2.2-RC1 [e2e] BURST/HOT (wake-free, the burst-mode population)
+v1.2.2-RC1 [e2e] throughput: 14357 keys/s (includes burst pacing)
+v1.2.2-RC1 [e2e] peak RSS: 14.08 MB total; IME pipeline footprint ~9.12 MB (excl. 5.0 MB harness arrays; engine-only baseline 2.00 MB)
+--- run3 v1.2.2-RC2
+v1.2.2-RC2 [e2e] BURST/HOT (wake-free, the burst-mode population)
+v1.2.2-RC2 [e2e] throughput: 13995 keys/s (includes burst pacing)
+v1.2.2-RC2 [e2e] peak RSS: 14.19 MB total; IME pipeline footprint ~9.23 MB (excl. 5.0 MB harness arrays; engine-only baseline 2.00 MB)
+--- run3 RC4(current)
+RC4 [e2e] BURST/HOT (wake-free, the burst-mode population)
+RC4 [e2e] throughput: 14152 keys/s (includes burst pacing)
+RC4 [e2e] peak RSS: 13.95 MB total; IME pipeline footprint ~8.99 MB (excl. 5.0 MB harness arrays; engine-only baseline 2.00 MB)

@@ -355,6 +355,17 @@ void ProcessMonitor::updateFromWindow(HWND fg) noexcept {
         return;
     }
 
+    // v1.2.2 RC4 (P2-4): PID-reuse revalidation. The OpenProcess / image-name
+    // / process-times / token queries above run while the window's owner
+    // could in theory exit and its PID be recycled — classifying the NEW
+    // process would flip exclusion/elevation for one foreground event.
+    // Re-query the window's owner and publish only when it still matches;
+    // on mismatch keep the previous snapshot (the next event retries).
+    DWORD pidNow = 0;
+    if (::GetWindowThreadProcessId(fg, &pidNow) == 0 || pidNow != pid) {
+        return;
+    }
+
     // exe name from full path (last '\' segment).
     const std::wstring_view path(info->exePath);
     const std::size_t pos = path.find_last_of(L"\\/");

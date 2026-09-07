@@ -3,6 +3,81 @@
 All notable changes to KieeKey are documented here. Format based on
 Keep a Changelog; versioning: SemVer.
 
+## [1.2.2-RC4] — 2026-09-06
+
+### Stable-qualification campaign — correctness hardening, release engineering
+
+> **Scope:** the RC4 stable-qualification campaign over the frozen RC3
+> baseline (`dd3c42a`). The engine hot path is byte-identical to RC3; every
+> accepted change is a correctness, stability or release-engineering fix
+> with re-run evidence. Full report:
+> `docs/reports/V1.2.2_RC4_RELEASE_REPORT.md`.
+
+### Fixed
+
+* **P0 — TsfComposer::commitBatch double Release (UAF/double-free).** The
+  v1.2.1 use-after-free fix was left half-applied: the caller-reference
+  `Release()` still ran BEFORE the `appliedCount()` snapshot, destroying the
+  session (`delete this` inside `Release()` with `TF_ES_SYNC`) and then
+  double-releasing it on every multi-delta batch commit. Snapshot once,
+  release once — the `commitOne` shape.
+* **P1 — producer handler exceptions could cross the Win32 hook boundary**
+  (UB / process fail-fast): all three LL/WinEvent callbacks now route the
+  producer handler through `runProducerHandler()` (catch → count into
+  `producerExceptions_` → pass-through + wake consumer). The consumer side
+  had isolation since v1.2.0; the producer side was missed.
+* **P1 — `resyncModifiersFromOs()` data race.** The UI thread may call it
+  (documented, and real: in-app on/off) while the pump thread RMWs the
+  toggle-edge bitmap; `toggleKeyDown_` is now an array of relaxed atomics.
+* **P2 — noexcept TSF entry points no longer terminate on OOM**
+  (`commitOne` / `commitBatch` / `textBeforeCaret` / both `DoEditSession`
+  COM entries degrade to a failed session → the documented SendInput
+  fallback).
+* **P2 — silent degradation surfaced:** foreground WinEvent-hook install
+  failures tracked (`fgHookInstalled` / `fgHookFailureCount`); a failed
+  ProcessMonitor start raises the new `AutoExcludeUnavailable` balloon
+  instead of silently disabling auto-exclusion for the session.
+* **P2 — restart hygiene:** `start()` after `stop()` resets the SPSC ring
+  (`reset_quiescent`) and producer bitmaps — no stale keystroke replays
+  into a new session; `keyboardProc` passes through once `running_` is
+  false.
+* **P2 — ProcessMonitor PID-reuse revalidation** before publishing the
+  foreground snapshot; header claim now describes the real guarantee.
+
+### Release engineering
+
+* Table generators emit the GPL-3 header + version-free banner; forward
+  regeneration proven byte-identical; the rotted v1.1.2-era reverse bridge
+  (`flat_to_legacy.py`) fails loudly with an actionable message instead of
+  a mid-file KeyError.
+* CMake presets default to `KIEEKEY_BUILD_UI=none` (dependency-free first
+  build; WinUI 3 enablement documented in `bin/README.txt`).
+* CI: `gen_sha256sums.sh --check` enforced on the x64 leg; stale metadata
+  fixed (CI header, ctest list, dead `dev` trigger, CMake STATUS message,
+  cross-build script standard, tool docstrings).
+* Dead code removed (`HookWatchdog::latestSeenTick`, `QueueStats::popped`).
+* Version carriers synchronized to `1.2.2 RC4` (macros, app strings,
+  README, gate CHANNEL); `tests/test_option_matrix.cpp` banner now derives
+  from the version macro (was a hard-coded RC3 string the gate could not
+  see).
+* `.gitignore` keeps `docs/bench/**/*.log` trackable — bench evidence is a
+  release artifact.
+
+### Evidence (RC4 campaign re-runs)
+
+* Native suite 20/20 PASS (2 hosts of evidence: clean + sanitizer builds).
+* ASan + UBSan + LSan: 20/20 PASS, 0 findings. TSan: 20/20 PASS,
+  0 warnings. Single-core (`taskset -c 0`) stress/lifecycle/option: PASS.
+* Determinism: option-matrix triple run digests identical; clean-vs-ASan
+  semantic output byte-identical (documented sanitizer-skip sections only).
+* Correctness gate re-run: 137,878 cases / 2,059,419 events / 0 mismatches.
+* Strict RC3↔RC4 A/B (5 interleaved e2e runs, identical harness):
+  hot-path p50 +0.15 %, throughput −0.04 %, RSS −0.21 % — within noise and
+  inside the 1 % regression policy.
+* Windows x64 cross-build (MinGW-w64 GCC 14, static runtime): KieeKeyApp.exe
+  + 8 test/bench executables compile warning-clean. Real-Windows runtime
+  validation: NOT AVAILABLE on this host (documented limitation).
+
 ## [1.2.2-RC3] — 2026-09-06
 
 ### Pipeline measurement, WinUI consumer-callback fix, option-torture gate

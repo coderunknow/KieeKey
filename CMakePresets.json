@@ -9,7 +9,7 @@
       "architecture": "x64",
       "binaryDir": "${sourceDir}/out/x64-debug",
       "cacheVariables": {
-        "KIEEKEY_BUILD_UI": "winui3",
+        "KIEEKEY_BUILD_UI": "none",
         "KIEEKEY_BUILD_TESTS": "ON"
       }
     },
@@ -21,7 +21,7 @@
       "binaryDir": "${sourceDir}/out/x64-release",
       "cacheVariables": {
         "CMAKE_CONFIGURATION_TYPES": "Release",
-        "KIEEKEY_BUILD_UI": "winui3",
+        "KIEEKEY_BUILD_UI": "none",
         "KIEEKEY_BUILD_TESTS": "ON"
       }
     },
@@ -33,7 +33,7 @@
       "binaryDir": "${sourceDir}/out/arm64-release",
       "cacheVariables": {
         "CMAKE_CONFIGURATION_TYPES": "Release",
-        "KIEEKEY_BUILD_UI": "winui3",
+        "KIEEKEY_BUILD_UI": "none",
         "KIEEKEY_BUILD_TESTS": "ON"
       }
     },
@@ -45,7 +45,7 @@
       "binaryDir": "${sourceDir}/out/arm64ec-release",
       "cacheVariables": {
         "CMAKE_CONFIGURATION_TYPES": "Release",
-        "KIEEKEY_BUILD_UI": "winui3",
+        "KIEEKEY_BUILD_UI": "none",
         "KIEEKEY_BUILD_TESTS": "ON"
       }
     }

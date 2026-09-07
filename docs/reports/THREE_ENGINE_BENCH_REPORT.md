@@ -1,15 +1,8 @@
-> **Lineage note (KieeKey v1.0 packaging):** Historical engineering
-> document from the refactor lineage that produced KieeKey v1.0 (a fork of
-> OpenKey, GPL-3.0). Written before the v1.0 release unification, it uses the
-> pre-release working name "OpenKey NextGen" and internal milestone numbers
-> (v3.0-v3.4). Published verbatim for traceability - see
-> [docs/reports/README.md](README.md).
-
-# Three-Engine Benchmark — OpenKey NextGen vs OpenKey 2.0.5 vs UniKey
+# Three-Engine Benchmark — KieeKey vs OpenKey 2.0.5 vs UniKey
 
 **Date:** 2026-08-29 · **Method:** Telex · deterministic byte-identical key streams.
 
-- **OpenKey NextGen v3.0** — shipped `TextEngine` (this repository).
+- **KieeKey v1.1.1** — shipped `TextEngine` (this repository).
 - **OpenKey 2.0.5** — vendored, unmodified legacy engine (`tests/reference/openkey-2.0.5`, compiled `-DLINUX`).
 - **UniKey 4.x** — vendored, unmodified `UKEngine` from the official GPL source (`tests/reference/unikey`); the engine behind the current UniKey release line 4.6.250531 (built 2025-12-28). Engine source pulled from the GitHub mirror `hochanh/unikey-source` (SourceForge CVS snapshot) because the official SourceForge SVN is unreachable.
 
@@ -17,7 +10,7 @@ Latency = engine-decision cost per key (the reproducible part headlessly). OS te
 
 ## 1. Correctness — final visible text per stream
 
-| stream | OpenKey NextGen (v3.0) | OpenKey 2.0.5 (legacy) | UniKey (4.x UKEngine) | 3-way |
+| stream | KieeKey (v3.0) | OpenKey 2.0.5 (legacy) | UniKey (4.x UKEngine) | 3-way |
 |---|---|---|---|---|
 | passage-0 | `Xin chào, tôi tên là Nam. Rất …` | `Xin chào, tôi tên là Nam. Rất …` | `Xin chào, tôi tên là Nam. Rất …` | ✓ |
 | passage-1 | `Hôm nay trời đẹp quá, chúng …` | `Hôm nay trời đẹp quá, chúng …` | `Hôm nay trời đẹp quá, chúng …` | ✓ |
@@ -89,13 +82,13 @@ Latency = engine-decision cost per key (the reproducible part headlessly). OS te
 | stress-52 | `toi không biết` | `toi không biết` | `toi không biết` | ✓ |
 | fuzz-5k | `ovobn ejuhrkt xlyrjc vvtwoy fgssokv …` | `ovobn ẹuhrkt xlyrjc vvtwoy fgssokv…` | `ovobn ẹuhrkt xlyrjc vvtwoy fgssokv…` | ✗ |
 
-**Agreement:** 3-way `65/69` · OpenKey NextGen (v3.0) == OpenKey 2.0.5 (legacy) `67/69` · OpenKey NextGen (v3.0) == UniKey (4.x UKEngine) `65/69` · OpenKey 2.0.5 (legacy) == UniKey (4.x UKEngine) `66/69`
+**Agreement:** 3-way `65/69` · KieeKey (v3.0) == OpenKey 2.0.5 (legacy) `67/69` · KieeKey (v3.0) == UniKey (4.x UKEngine) `65/69` · OpenKey 2.0.5 (legacy) == UniKey (4.x UKEngine) `66/69`
 
 ## 2. Real passages — exact match vs intended Vietnamese text
 
 | engine | exact vs intended | of 15 |
 |---|---|---|
-| OpenKey NextGen (v3.0) | **15** | 15 |
+| KieeKey (v3.0) | **15** | 15 |
 | OpenKey 2.0.5 (legacy) | **14** | 15 |
 | UniKey (4.x UKEngine) | **14** | 15 |
 
@@ -103,9 +96,9 @@ Latency = engine-decision cost per key (the reproducible part headlessly). OS te
 
 | engine | mean | p50 | p90 | p99 | max | sampled keys |
 |---|---|---|---|---|---|---|
-| OpenKey NextGen (v3.0) | 228.5 | 207 | 291 | 581 | 1952143 | 2000000 |
-| OpenKey 2.0.5 (legacy) | 263.5 | 214 | 393 | 849 | 2202994 | 2000000 |
-| UniKey (4.x UKEngine) | 118.4 | 111 | 137 | 180 | 500996 | 2000000 |
+| KieeKey (v3.0) | 139.3 | 114 | 192 | 414 | 1553419 | 2000000 |
+| OpenKey 2.0.5 (legacy) | 264.0 | 213 | 392 | 852 | 1868197 | 2000000 |
+| UniKey (4.x UKEngine) | 119.1 | 112 | 138 | 183 | 639153 | 2000000 |
 
 Includes ~20–40 ns of per-sample timing overhead, identical for all engines — the relative ranking is exact. `keys` from the correctness run: 6176 / 6176 / 6176.
 
@@ -113,7 +106,7 @@ Includes ~20–40 ns of per-sample timing overhead, identical for all engines �
 
 | engine | core object | internal buffers | approx total |
 |---|---|---|---|
-| OpenKey NextGen (v3.0) | `TextEngine` 728 B | raw-word buffer (kMaxBuff=32), undo history 64×32 | 728 B (+ heap history) |
+| KieeKey (v3.0) | `TextEngine` 9064 B | raw-word buffer (kMaxBuff=32), undo history 64×32 | 9064 B (+ heap history) |
 | OpenKey 2.0.5 (legacy) | engine globals | TypingWord[80], word/state histories | ~8 KiB |
 | UniKey (4.x UKEngine) | `UkEngine` 7752 B + `UkSharedMem` 141384 B | m_buffer[128] WordInfo, m_keyStrokes[128], macro store | 149136 B |
 
@@ -121,7 +114,7 @@ Includes ~20–40 ns of per-sample timing overhead, identical for all engines �
 
 - **"Delay when typing accents":** engine decision is 60–400 ns/key on all three engines — imperceptible. The perceived delay in the shipped app is the producer→consumer TSF hop (one synchronous edit session per edit). The fix shipped in this segment batches consecutive edits into ONE `TF_ES_SYNC` session and adds the producer-side ordering barrier; see `notes/fix_design.md`.
 - **Ghosting/sticking when typing and deleting quickly:** fixed by (1) swallowing the KeyUp of a suppressed KeyDown (phantom key-up) and (2) draining pending edits before a pass-through key reaches the app. Both live in the shipped Windows exe; the engine-level semantics are locked by `tests/test_hotfix.cpp` and this benchmark.
-- **Passage-11 (`confirm`)** and the fuzz show NextGen's shipped spelling auto-restore (`restoreIfWrongSpelling=true`): non-Vietnamese words keep their raw letters, while the 2.0.5/UniKey defaults mark them (`cònirm`, `ẹuhrkt`). Turn the option off and all three agree.
+- **Passage-11 (`confirm`)** and the fuzz show KieeKey's shipped spelling auto-restore (`restoreIfWrongSpelling=true`): non-Vietnamese words keep their raw letters, while the 2.0.5/UniKey defaults mark them (`cònirm`, `ẹuhrkt`). Turn the option off and all three agree.
 - **UniKey upstream engine limit:** its `UKEngine` uses a fixed 128-entry word buffer; words longer than that overflow its state machine (OOB read, ASAN-confirmed in the vendored reference). No human-typed word can exceed it — the comparative streams cap words at 11 letters, the realistic maximum — and the issue is documented here rather than patched into the unmodified reference.
 - **OpenKey 2.0.5 reference defect:** `checkForStandaloneChar` reads `TypingWord[_index - 1]` without an `_index > 0` guard (Engine.cpp:995). Under ASan this is a global-buffer-overflow READ (4 bytes before the 128-byte `TypingWord`), reproducible on the fuzz-5k stream. Release builds read benign adjacent memory and output is unaffected — the differential agreement is unchanged — but the unmodified vendored reference carries this pre-existing UB. It is documented here, not patched, to keep the reference pristine.
-- Correctness differences between engines are the documented rule differences (free-marking, auto-restore defaults, tone placement). The exhaustive NextGen vs 2.0.5 differential is `MEGA_BENCH_REPORT.md`; this benchmark adds UniKey.
+- Correctness differences between engines are the documented rule differences (free-marking, auto-restore defaults, tone placement). The exhaustive KieeKey vs 2.0.5 differential is `MEGA_BENCH_REPORT.md`; this benchmark adds UniKey.

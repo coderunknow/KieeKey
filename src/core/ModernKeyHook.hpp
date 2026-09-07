@@ -146,6 +146,14 @@ public:
     };
     using ProducerHandler = std::function<ProducerDecision(const KeyEvent&)>;
 
+    // v1.2.2 RC4 (P1-1): the ONLY sanctioned way to invoke the producer
+    // handler from an LL callback / WinEvent callback. An exception must
+    // never unwind across the Win32 hook-dispatch frames (UB / fail-fast);
+    // on catch the event degrades to the no-handler contract (pass through
+    // + wake consumer — a consumer-callback front-end still sees it) and
+    // the throw is counted into producerExceptions_.
+    [[nodiscard]] ProducerDecision runProducerHandler(const KeyEvent& ev) noexcept;
+
     ModernKeyHook() noexcept = default;
     ~ModernKeyHook() { stop(); }
 
@@ -236,6 +244,16 @@ public:
     [[nodiscard]] std::uint64_t handlerExceptionCount() const noexcept {
         return handlerExceptions_.load(std::memory_order_relaxed);
     }
+    // v1.2.2 RC4 (P1-1): producer-side fault isolation — LL hook callbacks
+    // whose producer handler threw. An exception must NEVER unwind across
+    // the Win32 hook-dispatch frames; on catch the key passes through and
+    // the consumer is woken (the same "no consumer work is guaranteed only
+    // with a consulted handler" contract). Expected to stay 0; a non-zero
+    // value means keystrokes degraded to pass-through, which is strictly
+    // better than a fail-fast from inside a keystroke.
+    [[nodiscard]] std::uint64_t producerExceptionCount() const noexcept {
+        return producerExceptions_.load(std::memory_order_relaxed);
+    }
 
     // v3.3.1 — Hook Self-Healing support.
     //
@@ -261,6 +279,12 @@ public:
     [[nodiscard]] const std::atomic<std::uint32_t>& mouseEventTickRef() const noexcept { return lastMouseEventTickMs_; }
     // Count of successful in-place hook reinstalls (watchdog recoveries).
     [[nodiscard]] std::uint64_t hookReinstallCount() const noexcept { return hookReinstallCount_.load(std::memory_order_relaxed); }
+    // v1.2.2 RC4 (P2-2): EVENT_SYSTEM_FOREGROUND WinEvent hook health.
+    // fgHookInstalled == false with a running pump means mouse word-break
+    // resync / modifier re-seeding / smart-switch are degraded to keyboard
+    // events only; fgHookFailures counts every failed install attempt.
+    [[nodiscard]] bool fgHookInstalled() const noexcept { return fgHookInstalled_.load(std::memory_order_acquire); }
+    [[nodiscard]] std::uint64_t fgHookFailureCount() const noexcept { return fgHookFailures_.load(std::memory_order_relaxed); }
 
     // Pump-tick callback (the watchdog heartbeat). Runs ON the pump thread
     // when the pump's WM_TIMER fires (armed in hookThreadMain when this is
@@ -367,7 +391,10 @@ private:
     // on x86/ARM but undefined and unsanitizable).
     std::atomic<std::uint64_t> overflowWakeCount_{0};
     std::atomic<std::uint64_t> handlerExceptions_{0};
+    std::atomic<std::uint64_t> producerExceptions_{0};   // v1.2.2 RC4 (P1-1)
     std::atomic<bool> hooksInstalled_{false};
+    std::atomic<bool> fgHookInstalled_{false};          // v1.2.2 RC4 (P2-2)
+    std::atomic<std::uint64_t> fgHookFailures_{0};      // v1.2.2 RC4 (P2-2)
 
     ok::win32::EventHandle wakeEvent_;           // signaled to wake consumer
     ok::win32::HookHandle   keyboardHook_;
@@ -423,10 +450,18 @@ private:
     // CapsLock for half a second XORed the tracked bit ~15-30 times and left
     // it OUT OF PHASE with the real OS toggle state — every subsequent tone
     // mark / đ / â transform then re-emitted its word with the wrong case
-    // ("vợ" rendering as "vỢ"). The bitmap (hook-thread-affine, same trick
-    // as suppressedDown_) flips the bit only on the up→down TRANSITION, so
-    // repeats are ignored and the tracked level always matches the OS.
-    std::array<std::uint32_t, 8> toggleKeyDown_{};    // 256-bit bitmap (vk 0..255)
+    // ("vợ" rendering as "vỢ"). The bitmap (same trick as suppressedDown_)
+    // flips the bit only on the up→down TRANSITION, so repeats are ignored
+    // and the tracked level always matches the OS.
+    // v1.2.2 RC4 (P1-2): the words are ATOMIC now. resyncModifiersFromOs()
+    // is documented and actually called from the UI thread (in-app on/off,
+    // main.cpp), and its bulk clear raced with the pump thread's RMW in
+    // applyModifierDelta — a data race that could lose a toggle edge while
+    // CapsLock is in flight. Relaxed ordering is sufficient: modifierBits_
+    // is the synchronized state, and the bitmap is an edge-detection aid
+    // whose worst-case degradation (one suppressed XOR, corrected by the
+    // next resync) is already documented as acceptable.
+    std::array<std::atomic<std::uint32_t>, 8> toggleKeyDown_{};   // 256-bit bitmap (vk 0..255)
     [[nodiscard]] bool wasToggleKeyDown(std::uint32_t vk) const noexcept;
     void setToggleKeyDown(std::uint32_t vk) noexcept;
     void clearToggleKeyDown(std::uint32_t vk) noexcept;

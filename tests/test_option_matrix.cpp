@@ -123,6 +123,7 @@
 // Exit 0 = every tier passed. Artifacts: --json machine-readable summary.
 //----------------------------------------------------------------------------
 #include "TextEngine.hpp"
+#include "kieekey_core.hpp"   // v1.2.2 RC4 (B-2): OPENKEY_KIEEKEY_VERSION_STRING — the banner can no longer drift from the release
 #include "vi_oracle.hpp"
 #include "PerfProfile.hpp"
 #include "LockFreeQueue.hpp"
@@ -2032,7 +2033,7 @@ int main(int argc, char** argv) {
         else if (a == "--quick") { quick = true; eventsN = 3000; }
         else { std::printf("unknown arg %s\n", argv[i]); return 2; }
     }
-    std::printf("KieeKey v1.2.2 RC3 — option-matrix differential harness\n");
+    std::printf("KieeKey v%s — option-matrix differential harness\n", OPENKEY_KIEEKEY_VERSION_STRING);
     std::printf("  tier=%s events/config=%zu quick=%d\n\n", tier.c_str(), eventsN, quick ? 1 : 0);
 
     auto want = [&](const char* name) { return tier == "all" || tier == name; };

@@ -456,9 +456,10 @@ else()
         target_compile_features(ok_profiles_bench PRIVATE cxx_std_20)
         target_link_libraries(ok_profiles_bench PRIVATE Threads::Threads)
 
-        message(STATUS "Non-Windows host: building the shim-based test suite only "
-                       "(ok_tests, ok_ring_tests, ok_wrap_tests). The Windows product "
-                       "targets (ok_core, ok_tsf, KieeKeyApp.exe) require WIN32.")
+        message(STATUS "Non-Windows host: building the shim-based test suite and "
+                       "benchmarks (16 ctest targets + 4 manual bench executables). "
+                       "The Windows product targets (ok_core, ok_tsf, KieeKeyApp.exe) "
+                       "require WIN32.")
     endif()
 
 endif()

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # ============================================================================
-# audit_controls.py — KieeKey v1.1.2 regression guard.
+# audit_controls.py — KieeKey dialog-control regression guard.
 #
 # Root-cause class this guards against: a control ID referenced by the
 # settings-dialog code (GetDlgItem / IsDlgButtonChecked / CheckDlgButton /

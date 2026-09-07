@@ -59,6 +59,10 @@ XamlSaveStateFile.json
 
 # ---------- Test / coverage output ----------
 *.log
+# v1.2.2 RC4 (B-4): bench evidence logs ARE release artifacts — keep them
+# trackable under the docs/bench tree (the RC1-RC3 evidence was committed
+# before the blanket rule; RC4+ must not silently drop evidence).
+!docs/bench/**/*.log
 coverage/
 *.gcda
 *.gcno

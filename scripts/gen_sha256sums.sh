@@ -81,7 +81,8 @@ generate() {
 }
 
 if [ "${1:-}" = "--check" ]; then
-    if diff -u <(cat "$MANIFEST" 2>/dev/null) <(generate) >/tmp/sha256sums.diff 2>&1; then
+    # Normalize line endings (strip \r) on both sides to handle Windows checkouts
+    if diff -u <(tr -d '\r' < "$MANIFEST" 2>/dev/null) <(generate) >/tmp/sha256sums.diff 2>&1; then
         echo "[sha256sums] OK — $MANIFEST matches the tracked tree."
         exit 0
     fi

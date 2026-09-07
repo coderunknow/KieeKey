@@ -1,0 +1,23 @@
+tests/reference/unikey/ukengine.cpp:1629:24: runtime error: index -1 out of bounds for type 'ConSeqInfo [30]'
+    #0 0x55ff5c31f4a0 in UkEngine::appendConsonnant(UkKeyEvent&) tests/reference/unikey/ukengine.cpp:1629
+    #1 0x55ff5c3333fa in UkEngine::process(unsigned int, int&, unsigned char*, int&, UkOutputType&) tests/reference/unikey/ukengine.cpp:1752
+    #2 0x55ff5c271859 in bench::UniKeyDriver::invoke() benchmark/harness/engines.hpp:429
+    #3 0x55ff5c24aabe in bench::IDriver::feed(corpus::Event const&) benchmark/harness/engines.hpp:97
+    #4 0x55ff5c24aabe in runHostileChild benchmark/harness/bench.cpp:778
+    #5 0x55ff5c238c75 in modeRobust benchmark/harness/bench.cpp:814
+    #6 0x55ff5c238c75 in main benchmark/harness/bench.cpp:841
+    #7 0x7fb89aa45249  (/lib/x86_64-linux-gnu/libc.so.6+0x27249)
+    #8 0x7fb89aa45304 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x27304)
+    #9 0x55ff5c23d960 in _start (/home/user/KieeKey/benchmark/.build/bench_san+0x155960)
+
+tests/reference/unikey/ukengine.cpp:1955:11: runtime error: load of value 25600, which is not a valid value for type 'VowelSeq'
+    #0 0x55ff5c2313ef in UkEngine::processBackspace(int&, unsigned char*, int&, UkOutputType&) tests/reference/unikey/ukengine.cpp:1955
+    #1 0x55ff5c271903 in bench::UniKeyDriver::invoke() benchmark/harness/engines.hpp:427
+    #2 0x55ff5c24aabe in bench::IDriver::feed(corpus::Event const&) benchmark/harness/engines.hpp:97
+    #3 0x55ff5c24aabe in runHostileChild benchmark/harness/bench.cpp:778
+    #4 0x55ff5c238c75 in modeRobust benchmark/harness/bench.cpp:814
+    #5 0x55ff5c238c75 in main benchmark/harness/bench.cpp:841
+    #6 0x7fb89aa45249  (/lib/x86_64-linux-gnu/libc.so.6+0x27249)
+    #7 0x7fb89aa45304 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x27304)
+    #8 0x55ff5c23d960 in _start (/home/user/KieeKey/benchmark/.build/bench_san+0x155960)
+

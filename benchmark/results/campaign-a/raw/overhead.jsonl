@@ -1,0 +1,6 @@
+{"mode":"meta","bench":"viet-ime-4way","action":"overhead","corpus":"tests/data/viet74k.txt","rounds":5,"keys":200000,"words":20000,"seed":20260907,"t0_unix":1788785542}
+{"mode":"overhead","engine":"kieekey","iterations":200000,"clock_pair_overhead_ns":23,"note":"adapter adds no call indirection (statically linked entry point)","ns_per_noop_call":0.00}
+{"mode":"overhead","engine":"kieekey-aa","iterations":200000,"clock_pair_overhead_ns":23,"note":"adapter adds no call indirection (statically linked entry point)","ns_per_noop_call":0.00}
+{"mode":"overhead","engine":"openkey-2.0.5","iterations":200000,"clock_pair_overhead_ns":23,"ns_per_noop_call":2.130,"note":"one indirect call through the dlopen shim + back (subtract from this engine's invoke-stage cost)"}
+{"mode":"overhead","engine":"openkey-master","iterations":200000,"clock_pair_overhead_ns":23,"ns_per_noop_call":2.059,"note":"one indirect call through the dlopen shim + back (subtract from this engine's invoke-stage cost)"}
+{"mode":"overhead","engine":"unikey-4.x","iterations":200000,"clock_pair_overhead_ns":23,"note":"adapter adds no call indirection (statically linked entry point)","ns_per_noop_call":0.00}

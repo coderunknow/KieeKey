@@ -1,0 +1,14 @@
+engine/ConvertTool.cpp: OK
+engine/ConvertTool.h: OK
+engine/DataType.h: OK
+engine/Engine.cpp: OK
+engine/Engine.h: OK
+engine/Macro.cpp: OK
+engine/Macro.h: OK
+engine/SmartSwitchKey.cpp: OK
+engine/SmartSwitchKey.h: OK
+engine/Vietnamese.cpp: OK
+engine/Vietnamese.h: OK
+engine/platforms/linux.h: OK
+engine/platforms/mac.h: OK
+engine/platforms/win32.h: OK

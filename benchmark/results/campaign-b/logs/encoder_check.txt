@@ -1,0 +1,3 @@
+[encoder] table rows checked: 148, mismatches vs unicodedata: 0
+[encoder] stream rows checked: 9000, mismatches: 0, python-refused(not modelled): 0
+[encoder] OK — the C++ key model is reproduced by an independent implementation

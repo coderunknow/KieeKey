@@ -1,0 +1,18 @@
+campaign=campaign-a
+date_utc=2026-09-07T12:51:17Z
+host=e2b.local kernel=6.1.158+ os=Debian GNU/Linux 12 (bookworm)
+cpu=Intel(R) Xeon(R) Processor @ 2.60GHz
+cores_total=2 pinned_core=1
+cpuinfo_mhz=2600.012
+governor=n/a (vm)
+turbo=n/a
+aslr=2
+compiler=g++ (Debian 12.2.0-14+deb12u1) 12.2.0
+flags: BENCH_STD=-std=c++17 BENCH_OPT=-O2 (identical for every engine)
+loadavg_start=0.64 0.63 0.55
+nprocs=78
+bogo_mips=
+cgroup_cpu_max=n/a
+cgroup_mem_max=n/a
+vmstat_throttle_before=
+loadavg_end=0.89 0.71 0.58

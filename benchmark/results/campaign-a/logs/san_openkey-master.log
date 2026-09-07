@@ -1,0 +1,26 @@
+benchmark/reference/openkey-master/engine/Engine.cpp:996:9: runtime error: index -1 out of bounds for type 'unsigned int [32]'
+    #0 0x7f73e252752e in checkForStandaloneChar(unsigned short const&, bool const&, unsigned int const&) benchmark/reference/openkey-master/engine/Engine.cpp:996
+    #1 0x7f73e2528d71 in handleMainKey(unsigned short const&, bool const&) benchmark/reference/openkey-master/engine/Engine.cpp:1188
+    #2 0x7f73e252f9ea in vKeyHandleEvent(vKeyEvent const&, vKeyEventState const&, unsigned short const&, unsigned char const&, bool const&) benchmark/reference/openkey-master/engine/Engine.cpp:1501
+    #3 0x7f73e257c362 in okmaster::processChar(char32_t, bool, bool, okmaster::Delta&) tests/engine205.cpp:309
+    #4 0x558004343abe in bench::IDriver::feed(corpus::Event const&) benchmark/harness/engines.hpp:97
+    #5 0x558004343abe in runHostileChild benchmark/harness/bench.cpp:778
+    #6 0x558004331c75 in modeRobust benchmark/harness/bench.cpp:814
+    #7 0x558004331c75 in main benchmark/harness/bench.cpp:841
+    #8 0x7f73e4445249  (/lib/x86_64-linux-gnu/libc.so.6+0x27249)
+    #9 0x7f73e4445304 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x27304)
+    #10 0x558004336960 in _start (/home/user/KieeKey/benchmark/.build/bench_san+0x155960)
+
+benchmark/reference/openkey-master/engine/Engine.cpp:996:9: runtime error: index -1 out of bounds for type 'unsigned int [32]'
+    #0 0x7f73e252752e in checkForStandaloneChar(unsigned short const&, bool const&, unsigned int const&) benchmark/reference/openkey-master/engine/Engine.cpp:996
+    #1 0x7f73e2528d71 in handleMainKey(unsigned short const&, bool const&) benchmark/reference/openkey-master/engine/Engine.cpp:1188
+    #2 0x7f73e252f9ea in vKeyHandleEvent(vKeyEvent const&, vKeyEventState const&, unsigned short const&, unsigned char const&, bool const&) benchmark/reference/openkey-master/engine/Engine.cpp:1501
+    #3 0x7f73e257c362 in okmaster::processChar(char32_t, bool, bool, okmaster::Delta&) tests/engine205.cpp:309
+    #4 0x558004343abe in bench::IDriver::feed(corpus::Event const&) benchmark/harness/engines.hpp:97
+    #5 0x558004343abe in runHostileChild benchmark/harness/bench.cpp:778
+    #6 0x558004331c75 in modeRobust benchmark/harness/bench.cpp:814
+    #7 0x558004331c75 in main benchmark/harness/bench.cpp:841
+    #8 0x7f73e4445249  (/lib/x86_64-linux-gnu/libc.so.6+0x27249)
+    #9 0x7f73e4445304 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x27304)
+    #10 0x558004336960 in _start (/home/user/KieeKey/benchmark/.build/bench_san+0x155960)
+

@@ -1,0 +1,3 @@
+{"mode":"meta","bench":"viet-ime-4way","action":"mem","corpus":"tests/data/viet74k.txt","rounds":5,"keys":200000,"words":20000,"seed":20260907,"t0_unix":1788784656}
+{"mode":"mem","config":"as-shipped","engine":"openkey-master","rss_after_init":3940352,"rss_after_soak":108032000,"soak_keys":2000000,"alloc_init":6,"bytes_init":72010043,"alloc_soak":1802847,"bytes_soak":69166056,"allocs_per_key":0.901424}
+{"mode":"mem","config":"matched-minimal","engine":"openkey-master","rss_after_init":84078592,"rss_after_soak":131383296,"soak_keys":2000000,"alloc_init":5,"bytes_init":72010039,"alloc_soak":1802840,"bytes_soak":69165940,"allocs_per_key":0.901420}

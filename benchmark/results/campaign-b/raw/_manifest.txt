@@ -1,0 +1,10 @@
+selftest secs=0 rc=0
+correctness secs=1 rc=0
+latency secs=45 rc=0
+mem-kieekey secs=0 rc=0
+mem-kieekey-aa secs=0 rc=0
+mem-openkey-2.0.5 secs=1 rc=0
+mem-openkey-master secs=0 rc=0
+mem-unikey-4.x secs=1 rc=0
+overhead secs=0 rc=0
+robust secs=1 rc=0

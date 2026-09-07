@@ -1,0 +1,9 @@
+=== Engine micro (bench_perf T1 p50 ns, medians of 3; base=RC4 cur=Stable) ===
+T1 passthrough  p50: RC4=   42 Stb=   42 (+0.00%)   p99: RC4=   68 Stb=   72 (+5.88%)
+T1 vn-compose   p50: RC4=   52 Stb=   52 (+0.00%)   p99: RC4=  110 Stb=  110 (+0.00%)
+T1 delete       p50: RC4=   48 Stb=   48 (+0.00%)   p99: RC4=   82 Stb=   95 (+15.85%)
+T1 mixed        p50: RC4=   53 Stb=   53 (+0.00%)   p99: RC4=  139 Stb=  141 (+1.44%)
+
+=== Tone layer (self-gated composition, both sides) ===
+tone base: composition gate lines: ['composition', 'populations OK']
+tone cur: composition gate lines: ['composition', 'populations OK']

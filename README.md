@@ -5,7 +5,7 @@
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20ARM64-0078D6.svg)
 ![Build](https://img.shields.io/badge/build-CMake%20%3E%3D%203.28-064FAD.svg)
 
-**KieeKey v1.2.2 RC4** is a modern, low-latency Vietnamese input method
+**KieeKey v1.2.2 Stable** is a modern, low-latency Vietnamese input method
 engine (bộ gõ Tiếng Việt) for Windows, with a system-tray application, a TSF
 text-store composer and an optional WinUI 3 Fluent settings UI.
 
@@ -19,6 +19,37 @@ text-store composer and an optional WinUI 3 Fluent settings UI.
 ![KieeKey preview](src/app/KieeKeyApp-preview.png)
 
 ---
+
+## What's new in v1.2.2 Stable — release
+
+**v1.2.2 Stable promotes the qualified RC4 tree unchanged** — a boring,
+evidence-backed Stable release. The engine hot path and every runtime source
+file are **byte-identical to RC4** (verified: `git diff v1.2.2-RC4..HEAD` is
+empty outside release identity/metadata); the only code-adjacent changes are
+the version carriers (`1.2.2 RC4` → `1.2.2 Stable`). RC4's fixes — the TSF
+`commitBatch` double-Release UAF (P0), producer-side fault isolation and the
+modifier-toggle data race (P1), OOM degradation, restart hygiene, PID-reuse
+revalidation, surfaced hook failures — ship exactly as qualified.
+
+* **Re-verification campaign on an independent host** (frozen three-way
+  baseline): native suite 23/23, CMake ctest 20/20, correctness gate
+  137,878 cases / 2,059,419 events / 0 mismatches, deep option matrix
+  92,392,535 events / 350 configs / 375 transitions / 0 failures, ASan +
+  UBSan + LSan and TSan full suites clean, single-core 7/7, determinism
+  digests stable (and cross-host identical to the RC4 campaign's).
+* **Strict interleaved three-way benchmark** (v1.2.1 Stable vs RC4 vs
+  Stable, same host/compiler/flags, harness SHA-synced): throughput floor
+  79.58 → 73.18 ns/key vs v1.2.1 (−8.0 %) with **byte-identical sink
+  digests** on all runs; E2E throughput flat (+0.1 %); RC4↔Stable deltas
+  within noise as expected for a byte-identical engine.
+* **Windows validation:** x64 + ARM64 full-product PE cross-build PASS
+  (Zig/MinGW-w64, resources + VERSIONINFO embedded, app carries
+  `1.2.2 Stable`); MSVC x64/ARM64/ARM64EC via CI (windows-2022); real
+  Windows runtime validation remains a documented external dependency.
+* Full evidence:
+  [V1.2.2_STABLE_RELEASE_REPORT.md](docs/reports/V1.2.2_STABLE_RELEASE_REPORT.md)
+  · [V1.2.2_STABLE_PERFORMANCE_REPORT.md](docs/reports/V1.2.2_STABLE_PERFORMANCE_REPORT.md)
+  · raw artifacts in [`docs/bench/stable-122/`](docs/bench/stable-122/).
 
 ## What's new in v1.2.2 RC4 — stable-qualification campaign
 

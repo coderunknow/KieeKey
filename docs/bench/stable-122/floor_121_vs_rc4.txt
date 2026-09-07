@@ -1,0 +1,21 @@
+--- interleaved pass 1 ---
+== floor_121 run1
+keys=20000000 mode=1 total=1590.0 ms  79.50 ns/key (median of 1)  sink=2905520108639366859
+  run0: 79.50 ns/key
+== floor_rc4 run1
+keys=20000000 mode=1 total=1463.7 ms  73.18 ns/key (median of 1)  sink=2905520108639366859
+  run0: 73.18 ns/key
+--- interleaved pass 2 ---
+== floor_121 run2
+keys=20000000 mode=1 total=1629.1 ms  81.46 ns/key (median of 1)  sink=2905520108639366859
+  run0: 81.46 ns/key
+== floor_rc4 run2
+keys=20000000 mode=1 total=1469.5 ms  73.48 ns/key (median of 1)  sink=2905520108639366859
+  run0: 73.48 ns/key
+--- interleaved pass 3 ---
+== floor_121 run3
+keys=20000000 mode=1 total=1591.7 ms  79.58 ns/key (median of 1)  sink=2905520108639366859
+  run0: 79.58 ns/key
+== floor_rc4 run3
+keys=20000000 mode=1 total=1450.3 ms  72.52 ns/key (median of 1)  sink=2905520108639366859
+  run0: 72.52 ns/key

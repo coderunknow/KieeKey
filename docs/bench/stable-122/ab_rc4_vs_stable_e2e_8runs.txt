@@ -1,0 +1,19 @@
+=== STRICT RC4<->Stable E2E, 5 interleaved pairs (additional to suite's 3) ===
+  burst_hot_us.p50     RC4 runs: [25.96, 25.25, 30.2, 24.67, 27.07]
+                       Stb runs: [24.02, 24.33, 27.82, 23.94, 24.13]
+                       paired deltas: ['-7.50%', '-3.65%', '-7.88%', '-2.97%', '-10.88%']  median=-7.50%  mean=-6.58%
+                       medians: RC4=25.964 Stable=24.127  delta=-7.08%
+  burst_hot_us.p99     RC4 runs: [58.56, 57.12, 62.3, 65.6, 73.91]
+                       Stb runs: [52.04, 51.48, 58.12, 52.9, 58.41]
+                       paired deltas: ['-11.13%', '-9.88%', '-6.71%', '-19.36%', '-20.97%']  median=-11.13%  mean=-13.61%
+                       medians: RC4=62.299 Stable=52.902  delta=-15.08%
+  pipeline_us.p50      RC4 runs: [28.71, 25.97, 31.24, 25.39, 28.97]
+                       Stb runs: [24.24, 24.65, 30.54, 24.18, 24.4]
+                       paired deltas: ['-15.58%', '-5.08%', '-2.24%', '-4.77%', '-15.78%']  median=-5.08%  mean=-8.69%
+                       medians: RC4=28.713 Stable=24.399  delta=-15.02%
+  raw_us.p50           RC4 runs: [28.76, 25.98, 31.26, 25.41, 29.06]
+                       Stb runs: [24.24, 24.65, 30.56, 24.18, 24.4]
+                       paired deltas: ['-15.71%', '-5.12%', '-2.24%', '-4.82%', '-16.02%']  median=-5.12%  mean=-8.78%
+                       medians: RC4=28.761 Stable=24.402  delta=-15.16%
+  throughput paired: ['-0.65%', '+0.13%', '+0.46%', '-0.11%', '+0.41%'] median=+0.13%
+  peak-RSS  paired: ['+0.27%', '-0.14%', '+2.81%', '+2.81%', '+2.90%'] median=+2.81%

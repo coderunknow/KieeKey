@@ -1,0 +1,71 @@
+--- interleaved pass 1 ---
+== floor_rc4 run1
+keys=20000000 mode=1 total=1452.9 ms  72.65 ns/key (median of 1)  sink=2905520108639366859
+  run0: 72.65 ns/key
+== floor_stable run1
+keys=20000000 mode=1 total=1470.0 ms  73.50 ns/key (median of 1)  sink=2905520108639366859
+  run0: 73.50 ns/key
+--- interleaved pass 2 ---
+== floor_rc4 run2
+keys=20000000 mode=1 total=1455.4 ms  72.77 ns/key (median of 1)  sink=2905520108639366859
+  run0: 72.77 ns/key
+== floor_stable run2
+keys=20000000 mode=1 total=1443.2 ms  72.16 ns/key (median of 1)  sink=2905520108639366859
+  run0: 72.16 ns/key
+--- interleaved pass 3 ---
+== floor_rc4 run3
+keys=20000000 mode=1 total=1442.0 ms  72.10 ns/key (median of 1)  sink=2905520108639366859
+  run0: 72.10 ns/key
+== floor_stable run3
+keys=20000000 mode=1 total=1481.3 ms  74.07 ns/key (median of 1)  sink=2905520108639366859
+  run0: 74.07 ns/key
+=== floor A/A control (same RC4 binary, interleaved x5) ===
+A run1: keys=20000000 mode=1 total=1498.3 ms  74.91 ns/key (median of 1)  sink=2905520108639366859
+A run1:   run0: 74.91 ns/key
+B run1: keys=20000000 mode=1 total=1490.4 ms  74.52 ns/key (median of 1)  sink=2905520108639366859
+B run1:   run0: 74.52 ns/key
+A run2: keys=20000000 mode=1 total=1447.5 ms  72.38 ns/key (median of 1)  sink=2905520108639366859
+A run2:   run0: 72.38 ns/key
+B run2: keys=20000000 mode=1 total=1458.4 ms  72.92 ns/key (median of 1)  sink=2905520108639366859
+B run2:   run0: 72.92 ns/key
+A run3: keys=20000000 mode=1 total=1475.9 ms  73.80 ns/key (median of 1)  sink=2905520108639366859
+A run3:   run0: 73.80 ns/key
+B run3: keys=20000000 mode=1 total=1437.1 ms  71.85 ns/key (median of 1)  sink=2905520108639366859
+B run3:   run0: 71.85 ns/key
+A run4: keys=20000000 mode=1 total=1450.9 ms  72.55 ns/key (median of 1)  sink=2905520108639366859
+A run4:   run0: 72.55 ns/key
+B run4: keys=20000000 mode=1 total=1515.0 ms  75.75 ns/key (median of 1)  sink=2905520108639366859
+B run4:   run0: 75.75 ns/key
+A run5: keys=20000000 mode=1 total=1465.4 ms  73.27 ns/key (median of 1)  sink=2905520108639366859
+A run5:   run0: 73.27 ns/key
+B run5: keys=20000000 mode=1 total=1484.0 ms  74.20 ns/key (median of 1)  sink=2905520108639366859
+B run5:   run0: 74.20 ns/key
+=== floor A/B additional (interleaved x5) ===
+RC4  run4: keys=20000000 mode=1 total=1487.5 ms  74.38 ns/key (median of 1)  sink=2905520108639366859
+RC4  run4:   run0: 74.38 ns/key
+STBLE run4: keys=20000000 mode=1 total=1462.4 ms  73.12 ns/key (median of 1)  sink=2905520108639366859
+STBLE run4:   run0: 73.12 ns/key
+RC4  run5: keys=20000000 mode=1 total=1494.3 ms  74.72 ns/key (median of 1)  sink=2905520108639366859
+RC4  run5:   run0: 74.72 ns/key
+STBLE run5: keys=20000000 mode=1 total=1447.8 ms  72.39 ns/key (median of 1)  sink=2905520108639366859
+STBLE run5:   run0: 72.39 ns/key
+RC4  run6: keys=20000000 mode=1 total=1443.8 ms  72.19 ns/key (median of 1)  sink=2905520108639366859
+RC4  run6:   run0: 72.19 ns/key
+STBLE run6: keys=20000000 mode=1 total=1447.9 ms  72.39 ns/key (median of 1)  sink=2905520108639366859
+STBLE run6:   run0: 72.39 ns/key
+RC4  run7: keys=20000000 mode=1 total=1485.1 ms  74.25 ns/key (median of 1)  sink=2905520108639366859
+RC4  run7:   run0: 74.25 ns/key
+STBLE run7: keys=20000000 mode=1 total=1436.6 ms  71.83 ns/key (median of 1)  sink=2905520108639366859
+STBLE run7:   run0: 71.83 ns/key
+RC4  run8: keys=20000000 mode=1 total=1438.2 ms  71.91 ns/key (median of 1)  sink=2905520108639366859
+RC4  run8:   run0: 71.91 ns/key
+STBLE run8: keys=20000000 mode=1 total=1465.8 ms  73.29 ns/key (median of 1)  sink=2905520108639366859
+STBLE run8:   run0: 73.29 ns/key
+
+=== floor analysis (all 20M-key runs; sink identical 2905520108639366859 everywhere) ===
+A/A control paired deltas: ['-0.52%', '+0.75%', '-2.64%', '+4.41%', '+1.27%']  (identical binary! mean=+0.65%, |max|=4.41%)
+A/B all 8 pairs:  RC4 median=72.71  Stable median=72.75  median-delta=+0.06%
+A/B paired deltas: ['+1.17%', '-0.84%', '+2.73%', '-1.69%', '-3.12%', '+0.28%', '-3.26%', '+1.92%'] mean=-0.35%
+verdict: observed |deltas| (max 2.7%%) are inside the A/A control band (identical
+binary swings up to 4.4%% paired on this host); sign flips across sessions;
+binaries' .text proven identical -> NOT a code effect; no reproducible regression.

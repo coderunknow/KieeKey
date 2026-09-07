@@ -1,0 +1,33 @@
+== seed=0xC0FFEE clean-vs-asan diff ==
+32c32
+<   [ ok ] endless word: ZERO allocations after warmup (growth capped)
+---
+>   [ ok ] endless word: no crash (alloc check skipped under sanitizers)
+41,43c41
+< -- Hot-path allocations (steady state) --
+<   allocations during 100k STEADY-STATE keys: 0  (freed 0, live 7)
+<   [ ok ] STEADY-STATE: ZERO heap allocations per keystroke
+---
+> -- Hot-path allocations -- (skipped under sanitizers; run plain -O2)
+== seed=12345 clean-vs-asan diff ==
+32c32
+<   [ ok ] endless word: ZERO allocations after warmup (growth capped)
+---
+>   [ ok ] endless word: no crash (alloc check skipped under sanitizers)
+41,43c41
+< -- Hot-path allocations (steady state) --
+<   allocations during 100k STEADY-STATE keys: 0  (freed 0, live 7)
+<   [ ok ] STEADY-STATE: ZERO heap allocations per keystroke
+---
+> -- Hot-path allocations -- (skipped under sanitizers; run plain -O2)
+== seed=987654321 clean-vs-asan diff ==
+32c32
+<   [ ok ] endless word: ZERO allocations after warmup (growth capped)
+---
+>   [ ok ] endless word: no crash (alloc check skipped under sanitizers)
+41,43c41
+< -- Hot-path allocations (steady state) --
+<   allocations during 100k STEADY-STATE keys: 0  (freed 0, live 7)
+<   [ ok ] STEADY-STATE: ZERO heap allocations per keystroke
+---
+> -- Hot-path allocations -- (skipped under sanitizers; run plain -O2)

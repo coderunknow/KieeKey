@@ -1,0 +1,2 @@
+b3f18effea94becf9f51dde24e5bf81fce051dbd7ee53c1c86b1f41456e41fab  build/win-x64/KieeKeyApp.exe
+2093a099ad06b17993541bfb0e860d9a1cb369dc18b6bcc9be0f8b84b88f0c60  build/win-arm64/KieeKeyApp.exe

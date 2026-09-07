@@ -1,0 +1,27 @@
+KieeKey v1.2.2 RC4 — option-matrix differential harness
+  tier=all events/config=100000 quick=0
+
+[T1] method x codeTable x outputEncoding Cartesian (30), oracle lockstep
+[T2] pairwise grammar/macro matrix (11 semantic booleans x method)
+     covering-array rows: 10 (pairwise-complete over 11 factors)
+[T3] runtime option transitions (contract/live/roundtrip/render/ABA)
+[T4] performance-profile matrix: engine invariance across 5 x 16 strategies
+     dict-flag rows: 48/80; plain-d=530a0d6eee8ddb38 dict-d=12347f5ea48cf410
+[T5] option changes while the queue holds pending work
+[T6] option torture: rapid full-space flips (FRESH/ORACLE/INVAR/DETERM)
+[TG] goldens: documented option differences
+[TI] option-cache staleness probe (masks/buckets/caches)
+
+== OPTION MATRIX SUMMARY ==
+  tier                   events  configs mismatch   overBS  goldens           digest
+  1                    92392535       60        0        0        0 0bda5021801f8db4
+  2                    92392535       30        0        0        0 f1630ffd8561ee1e
+  3                    92392535      141        0        0        0 d0f94a34c0bd503e
+  4                    92392535       80        0        0        0 d973f506c2f8f2d9
+  5                    92392535        9        0        0        0 279abb8f01761d08
+  6                    92392535       32        0        0        0 9926993e4eb60863
+  g                    92392535       14        0        0       14 0000000000000000
+  i                    92392535        0        0        0        0 70e60cf774642d80
+  totals: events=92392535 configs=350 transitions=375 failures=0
+  json: /home/user/KieeKey/docs/bench/stable-122/option-matrix-deep-100k.json
+OPTION MATRIX: ALL PASSED

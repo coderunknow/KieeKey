@@ -1,0 +1,123 @@
+[tone] KieeKey v1.2.0 Stable — tone-population latency benchmark
+[tone] mixed pace(s)=150,250 reps=1 (--fast for one pace/one rep, --full for the exhaustive matrix)
+[tone] composition validation: 8 populations OK
+[pop] tone-append     path=inline          barrier=spin   commit=0ns n=1500
+      desc: as -> a-acute (1 tone key = 1 edit)
+      EDIT  n=500   E2E(t5) p50=  0.194 p99=   1.923 p99.9=    4.389 max=    9.881 us
+            t1(decision) p50= 0.077  t2(push/emit) p50=  0.194  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+      PASS  n=1000  delivery(t2) p50=  0.090 p99=   0.181 max=    1.032 us | barrier p50=  0.000 max=    0.000 us
+      edits: 500 sendInputCalls: 500
+[pop] tone-append     path=inline          barrier=hybrid commit=0ns n=1500
+      desc: as -> a-acute (1 tone key = 1 edit)
+      EDIT  n=500   E2E(t5) p50=  0.204 p99=   1.644 p99.9=    2.125 max=    3.885 us
+            t1(decision) p50= 0.077  t2(push/emit) p50=  0.204  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+      PASS  n=1000  delivery(t2) p50=  0.092 p99=   0.233 max=   26.537 us | barrier p50=  0.000 max=    0.000 us
+      edits: 500 sendInputCalls: 500
+[pop] dbar            path=inline          barrier=spin   commit=0ns n=1500
+      desc: dd -> d-stroke (d-bar edit)
+      EDIT  n=500   E2E(t5) p50=  0.192 p99=   1.447 p99.9=    1.557 max=    7.278 us
+            t1(decision) p50= 0.065  t2(push/emit) p50=  0.192  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+      PASS  n=1000  delivery(t2) p50=  0.094 p99=   0.118 max=    0.989 us | barrier p50=  0.000 max=    0.000 us
+      edits: 500 sendInputCalls: 500
+[pop] dbar            path=inline          barrier=hybrid commit=0ns n=1500
+      desc: dd -> d-stroke (d-bar edit)
+      EDIT  n=500   E2E(t5) p50=  0.190 p99=   1.557 p99.9=    1.950 max=    3.778 us
+            t1(decision) p50= 0.065  t2(push/emit) p50=  0.190  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+      PASS  n=1000  delivery(t2) p50=  0.096 p99=   0.201 max=    0.920 us | barrier p50=  0.000 max=    0.000 us
+      edits: 500 sendInputCalls: 500
+[pop] reposition      path=inline          barrier=spin   commit=0ns n=2000
+      desc: asa -> a-circumflex-acute (sac reposition)
+      EDIT  n=1000  E2E(t5) p50=  0.200 p99=   1.626 p99.9=   17.231 max=   24.822 us
+            t1(decision) p50= 0.079  t2(push/emit) p50=  0.200  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+      PASS  n=1000  delivery(t2) p50=  0.100 p99=   0.178 max=    0.823 us | barrier p50=  0.000 max=    0.000 us
+      edits: 1000 sendInputCalls: 1000
+[pop] reposition      path=inline          barrier=hybrid commit=0ns n=2000
+      desc: asa -> a-circumflex-acute (sac reposition)
+      EDIT  n=1000  E2E(t5) p50=  0.204 p99=   1.540 p99.9=    2.851 max=    3.848 us
+            t1(decision) p50= 0.080  t2(push/emit) p50=  0.204  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+      PASS  n=1000  delivery(t2) p50=  0.100 p99=   0.154 max=    0.822 us | barrier p50=  0.000 max=    0.000 us
+      edits: 1000 sendInputCalls: 1000
+[pop] restore-reissue path=inline          barrier=spin   commit=0ns n=2500
+      desc: asas -> Restore chain: 2 edits + Restore-reissue + space-Restore-reissue
+      EDIT  n=2000  E2E(t5) p50=  0.212 p99=   1.799 p99.9=    3.712 max=   49.029 us
+            t1(decision) p50= 0.090  t2(push/emit) p50=  0.212  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+      PASS  n=500   delivery(t2) p50=  0.094 p99=   0.168 max=    1.149 us | barrier p50=  0.000 max=    0.000 us
+      edits: 2000 sendInputCalls: 2000
+[pop] restore-reissue path=inline          barrier=hybrid commit=0ns n=2500
+      desc: asas -> Restore chain: 2 edits + Restore-reissue + space-Restore-reissue
+      EDIT  n=2000  E2E(t5) p50=  0.211 p99=   2.031 p99.9=    5.824 max=   42.461 us
+            t1(decision) p50= 0.092  t2(push/emit) p50=  0.211  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+      PASS  n=500   delivery(t2) p50=  0.094 p99=   0.183 max=    0.814 us | barrier p50=  0.000 max=    0.000 us
+      edits: 2000 sendInputCalls: 2000
+[pop] double-tone     path=inline          barrier=spin   commit=0ns n=3000
+      desc: oasas -> double-tone family + Restore chain
+      EDIT  n=2000  E2E(t5) p50=  0.315 p99=   2.139 p99.9=    3.943 max=  109.536 us
+            t1(decision) p50= 0.159  t2(push/emit) p50=  0.315  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+      PASS  n=1000  delivery(t2) p50=  0.091 p99=   0.163 max=   27.395 us | barrier p50=  0.000 max=    0.000 us
+      edits: 2000 sendInputCalls: 2000
+[pop] double-tone     path=inline          barrier=hybrid commit=0ns n=3000
+      desc: oasas -> double-tone family + Restore chain
+      EDIT  n=2000  E2E(t5) p50=  0.315 p99=   2.323 p99.9=    3.007 max=    5.776 us
+            t1(decision) p50= 0.159  t2(push/emit) p50=  0.315  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+      PASS  n=1000  delivery(t2) p50=  0.091 p99=   0.180 max=    4.750 us | barrier p50=  0.000 max=    0.000 us
+      edits: 2000 sendInputCalls: 2000
+[pop] mid-word        path=inline          barrier=spin   commit=0ns n=4000
+      desc: ddawjng -> dang-nang (d-bar + breve + nang; trailing ng re-typed)
+      EDIT  n=1500  E2E(t5) p50=  0.219 p99=   1.722 p99.9=    3.091 max=    4.603 us
+            t1(decision) p50= 0.100  t2(push/emit) p50=  0.219  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+      PASS  n=2500  delivery(t2) p50=  0.152 p99=   0.372 max=    1.006 us | barrier p50=  0.000 max=    0.000 us
+      edits: 1500 sendInputCalls: 1500
+[pop] mid-word        path=inline          barrier=hybrid commit=0ns n=4000
+      desc: ddawjng -> dang-nang (d-bar + breve + nang; trailing ng re-typed)
+      EDIT  n=1500  E2E(t5) p50=  0.221 p99=   1.769 p99.9=    3.109 max=    3.473 us
+            t1(decision) p50= 0.101  t2(push/emit) p50=  0.221  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+      PASS  n=2500  delivery(t2) p50=  0.153 p99=   0.379 max=   24.178 us | barrier p50=  0.000 max=    0.000 us
+      edits: 1500 sendInputCalls: 1500
+[pop] horn-compound   path=inline          barrier=spin   commit=0ns n=2500
+      desc: uows -> uo-horn + acute (horn compound + mark)
+      EDIT  n=1000  E2E(t5) p50=  0.296 p99=   1.837 p99.9=    2.666 max=    4.346 us
+            t1(decision) p50= 0.142  t2(push/emit) p50=  0.296  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+      PASS  n=1500  delivery(t2) p50=  0.086 p99=   0.302 max=   21.949 us | barrier p50=  0.000 max=    0.000 us
+      edits: 1000 sendInputCalls: 1000
+[pop] horn-compound   path=inline          barrier=hybrid commit=0ns n=2500
+      desc: uows -> uo-horn + acute (horn compound + mark)
+      EDIT  n=1000  E2E(t5) p50=  0.294 p99=   1.679 p99.9=    4.057 max=  201.661 us
+            t1(decision) p50= 0.142  t2(push/emit) p50=  0.294  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+      PASS  n=1500  delivery(t2) p50=  0.086 p99=   0.282 max=    1.208 us | barrier p50=  0.000 max=    0.000 us
+      edits: 1000 sendInputCalls: 1000
+[pop] heavy-word      path=inline          barrier=spin   commit=0ns n=4000
+      desc: dduowcj -> duoc (d-bar + horn + nang: the heaviest)
+      EDIT  n=1500  E2E(t5) p50=  0.274 p99=   2.509 p99.9=    5.118 max=   23.870 us
+            t1(decision) p50= 0.118  t2(push/emit) p50=  0.274  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+      PASS  n=2500  delivery(t2) p50=  0.100 p99=   0.402 max=    1.213 us | barrier p50=  0.000 max=    0.000 us
+      edits: 1500 sendInputCalls: 1500
+[pop] heavy-word      path=inline          barrier=hybrid commit=0ns n=4000
+      desc: dduowcj -> duoc (d-bar + horn + nang: the heaviest)
+      EDIT  n=1500  E2E(t5) p50=  0.274 p99=   2.548 p99.9=   22.905 max=   49.102 us
+            t1(decision) p50= 0.118  t2(push/emit) p50=  0.274  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+      PASS  n=2500  delivery(t2) p50=  0.101 p99=   0.405 max=    1.208 us | barrier p50=  0.000 max=    0.000 us
+      edits: 1500 sendInputCalls: 1500
+[pop] mixed           path=inline          barrier=spin   commit=0ns n=173
+      desc: mixed@150wpm
+      EDIT  n=25    E2E(t5) p50=  7.592 p99=  11.690 p99.9=   11.690 max=   14.308 us
+            t1(decision) p50= 3.201  t2(push/emit) p50=  7.592  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+      PASS  n=148   delivery(t2) p50=  2.482 p99=   6.543 max=    8.441 us | barrier p50=  0.000 max=    0.000 us
+      edits: 25 sendInputCalls: 25
+[pop] mixed           path=inline          barrier=hybrid commit=0ns n=173
+      desc: mixed@150wpm
+      EDIT  n=25    E2E(t5) p50=  8.733 p99=  11.662 p99.9=   11.662 max=   12.601 us
+            t1(decision) p50= 3.995  t2(push/emit) p50=  8.733  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+      PASS  n=148   delivery(t2) p50=  3.198 p99=   7.271 max=    8.048 us | barrier p50=  0.000 max=    0.000 us
+      edits: 25 sendInputCalls: 25
+[pop] mixed           path=inline          barrier=spin   commit=0ns n=173
+      desc: mixed@250wpm
+      EDIT  n=25    E2E(t5) p50=  9.931 p99=  14.976 p99.9=   14.976 max=   15.032 us
+            t1(decision) p50= 4.590  t2(push/emit) p50=  9.931  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+      PASS  n=148   delivery(t2) p50=  3.341 p99=  10.821 max=   16.362 us | barrier p50=  0.000 max=    0.000 us
+      edits: 25 sendInputCalls: 25
+[pop] mixed           path=inline          barrier=hybrid commit=0ns n=173
+      desc: mixed@250wpm
+      EDIT  n=25    E2E(t5) p50=  9.975 p99=  14.950 p99.9=   14.950 max=   16.654 us
+            t1(decision) p50= 4.770  t2(push/emit) p50=  9.975  t3(deq) p50=  0.000  t4(flush) p50=  0.000  t5(commit) p50=  0.000 us
+      PASS  n=148   delivery(t2) p50=  3.413 p99=   7.617 max=    7.949 us | barrier p50=  0.000 max=    0.000 us
+      edits: 25 sendInputCalls: 25

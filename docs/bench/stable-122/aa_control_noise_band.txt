@@ -1,0 +1,15 @@
+=== A/A CONTROL: SAME binary run twice per interleave, 5 passes (RC4 e2e_bench) ===
+Purpose: measure this host's run-to-run noise band for the e2e populations.
+  burst_hot_us.p50   A runs: [29.39, 24.46, 27.26, 25.12, 31.9]
+                     B runs: [27.81, 24.32, 31.68, 28.94, 29.03]
+                     paired B/A deltas: ['-5.37%', '-0.59%', '+16.22%', '+15.21%', '-9.01%']  mean=+3.29%  |max|=16.22%
+  pipeline_us.p50    A runs: [30.87, 25.04, 28.89, 25.99, 33.33]
+                     B runs: [28.15, 24.8, 32.65, 31.41, 29.82]
+                     paired B/A deltas: ['-8.82%', '-0.98%', '+13.00%', '+20.88%', '-10.54%']  mean=+2.71%  |max|=20.88%
+  raw_us.p50         A runs: [30.89, 25.05, 28.95, 26.02, 33.39]
+                     B runs: [28.15, 24.81, 32.67, 31.48, 29.83]
+                     paired B/A deltas: ['-8.85%', '-0.97%', '+12.88%', '+20.96%', '-10.66%']  mean=+2.67%  |max|=20.96%
+  raw_us.p99         A runs: [67.06, 57.33, 69.58, 72.01, 74.18]
+                     B runs: [69.84, 60.11, 76.77, 70.28, 65.02]
+                     paired B/A deltas: ['+4.15%', '+4.85%', '+10.33%', '-2.40%', '-12.35%']  mean=+0.92%  |max|=12.35%
+  throughput paired deltas: ['-0.32%', '+0.58%', '-0.31%', '-0.18%', '+0.73%'] mean=+0.10%

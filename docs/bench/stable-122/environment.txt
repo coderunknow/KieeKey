@@ -1,0 +1,25 @@
+KieeKey v1.2.2 Stable campaign — environment capture
+====================================================
+captured_utc : 2026-09-07T06:46:24Z
+host_os      : Linux 6.1.158+ (x86_64)
+os_pretty    : Debian GNU/Linux 12 (bookworm)
+cpu_model    : Intel(R) Xeon(R) Processor @ 2.60GHz
+logical_cpus : 2
+cpu_governor : UNKNOWN/not-exposed-in-container
+ram          : MemTotal:        4034452 kB
+compiler     : g++ (Debian 12.2.0-14+deb12u1) 12.2.0
+cmake        : cmake version 4.4.3 (pip wheel, $HOME/.local/bin)
+ninja        : 1.13.2.git.kitware.jobserver-pipe-1
+zig          : 0.16.0 (pip ziglang; windows-gnu cross toolchain)
+python       : Python 3.11.2
+mingw-gcc    : NOT AVAILABLE (apt mirrors unreachable from this sandbox)
+msvc         : NOT AVAILABLE (no Windows host; CI windows-2022 is the MSVC authority)
+container    : none reported
+baseline_tag : v1.2.2-RC4 = commit 8ad57393749bcd37800017f51db88b8d95a56a5a
+baseline_121 : v1.2.1-Stable = commit 715c527 (fetched, pristine worktree)
+
+NOTE: the RC4 campaign host was Debian 13 / g++ 14.2 / mingw-GCC14.
+This host is Debian 12 / g++ 12.2 / zig-mingw. ALL cross-host number
+comparisons are therefore HISTORICAL / NOT STRICT; every STRICT
+comparison in this campaign is measured HERE, interleaved, same
+compiler+flags, harness SHA-synced between sides.

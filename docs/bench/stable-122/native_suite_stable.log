@@ -1,0 +1,58 @@
+== KieeKey native test suite ==
+   compiler : g++ (g++ (Debian 12.2.0-14+deb12u1) 12.2.0)
+   output   : /home/user/kk_stable_suite
+   quick    : 0
+
+-- building --------------------------------------------------------
+  [check] version consistency    ok
+  [check] SHA256SUMS manifest    ok
+  [build] ok_tests               ok
+  [build] diff_engine_ab         ok
+  [build] test_notifications     ok
+  [build] test_perf_profiles     ok
+  [build] test_option_matrix     ok
+  [build] stress_rc2             ok
+  [build] test_hotfix_asan       ok
+  [build] ok_ring_tests          ok
+  [build] ok_wrap_tests          ok
+  [build] test_outputitem        ok
+  [build] test_hotfix            ok
+  [build] test_v331_features     ok
+  [build] stress_engine          ok
+  [build] stress_queue           ok
+  [build] soak_engine            ok
+  [build] gate_correctness       ok
+  [build] edge_behaviors         ok
+  [build] dirty_input            ok
+  [build] real_passages          ok
+  [build] test_key_correctness   ok
+  [build] test_lifecycle         ok
+  [build] test_state_transitions ok
+  [build] soak_pipeline          ok
+
+-- running ---------------------------------------------------------
+  [run]   ok_tests               PASS  (0s)
+  [run]   diff_engine_ab         PASS  (0s)
+  [run]   test_perf_profiles     PASS  (0s)
+  [run]   test_option_matrix     PASS  (124s)
+  [run]   test_notifications     PASS  (0s)
+  [run]   stress_rc2             PASS  (2s)
+  [run]   test_hotfix_asan       PASS  (1s)
+  [run]   ok_ring_tests          PASS  (0s)
+  [run]   ok_wrap_tests          PASS  (0s)
+  [run]   test_outputitem        PASS  (0s)
+  [run]   test_hotfix            PASS  (0s)
+  [run]   test_v331_features     PASS  (0s)
+  [run]   stress_engine          PASS  (0s)
+  [run]   stress_queue           PASS  (0s)
+  [run]   soak_engine            PASS  (7s)
+  [run]   gate_correctness       PASS  (0s)
+  [run]   edge_behaviors         PASS  (0s)
+  [run]   dirty_input            PASS  (0s)
+  [run]   real_passages          PASS  (0s)
+  [run]   test_key_correctness   PASS  (0s)
+  [run]   test_lifecycle         PASS  (5s)
+  [run]   test_state_transitions PASS  (0s)
+  [run]   soak_pipeline          PASS  (3s)
+
+== ALL NATIVE TESTS PASSED ==

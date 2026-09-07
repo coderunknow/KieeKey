@@ -77,7 +77,7 @@
 #define OPENKEY_KIEEKEY_VERSION_MAJOR 1
 #define OPENKEY_KIEEKEY_VERSION_MINOR 2
 #define OPENKEY_KIEEKEY_VERSION_PATCH 2
-#define OPENKEY_KIEEKEY_VERSION_STRING "1.2.2 RC4"
+#define OPENKEY_KIEEKEY_VERSION_STRING "1.2.2 Stable"
 
 #include "TextEngine.hpp"       // engine + options + result contract
 #include "VietnameseTables.hpp" // encoding masks (public contract of results)

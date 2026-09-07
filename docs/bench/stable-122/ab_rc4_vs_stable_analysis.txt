@@ -1,0 +1,20 @@
+=== STRICT RC4 <-> Stable E2E A/B (3 interleaved runs/side; base=RC4 cur=Stable) ===
+raw_us         p50=  24.911/  31.577(+26.76%) p95=  46.731/  59.043(+26.35%) p99=  68.029/  84.013(+23.50%) p999= 151.740/ 524.638(+245.75%) [us RC4/Stable]
+burst_hot_us   p50=  24.506/  29.342(+19.73%) p95=  40.249/  55.920(+38.94%) p99=  62.925/  73.320(+16.52%) p999=  89.971/  92.900( +3.26%) [us RC4/Stable]
+pipeline_us    p50=  24.902/  31.521(+26.58%) p99=  64.674/  75.644(+16.96%) p999=  90.361/  93.747( +3.75%) [us RC4/Stable]
+wake_pay_us    p50=  38.287/  44.838(+17.11%) p99=  81.727/  96.703(+18.32%) [us RC4/Stable]
+throughput keys/s RC4= 13580.800  Stable= 13572.200  delta= -0.06%
+  per-run RC4    [13560.9, 13641.3, 13580.8]
+  per-run Stable [13572.2, 13514.3, 13618.7]
+peak RSS MB      RC4=     8.496  Stable=     8.465  delta= -0.37%
+  per-run RC4    [8.47, 8.72, 8.5]
+  per-run Stable [8.46, 8.46, 8.46]
+IME footprint MB RC4=     6.017  Stable=     5.985  delta= -0.52%
+  per-run RC4    [5.99, 6.24, 6.02]
+  per-run Stable [5.98, 5.99, 5.99]
+lag spikes keys  RC4=   200.000  Stable=   532.000  delta=+166.00%
+  per-run RC4    [429, 135, 200]
+  per-run Stable [532, 580, 267]
+  paired burst_hot_us.p50   ['+20.76%', '-17.04%', '+27.71%'] mean=+10.48%
+  paired pipeline_us.p50    ['+27.99%', '-10.03%', '+27.12%'] mean=+15.03%
+  paired raw_us.p50         ['+28.15%', '-9.30%', '+27.11%'] mean=+15.32%

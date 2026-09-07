@@ -6,6 +6,7 @@ v1.2.1 campaign and must not be overwritten by v1.2.2 runs.
 
 | directory | campaign | documented in |
 |---|---|---|
+| `stable-122/` | v1.2.2 Stable release campaign (independent-host re-verification + three-way 1.2.1/RC4/Stable) | this file, below |
 | `rc4-122/` | v1.2.2 RC4 stable-qualification campaign | this file, below |
 | `rc1-122/` | v1.2.2 RC1 engine A/B vs v1.2.1 Stable | this file, below |
 | `rc2-122/` | v1.2.2 RC2 throughput floor + option matrix | this file, below |
@@ -13,6 +14,29 @@ v1.2.1 campaign and must not be overwritten by v1.2.2 runs.
 | `rc1/`, `rc2/` | v1.2.1 RC1-vs-RC2 | this file, below |
 | `rc3/` | v1.2.1 RC2-vs-RC3 | this file, below |
 | `stable/` | v1.2.1 RC3-vs-Stable | this file, below |
+
+## v1.2.2 Stable (release campaign)
+
+`stable-122/` holds the Stable evidence tree, produced on an **independent
+host/compiler** (Debian 12, g++ 12.2 — the RC4 campaign host was Debian 13,
+g++ 14.2, so cross-host number comparisons are HISTORICAL / NOT STRICT):
+`environment.txt` (host/toolchain freeze), the RC4 baseline re-runs on this
+host (`baseline_ctest_rc4.log`, `native_suite_rc4.log`,
+`asan_ubsan_rc4_thishost.log`, `tsan_rc4_thishost.log`,
+`single_core_rc4_thishost.log`), the deep option matrix (92.4 M events,
+0 failures), `determinism/` (option-matrix ×3 digests identical to the RC4
+campaign's cross-host value; seeded-stress clean-vs-ASan diffs fully
+enumerated), the frozen three-way benchmark (`suite_121_vs_rc4/` +
+`ab_121_vs_rc4_*` analysis, `ab_rc4_vs_stable_*` + 8-pair e2e campaign,
+`floor_121_vs_rc4.txt`, `floor_rc4_vs_stable.txt` with the A/A floor
+control, `aa_control_noise_band.txt` — the same-binary host noise band that
+classifies the E2E latency deltas), `cpu_rss_floor.txt`, the competitor
+benchmark, and the Windows cross-build logs (`zig_cross_rc4.log`,
+`zig_cross_stable.log`, `windows-cross_sha256.txt`). Reports:
+[`V1.2.2_STABLE_RELEASE_REPORT.md`](../reports/V1.2.2_STABLE_RELEASE_REPORT.md),
+[`V1.2.2_STABLE_PERFORMANCE_REPORT.md`](../reports/V1.2.2_STABLE_PERFORMANCE_REPORT.md).
+
+---
 
 ## v1.2.2 RC4 (stable-qualification campaign)
 

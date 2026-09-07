@@ -1,0 +1,11 @@
+=== summary (medians over 3 run(s)) ===
+[base] gate rc=0
+[base] T0-control ns mean=23.5 p50=23 max=74021
+[base] perf T1-decision p50 ns: passthrough=41, vn-compose=55, delete=46, mixed=55
+[base] e2e burst/hot p50=24.95us p99=65.44us pipeline p50=25.75us wake p50=39.40us spikes-med=188 rss=8.45MB
+[base] tone edit p50 us (pop[barrier]): dbar[hybrid]=0.284 dbar[spin]=0.281 double-tone[hybrid]=0.330 double-tone[spin]=0.330 heavy-word[hybrid]=0.307 heavy-word[spin]=0.457 horn-compound[hybrid]=0.364 horn-compound[spin]=0.365 mid-word[hybrid]=0.256 mid-word[spin]=0.252 mixed[hybrid]=8.451 mixed[spin]=9.490 reposition[hybrid]=0.211 reposition[spin]=0.208 restore-reissue[hybrid]=0.220 restore-reissue[spin]=0.221 tone-append[hybrid]=0.208 tone-append[spin]=0.209
+[cur] gate rc=0
+[cur] T0-control ns mean=23.3 p50=23 max=44235
+[cur] perf T1-decision p50 ns: vn-compose=52, mixed=53, passthrough=42, delete=48
+[cur] e2e burst/hot p50=26.37us p99=65.63us pipeline p50=30.26us wake p50=41.20us spikes-med=179 rss=8.72MB
+[cur] tone edit p50 us (pop[barrier]): dbar[hybrid]=0.190 dbar[spin]=0.192 double-tone[hybrid]=0.315 double-tone[spin]=0.315 heavy-word[hybrid]=0.274 heavy-word[spin]=0.274 horn-compound[hybrid]=0.294 horn-compound[spin]=0.296 mid-word[hybrid]=0.221 mid-word[spin]=0.219 mixed[hybrid]=9.975 mixed[spin]=9.931 reposition[hybrid]=0.204 reposition[spin]=0.200 restore-reissue[hybrid]=0.211 restore-reissue[spin]=0.212 tone-append[hybrid]=0.204 tone-append[spin]=0.194

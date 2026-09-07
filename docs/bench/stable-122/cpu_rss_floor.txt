@@ -1,0 +1,6 @@
+== floor_121 (20M keys)
+[cpu] user=1.716 sys=0.120 total=1.838
+== floor_rc4 (20M keys)
+[cpu] user=1.617 sys=0.064 total=1.681
+== floor_stable (20M keys)
+[cpu] user=1.679 sys=0.100 total=1.779

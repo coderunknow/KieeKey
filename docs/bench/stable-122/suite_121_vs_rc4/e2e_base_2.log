@@ -1,0 +1,17 @@
+[e2e] wrote /home/user/bench_ab_121_vs_rc4/e2e_base_2.json
+[e2e] KieeKey - Win32 wrapper E2E latency
+[e2e] workload: 100000 keys, burst (word bursts + inter-burst pauses, v3.0 convention), spin-cap=200 us, model=all, runs=1, json=/home/user/bench_ab_121_vs_rc4/e2e_base_2.json
+[e2e] ---- run 0 ----
+[e2e] SCHED_FIFO unavailable (rc=1, need root) - Windows uses THREAD_PRIORITY_TIME_CRITICAL + HIGH_PRIORITY_CLASS instead
+[e2e] keys=100000 edits-batched sendInputCalls=108
+[e2e] RAW      p50=32.075 us  p95=51.161 us  p99=73.892 us  p99.9=114.785 us  max=1774.616 us
+[e2e] BURST/HOT (wake-free, the burst-mode population)
+[e2e]          p50=31.447 us  p95=45.020 us  p99=69.978 us  p99.9=92.199 us  max=99.849 us
+[e2e] WAKE-PAY (first key after a pause - OS wake cost, host-dependent)
+[e2e]          p50=45.659 us  p99=88.186 us  n=11112
+[e2e] PIPELINE (all keys, deschedule-excluded)
+[e2e]          p50=32.064 us  p99=71.650 us  p99.9=92.944 us  max=99.931 us
+[e2e] lag spikes (>100 us): 188 keys in 40 contiguous scheduler deschedule events (0.1880%)
+[e2e] throughput: 13590 keys/s (includes burst pacing)
+[e2e] peak RSS: 8.44 MB total; IME pipeline footprint ~5.96 MB (excl. 2.5 MB harness arrays; engine-only baseline 2.00 MB)
+[e2e] TARGETS (burst mode median of 1 run(s), wake-free population): p50 FAIL (31.447 <= 2.5)  p99 FAIL (69.978 <= 7.0)

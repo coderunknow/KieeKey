@@ -1,0 +1,6 @@
+seed=0xC0FFEE build=clean digest=b45e6d925d271df8
+seed=0xC0FFEE build=asan  digest=e908570655cd0d90
+seed=12345 build=clean digest=5d59e16595014783
+seed=12345 build=asan  digest=fc6531258a75c12e
+seed=987654321 build=clean digest=b8bc2ee8f44ae774
+seed=987654321 build=asan  digest=92edb2ccf6d6ecb3

@@ -1,0 +1,301 @@
+== KieeKey cross-build ==
+   zig    : python3 -m ziglang (0.16.0)
+   target : x86_64-windows-gnu
+   config : Release
+   out    : /home/user/base-rc4/build/win-x64
+
+-- compiling -----------------------------------------------------------
+  src/core/ModernKeyHook.cpp        ok
+  src/core/ProcessMonitor.cpp       ok
+  src/core/TextEngine.cpp           ok
+  src/core/win32_wrapper.cpp        ok
+  src/tsf/TsfComposer.cpp           ok
+  src/app/main.cpp                  ok
+-- resources -----------------------------------------------------------
+  src/app/KieeKeyApp.rc             ok
+-- linking -------------------------------------------------------------
+  KieeKeyApp.exe                    ok
+
+== built: /home/user/base-rc4/build/win-x64/KieeKeyApp.exe (1289216 bytes) ==
+X64_RC=0
+== KieeKey cross-build ==
+   zig    : python3 -m ziglang (0.16.0)
+   target : aarch64-windows-gnu
+   config : Release
+   out    : /home/user/base-rc4/build/win-arm64
+
+-- compiling -----------------------------------------------------------
+  src/core/ModernKeyHook.cpp        ok
+  src/core/ProcessMonitor.cpp       ok
+  src/core/TextEngine.cpp           ok
+  src/core/win32_wrapper.cpp        ok
+  src/tsf/TsfComposer.cpp           ok
+  src/app/main.cpp                  ok
+-- resources -----------------------------------------------------------
+  src/app/KieeKeyApp.rc             ok
+-- linking -------------------------------------------------------------
+  KieeKeyApp.exe                    ok
+
+== built: /home/user/base-rc4/build/win-arm64/KieeKeyApp.exe (1216000 bytes) ==
+ARM64_RC=0
+== KieeKey cross-build ==
+   zig    : python3 -m ziglang (0.16.0)
+   target : arm64ec-windows-gnu
+   config : Release
+   out    : /home/user/base-rc4/build/win-arm64ec
+
+-- compiling -----------------------------------------------------------
+  src/core/ModernKeyHook.cpp        FAILED
+      info: available architectures:
+       aarch64
+       aarch64_be
+       alpha
+       amdgcn
+       arc
+       arceb
+       arm
+       armeb
+       avr
+       bpfeb
+       bpfel
+       csky
+       hexagon
+       hppa
+       hppa64
+       kalimba
+       kvx
+       lanai
+       loongarch32
+       loongarch64
+       m68k
+       microblaze
+       microblazeel
+       mips
+       mipsel
+       mips64
+       mips64el
+       msp430
+       nvptx
+       nvptx64
+       or1k
+       powerpc
+       powerpcle
+       powerpc64
+       powerpc64le
+       propeller
+       riscv32
+       riscv32be
+       riscv64
+  src/core/ProcessMonitor.cpp       FAILED
+      info: available architectures:
+       aarch64
+       aarch64_be
+       alpha
+       amdgcn
+       arc
+       arceb
+       arm
+       armeb
+       avr
+       bpfeb
+       bpfel
+       csky
+       hexagon
+       hppa
+       hppa64
+       kalimba
+       kvx
+       lanai
+       loongarch32
+       loongarch64
+       m68k
+       microblaze
+       microblazeel
+       mips
+       mipsel
+       mips64
+       mips64el
+       msp430
+       nvptx
+       nvptx64
+       or1k
+       powerpc
+       powerpcle
+       powerpc64
+       powerpc64le
+       propeller
+       riscv32
+       riscv32be
+       riscv64
+  src/core/TextEngine.cpp           FAILED
+      info: available architectures:
+       aarch64
+       aarch64_be
+       alpha
+       amdgcn
+       arc
+       arceb
+       arm
+       armeb
+       avr
+       bpfeb
+       bpfel
+       csky
+       hexagon
+       hppa
+       hppa64
+       kalimba
+       kvx
+       lanai
+       loongarch32
+       loongarch64
+       m68k
+       microblaze
+       microblazeel
+       mips
+       mipsel
+       mips64
+       mips64el
+       msp430
+       nvptx
+       nvptx64
+       or1k
+       powerpc
+       powerpcle
+       powerpc64
+       powerpc64le
+       propeller
+       riscv32
+       riscv32be
+       riscv64
+  src/core/win32_wrapper.cpp        FAILED
+      info: available architectures:
+       aarch64
+       aarch64_be
+       alpha
+       amdgcn
+       arc
+       arceb
+       arm
+       armeb
+       avr
+       bpfeb
+       bpfel
+       csky
+       hexagon
+       hppa
+       hppa64
+       kalimba
+       kvx
+       lanai
+       loongarch32
+       loongarch64
+       m68k
+       microblaze
+       microblazeel
+       mips
+       mipsel
+       mips64
+       mips64el
+       msp430
+       nvptx
+       nvptx64
+       or1k
+       powerpc
+       powerpcle
+       powerpc64
+       powerpc64le
+       propeller
+       riscv32
+       riscv32be
+       riscv64
+  src/tsf/TsfComposer.cpp           FAILED
+      info: available architectures:
+       aarch64
+       aarch64_be
+       alpha
+       amdgcn
+       arc
+       arceb
+       arm
+       armeb
+       avr
+       bpfeb
+       bpfel
+       csky
+       hexagon
+       hppa
+       hppa64
+       kalimba
+       kvx
+       lanai
+       loongarch32
+       loongarch64
+       m68k
+       microblaze
+       microblazeel
+       mips
+       mipsel
+       mips64
+       mips64el
+       msp430
+       nvptx
+       nvptx64
+       or1k
+       powerpc
+       powerpcle
+       powerpc64
+       powerpc64le
+       propeller
+       riscv32
+       riscv32be
+       riscv64
+  src/app/main.cpp                  FAILED
+      info: available architectures:
+       aarch64
+       aarch64_be
+       alpha
+       amdgcn
+       arc
+       arceb
+       arm
+       armeb
+       avr
+       bpfeb
+       bpfel
+       csky
+       hexagon
+       hppa
+       hppa64
+       kalimba
+       kvx
+       lanai
+       loongarch32
+       loongarch64
+       m68k
+       microblaze
+       microblazeel
+       mips
+       mipsel
+       mips64
+       mips64el
+       msp430
+       nvptx
+       nvptx64
+       or1k
+       powerpc
+       powerpcle
+       powerpc64
+       powerpc64le
+       propeller
+       riscv32
+       riscv32be
+       riscv64
+
+=== ARM64EC attempt (honest record) ===
+target arm64ec-windows-gnu: FAIL — zig 0.16.0 error: "unknown architecture:
+'arm64ec'" (zig targets has no arm64ec). NOTE: an earlier inline probe that
+appeared to compile TextEngine for arm64ec was a shell pipeline artifact
+(head's exit code, not zig's); the real compile fails as above.
+ARM64EC cross-build on this host: NOT AVAILABLE (zig lacks the target;
+llvm-mingw download blocked; MSVC CI windows-2022 -A ARM64EC is authority).

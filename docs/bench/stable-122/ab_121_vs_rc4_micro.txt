@@ -1,0 +1,5 @@
+=== Engine micro (bench_perf T1 p50/p99/p99.9 ns, medians of 3 runs; base=v1.2.1-Stable cur=RC4) ===
+T1 passthrough  p50:    41/   42 ns (+2.44%)  p99:   114/   70 ns (-38.60%)  p99.9:    183/   155 ns (-15.30%)  [121/RC4]
+T1 vn-compose   p50:    55/   52 ns (-5.45%)  p99:   128/  117 ns (-8.59%)  p99.9:    210/   220 ns (+4.76%)  [121/RC4]
+T1 delete       p50:    46/   48 ns (+4.35%)  p99:    92/   95 ns (+3.26%)  p99.9:    177/   181 ns (+2.26%)  [121/RC4]
+T1 mixed        p50:    55/   53 ns (-3.64%)  p99:   191/  140 ns (-26.70%)  p99.9:    235/   229 ns (-2.55%)  [121/RC4]

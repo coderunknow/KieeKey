@@ -3,6 +3,58 @@
 All notable changes to KieeKey are documented here. Format based on
 Keep a Changelog; versioning: SemVer.
 
+## [1.2.2-Stable] — 2026-09-07
+
+### Stable release — RC4 promoted unchanged, full re-verification on an independent host
+
+> **Scope:** v1.2.2 Stable ships the qualified RC4 tree as-is. `git diff
+> v1.2.2-RC4 v1.2.2` touches **release identity and release evidence only**
+> (version carriers, CHANGELOG/README, the Stable report set, benchmark
+> artifacts, SHA256SUMS) — zero runtime-semantics changes; the engine hot
+> path and every shipped source file are byte-identical to RC4. Full
+> report: `docs/reports/V1.2.2_STABLE_RELEASE_REPORT.md`.
+
+### Changed
+
+* Version carriers synchronized to `1.2.2 Stable` (`kieekey_core.hpp`
+  VERSION_STRING, app title/version strings, `check_version.py` CHANNEL,
+  README headline + What's-new, this entry, the Stable report set, the
+  bench index). PE VERSIONINFO / manifest stay `1.2.2.0`; CMake project
+  stays `1.2.2` (unchanged-by-policy, gate-verified).
+* New evidence tree `docs/bench/stable-122/` — the complete independent
+  re-verification campaign (frozen three-way baseline: v1.2.1 Stable /
+  v1.2.2 RC4 / v1.2.2 Stable on one host, one compiler, one harness set).
+
+### Verified (Stable campaign, independent host: Debian 12, g++ 12.2, CMake 4.4.3)
+
+* RC4 baseline re-run BEFORE any change: CMake ctest **20/20**, native
+  suite **23/23**, correctness gate **137,878 cases / 2,059,419 events /
+  0 mismatches / 0 stale / 0 expectDrift**, deep option matrix
+  **92,392,535 events / 350 configs / 375 transitions / 0 failures**,
+  ASan+UBSan+LSan **20/20 / 0 findings**, TSan **20/20 / 0 warnings**,
+  single-core (taskset -c 0) **7/7**, option-matrix determinism digests
+  identical ×3 (and equal to the RC4 campaign's digest on a different
+  host/compiler — cross-host determinism), seeded-stress clean-vs-ASan
+  semantic output byte-identical (documented sanitizer-skip sections only),
+  table-generator round-trip byte-identical.
+* Strict interleaved three-way benchmarks (same host, flags, SHA-synced
+  harness): throughput floor **73.18 ns/key (RC4) vs 79.58 (v1.2.1),
+  −8.0 %**, with the 20M-key sink digest **identical across every run and
+  both versions** (`2905520108639366859`); E2E throughput 13,557 → 13,570
+  keys/s (+0.1 %); E2E hot-p50 paired deltas inside the host's ±7 %
+  run-to-run band; peak RSS +0.28 MB (1.2.2's engine tables/batch state —
+  consistent, explained). RC4↔Stable: engine byte-identical; deltas within
+  noise (see the performance report).
+* Windows PE cross-build (Zig/MinGW-w64): full `KieeKeyApp.exe` built for
+  **x64 and ARM64** with resources + VERSIONINFO, binary carries
+  `1.2.2 Stable`; ARM64EC cross-build NOT AVAILABLE on this host (no
+  arm64ec target in Zig, MSVC download blocked) — the MSVC CI
+  (windows-2022, x64/ARM64/ARM64EC, ctest on x64) is the authority and
+  runs on push/tag.
+* Real-Windows runtime (hooks/TSF/tray in a live session): NOT EXECUTED —
+  no Windows host in this environment; unchanged, explicitly documented
+  limitation inherited from RC4.
+
 ## [1.2.2-RC4] — 2026-09-06
 
 ### Stable-qualification campaign — correctness hardening, release engineering

@@ -49,6 +49,15 @@
 #
 # SHA256SUMS.txt cannot hash itself, so it is the one excluded entry.
 #
+# PLATFORM COMPATIBILITY
+# ----------------------
+# This script is designed to produce byte-identical output on both Linux
+# and Windows (Git Bash). It uses:
+# - git show HEAD:file to hash Git-normalized content (not disk files)
+# - Explicit Unix line endings (\n) in output
+# - Forward slashes for all paths
+# - LC_ALL=C for deterministic sorting
+#
 # Usage:
 #     scripts/gen_sha256sums.sh            # rewrite SHA256SUMS.txt
 #     scripts/gen_sha256sums.sh --check    # verify, do not write (exit 1 on drift)
@@ -68,36 +77,61 @@ if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
 fi
 
 generate() {
-    # Hash files as Git stores them (normalized content), not as checked out on disk.
-    # This ensures consistent hashes regardless of platform line ending conversion.
-    # -z keeps paths with spaces/unicode intact; LC_ALL=C gives a stable order
-    # so an unchanged tree always produces a byte-identical manifest.
+    # Generate manifest with platform-independent hashing.
+    # Uses git show HEAD:file to hash the Git-normalized content (as stored in repo),
+    # not the file as checked out on disk. This ensures:
+    # - Consistent hashes across Linux/Windows regardless of autocrlf/eol settings
+    # - Hashes match the canonical repository content
+    #
+    # Path normalization: converts backslashes to forward slashes for Windows compatibility.
+    # Line endings: printf with \n ensures Unix line endings even on Windows.
+    # Sort order: LC_ALL=C for deterministic byte-order sorting.
+    
     git ls-files -z \
         | tr '\0' '\n' \
         | grep -v "^${MANIFEST}$" \
         | LC_ALL=C sort \
         | while IFS= read -r f; do
+              # Skip if file doesn't exist (shouldn't happen with git ls-files, but be safe)
               [ -f "$f" ] || continue
-              # Hash the Git-normalized content (as stored in the repository)
-              # This is platform-independent: always hashes the LF-normalized version
-              hash=$(git show "HEAD:$f" 2>/dev/null | sha256sum | cut -d' ' -f1)
-              # Normalize path separators to forward slashes (Windows compatibility)
+              
+              # Hash the Git-normalized content (as stored in repository)
+              # This is platform-independent: always hashes the canonical version
+              if ! hash=$(git show "HEAD:$f" 2>/dev/null | sha256sum | cut -d' ' -f1); then
+                  echo "[sha256sums] WARNING: failed to hash $f" >&2
+                  continue
+              fi
+              
+              # Normalize path separators to forward slashes (Windows git ls-files may use backslashes)
               normalized_path=$(printf '%s' "$f" | tr '\\' '/')
+              
+              # Output with explicit Unix line ending (\n)
               printf '%s  %s/%s\n' "$hash" "$PREFIX" "$normalized_path"
           done
 }
 
 if [ "${1:-}" = "--check" ]; then
-    # Normalize line endings (strip \r) on both sides to handle Windows checkouts
-    if diff -u <(tr -d '\r' < "$MANIFEST" 2>/dev/null) <(generate) >/tmp/sha256sums.diff 2>&1; then
+    # Normalize both sides: strip \r (Windows line endings) and ensure consistent comparison
+    # This handles cases where:
+    # - SHA256SUMS.txt was checked out with \r\n on Windows
+    # - Generated output somehow has \r\n
+    # - Any line ending conversion artifacts
+    
+    existing=$(tr -d '\r' < "$MANIFEST" 2>/dev/null || echo "")
+    generated=$(generate | tr -d '\r')
+    
+    if [ "$existing" = "$generated" ]; then
         echo "[sha256sums] OK — $MANIFEST matches the tracked tree."
         exit 0
     fi
+    
+    # Show diff for debugging
     echo "[sha256sums] FAIL: $MANIFEST is stale. Run scripts/gen_sha256sums.sh" >&2
-    sed -n '1,40p' /tmp/sha256sums.diff >&2
+    diff -u <(echo "$existing") <(echo "$generated") | head -40 >&2
     exit 1
 fi
 
+# Generate and write manifest
 generate > "$MANIFEST.tmp"
 mv "$MANIFEST.tmp" "$MANIFEST"
 echo "[sha256sums] wrote $MANIFEST ($(wc -l < "$MANIFEST") entries, prefix '$PREFIX/')."

@@ -163,6 +163,49 @@ measured with the pathological cells as the gate rather than as a footnote. Kept
 17.8 ns is the biggest single number, but it is last for a reason, and it should be considered
 `DROP`ped if P1+P2 already reach the objective.
 
+### P8 — compiler configuration (PGO): the lever that attacks diffuse cost
+*Target:* the release profile shows the gap is **diffuse** — no function above 19 % and the biggest
+single line worth 6.6 ns. Candidates that shave loops inside such a distribution are bounded by ~1 ns
+each (P1's analysis below proves it), whereas the branch layout, inlining and register allocation of
+the whole 300-line `checkSpelling` + the dispatch pair are what the compiler decides. Profile-guided
+optimisation is the only lever in this class that is (a) behaviour-preserving by construction, (b)
+symmetric across engines, and (c) available without touching a line of engine logic.
+*Procedure, in the order that keeps it honest:*
+1. Build `libkkcand.so` from the **same sources** with `-fprofile-generate`, run one training pass
+   over the campaign corpus (`tput`, all 3 streams, both methods, both configurations — so the
+   profile is not tuned to the deciding cell alone), merge `.gcda`, rebuild `-fprofile-use
+   -fprofile-correction`.
+2. Measure it as a *paired candidate*: frozen non-PGO build in `kk_base`, PGO build in `kk_cand`,
+   same rounds, so the gain table is the PGO effect with the campaign's own A/A band and order
+   control — the same acceptance rule as any engine candidate, no cross-campaign arithmetic.
+3. Measure all four engines with PGO in a separate labelled configuration campaign and publish the
+   table, so the report can say what the rivals would gain from the same flag. If UniKey gains more
+   from PGO than KieeKey does, the parity claim changes and the report must follow the numbers, not
+   the flag.
+4. Decide the *shipped* configuration separately from the benchmark: `src/CMakeLists.txt` would gain a
+   `KIEEKEY_PGO` option with the profile committed or regenerated at build time; the fallback (stale
+   or missing profile) must be a plain `-O3` build, never a build that fails.
+*Expected:* 2–6 % of L1 (1.7–5 ns in the deciding cell) for KieeKey; the same order for the rivals.
+*Risk:* low for correctness (same sources, compiler-verified), medium for reproducibility — `-fprofile-use`
+emits a warning-and-ignore on a stale profile, so the build must record the training corpus and the
+`.gcda` digest. It is also the one candidate that could *move the null test*, because the shim columns
+then differ in build flags rather than sources: `gate:attrib-guard` must stay inside its band, and if
+PGO changes the shim/in-process ratio, the band is re-derived from a same-build A/A pair rather than
+reused from this campaign.
+*Why it is listed after the engine candidates in effort but before them in expected value:* it costs
+one build variant, and if it alone reaches the +7 ns clause, several risky engine edits become
+unnecessary. Run it second (right after P5), not last.
+
+### P1 — result of the loop-level analysis (why it is now a *small* candidate)
+The share (13.2 % across two instantiations) is real but the work is not removable: the scan stops at
+the first consonant after the vowel run, so it examines ~4–7 positions for a prose word. Computing
+both variants in one pass therefore saves a handful of iterations, and a per-key memo would have to
+be invalidated by 26 `typingWord_` write sites plus 24 `index_` mutations — an invalidation surface
+out of proportion to ~1 ns. P1 is reduced to: share the single `isConsonantAt(iii)` evaluation between
+the two variants where a function calls both (a local, not a cache), expected 0.3–0.8 ns. It stays in
+the plan because it is nearly free, and it is explicitly *not* the 3–4 ns it was estimated to be —
+the estimate is recorded here so a future reader sees the correction, not just the outcome.
+
 ## 3. How each candidate is decided
 
 1. **Screen** (`4 sessions × 8 rounds, keys=150000, DIFFAB_KEYS=40000`, ~18 min): if the deciding
@@ -173,8 +216,12 @@ measured with the pathological cells as the gate rather than as a footnote. Kept
    rule as pre-registered, plus the gates at full corpus size.
 3. **Accept** → commit with the table in the ledger; **reject** → revert the same day, ledger keeps
    the numbers.
-4. Land order: P0 → P1 → P3 → P4 → P5 → P2 (biggest risk last, so that when a change misbehaves the
-   rest is already banked) → P6 → P7 only if still needed.
+4. Land order, revised after the loop-level analysis above: **P5 → P8(PGO) → P0 → P4 → P6 → P2 → P7**,
+   with P1 demoted to a side-effect of whichever change touches `findAndCalculateVowel` and P3
+   dropped (its memo's invalidation surface is 50 write sites for ~1 ns). Cheap-and-safe first, the
+   diffuse-cost build lever second, the state-carrying ones only if the target still is not met.
+   Objective as agreed: L1 deciding cell **and** L2 p50 in all three `as-shipped` streams must reach
+   ≤ UniKey + 7 ns; parity is the stretch, tails are published and not gated.
 5. After the last accepted candidate, a **fresh release campaign** on the final tree is the number
    that ships (`rc1-opt` at 6 × 24), and the report is re-rendered from it. Interim campaigns are
    screening evidence only, and the report says so.

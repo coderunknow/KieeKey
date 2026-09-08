@@ -27,6 +27,7 @@
 #
 #   ./build.sh                 release build  -> benchmark/.build/{bench,bench_mem}
 #   ./build.sh --sanitizers    also builds bench_san (ASan+UBSan+LSan)
+#   ./build.sh --pgo           also rebuilds libkkcand.so with profile feedback (see below)
 #   ./build.sh --clean         remove the build dir first
 #==============================================================================
 set -euo pipefail
@@ -40,9 +41,11 @@ OPT="${BENCH_OPT:--O3}"
 DEF="${BENCH_DEF:--DNDEBUG}"
 WARN="-w"
 WITH_SAN=0
+WITH_PGO=0
 for arg in "$@"; do
     case "$arg" in
         --sanitizers) WITH_SAN=1 ;;
+        --pgo) WITH_PGO=1 ;;
         --clean) rm -rf "$BUILD" ;;
         *) echo "unknown option: $arg" >&2; exit 2 ;;
     esac
@@ -158,6 +161,63 @@ build_variant "" ""
 if [ "$WITH_SAN" = "1" ]; then
     log "sanitizer build (ASan + UBSan + LSan) — separate objects, same sources"
     build_variant "_san" "-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=address,undefined -g"
+fi
+
+if [ "$WITH_PGO" = "1" ]; then
+    # ---- profile-guided variant of the CANDIDATE library only ----------------
+    # The measurement keeps its shape on purpose: libkkbase.so stays a plain
+    # -O3 build of the frozen sources, libkkcand.so becomes the same tree built
+    # with profile feedback, so the campaign's paired gain table *is* the PGO
+    # effect -- same rounds, same A/A band, same order control, no cross-campaign
+    # arithmetic. Two rules keep it from being self-flattery:
+    #   * training reads a corpus window disjoint from the measured one
+    #     (--seed-idx rotates the window; the campaign measures seeds 0..2, so
+    #     training at 7 never sees an evaluation stream), and
+    #   * training runs the engine's own workload (tput across both
+    #     configurations, both methods and all three streams, plus the
+    #     correctness and robust streams) rather than a chosen microbenchmark.
+    # Only the engine TU is PGO'd; the shim stays plain, which is the
+    # conservative direction (any glue cost is left on the table).
+    log "pgo: instrumented training build (engine TU only)"
+    POD="$BUILD/obj_pgo"
+    rm -rf "$POD"; mkdir -p "$POD/prof"
+    PGFLAG="-fprofile-generate=$POD/prof"
+    $CXX $STD $OPT $DEF $WARN $PGFLAG -fPIC -fvisibility=hidden \
+        -DKK_BUILD_ID=kk_cand -I src/core -c src/core/TextEngine.cpp \
+        -o "$POD/kk_cand_engine.o"
+    $CXX $STD $OPT $DEF $WARN -o "$BUILD/bench_pgo_train" "$BUILD/obj/bench.o" \
+        "$POD/kk_cand_engine.o" "$BUILD"/obj/uk_*.o $PGFLAG -ldl
+    # The passes mirror what the campaign measures, so the profile is the engine's
+    # real branch mix rather than one convenient loop. --mode=tput already covers
+    # both configurations x both methods x all three streams in a single run.
+    log "pgo: training (seed-idx 7 — a window the campaign never measures)"
+    pgo_pass() {
+        "$BUILD/bench_pgo_train" "$@" --out="$POD/train.jsonl" --append >/dev/null || {
+            echo "[build] FATAL: PGO training pass failed: $*" >&2
+            exit 5
+        }
+    }
+    pgo_pass --mode=tput --engines=kieekey --session=train --seed-idx=7 \
+        --rounds=8 --rotate=1 --words=74000 --keys=150000
+    pgo_pass --mode=latency --engines=kieekey --rounds=2 --words=74000 --keys=40000
+    pgo_pass --mode=correctness --engines=kieekey --rounds=1 --words=74000
+    pgo_pass --mode=robust --engines=kieekey --rounds=1
+    n_gcda=$(find "$POD/prof" -name '*.gcda' -size +0 | wc -l)
+    if [ "$n_gcda" -lt 1 ]; then
+        echo "[build] FATAL: no .gcda written — a '-fprofile-use' build would silently" >&2
+        echo "         fall back to plain -O3 and the comparison would be fiction" >&2
+        exit 5
+    fi
+    log "pgo: $n_gcda profile file(s); rebuilding the candidate TU with -fprofile-use"
+    $CXX $STD $OPT $DEF $WARN -fprofile-use="$POD/prof" -Werror=coverage-mismatch \
+        -fPIC -fvisibility=hidden -DKK_BUILD_ID=kk_cand -I src/core \
+        -c src/core/TextEngine.cpp -o "$POD/kk_cand_engine_pgo.o"
+    $CXX $STD $OPT $DEF $WARN -shared -o "$BUILD/libkkcand.so" \
+        "$POD/kk_cand_engine_pgo.o" "$BUILD/obj/kk_cand_shim.o"
+    ( cd "$POD/prof" && find . -name '*.gcda' -print0 | sort -z | xargs -0 sha256sum ) \
+        > "$POD/profile-sha256.txt" 2>/dev/null || true
+    log "pgo: libkkcand.so is now the PGO build; profile digests in $POD/profile-sha256.txt"
+    log "pgo: NOTE libkkbase.so and bench remain plain -O3 by design"
 fi
 
 log "done"

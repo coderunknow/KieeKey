@@ -177,6 +177,11 @@ if have_step gate; then
         run "build" ./benchmark/scripts/build.sh || exit 1
     fi
     python3 benchmark/scripts/baseline_manifest.py || exit 1
+    # Snapshot the manifest WITH the campaign: the tree-level copy is overwritten by the
+    # next build, and a campaign's numbers must be attributable to the tree that was
+    # built for it (this also decides baseline-vs-candidate wording in rc1_stats).
+    cp docs/bench/rc1-130/baseline_manifest.json "$RES/manifest_at_build.json" 2>/dev/null \
+        || say "WARNING: could not snapshot the manifest into $RES"
     python3 benchmark/scripts/rc1_gates.py manifest "${GATE_ARGS[@]}" || exit 1
     ( cd benchmark/reference/kieekey-1.2.2 && sha256sum -c UPSTREAM-SHA256.txt >/dev/null ) \
         && say "baseline reference integrity: OK ($(ls benchmark/reference/kieekey-1.2.2 | wc -l) files)" \

@@ -229,6 +229,36 @@ reorder family (C-C1, C-C3) is `DROP`ped and `checkGrammar`'s repair loop is dec
 
 ---
 
+### P5 — single-copy undo snapshot — **`REJECT`, no measurable effect** (screened in `rc1-p5`)
+`saveWord()` copied the word twice per key: `typingWord_[0..index_)` into the scratch vector, then
+scratch → ring entry. The candidate wrote straight into the ring slot (same bytes, same slot, one
+loop). It was implemented, built, and screened — `attrib-guard` transcripts IDENTICAL, `diffab`
+2 146 422 events / 0 mismatches, memory gate unchanged at 21/20 allocations — and the paired
+gain table over 32 rounds with an A/A band of 0.73 ns read:
+
+| | deciding cell | best cell | worst cell | max \|gain\| over 18 cells |
+|---|---|---|---|---|
+| P5 | −0.06 % (68.73 → 69.46 ns) | +0.54 % | −0.32 % | 0.54 % |
+
+That is *exactly* the size of the same-code null-test drift, so the honest verdict is **no effect**:
+the second copy was free. Two readings, both useful. The scratch loop was cheap because the entry copy
+touches the same 32-byte-aligned ring slot either way — the cost is the cache line, not the loop, and
+removing one of two loops over 4-byte words does not remove a memory access the engine was going to
+make anyway. And `saveWord`'s 2.1 % profile share was never "2.1 % of removable work"; it is 2.1 % of
+*touching the history*, which any snapshot design must do. Reverted; the plan's P4 emit-tail idea is a
+close relative and is now expected to be small for the same reason, which is stated in
+[OPTIMIZATION_PLAN.md](OPTIMIZATION_PLAN.md) rather than discovered after another 25-minute campaign.
+
+**The host-speed finding that came out of the same campaign.** The frozen engine's own column read
+68.73 ns/key here against 84.70 ns/key in `rc1-130` — the same binary, 19 % faster, same flags, hours
+apart. UniKey's column moved with it (73.00 → 60.20), so the *ratio* held (+16.1 % → +13.1 %) while
+the absolute gap moved from 11.77 ns to 7.67 ns. Consequence for an objective stated in nanoseconds:
+a "+7 ns" clause is only meaningful **inside one campaign**, and a release claim must name the
+campaign it came from — which is why every table here is paired-by-round, and why "KieeKey is 7.7 ns
+behind on a fast host" is not a licence to compare it against 11.8 ns measured on a slower one.
+
+---
+
 ## 3c. Further candidates (specs; none implemented yet)
 
 ### C-B — single-load vowel-position scan

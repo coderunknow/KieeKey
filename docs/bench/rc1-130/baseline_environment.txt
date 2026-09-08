@@ -1,12 +1,12 @@
 affinity=2
 compiler=g++ (Debian 12.2.0-14+deb12u1) 12.2.0
 cores_online=2
-cpu_model=: Intel(R) Xeon(R) Processor @ 2.60GHz
+cpu_model=Intel(R) Xeon(R) Processor @ 2.60GHz
 defines_bench=-DNDEBUG
 governor=NOT AVAILABLE (not exposed in this container)
 host_note=containerised host; perf_event_open is blocked by seccomp and valgrind is not installed, so hardware counters and callgrind-style attribution are recorded as NOT AVAILABLE rather than substituted
 kernel=Linux-6.1.158+-x86_64-with-glibc2.36
-loadavg_at_manifest=0.85 0.81 0.66 1/80 7742
+loadavg_at_manifest=0.58 0.22 0.08 1/77 1758
 lto=OFF for every engine (LTO across a dlopen boundary would be an asymmetry)
 machine=x86_64
 max_freq_khz=NOT AVAILABLE (not exposed in this container)

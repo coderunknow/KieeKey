@@ -47,12 +47,12 @@
   "affinity": 2,
   "compiler": "g++ (Debian 12.2.0-14+deb12u1) 12.2.0",
   "cores_online": 2,
-  "cpu_model": ": Intel(R) Xeon(R) Processor @ 2.60GHz",
+  "cpu_model": "Intel(R) Xeon(R) Processor @ 2.60GHz",
   "defines_bench": "-DNDEBUG",
   "governor": "NOT AVAILABLE (not exposed in this container)",
   "host_note": "containerised host; perf_event_open is blocked by seccomp and valgrind is not installed, so hardware counters and callgrind-style attribution are recorded as NOT AVAILABLE rather than substituted",
   "kernel": "Linux-6.1.158+-x86_64-with-glibc2.36",
-  "loadavg_at_manifest": "0.85 0.81 0.66 1/80 7742",
+  "loadavg_at_manifest": "0.58 0.22 0.08 1/77 1758",
   "lto": "OFF for every engine (LTO across a dlopen boundary would be an asymmetry)",
   "machine": "x86_64",
   "max_freq_khz": "NOT AVAILABLE (not exposed in this container)",
@@ -69,9 +69,9 @@
  },
  "git": {
   "branch": "arena/01a07b1c-kieekey",
-  "dirty_src": "M  src/core/TextEngine.cpp",
-  "git_head": "03492b43144526e3486b09a82139417629569853",
-  "git_head_short": "03492b4"
+  "dirty_src": "clean",
+  "git_head": "3047143d0e4b8f03fd391993b92dbe4f00f2225b",
+  "git_head_short": "3047143"
  },
  "harness": {
   "files": 9,
@@ -81,8 +81,8 @@
  "product_version": "?",
  "schema": "kieekey-bench-baseline/1",
  "scripts": {
-  "files": 11,
-  "tree_sha256": "bb610c87ca88478dd848b9e90fe8f74e3b92e8c31ebd6a2a865bf98979d02cd0"
+  "files": 12,
+  "tree_sha256": "771b4c7c91cadf3e189ff04686f467f8fe0f1bb53bc0ba0debbb925f612fe7cc"
  },
  "toolchain": {
   "compiler": "g++ (Debian 12.2.0-14+deb12u1) 12.2.0",

@@ -322,11 +322,32 @@ def main():
                 man0 = json.load(fh0)
         except (OSError, ValueError):
             man0 = {}
+    # When the campaign has no manifest snapshot (a resume, or a run predating the
+    # snapshot), fall back to the campaign's own header: it records --candidate, which
+    # is what decides whether a verdict is even meaningful here. Guessing "baseline"
+    # from a stale tree-level manifest once printed "NOT RUN" over a real candidate
+    # measurement, so the fallback is explicit and said out loud.
     tree0 = man0.get("engine_sources_sha256") or {}
     base0 = man0.get("baseline_engine_sources_sha256") or {}
     differing0 = sorted(k for k, v in base0.items() if tree0.get(k) != v)
     manifest_known = bool(base0) and bool(tree0)
     is_baseline = manifest_known and not differing0
+    if not manifest_known or (is_baseline and os.path.isfile(os.path.join(ROOT, a.results, "environment.txt"))):
+        hdr = {}
+        try:
+            with open(os.path.join(ROOT, a.results, "environment.txt"), encoding="utf-8") as fh1:
+                for tok in fh1.read().split("\n"):
+                    for part in tok.split():
+                        if part.startswith("candidate="):
+                            hdr["candidate"] = part.split("=", 1)[1]
+        except OSError:
+            hdr = {}
+        if hdr.get("candidate") == "1":
+            if is_baseline:
+                print("[stats] NOTE: the manifest snapshot says the tree is frozen, but this "
+                      "campaign was run with --candidate — trusting the campaign header (the "
+                      "manifest was regenerated after the build, or a resume overwrote it)")
+            is_baseline = False
     if not manifest_known:
         print("[stats] WARNING: manifest has no frozen hash map — the campaign cannot be "
               "classified as baseline or candidate; the candidate verdict says UNKNOWN")

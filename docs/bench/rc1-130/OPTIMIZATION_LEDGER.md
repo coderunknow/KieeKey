@@ -450,7 +450,7 @@ the artifact itself was left exactly as measured and the correction is prose bes
 
 Open frontier after RC2: **P9** — folding spelling *verification* out of the profile would be worth
 ~12 ns but is not a gate (the function publishes ranges the emit paths consume, so skipping the call corrupts
-valid text); it needs `checkSpelling` split into `ranges()` + `rationally` — see plan §P9 for the analysis
+valid text); it needs `checkSpelling` split into `ranges()` + `verdict()` — see plan §P9 for the analysis
 and for the two exact sub-levers pre-registered inside it.
 
 ### Closed by analysis rather than measurement: P1, P3, and most of P2

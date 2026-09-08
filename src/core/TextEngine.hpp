@@ -176,6 +176,12 @@ struct EngineOptions {
     // in CMake) and the two strictness switches ship off, for a target where the
     // latency matters more than the last rule pass. The profile's own latency and
     // its exact behavioural price are published side by side in the RC1 report.
+    // v1.3.0-rc2 — deliberately NOT a runtime option, unlike grammarRepair: reading a per-key flag to
+    // skip a 256-byte snapshot write costs a load + branch on every key in the STRICT build too, which
+    // is most of what the saving is. As a compile-time profile switch the branch folds away and the
+    // strict object code stays byte-identical to v1.3.0-rc1 (verified by digest, not by argument), so
+    // rc1's release campaign keeps describing this build exactly. If this ever needs per-target
+    // control, it must be paid for by a measured strict-build number, not silently.
     bool grammarRepair =
 #ifdef KIEEKEY_LOW_LATENCY_PROFILE
         false;
@@ -352,11 +358,25 @@ public:
     // runtime; the profile is for a target that wants it without a per-app setting.
 #ifdef KIEEKEY_LOW_LATENCY_PROFILE
     static constexpr bool kProfileSkipsGrammarRepair = true;
+    static constexpr bool kProfileSkipsUndoSnapshot  = true;
 #else
     static constexpr bool kProfileSkipsGrammarRepair = false;
+    static constexpr bool kProfileSkipsUndoSnapshot  = false;
 #endif
     [[nodiscard]] bool useGrammarRepair() const noexcept {
         return !kProfileSkipsGrammarRepair && opts_.grammarRepair;
+    }
+
+    // v1.3.0-rc2 — the other per-key copy the profile drops: `saveWord()` snapshots the pending word
+    // into the fixed-capacity undo ring on every key, which is what lets a backspace after a transform
+    // restore the word's previous form rather than deleting a character. It is 2.2 % of the engine
+    // (1.3 ns/key) plus the ring's cache footprint, and `restoreLastTypingState()` is already written
+    // against an empty ring, so turning it off degrades one interaction cleanly instead of corrupting
+    // state. Like the repair pass it is also a *runtime* option (`undoHistory`), because the honest
+    // shape of "strip a defensive copy" is a switch the consumer can set per target — and because a
+    // trade-off nobody can turn off is just a bug with a press release.
+    [[nodiscard]] static constexpr bool useUndoSnapshot() noexcept {
+        return !kProfileSkipsUndoSnapshot;
     }
 
     // ---- settings (thread-affine: call from consumer thread only) --------

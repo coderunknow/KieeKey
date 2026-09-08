@@ -5,7 +5,7 @@
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20ARM64-0078D6.svg)
 ![Build](https://img.shields.io/badge/build-CMake%20%3E%3D%203.28-064FAD.svg)
 
-**KieeKey v1.3.0 RC1** is a modern, low-latency Vietnamese input method
+**KieeKey v1.3.0 RC2** is a modern, low-latency Vietnamese input method
 engine (bộ gõ Tiếng Việt) for Windows, with a system-tray application, a TSF
 text-store composer and an optional WinUI 3 Fluent settings UI.
 
@@ -19,6 +19,34 @@ text-store composer and an optional WinUI 3 Fluent settings UI.
 ![KieeKey preview](src/app/KieeKeyApp-preview.png)
 
 ---
+
+## What's new in v1.3.0 RC2 — the low-latency profile's second lever, and the first cell where we lead
+
+One configuration change, no default-behaviour change. The opt-in `KIEEKEY_LOW_LATENCY_PROFILE` now folds
+out a second per-key copy — `saveWord()`'s undo-history snapshot — on top of the strict grammar-repair
+pass it already skipped.
+
+* **The pre-registered deciding cell now reads in our favour** in that configuration: `as-shipped |
+  telex-end | prose` at **55.10 ns/key against vendored UniKey's 61.51** (−10.41 % pooled, **−7.69 %**
+  on the campaign's paired statistic, 60 samples, A/A band 1.085 ns), **+23.79 %** over frozen v1.2.2
+  (CI [+16.88, +17.81] ns, ACCEPT). Prose and edit-storm cells land between −14 % and −22 %. Campaign of
+  record `benchmark/results/rc1-v13prof2`, report `benchmark/REPORT.rc1.md`.
+* **TIER MIXED, and we say so**: three `pathological` cells still regress (+11.3 % telex-end, +65.7 %
+  vni against UniKey) — that stream is adversarial by construction, and the mixed label is the gate's
+  output rather than wording. At L2 `p50` leads on 7 of 9 `as-shipped` streams, `p99` on 6 of 9 (largest
+  gap: telex-end edit-storm −120.5 ns).
+* **The price is the point of the trade.** Payload divergence on the full corpus rises from 52.03 % of
+  keys to **55.03 %**, final text differs on 10 of 18 streams, and the `digest-identity` gate fails on 22
+  of 376 rows — published, with the concrete case (`thoaji` composes `thọai`, not `thoại`) and the undo
+  consequence (a backspace right after a transform deletes a character instead of restoring the previous
+  form). Allocation behaviour is untouched: **21 allocations per 2 000 000 keys**, `O(1)` hot path intact.
+* **The shipped default is unchanged and provably so**: the strict engine object is byte-identical to
+  `v1.3.0-rc1`'s, so `rc1-v13rel` remains the release campaign of record, where the honest answer for the
+  default build is still **+15.74 % behind UniKey**. Nothing in this release re-labels that.
+* **Why `undoHistory` is not a runtime option:** gating it on an `EngineOptions` field was implemented
+  first and put a load + branch on every key in the *strict* build — most of what the fold saves, billed
+  to the configuration that never asked. It is `static constexpr` instead, and the byte-identical strict
+  object is the check that this reasoning held.
 
 ## What's new in v1.3.0 RC1 — cross-engine latency campaign, and the fast emit path
 

@@ -155,7 +155,14 @@ attacks the same class (copy/compose work the compiler already overlaps), and `g
 `composeCharacter` do not appear among the profile's ranked symbols at all, so P4 is expected at
 ≤ ~1 ns and is no longer queued ahead of the untried build-level levers.
 
-### P6 — first-touch cost: the cold-start and first-round deficit
+### P6 — first-touch cost: the cold-start and first-round deficit — CLOSED by measurement (v1.3.0-RC2)
+
+Result, recorded here so the candidate is not re-litigated: the cold-start deficit I reported from a single
+campaign pass **does not exist** (three 12-launch repeats: 455.6/457.0/457.7 ms base vs 449.3/445.1/441.2
+candidate — the memo build is 1.4–3.6 % faster to first output), and the only first-touch cost is the
+expected one: ~1.5 ns/key on the *first* round as the 256-byte memo arrays are touched for the first time
+(25.1/26.3/25.4 → 27.0/27.6/27.1 ns/key), recovering by the second round. Cause of the false alarm: `cold`
+ran in a shared campaign chunk behind `sanitizers`/`robust`; PROTOCOL §12 now requires it to run alone.
 *Target:* cold `wall p50` 484.4 ms vs UniKey 418.5 ms, and first round 30.9 vs 17.5 ns/key.
 *Change:* whatever the tables cost at first touch (code table, `gCharacterIndex`, per-`configure`
 rebuilds in the driver) is the whole of a 66 ms gap that a user feels on the first word after login.
@@ -294,11 +301,18 @@ Non-negotiable invariants the harness must keep holding for any number in this p
 > **57.77 vs UniKey's 61.36 = −5.84 %**, −9.6 % … −15.8 % on the other prose cells, and ahead at p50 on
 > all nine `as-shipped` L2 streams — **the target met and exceeded**, at the documented price of
 > different composed text on 10 of 18 streams, which is why it is a build profile and not the default.
+> **v1.3.0-RC2 (`rc1-v13prof2`) went one lever further** — the profile also folds out `saveWord()`'s
+> per-key undo snapshot — and the pre-registered cell is now negative on the campaign's own paired
+> statistic: **−7.69 % vs UniKey** (55.10 vs 61.51 pooled = −10.41 %), +23.79 % over frozen, ACCEPT,
+> p50 ahead on 7/9 L2 streams, price 55.03 % of keys' payload and a `digest-identity` failure on 22/376
+> rows published as the price. The strict default's number is unchanged and unchanged-by-proof: its engine
+> object is byte-identical to rc1's, so the answer for what ships enabled by default stays +15.74 %
+> behind.
 > The original instruction for this cycle was "≤ UniKey + 5-7 ns"; on the strict default that clause
 > failed and §5's FAIL wording stands for the default configuration. The
 > queue above was executed in order and every candidate the profile put at ≥ 2 ns has now been built and
 > measured: C-A (−5.0 %), C-C1 (+3.5 % deciding / −10.9 % worst), P5 (−0.06 %, inside the harness's own
-> same-code drift), P8/PGO (−4.04 %) — all REJECT. What is left untried (P0, P2, P4, P6) is each bounded
+> same-code drift), P8/PGO (−4.04 %) — all REJECT. What is left untried (P0, P2, P4) is each bounded
 > at ≲ 1 ns by the profile-share arithmetic in §1, which cannot add up to 7.7–11.8 ns. The separation is
 > feature-level: a 32-bit code-point word recomposed per emitted character, a per-key snapshot/restore
 > for undo, and an orthography-repair pass UniKey does not run. Reaching parity means giving one of

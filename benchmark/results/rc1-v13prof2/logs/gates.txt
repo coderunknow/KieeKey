@@ -1,0 +1,5 @@
+[2026-09-08T15:51:42Z] gate:manifest: PASS — baseline intact (18 frozen v1.2.2 sources verified in benchmark/reference/kieekey-1.2.2); the working tree differs in 3 of them (TextEngine.cpp, TextEngine.hpp, kieekey_core.hpp) — that is the candidate under test, and libkkbase.so still measures v1.2.2 exactly
+[2026-09-08T16:01:28Z] gate:correctness: PASS — no baseline oracle (absolute rates published) in 376 subject rows (words/passages/invariant/macro), both configs, all methods
+[2026-09-08T16:01:28Z] gate:digest-identity: FAIL — 22 of 376 rows differ; first at ('as-shipped', 'telex-mid', 'passages', '^soos ddieejn thoaji cura tooi laf 0901234567, goji cho tooi nhes.'): baseline='Số điện thoại của tôi là 0901234567, gọi cho tôi nhé.' vs now='Số điện thọai của tôi là 0901234567, gọi cho tôi nhé.'
+[2026-09-08T16:04:51Z] gate:memory: PASS — hot path stays allocation-free — as-shipped: 21 allocs / 2,000,000 keys, RSS 46.2 MiB; matched-minimal: 20 allocs / 2,000,000 keys, RSS 49.4 MiB
+[2026-09-08T16:04:52Z] gate:integrity: PASS — 19 artifact(s), 18229 row(s) parsed, identical engine coverage across tput sessions, 0 undecodable line(s)

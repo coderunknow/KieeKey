@@ -396,7 +396,7 @@ void TextEngine::wordBreakBranch(char32_t c, bool caps, const TextInput& in, boo
             saveWord(U' ', spaceCount_);
             spaceCount_ = 0;
         } else {
-            saveWord();
+            if (useUndoSnapshot()) { saveWord(); }
         }
         specialChar_.push_back(c | (caps ? kCapsMask : 0));
         result_.extCode = 3;   // normal key
@@ -535,7 +535,7 @@ void TextEngine::spaceBranch(char32_t /*c*/, bool /*caps*/) {
         if (specialChar_.size() > 0) {
             saveSpecialChar();
         } else {
-            saveWord();
+            if (useUndoSnapshot()) { saveWord(); }
         }
     }
     opts_.checkSpelling = useSpellingBefore_;
@@ -721,7 +721,7 @@ void TextEngine::mainKeyBranch(char32_t c, bool caps) {
          opts_.inputMethod == InputMethod::SimpleTelex)) {
         if (index_ - (result_.code == EngineCode::WillProcess ? result_.backspaceCount : 0) > 0) {
             --index_;
-            saveWord();
+            if (useUndoSnapshot()) { saveWord(); }
         }
         index_ = 0;
         tempDisableKey_ = false;

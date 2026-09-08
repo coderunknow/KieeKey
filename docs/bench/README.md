@@ -190,4 +190,6 @@ The [`rc1-130/`](rc1-130/) directory now covers a shipped release, not only a me
 `REPORT`-side documents (PROTOCOL §14, OPTIMIZATION_PLAN §5, OPTIMIZATION_LEDGER §3d) carry the
 v1.3.0-RC1 engine change (+1.56 % per key over v1.2.2 with bit-identical output, campaign `rc1-v13rel`)
 and the opt-in low-latency profile that measures −5.84 % against UniKey on the deciding cell with its
-behavioural price published (campaign `rc1-v13prof`).
+behavioural price published (campaigns `rc1-v13prof` for RC1's grammar-only profile and
+`rc1-v13prof2` for RC2's grammar-plus-undo profile, which reads −7.69 % against UniKey on the
+pre-registered deciding cell).

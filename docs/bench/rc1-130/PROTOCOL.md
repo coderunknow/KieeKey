@@ -349,3 +349,14 @@ controls are then directly comparable, and a bigger campaign of a different size
 instruments rather than engines. The plan's earlier "6 × 24 at keys 200 000" is superseded by this
 rule; a chunked long campaign (steps split across invocations so each chunk's artifacts land in git
 before the next) is the operational form when a host may be reset mid-run.
+**Build-configuration campaigns (profile builds) run without the `correctness` gate.** The two policies
+`rc1_gates.py` knows are `identity` (row digests must match the frozen baseline) and `declared-divergence`
+(behaviour may differ per an explicit allow-list, but *final* text must still match). A build configuration
+whose whole point is different composed text satisfies neither: profile-A/B change the mark placement on
+`oai`-class patterns, so `digest-identity` fails 22 of 376 rows and a final-text clause would fail too.
+The procedure that keeps this honest rather than gate-shopping is: run the campaign with
+`--steps=<everything except correctness>` so the timing artifacts are produced under the same gate as every
+other campaign, then publish (a) the manual `diffab` over the full corpus as the price, (b) the
+`digest-identity` line from a run *with* `correctness` — its FAIL is the measured price and belongs in the
+artifact directory — and (c) the engine-hash note recording that the harness binaries were rebuilt with the
+define. Never drop the failing gate line from `logs/gates.txt`.

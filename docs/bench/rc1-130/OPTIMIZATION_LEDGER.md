@@ -422,6 +422,32 @@ orthography rule. The profile's latency number is published beside the strict on
 purpose: it still asserts that the *visible text* matches and that the tree's own two builds match each
 other, and it publishes the payload divergence instead of asserting it away.
 
+### Profile, second lever — `rc1-v13prof2`, shipped as v1.3.0-RC2
+
+`KIEEKEY_LOW_LATENCY_PROFILE` gained a second folded-out copy: `saveWord()`'s per-key snapshot into the
+fixed-capacity undo ring (2.2 % of the engine, 1.3 ns/key, plus the ring's cache footprint). Campaign of
+record `benchmark/results/rc1-v13prof2` (5 × 12, A/A band 1.085 ns, order control 5.10 ns vs A/A 0.23):
+
+| axis | number |
+|---|---|
+| deciding cell `as-shipped\|telex-end\|prose` | **55.10** ns/key vs UniKey **61.51** → **−10.41 %** pooled, **−7.69 %** on the campaign's paired statistic (60 samples) |
+| over frozen v1.2.2 | **+23.79 %** (72.91 → 55.10), paired Δ CI [+16.88, +17.81] ns, **ACCEPT**, 0 cells beyond band |
+| vs profile-A (grammar only) | prose −2.7 ns, telex-end edit-storm −3.7 ns, vni prose −2.3 ns; `matched-minimal\|vni\|pathological` **+1.2 ns worse** |
+| regressions | 3 cells, all `pathological` (+11.3 % telex-end, +65.7 % vni) → **TIER MIXED** stands |
+| L2, `as-shipped` | p50 ahead 7/9 (−2.0…−19.0 ns); the two `telex-mid` cells read +3.5/+4.0 ns, inside the 5.10 ns column-order shift → published as undecidable. p99 ahead 6/9 (−120.5 ns worst, +31.0/+19.5 ns behind on two) |
+| price | payload 52.03 % → **55.03 %** of 715 474 keys; final text still differs on 10/18; `digest-identity` fails on 22/376 rows with the concrete case `thoaji` → `thọai` |
+| contracts kept | memory gate PASS unchanged: **21 allocs / 2 000 000 keys** (20 matched-minimal), RSS 46.2 MiB, `O(1)` core intact; integrity PASS 19 artifacts / 18 229 rows |
+| strict tree | **engine object byte-identical to `v1.3.0-rc1`'s** — both `TextEngine.cpp` TUs compiled with the same flags and `cmp`'d — so `rc1-v13rel` stays the release campaign of record and needs no re-run |
+
+**Cold start: a published claim of mine was wrong, and the correction is the useful part.** I recorded
+`rc1-v13rel`'s `cold` line (wall p50 403.1 → 441.5 ms) as a regression. Three independent 12-launch
+repeats of the same two binaries, run in their own chunk, read base 455.6/457.0/457.7 ms against candidate
+449.3/445.1/441.2 ms — the release is 1.4–3.6 % *faster* to first output. Only the first round repeats in
+the original direction (25.1/26.3/25.4 → 27.0/27.6/27.1 ns/key ≈ +1.5 ns), i.e. the memo tables' 256 bytes
+are paid once on a cold object and then earn. Root cause of the bad read: `cold` measures whole-process wall
+time and the campaign ran it in the same chunk as `sanitizers` and `robust`. Rule added to PROTOCOL §12;
+the artifact itself was left exactly as measured and the correction is prose beside the table.
+
 ### Closed by analysis rather than measurement: P1, P3, and most of P2
 `findAndCalculateVowel` is a backward scan that stops at the first consonant after the vowel run —
 4 to 7 positions for a prose word — so fusing its two variants saves a handful of iterations
@@ -454,6 +480,7 @@ the campaign of record.
 | R3 | replace `FlatMap::find` with a dense 256-entry table | the dense table is 4× L1-resident for a lookup that is already register-cached after C-A; profile share did not justify it |
 | R4 | skip `checkSpelling` for words of length ≤ 2 | changes behaviour on `bâ`, `chê`-class inputs; correctness gates are not negotiable for a share this small |
 | R5 | batch two keystrokes per `process()` call | breaks the per-key contract the producers rely on (a key can arrive from a different window/context between the two) |
+| R9 | `undoHistory` as a runtime `EngineOptions` flag (implemented, then removed) | gating `saveWord()` on `opts_.undoHistory` put a load + branch on every key in the **strict** build to buy a knob that configuration never asked for — most of the 1.3 ns the fold saves, billed to the default. Replaced by `static constexpr useUndoSnapshot()`, verified by the strict object coming out byte-identical to v1.3.0-rc1's. The general rule: a knob on a hot-path defensive copy must be free to the configuration that leaves it alone, or it is not worth the copy |
 | C8 | per-slot result cache keyed on (word hash, slot) | falsified by the profile: the misses are near-universal during edit-storms, which is the only stream where the cache would have helped |
 
 ---

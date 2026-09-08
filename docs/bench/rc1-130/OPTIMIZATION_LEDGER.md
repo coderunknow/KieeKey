@@ -324,7 +324,10 @@ Three more came out of this candidate cycle, each of which had been able to move
   `results/<name>/manifest_at_build.json`, because `docs/…/baseline_manifest.json` is overwritten by
   the next build. `rc1_stats.py` reads that per-campaign copy to decide whether the campaign is a
   baseline or a candidate trial, so the phrase "this campaign had no candidate" is derived from hashes
-  rather than from a remembered flag. The same rule applies to `bench_san`: a sanitizer build from a
+  rather than from a remembered flag. (A related near-miss, logged in PROTOCOL §12: `*.log` is
+  git-ignored under `benchmark/results/`, so an ignored-but-tracked artifact can fall out of a commit
+  without any command failing — the trail under `docs/bench/` exists partly to make that impossible.)
+  The same rule applies to `bench_san`: a sanitizer build from a
   previous tree is never reused for a release claim.
 * **A null test that must read zero.** In a baseline campaign the frozen and candidate columns hold
   identical code, so the gain table measures the harness; `rc1-130` prints that drift explicitly

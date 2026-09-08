@@ -104,6 +104,16 @@ fi
 say "cpu affinity: $PIN_NOTE"
 
 # --- environment record, written BEFORE anything is measured ------------------
+# A partial re-run must not overwrite the provenance record of the campaign that
+# produced the rows: it did, once, and the report header then announced "6 sessions
+# x 20 paired rounds" for a campaign that ran 5 x 12, because the re-run's own defaults
+# landed in the file. Fresh campaigns (the ones that run `gate`, and therefore build)
+# still own environment.txt; anything else lands in a timestamped side file.
+ENVFILE="$RES/environment.txt"
+if [ -s "$ENVFILE" ] && ! have_step gate; then
+    ENVFILE="$RES/environment.$(date -u +%Y%m%dT%H%M%SZ).patch.txt"
+    say "partial re-run: keeping the campaign's environment.txt, this run's facts go to $(basename "$ENVFILE")"
+fi
 {
     echo "campaign=$NAME"
     echo "utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -121,7 +131,7 @@ say "cpu affinity: $PIN_NOTE"
     echo "mitigations=$(cat /sys/devices/system/cpu/vulnerabilities/meltdown 2>/dev/null || echo 'NOT AVAILABLE')"
     echo "perf=$(perf --version 2>/dev/null || echo 'NOT AVAILABLE (seccomp blocks perf_event_open in this container)')"
     echo "valgrind=$(command -v valgrind >/dev/null && valgrind --version || echo 'NOT AVAILABLE')"
-} > "$RES/environment.txt" 2>&1
+} > "$ENVFILE" 2>&1
 sha256sum src/core/*.hpp src/core/*.cpp > "$LOGS/engine_hashes.txt" 2>&1
 cp benchmark/reference/kieekey-1.2.2/UPSTREAM-SHA256.txt "$LOGS/baseline_reference_hashes.txt" 2>/dev/null
 

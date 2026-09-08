@@ -320,4 +320,14 @@ Three more came out of this candidate cycle, each of which had been able to move
   previous tree is never reused for a release claim.
 * **A null test that must read zero.** In a baseline campaign the frozen and candidate columns hold
   identical code, so the gain table measures the harness; `rc1-130` prints that drift explicitly
-  (`null_test_abs_max_pct`). If it were not ~0, every gain in this ledger would be suspect.
+  (`null_test_abs_max_pct`). `rc1-130`'s reads −0.92 %…+0.99 % with identical code, and two of those
+  cells have CIs excluding zero — ~0.5 ns of column-dependent bias, which is why the ledger treats a
+  sub-1 % claim as uninterpretable and why C-C1's 3.5 % and C-A's −5 % stand.
+* **What a campaign's size record is.** `environment.txt` used to be rewritten by every partial
+  re-run, so a report header can quote "6 sessions × 20 rounds" for a 5 × 12 campaign (it did, once,
+  and the file now has to be reconstructed with a note saying so). A partial re-run writes a
+  timestamped side file instead, and the report's measurement shape is taken from the timed rows' own
+  `meta` records and the `raw/tput_s*.jsonl` count. Two smaller ones from the same sweep:
+  `summary["meta"]` used to be *the first meta row in any file* (whichever step happened to be read
+  first), and `cpu_model` kept a leading `": "` because `strip(": ")` does not remove the tab that
+  `/proc/cpuinfo` puts before the value.

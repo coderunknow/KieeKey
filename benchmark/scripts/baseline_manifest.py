@@ -107,7 +107,12 @@ def env_facts():
     env["python"] = platform.python_version()
     try:
         env["cpu_model"] = re.sub(r"\s+", " ", open("/proc/cpuinfo", encoding="utf-8").read()
-                                  .split("model name")[1].split("\n")[0].strip(": ").strip())
+                                  .split("model name")[1].split("\n")[0].lstrip(" \t:").strip())
+        # lstrip(" \t:"), not strip(": "): /proc/cpuinfo separates the field with a TAB, and
+        # ": " as a character set does not contain it, so the value used to come out as
+        # ": Intel(R) Xeon…" and the rendered report began a line with a stray colon. A
+        # manifest already on disk is left as written — the report reads the host line from
+        # the campaign's environment.txt instead, which was always clean.
     except Exception:
         env["cpu_model"] = "NOT AVAILABLE"
     try:

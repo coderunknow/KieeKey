@@ -1,12 +1,14 @@
 # KieeKey v1.3.0 RC1 — engine-decision benchmark and optimisation record
 
 Campaign **{{env:campaign}}** · run recorded at {{meta:t0_unix}} · corpus `{{meta:corpus}}` (seed
-{{meta:seed}}) · {{env:words}} word cases per correctness pass, {{env:keys}} keys per timed stream ·
-engine set `{{env:engines}}` · {{env:sessions}} sessions × {{env:rounds}} paired rounds ·
+{{meta:seed}}) · {{stat:meta.words}} word cases per correctness pass, {{stat:meta.keys}} keys per
+timed stream · engine set `{{env:engines}}` · {{stat:meta.sessions}} sessions ×
+{{stat:meta.rounds}} paired rounds (counted out of the timed rows themselves, not out of a
+campaign log line — a partial re-run once overwrote the log's numbers with its own defaults) ·
 compiler {{stat:manifest.toolchain.compiler}} · flags `{{stat:manifest.toolchain.std}}
 {{stat:manifest.toolchain.opt}} {{stat:manifest.toolchain.defines_bench}}` for every engine
 translation unit (read out of the build manifest, not out of the build script) ·
-{{stat:manifest.environment.cpu_model}}, {{stat:manifest.environment.cores_online}} logical CPUs
+{{env:cpu}}, {{stat:manifest.environment.cores_online}} logical CPUs
 ({{stat:manifest.environment.affinity}} usable by this container), affinity: {{env:pin_note}}.
 
 Everything between the rules is generated. Numbers are spliced out of
@@ -135,7 +137,8 @@ reference for what a shift means.
 
 ### 3.1b How big this campaign is, and what that buys
 
-{{env:sessions}} sessions × {{env:rounds}} paired rounds at {{env:keys}} keys per stream = the sample
+{{stat:meta.sessions}} sessions × {{stat:meta.rounds}} paired rounds at {{stat:meta.keys}} keys per
+stream = the sample
 count behind every CI above ({{stat:verdict.paired_samples}} paired samples in the deciding cell).
 That is a screening size, not the size the first pass of this work used: `rc1-ca4` ran
 6 sessions × 24 rounds (144 paired samples per cell) and measured the same deciding cell at
@@ -226,7 +229,16 @@ the only difference between the columns is the engine code.
 the instrument's own null test: with `kieekey-cand` and `kieekey-base` compiled from identical
 sources, the reported gain must be indistinguishable from zero, and its spread is an independent
 estimate of what this design can resolve. A non-zero value here would mean every gain figure in the
-ledger is measuring the harness. The verdict row prints `NOT RUN — baseline campaign (frozen src/core)` — derived by
+ledger is measuring the harness. What it actually reads here is −0.92 % … +0.99 % across the 18
+cells, mostly inside ±0.5 %, but two cells (`as-shipped · telex-mid · prose` +0.90 %, CI
+0.43…1.01 ns; `matched-minimal · telex-mid · pathological` −0.92 %, CI −0.47…−0.14 ns) have CIs that
+exclude zero **with identical code** — a residual ~0.5 ns of column-dependent bias, most plausibly
+which `.so` the dynamic loader touched first. So the honest reading of this instrument is: differences
+under ~1 % are not interpretable at all, and differences of a few ns/key should be read after
+subtracting the cell's own residual here rather than compared to the A/A band alone. Every candidate
+figure in the ledger is above 3 %, and C-A's regression was above 5 %, so none of them turns on that
+bias — but a future candidate that claims 0.7 % does, and this paragraph is the reason it will be
+asked to show the null test alongside it. The verdict row prints `NOT RUN — baseline campaign (frozen src/core)` — derived by
 comparing the manifest's per-source hashes, not by a flag someone remembered to pass —
 because there is nothing to decide.
 
@@ -296,7 +308,7 @@ dirty src/                             # {{env:dirty_src}}
 ./benchmark/scripts/build.sh --sanitizers
 python3 benchmark/scripts/baseline_manifest.py
 ./benchmark/scripts/campaign_rc1.sh --name={{env:campaign}} --candidate \
-    --sessions={{env:sessions}} --rounds={{env:rounds}} --keys={{env:keys}} \
+    --sessions={{stat:meta.sessions}} --rounds={{stat:meta.rounds}} --keys={{stat:meta.keys}} \
     --words={{env:words}} --engines={{env:engines}}
 ```
 

@@ -366,7 +366,23 @@ def main():
 
     # the campaign's own header row (corpus, seed, counts) rides along so the
     # report can state what was measured without parsing JSONL at render time
-    summary["meta"] = (collect("meta", 1) or [{}])[0]
+    # The report header quotes the *timing* pass's shape, so the meta row is taken from a
+    # tput artifact: "the first meta row anywhere" used to return whichever step was read
+    # first, and that step's keys=8000/rounds=5 were then published as the campaign's
+    # size. Sessions are counted from the rows themselves, not from a remembered flag.
+    tput_meta = next((r for r in rows if r.get("mode") == "meta"
+                      and str(r.get("_file", "")).startswith("tput_s")), {})
+    summary["meta"] = dict(tput_meta or (collect("meta", 1) or [{}])[0])
+    sess = {r.get("_file") for r in rows
+            if r.get("mode") == "tput" and str(r.get("_file", "")).startswith("tput_s")}
+    if sess:
+        summary["meta"]["sessions"] = len(sess)
+        summary["meta"]["sessions_note"] = ("sessions counted from the timed rows' own "
+                                            "_file field; rounds/keys/words/seed come from "
+                                            "that pass's meta row")
+    else:
+        print("[stats] WARNING: no tput meta row found — the report's corpus line falls "
+              "back to the first meta row in the artifacts and may describe another step")
 
     man = {}
     mpath = mp0  # the same file the verdict above read, so the report cannot describe

@@ -76,6 +76,12 @@ def rate(v):
     return "n/a" if v is None else f"{100.0 * v:.2f}%"
 
 
+# "[2026-09-08T08:11:07Z] gate:diffab: PASS — detail". Matching this on a loose
+# substring once rendered "0 of 0 gates PASS" in a report whose every gate had
+# passed, because the line begins with "] gate:" and not ": gate:".
+GATE_LINE = re.compile(r"^\[[\dT:+-]+Z\] gate:([a-z0-9-]+): (PASS|FAIL)\b")
+
+
 class Report:
     def __init__(self, res, ref=None):
         self.res = res
@@ -115,14 +121,10 @@ class Report:
         # last line per gate name, which is the same row the table below quotes.
         last = {}
         for l in open(path, encoding="utf-8"):
-            l = l.strip()
-            if ": gate:" not in l:
+            m = GATE_LINE.match(l.strip())
+            if not m:
                 continue
-            try:
-                name = l.split("gate:", 1)[1].split(":", 1)[0]
-            except IndexError:
-                continue
-            last[name] = l
+            last[m.group(1)] = l.strip()
         lines = [last[k] for k in sorted(last)]
         ok = sum(1 for l in lines if ": PASS" in l)
         bad = [l.split("gate:", 1)[1] for l in lines if ": FAIL" in l]

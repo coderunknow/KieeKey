@@ -38,8 +38,13 @@ profile whose behavioural price is published rather than buried.
   *worse* (−3.5…−9.9 %) by breaking inlining at the 21 sites, so it was reverted and `composeCached` is
   `always_inline`. The cell is a stress case KieeKey already loses (26.7 vs UniKey's 16.7 ns), not a win
   being traded.
-* **Cold start moved the wrong way and is published**: wall p50 403.1 → 441.5 ms, first round
-  23.86 → 27.71 ns/key (`cold`, unexplained at this size — P6 territory in the plan).
+* Cold start, **corrected by re-measurement**: the release campaign's single `cold` pass (run in the same
+  chunk as `sanitizers`/`robust`, so under residual load) read 403.1 → 441.5 ms wall p50 and suggested a
+  regression. Three independent 12-launch repeats read the opposite: base 455.6/457.0/457.7 ms vs this
+  engine 449.3/445.1/441.2 ms — 1.4–3.6 % **faster** to first output. What does repeat is the first
+  round, 25.1/26.3/25.4 → 27.0/27.6/27.1 ns/key: the memo tables cost ~1.5 ns/key once, then pay for
+  themselves. PROTOCOL §12 now requires `cold` in its own chunk, and the campaign artifact is published
+  unchanged with the correction stated beside it.
 
 ### New: low-latency build profile (opt-in, `KIEEKEY_LOW_LATENCY_PROFILE`)
 
@@ -60,6 +65,18 @@ profile whose behavioural price is published rather than buried.
   trades a rule away on purpose, the gates still assert final visible text identity and this tree's
   in-process/shim identity, and publish the payload divergence instead of turning the check off.
   Not needed by this release's campaign of record — the strict tree is byte-identical output.
+
+### How much of the gap closed, on the instrument where the campaigns are comparable
+
+`bench_prof` processed exactly 143 094 720 keys in every campaign, so its columns read across releases
+even though its absolute ns are inflated by the build: v1.2.2 74.7 vs UniKey 61.6 (gap 13.1 ns) →
+v1.3.0-RC1 **61.0 vs 51.5 (gap 9.5 ns)** → with the low-latency profile **57.4 vs 54.8 (gap 2.6 ns)**.
+The twin is for attribution, never for the head-to-head claim: it inflates the two engines differently,
+which is why its residual 2.6 ns sits beside the plain binary's 3.6 ns lead. Post-change shares:
+`checkSpelling` 20.9 %, `mainKeyBranch`+`handleMainKey` 25.9 %, `checkGrammar` 5.9 % (from 7.3 %),
+`insertMark` 6.8 % (from 9.0 %), `findAndCalculateVowel` 7.3 % combined (from 13.2 %), hottest single
+engine line 1.4 % — no exact lever of ≥ 2 ns is left in the shipped tree, now measured rather than
+asserted.
 
 ### Tooling and measurement rules
 

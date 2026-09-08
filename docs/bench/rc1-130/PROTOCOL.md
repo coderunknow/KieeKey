@@ -309,6 +309,15 @@ two cores this container exposes; a tput-only screening pass (`--steps=gate,self
 --sessions=4 --rounds=12 --diffab-seeds=1`) is about 25 min and is what §8 decisions are screened
 with before a full campaign is spent.
 
+**`cold` runs in its own chunk.** `--mode=cold` launches whole processes and measures wall time to first
+usable output, so it is the one mode in this suite that residual load moves by double digits: the
+v1.3.0-RC1 release campaign ran it beside `sanitizers` and `robust` and read 403 → 441 ms (a 9.5 %
+apparent regression), while three independent 12-launch repeats of the same two binaries, run alone, read
+455/457/458 vs 449/445/441 ms — the opposite sign. A campaign that reports `cold` in a shared chunk must
+therefore publish the repeats alongside it, or run the mode separately; the artifact is never edited to
+match the repeats, and the correction lives beside the table. Same rule, weaker form, for the `mem`
+isolated-RSS runs.
+
 ## 14. Gate policy for a declared divergence, and build-configuration campaigns (v1.3.0-RC1)
 
 Two additions came out of shipping an engine change instead of only measuring one.

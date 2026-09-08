@@ -361,6 +361,20 @@ UniKey's 16.3 ns), not a win being traded.
 
 ### P8 (PGO) and P5 — `REJECT` (§3c above), and the cap — `REJECT` (this section)
 
+### How much of the gap this closed, on the comparable instrument
+
+Every campaign below processed exactly 143 094 720 keys under `bench_prof`, so those columns read across
+releases even though the twin's absolute ns are inflated: v1.2.2 74.7 vs UniKey 61.6 (gap **13.1 ns**) →
+this tree 61.0 vs 51.5 (gap **9.5 ns**) → low-latency profile 57.4 vs 54.8 (gap **2.6 ns**). The twin is
+attribution-only and must never be quoted as the head-to-head number (it inflates the two engines
+differently: its 2.6 ns residual sits beside the plain binary's 3.6 ns *lead*). Post-change shares:
+`checkSpelling` 20.9 % (from 18.9 %), `mainKeyBranch`+`handleMainKey` 25.9 %, `checkGrammar` 5.9 % (from
+7.3 %), `insertMark` 6.8 % (from 9.0 %), `findAndCalculateVowel` 7.3 % combined (from 13.2 %), hottest
+single engine line 1.4 %. That is the evidence for "no exact ≥ 2 ns lever left in the strict tree": the
+work that remains is spread across inlined bucket walks and dispatch, not concentrated in a loop whose
+first termination test bounds a removable cost — the same lesson C-A and C-C1 taught, this time read off
+the shipped code.
+
 ### Release campaign of record — `rc1-v13rel` (5 × 12, 60 paired samples, keys 150 000)
 
 Run at v1.2.2's own instrument size rather than the plan's larger 6 × 24, so the bands and the order
@@ -374,7 +388,12 @@ the strict default, with `matched-minimal · vni · pathological` at −10.5 % (
 PASS: manifest, attrib-guard, correctness (374 rows), digest-identity (9a78c1b4fcc6dad2 both sides),
 diffab (0 / 2 146 422 events), memory (21 allocs per 2 M keys), **sanitizers (0 findings, 7 runs)**,
 integrity (27 artifacts, 20 590 rows). Order control: max |shift| 4.83 ns vs A/A 0.29 ns. Cold start
-regressed and is published: wall p50 403.1 → 441.5 ms, first round 23.86 → 27.71 ns/key.
+looked like a regression in that campaign (wall p50 403.1 → 441.5 ms) and is *not* one: three
+independent 12-launch repeats, run in their own chunk, read 455.6/457.0/457.7 vs 449.3/445.1/441.2 ms —
+the release is 1.4–3.6 % faster to first output — and the only figure that repeats is the first round,
+25.1/26.3/25.4 → 27.0/27.6/27.1 ns/key (the 256 bytes of memo tables, touched once). Recorded as an
+instrument rule in PROTOCOL §12 rather than as an engine result, and the campaign artifact is left
+published as measured.
 
 ### The low-latency profile — built, measured, and deliberately **not** the default
 `KIEEKEY_LOW_LATENCY_PROFILE` (`build.sh --fast-profile`, `cmake -DKIEEKEY_LOW_LATENCY_PROFILE=ON`)

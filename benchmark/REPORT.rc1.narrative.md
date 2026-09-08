@@ -190,6 +190,19 @@ takes when a user opens a document and types immediately, before any table has b
 
 {{table:rc1_cold}}
 
+**Read the table above with this caveat, which was found by re-measuring rather than by arguing.** The
+`cold` pass runs once per campaign chunk, and this campaign ran it in the same chunk as `sanitizers` and
+`robust`, so residual load moves it. Three independent repeats of the mode (12 launches each, run
+separately: `bench --mode=cold --engines=kieekey-base,kieekey-cand`) read the *opposite* direction for
+wall p50 — base 455.6 / 457.0 / 457.7 ms against candidate 449.3 / 445.1 / 441.2 ms, i.e. **the release
+is 1.4–3.6 % faster to first output**, not 9.5 % slower — while the one figure that repeats in the same
+direction is the first round: 25.1 / 26.3 / 25.4 ns/key for v1.2.2 against 27.0 / 27.6 / 27.1 for this
+engine. So the claim that survives is narrow and real: **the memo tables cost about 1.5 ns/key on the
+very first round** (256 bytes of extra object to touch, on a colder path) **and pay for themselves from
+the second round on**; nothing in the shipped tree regresses cold start. The campaign's own
+`cold.jsonl` is published above unchanged — annotating an artifact by overwriting it is how a provenance
+trail becomes fiction — and PROTOCOL §12 now requires `cold` to run in its own chunk.
+
 ---
 
 ## 6. Memory
@@ -273,6 +286,25 @@ mismatches). None was accepted. `src/core` is byte-identical to v1.2.2, and the 
 release measurement. PGO is in `build.sh --pgo` rather than argued about, because a build-configuration
 claim deserves the same paired instrument as a source claim — and because a claim of "the compiler could
 have done this for free" left untested is how a release note gets written backwards.
+
+The sampling twin (`bench_prof`, `-g -no-pie`) is the one instrument on which the two releases are
+directly comparable, because every one of these campaigns processed exactly 143 094 720 keys: v1.2.2
+read 74.7 ns/key against UniKey's 61.6 (gap 13.1 ns), this tree reads **61.0 against 51.5 (gap 9.5 ns)**.
+The profile build on the same twin reads 57.4 against UniKey's 54.8 — a 2.6 ns gap, i.e. **roughly 80 %
+of the sampled gap is closed in the profiled configuration** — but the twin is an attribution instrument
+and never the head-to-head number: it inflates the two engines differently (a debug-info, non-PIE build
+penalises this engine's structure more than UniKey's), which is why its residual 2.6 ns coexists with
+the plain binary's 3.6 ns lead above. The plain paired measurement is what the release claims; the twin
+is quoted only for how much of the gap closed.
+
+On the fresh profile of this tree, no exact lever of ≥ 2 ns is left. `checkSpelling` is now the largest
+stage at 20.9 % (was 18.9 %) and its work is spread over the inlined bucket walks — the hottest single
+line anywhere in the engine is 1.4 % — and after the leading-match memo there is no loop whose first
+termination test bounds a removable cost. `findAndCalculateVowel` fell to 7.3 % combined (from 13.2 %),
+`insertMark` to 6.8 % (from 9.0 %), `checkGrammar` to 5.9 % (from 7.3 %); `mainKeyBranch` +
+`handleMainKey` remain 25.9 % of dispatch, which is where C-A and C-C1 died. The remaining separation is
+spelling plus dispatch plus mark insertion — feature work per key — which is the same conclusion the
+rejected candidates reached from the other side, now measured on the shipped code.
 
 ### 8.2 The opt-in low-latency profile — and its price, measured
 

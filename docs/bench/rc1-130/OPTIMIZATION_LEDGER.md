@@ -11,7 +11,15 @@ Statuses: `LAND` (in `src/core`, gate-verified) · `MEASURE` (measured, verdict 
 
 ---
 
-## 1. How a candidate gets here
+## 0. Where the next cycle is planned
+
+[`OPTIMIZATION_PLAN.md`](OPTIMIZATION_PLAN.md) holds the current plan: the measured gap to UniKey
+(L1 +11.77 ns in the deciding cell, L2 p50 already at parity), the profile evidence that the gap is
+word-length re-analysis rather than dispatch, seven candidates with expected nanoseconds and
+falsifiers, and the conditions under which the cycle is declared a failure. Candidates enter this
+ledger only once they are implemented and measured.
+
+
 
 1. Profile the shipped optimisation level first (`bench_prof`, `-O3`, `--mode=profile`), rank by
    share, and write down the *function or line range* the candidate targets plus the expected

@@ -27,6 +27,7 @@ method and the verdicts:
 |---|---|
 | `PROTOCOL.md` | the pre-registered rules: passes, estimators, noise bands, tier vocabulary, gates, exclusions, deviations log |
 | `OPTIMIZATION_LEDGER.md` | every candidate with its ACCEPT/REJECT, including the rejected ones, and the rejections' reasons |
+| `OPTIMIZATION_PLAN.md` | the forward plan: measured gap arithmetic, profile-grounded candidate specs with expected nanoseconds and falsifiers, and the conditions for declaring the objective unreachable |
 | `baseline_manifest.json` | what a campaign measured: tree hashes, frozen-baseline hashes, flags, host facts |
 | `baseline_environment.txt` | the same facts in `k=v` form for the report generator |
 | `rc1-130/`, `rc1-cc1/`, `rc1-ca4/` | per-campaign released trails, each holding `tables.md`, `summary.json`, `gates.txt`, `environment.txt`, `manifest_at_build.json`, `build.log`, `attrib-guard.log` — copied by `benchmark/scripts/rc1_trail.sh`, which refuses empty artifacts. `rc1-ca4` (C-A) and `rc1-cc1` (C-C1) are candidate trials, both REJECT; `rc1-130` is the release measurement of the frozen engine. Raw JSON Lines for all three stay in [`benchmark/results/`](../../benchmark/results) |

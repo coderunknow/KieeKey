@@ -74,6 +74,17 @@ struct Args {
     uint64_t soakKeys = 2000000;
     bool matched = false;                   // feature-matched instead of as-shipped
     bool allConfigs = true;                 // run both configs
+    // ---- v1.3.0 RC1 additions (see benchmark/harness/rc1.hpp) ----
+    std::string configFilter;               // "" | as-shipped | matched-minimal
+    std::string drivers;                    // alias or comma list; empty -> default
+    std::string session;                    // "s0" … written into every row
+    uint64_t rotate = 1;                    // engine-order rotation per round
+    uint64_t orderOffset = 0;               // A/B order offset (fixed-lead test)
+    uint64_t seedIdx = 0;                   // corpus seed selection
+    uint64_t hz = 1000;                     // SIGPROF sampling request
+    uint64_t profileRounds = 0;             // 0 -> derive from --rounds
+    std::string libDir = "benchmark/.build";
+    bool candidate = false;                 // also load the attribution pair
 };
 
 Args parseArgs(int argc, char** argv) {
@@ -88,6 +99,16 @@ Args parseArgs(int argc, char** argv) {
         if (!(v = val("--mode=")).empty()) { a.mode = v; }
         else if (!(v = val("--out=")).empty()) { a.out = v; }
         else if (!(v = val("--engine=")).empty()) { a.engineFilter = v; }
+        else if (!(v = val("--engines=")).empty()) { a.drivers = v; }
+        else if (!(v = val("--session=")).empty()) { a.session = v; }
+        else if (!(v = val("--config=")).empty()) { a.configFilter = v; }
+        else if (!(v = val("--rotate=")).empty()) { a.rotate = std::strtoull(v.c_str(), nullptr, 10); }
+        else if (!(v = val("--order-offset=")).empty()) { a.orderOffset = std::strtoull(v.c_str(), nullptr, 10); }
+        else if (!(v = val("--seed-idx=")).empty()) { a.seedIdx = std::strtoull(v.c_str(), nullptr, 10); }
+        else if (!(v = val("--hz=")).empty()) { a.hz = std::strtoull(v.c_str(), nullptr, 10); }
+        else if (!(v = val("--profile-rounds=")).empty()) { a.profileRounds = std::strtoull(v.c_str(), nullptr, 10); }
+        else if (!(v = val("--build-dir=")).empty()) { a.libDir = v; }
+        else if (s == "--candidate") { a.candidate = true; }
         else if (!(v = val("--corpus=")).empty()) { a.corpus = v; }
         else if (!(v = val("--probe=")).empty()) { a.probeFile = v; }
         else if (!(v = val("--rounds=")).empty()) { a.rounds = std::stoull(v); }
@@ -129,11 +150,13 @@ const MethodVariant kMethods[] = {
 struct ConfigVariant { const char* name; bench::Cfg cfg; };
 std::vector<ConfigVariant> configs(const Args& a) {
     std::vector<ConfigVariant> v;
-    if (a.allConfigs || !a.matched) {
+    const bool wantShip = a.configFilter.empty() || a.configFilter == "as-shipped";
+    const bool wantMatched = a.configFilter.empty() || a.configFilter == "matched-minimal";
+    if ((a.allConfigs || !a.matched) && wantShip) {
         bench::Cfg c; c.asShipped = true;
         v.push_back({"as-shipped", c});
     }
-    if (a.allConfigs || a.matched) {
+    if ((a.allConfigs || a.matched) && wantMatched) {
         bench::Cfg c; c.asShipped = false;   // shared subset: all extras OFF
         c.macroOn = false; c.restoreOn = false; c.spellCheckOn = false;
         c.freeMark = false; c.modernOrthography = false;
@@ -149,7 +172,40 @@ std::vector<bench::Which> driverSet(const std::string& filter = std::string()) {
                                      bench::Which::OpenKey205, bench::Which::OpenKeyMaster,
                                      bench::Which::UniKey};
     if (filter.empty()) { return all; }
-    return {bench::whichFrom(filter)};
+    // Each token is an alias (contest / rc1 / attrib / all) or one engine name,
+    // so "contest,attrib" is a legal union — the release campaign needs the
+    // rival pair and the attribution pair measured in the SAME rounds, or the
+    // gain figure would carry campaign-to-campaign drift. Duplicates are
+    // dropped: the same driver twice would double-count a round and quietly skew
+    // every paired statistic built on it.
+    std::vector<bench::Which> v;
+    auto add = [&v](bench::Which w) {
+        for (auto x : v) { if (x == w) { return; } }
+        v.push_back(w);
+    };
+    std::size_t pos = 0;
+    while (pos <= filter.size()) {
+        const std::size_t comma = filter.find(',', pos);
+        const std::string tok = filter.substr(pos, comma == std::string::npos ? std::string::npos
+                                                                             : comma - pos);
+        if (!tok.empty()) {
+            if (tok == "contest") { for (auto w : bench::kContest) { add(w); } }
+            else if (tok == "rc1") { for (auto w : bench::kRc1) { add(w); } }
+            else if (tok == "attrib") { for (auto w : bench::kAttrib) { add(w); } }
+            else if (tok == "all") { for (auto w : all) { add(w); } }
+            else { add(bench::whichFrom(tok)); }
+        }
+        if (comma == std::string::npos) { break; }
+        pos = comma + 1;
+    }
+    return v;
+}
+
+// The engine list a mode should time: --engines= when given, else the legacy
+// --engine= narrow, else the default four-way set.
+std::vector<bench::Which> driverSetFor(const Args& a) {
+    if (!a.drivers.empty()) { return driverSet(a.drivers); }
+    return driverSet(a.engineFilter);
 }
 
 std::FILE* g_out = nullptr;
@@ -821,6 +877,8 @@ void modeRobust(const Args& a) {
 
 }  // namespace
 
+#include "rc1.hpp"   // needs Args/configs()/driverSetFor() above
+
 int main(int argc, char** argv) {
     const Args a = parseArgs(argc, argv);
     g_out = a.out.empty() ? stdout : std::fopen(a.out.c_str(), "w");
@@ -834,6 +892,7 @@ int main(int argc, char** argv) {
     meta.addInt("t0_unix", static_cast<uint64_t>(std::time(nullptr)));
     meta.end();
 
+    if (rc1::isRc1Mode(a.mode)) { return rc1::run(a) ? 1 : 0; }
     if (a.mode == "selftest") { modeSelftest(a); }
     else if (a.mode == "correctness") { modeCorrectness(a); }
     else if (a.mode == "latency") { modeLatency(a); }

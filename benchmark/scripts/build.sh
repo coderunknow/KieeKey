@@ -7,8 +7,21 @@
 #   OpenKey latest : benchmark/reference/openkey-master (pristine upstream master)
 #   UniKey         : tests/reference/unikey (pristine upstream UKEngine)
 #
-# Same standard, same -O level, same warning flags for every engine — no
-# engine gets a private tuning. The two OpenKey builds are packaged as
+# Same standard, same -O level, same defines, same warning flags for every
+# engine — no engine gets a private tuning.
+#
+# The optimisation defaults mirror the PRODUCT build (CMake Release = -O3
+# -DNDEBUG), and that is not a cosmetic choice: TextEngine.cpp keeps its D2
+# root-invariant loop inside #ifndef NDEBUG, so a build without -DNDEBUG charges
+# KieeKey for debug bookkeeping the shipped binary never runs. BENCH_OPT and
+# BENCH_DEF override both, for sensitivity runs; whatever is in force is recorded
+# in the campaign's environment.txt and in docs/bench/rc1-130/baseline_manifest.json
+# (which reads them back out of this file, so it cannot claim flags this build
+# does not use).
+#
+# The attribution pair (libkkbase.so = frozen v1.2.2, libkkcand.so = this tree)
+# is built from ONE shim source with ONE set of flags, so the only difference
+# between the two columns is the engine translation unit behind it. The two OpenKey builds are packaged as
 # separate shared objects driven by one identical shim, because both define
 # the same global engine state; see harness/ok_shim.cpp.
 #
@@ -23,7 +36,8 @@ cd "$ROOT"
 BUILD="${BENCH_BUILD:-benchmark/.build}"
 CXX="${CXX:-g++}"
 STD="${BENCH_STD:--std=c++17}"
-OPT="${BENCH_OPT:--O2}"
+OPT="${BENCH_OPT:--O3}"
+DEF="${BENCH_DEF:--DNDEBUG}"
 WARN="-w"
 WITH_SAN=0
 for arg in "$@"; do
@@ -55,12 +69,16 @@ verify_pristine() {
     fi
 }
 verify_pristine "benchmark/reference/openkey-master" "OpenKey latest reference"
+# The v1.2.2 baseline copy is what libkkbase.so is built from. If it ever
+# differs from its recorded hashes, "identical to baseline" and the whole
+# gain-over-v1.2.2 column mean nothing, so the build stops instead.
+verify_pristine "benchmark/reference/kieekey-1.2.2" "KieeKey v1.2.2 baseline reference"
 
 build_variant() {
     local sfx="$1" extra="$2"
     local od="$BUILD/obj${sfx}"
     mkdir -p "$od"
-    local common="$STD $OPT $WARN $extra"
+    local common="$STD $OPT $DEF $WARN $extra"
 
     log "[$sfx] KieeKey engine (this working tree)"
     $CXX $common -I src/core -c src/core/TextEngine.cpp -o "$od/kk_TextEngine.o"
@@ -89,6 +107,22 @@ build_variant() {
     $CXX $common -fPIC -Dok205=okmaster -I tests -c "$HK/ok_shim.cpp" -o "$od/m_shim.o"
     $CXX $common -shared -o "$BUILD/libokmaster$sfx.so" "$od"/m_*.o
 
+    # ---- the v1.3.0 RC1 attribution pair: same shim, two engine TUs ----
+    log "[$sfx] KieeKey attribution pair (frozen v1.2.2 vs this tree)"
+    for side in base cand; do
+        if [ "$side" = base ]; then
+            edir="benchmark/reference/kieekey-1.2.2"
+        else
+            edir="src/core"
+        fi
+        $CXX $common -fPIC -fvisibility=hidden -DKK_BUILD_ID=kk_$side -I "$edir" \
+            -c "$edir/TextEngine.cpp" -o "$od/kk_${side}_engine.o"
+        $CXX $common -fPIC -fvisibility=hidden -DKK_BUILD_ID=kk_$side -I "$edir" \
+            -I "$HK" -c "$HK/kk_shim.cpp" -o "$od/kk_${side}_shim.o"
+        $CXX $common -shared -o "$BUILD/libkk${side}${sfx}.so" \
+            "$od/kk_${side}_engine.o" "$od/kk_${side}_shim.o"
+    done
+
     log "[$sfx] harness"
     $CXX $common -I src/core -I "$HK" -I "$REFUK" -c "$HK/bench.cpp" -o "$od/bench.o"
     local objs=("$od/bench.o" "$od/kk_TextEngine.o" "$od"/uk_*.o)
@@ -97,7 +131,17 @@ build_variant() {
         $CXX $STD $OPT $WARN -DBENCH_ALLOC_TRACK -I src/core -I "$HK" -I "$REFUK" \
              -c "$HK/bench.cpp" -o "$od/bench_mem.o"
         $CXX $common "$od/bench_mem.o" "$od/kk_TextEngine.o" "$od"/uk_*.o -ldl -o "$BUILD/bench_mem"
-        log "[$sfx] built $BUILD/bench, $BUILD/bench_mem, libok205.so, libokmaster.so"
+        # Debug-info twin of the engine object, used ONLY by bench_prof so the
+        # SIGPROF samples can be attributed to source lines inside the engine.
+        # Same flags plus -g: the profile ranks, and every decision is made on
+        # the plain binary above.
+        $CXX $common -g -fno-omit-frame-pointer -I src/core -c src/core/TextEngine.cpp \
+            -o "$od/kk_TextEngine_prof.o"
+        $CXX $common -g -fno-omit-frame-pointer -I src/core -I "$HK" -I "$REFUK" \
+            -c "$HK/bench.cpp" -o "$od/bench_prof.o"
+        $CXX $common -g -fno-omit-frame-pointer "$od/bench_prof.o" "$od/kk_TextEngine_prof.o" \
+            "$od"/uk_*.o -ldl -o "$BUILD/bench_prof"
+        log "[$sfx] built $BUILD/bench, $BUILD/bench_mem, $BUILD/bench_prof, libok205.so, libokmaster.so, libkkbase.so, libkkcand.so"
     else
         $CXX $common "${objs[@]}" -ldl -o "$BUILD/bench$sfx"
         log "[$sfx] built $BUILD/bench$sfx"

@@ -510,12 +510,23 @@ enum class Which : uint8_t {
     KieeKeyCtl = 1,     // A/A control: same engine, second instance
     OpenKey205 = 2,     // latest OpenKey release
     OpenKeyMaster = 3,  // latest OpenKey code (upstream master)
-    UniKey = 4          // UniKey UKEngine (4.x line)
+    UniKey = 4,         // UniKey UKEngine (4.x line)
+    // v1.3.0 RC1 attribution pair: the FROZEN v1.2.2 engine and the CURRENT
+    // tree, both built from benchmark/harness/kk_shim.cpp with identical flags
+    // and loaded side by side. A difference between these two columns is
+    // attributable to the engine change and to nothing else — campaign-to-
+    // campaign drift (host state, another day's binary) cannot enter, because
+    // they are measured in the same round of the same process.
+    KieeKeyBase = 5,
+    KieeKeyCand = 6
 };
 inline constexpr Which kAll[] = {Which::KieeKey, Which::KieeKeyCtl, Which::OpenKey205,
                                  Which::OpenKeyMaster, Which::UniKey};
 inline constexpr Which kContest[] = {Which::KieeKey, Which::OpenKey205,
                                      Which::OpenKeyMaster, Which::UniKey};
+inline constexpr Which kRc1[] = {Which::KieeKey, Which::KieeKeyCtl, Which::OpenKey205,
+                                 Which::OpenKeyMaster, Which::UniKey};
+inline constexpr Which kAttrib[] = {Which::KieeKeyBase, Which::KieeKeyCand};
 
 inline const char* whichName(Which w) {
     switch (w) {
@@ -524,6 +535,8 @@ inline const char* whichName(Which w) {
         case Which::OpenKey205: return "openkey-2.0.5";
         case Which::OpenKeyMaster: return "openkey-master";
         case Which::UniKey: return "unikey-4.x";
+        case Which::KieeKeyBase: return "kieekey-base";
+        case Which::KieeKeyCand: return "kieekey-cand";
     }
     return "?";
 }
@@ -533,8 +546,162 @@ inline Which whichFrom(const std::string& s) {
     if (s == "kieekey-aa") { return Which::KieeKeyCtl; }
     if (s == "openkey-2.0.5") { return Which::OpenKey205; }
     if (s == "openkey-master") { return Which::OpenKeyMaster; }
+    if (s == "unikey-4.x") { return Which::UniKey; }
+    if (s == "kieekey-base") { return Which::KieeKeyBase; }
+    if (s == "kieekey-cand") { return Which::KieeKeyCand; }
     return Which::UniKey;
 }
+
+//============================================================================
+// KieeKey attribution pair (v1.3.0 RC1)
+//============================================================================
+inline std::string kkLibPath(const char* which) {
+    const std::string envName = std::string("BENCH_LIB_KK") + which;
+    if (const char* e = std::getenv(envName.c_str()); e && *e) { return e; }
+    std::string sfx;
+#if defined(__SANITIZE_ADDRESS__)
+    sfx = "_san";
+#elif defined(__has_feature)
+#  if __has_feature(address_sanitizer)
+    sfx = "_san";
+#  endif
+#endif
+    return std::string("benchmark/.build/libkk") + which + sfx + ".so";
+}
+
+struct KkShimApi {
+    void* lib = nullptr;
+    void* h = nullptr;
+    void* (*open)() = nullptr;
+    void (*close)(void*) = nullptr;
+    void (*configure)(void*, int, int, int, int, int, int, int, int) = nullptr;
+    void (*prepare)(void*, unsigned, unsigned, int) = nullptr;
+    void (*invoke)(void*) = nullptr;
+    void (*result)(void*, int*, unsigned*, unsigned*, const wchar_t**, unsigned long long*) = nullptr;
+    void (*installMacro)(void*, const char*, const char*) = nullptr;
+    int (*noop)() = nullptr;
+    const char* (*buildId)() = nullptr;
+
+    bool load(const std::string& path, std::string& err) {
+        lib = ::dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
+        if (!lib) { err = ::dlerror(); return false; }
+        auto sym = [this](const char* n) { return reinterpret_cast<void*>(::dlsym(lib, n)); };
+        *reinterpret_cast<void**>(&open) = sym("kk_open");
+        *reinterpret_cast<void**>(&close) = sym("kk_close");
+        *reinterpret_cast<void**>(&configure) = sym("kk_configure");
+        *reinterpret_cast<void**>(&prepare) = sym("kk_prepare");
+        *reinterpret_cast<void**>(&invoke) = sym("kk_invoke");
+        *reinterpret_cast<void**>(&result) = sym("kk_result");
+        *reinterpret_cast<void**>(&installMacro) = sym("kk_install_macro");
+        *reinterpret_cast<void**>(&noop) = sym("kk_noop");
+        *reinterpret_cast<void**>(&buildId) = sym("kk_build_id");
+        if (!open || !configure || !prepare || !invoke || !result || !noop) {
+            err = "missing kk_* symbol in " + path;
+            return false;
+        }
+        h = open();
+        return h != nullptr;
+    }
+};
+
+class KieeKeyShimDriver final : public IDriver {
+public:
+    KieeKeyShimDriver(const char* nm, std::string libPath)
+        : name_(nm), libPath_(std::move(libPath)) {
+        std::string err;
+        loaded_ = api_.load(libPath_, err);
+        if (!loaded_) {
+            std::fprintf(stderr, "[harness] dlopen failed for %s: %s\n",
+                         libPath_.c_str(), err.c_str());
+        }
+    }
+    ~KieeKeyShimDriver() override {
+        if (api_.lib && api_.h && api_.close) { api_.close(api_.h); }
+    }
+    const char* name() const override { return name_; }
+    bool loaded() const { return loaded_; }
+    // Which engine tree this object was built from — written into every artifact
+    // row, so the report cannot claim the wrong build (and so a stale .so is
+    // visible in the data rather than in a footnote).
+    std::string buildId() const { return (loaded_ && api_.buildId) ? api_.buildId() : "?"; }
+    long long noopCall() const override {
+        if (!loaded_ || !api_.noop) { return -1; }
+        volatile int sink = 0;
+        for (int i = 0; i < 1000; ++i) { sink += api_.noop(); }
+        (void)sink;
+        return 0;
+    }
+
+    void configure(const Cfg& c) override {
+        if (!loaded_) { return; }
+        // digits are literal in Telex, not in VNI — the same rule the in-process
+        // KieeKeyDriver applies, so the two KieeKey columns agree by
+        // construction about what they were told to do.
+        const int digitsLiteral = (c.method == Method::Telex) ? 1 : 0;
+        api_.configure(api_.h, c.method == Method::Telex ? 0 : 1, c.asShipped ? 1 : 0,
+                       c.spellCheckOn ? 1 : 0, c.restoreOn ? 1 : 0, c.freeMark ? 1 : 0,
+                       c.modernOrthography ? 1 : 0, c.macroOn ? 1 : 0, digitsLiteral);
+        vis_.clear();
+    }
+
+    void installMacro(const std::string& key, const std::wstring& text) override {
+        if (!loaded_ || !api_.installMacro) { return; }
+        const std::string t = viet::utf16To8(text);
+        api_.installMacro(api_.h, key.c_str(), t.c_str());
+    }
+
+    // THE STAGE THAT WAS MISSING ONCE: prepare must reach the shim, or the
+    // engine is handed its default-constructed input on every key and both
+    // attribution columns measure an early-out instead of the engine. The
+    // rc1 selftest compares this column's transcript against the in-process
+    // KieeKey column and fails the campaign if they ever differ.
+    void prepare(const corpus::Event& e) override {
+        if (!loaded_) { return; }
+        kind_ = static_cast<unsigned>(e.kind);
+        ch_ = static_cast<unsigned>(e.ch);
+        caps_ = e.caps ? 1 : 0;
+        api_.prepare(api_.h, kind_, ch_, caps_);
+    }
+
+    void invoke() override { if (loaded_) { api_.invoke(api_.h); } }
+
+    // The consumer contract, applied identically to the in-process KieeKey
+    // column above (same three cases, same re-issue of a restored key). The
+    // attribution pair is only meaningful if the two columns differ in the
+    // engine translation unit and in NOTHING else — rc1.hpp's attrib-guard
+    // mode compares this transcript against the in-process one key by key and
+    // fails the campaign when they diverge.
+    void apply(const corpus::Event& e) override {
+        if (!loaded_) { return; }
+        int consumed = 0;
+        unsigned code = 0, backs = 0;
+        const wchar_t* txt = nullptr;
+        unsigned long long n = 0;
+        api_.result(api_.h, &consumed, &code, &backs, &txt, &n);
+        const std::wstring t(txt, txt + n);
+        const wchar_t ch = static_cast<wchar_t>(corpus::displayChar(e));
+        if (!consumed) {
+            if (e.kind == corpus::Kind::Backspace) {
+                if (!vis_.empty()) { vis_.pop_back(); }
+            } else {
+                vis_ += ch;
+            }
+            return;
+        }
+        applyEdit(vis_, backs, t);
+        if (code == static_cast<unsigned>(ok::text::EngineCode::Restore) ||
+            code == static_cast<unsigned>(ok::text::EngineCode::RestoreAndStartNewSession)) {
+            vis_ += ch;                 // char / space restore re-issue
+        }
+    }
+
+private:
+    const char* name_ = "kieekey-shim";
+    std::string libPath_;
+    bool loaded_ = false;
+    KkShimApi api_{};
+    unsigned kind_ = 0, ch_ = 0, caps_ = 0;
+};
 
 inline std::unique_ptr<IDriver> makeDriver(Which w) {
     switch (w) {
@@ -545,6 +712,10 @@ inline std::unique_ptr<IDriver> makeDriver(Which w) {
         case Which::OpenKeyMaster:
             return std::unique_ptr<IDriver>(new OpenKeyShimDriver("openkey-master", okLibPath("master")));
         case Which::UniKey: return std::unique_ptr<IDriver>(new UniKeyDriver("unikey-4.x"));
+        case Which::KieeKeyBase:
+            return std::unique_ptr<IDriver>(new KieeKeyShimDriver("kieekey-base", kkLibPath("base")));
+        case Which::KieeKeyCand:
+            return std::unique_ptr<IDriver>(new KieeKeyShimDriver("kieekey-cand", kkLibPath("cand")));
     }
     return nullptr;
 }

@@ -6,6 +6,7 @@ v1.2.1 campaign and must not be overwritten by v1.2.2 runs.
 
 | directory | campaign | documented in |
 |---|---|---|
+| `rc1-130/` | **v1.3.0 RC1** engine-decision benchmark + optimisation campaign (four-way, frozen-engine attribution pair) | [`rc1-130/PROTOCOL.md`](rc1-130/PROTOCOL.md) |
 | `stable-122/` | v1.2.2 Stable release campaign (independent-host re-verification + three-way 1.2.1/RC4/Stable) | this file, below |
 | `rc4-122/` | v1.2.2 RC4 stable-qualification campaign | this file, below |
 | `rc1-122/` | v1.2.2 RC1 engine A/B vs v1.2.1 Stable | this file, below |
@@ -14,6 +15,26 @@ v1.2.1 campaign and must not be overwritten by v1.2.2 runs.
 | `rc1/`, `rc2/` | v1.2.1 RC1-vs-RC2 | this file, below |
 | `rc3/` | v1.2.1 RC2-vs-RC3 | this file, below |
 | `stable/` | v1.2.1 RC3-vs-Stable | this file, below |
+
+## v1.3.0 RC1 (engine-decision benchmark + optimisation campaign)
+
+`rc1-130/` is a campaign directory with a different shape from the v1.2.2 ones: its raw
+artifacts live in [`benchmark/results/`](../../benchmark/results) (one directory per campaign
+run, JSON Lines + per-step logs + `tables.md`/`summary.json`), and what lives *here* is the
+method and the verdicts:
+
+| file | role |
+|---|---|
+| `PROTOCOL.md` | the pre-registered rules: passes, estimators, noise bands, tier vocabulary, gates, exclusions, deviations log |
+| `OPTIMIZATION_LEDGER.md` | every candidate with its ACCEPT/REJECT, including the rejected ones, and the rejections' reasons |
+| `baseline_manifest.json` | what a campaign measured: tree hashes, frozen-baseline hashes, flags, host facts |
+| `baseline_environment.txt` | the same facts in `k=v` form for the report generator |
+| `rc1-baseline/`, `rc1-ca4/` | per-campaign released trails (tables, gate log, environment) |
+
+The instruments are in [`benchmark/`](../../benchmark) — `scripts/campaign_rc1.sh` runs a
+campaign, `scripts/rc1_gates.py` decides pass/fail, `scripts/rc1_stats.py` produces the
+tables, and `benchmark/REPORT.rc1.md` is generated from those artifacts and refuses to
+render a number it cannot resolve.
 
 ## v1.2.2 Stable (release campaign)
 

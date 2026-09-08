@@ -54,7 +54,7 @@ Correctness gates: **{{gatesummary}}**. Each gate is pass/fail, not a number to 
 | What does a user feel per keystroke, including the producer→consumer hop and text replacement? | L2 `--mode=latency`: per-key sample distribution (p50…p999, worst sample), KieeKey only for the pipeline part, with the `prep_ns_per_key` split published separately | measured below |
 | How much does the IME cost inside a real Windows session (TSF, hook chain, terminal/editor behaviour)? | — | **NOT MEASURED.** The competitors' production path is Windows-only and is not exercised here; no number in this document may be read as an end-to-end product comparison, and none is extrapolated from engine timing |
 | Same question for KieeKey's own product pipeline | its own harness | measured separately, reported as a KieeKey-side figure only, never compared against the competitors' unmeasured path |
-| Hardware counters (`perf`), callgrind-style attribution | `{{env:perf}}` / `{{env:valgrind}}` | **NOT AVAILABLE** in this container (seccomp blocks `perf_event_open`). Attribution is done with a `SIGPROF` sampling twin instead, and its limits are stated in §9 |
+| Hardware counters, callgrind-style attribution | `perf`: {{env:perf}} · `valgrind`: {{env:valgrind}} | **NOT AVAILABLE** here. Attribution uses a `SIGPROF` sampling twin instead, and §9 states what that can and cannot resolve |
 
 Two instruments in this repository report a quantity called "ns per key" and they are **not**
 comparable: L1 is throughput of the decision call inside one process; the v1.2.2-era per-key
@@ -222,7 +222,7 @@ a debug build's inlining):
 {{table:rc1_profile}}
 
 The optimisation ledger turns these shares into candidates with expected effects, and records what
-each one measured. Rejected candidates stay in the ledger: {{stat:candidate_verdict.note}}.
+each one measured — including the ones that lost, because a record of only successes teaches nothing.
 
 ---
 
@@ -269,7 +269,7 @@ git rev-parse HEAD                     # {{stat:manifest.git.git_head}}
 dirty src/                             # {{env:dirty_src}}
 ./benchmark/scripts/build.sh --sanitizers
 python3 benchmark/scripts/baseline_manifest.py
-./benchmark/scripts/campaign_rc1.sh --name={{env:campaign}} {{stat:campaign.flags}} \
+./benchmark/scripts/campaign_rc1.sh --name={{env:campaign}} --candidate \
     --sessions={{env:sessions}} --rounds={{env:rounds}} --keys={{env:keys}} \
     --words={{env:words}} --engines={{env:engines}}
 ```

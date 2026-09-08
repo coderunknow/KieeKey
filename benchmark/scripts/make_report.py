@@ -43,7 +43,11 @@ def load_json(path):
 def load_tables(path):
     txt = open(path, encoding="utf-8").read()
     out = {}
-    for m in re.finditer(r"<<<TABLE:([a-z_]+)>>>\n(.*?)\n<<<END>>>", txt, re.S):
+    # [a-z0-9_] : the RC1 tables are named rc1_l1 / rc1_l2 / rc1_corr_cells, and a
+    # pattern without digits silently loaded *no* tables — the report then failed
+    # (or, worse, an older generator variant printed nothing). Names with digits
+    # are the norm now, so the pattern has to match them.
+    for m in re.finditer(r"<<<TABLE:([a-z0-9_]+)>>>\n(.*?)\n<<<END>>>", txt, re.S):
         out[m.group(1)] = m.group(2).strip("\n")
     return out
 
@@ -354,6 +358,8 @@ class Report:
             for part in arg.split("."):
                 if isinstance(node, dict):
                     node = node.get(part)
+                elif isinstance(node, list) and part.lstrip("-").isdigit():
+                    node = node[int(part)] if abs(int(part)) < len(node) else None
                 elif isinstance(node, list):
                     # list[<key>=<value>].<field> selects a row
                     sel, _eq, want = part.partition("=")

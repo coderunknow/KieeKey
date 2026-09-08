@@ -442,6 +442,7 @@ def main():
             ent["allocs_per_megakey_" + cfg.replace("-", "_")] = (al / float(soak) * 1e6) if soak else None
             ent["rss_mib_" + cfg.replace("-", "_")] = (r.get("rss_after_soak") or 0) / 1048576.0
             ent["bytes_per_key_" + cfg.replace("-", "_")] = ((r.get("bytes_soak") or 0) / float(soak)) if soak else None
+            ent["soak_keys"] = soak
         summary["memory"][alias(e)] = ent
         mem_labels[alias(e)] = e
     summary["memory_labels"] = mem_labels

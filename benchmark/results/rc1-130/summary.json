@@ -28571,6 +28571,14 @@
   "rel_pct": 11.283294679879123,
   "tier": "MIXED"
  },
+ "profile": {
+  "delivered_hz": 249.8,
+  "keys": 143094720,
+  "note": "delivered = samples / measured window; the gap to the requested rate is the kernel tick (CONFIG_HZ) limiting ITIMER_PROF, not the harness",
+  "requested_hz": 1000,
+  "samples": 2669,
+  "window_s": 10.68
+ },
  "rival": "unikey-4.x",
  "robust": [
   {

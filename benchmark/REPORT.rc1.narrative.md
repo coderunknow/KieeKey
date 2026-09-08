@@ -253,9 +253,11 @@ tidy. `{{gate:attrib-guard}}` is now a gate precisely so that failure cannot com
 
 ## 9. Where the time actually goes
 
-Sampling profile of the same binary the campaign times, symbolised with line info from a
-`-g -fno-omit-frame-pointer` twin (so the ranks come from the measured optimisation level, not from
-a debug build's inlining):
+Sampling profile of the measured code path, symbolised with line info from a twin built
+`-O3 -g -fno-omit-frame-pointer -no-pie` — the same optimisation level as the campaign (so the ranks
+are not a debug build's inlining), linked non-PIE because raw counters are resolved against the
+`nm` addresses an ASLR-slid image would otherwise miss, and bounded by symbol *extents* rather than
+a fixed window:
 
 {{table:rc1_profile}}
 
@@ -271,14 +273,19 @@ each one measured — including the ones that lost, because a record of only suc
   ({{env:pin_note}}); the neighbour core carries the host's noise. A 2-core box cannot give the
   isolation a dedicated machine would, which is why the A/A control and the order control are
   published next to every effect rather than a claim that noise is negligible.
-* `{{env:perf}}` and `{{env:valgrind}}`: hardware counters and callgrind attribution are
-  **NOT AVAILABLE**; §9 is a `SIGPROF` sample (kernel-side ~250 Hz cap on `ITIMER_PROF` is bypassed
-  with `setitimer(ITIMER_PROF)` at the requested rate, but sample counts remain an estimate — treat a
-  1 % share as ±1 %).
+* Hardware counters and callgrind-style attribution are **NOT AVAILABLE** here
+  (`perf`: {{env:perf}} · `valgrind`: {{env:valgrind}}), so §9 is a sampling profile of a
+  identically-optimised twin (`-O3`, plus `-g -fno-omit-frame-pointer -no-pie` for attribution).
+  Its clock is not what we asked for, and the report says so plainly: the harness requests **{{stat:profile.requested_hz}} Hz** and the run delivered
+  **{{stat:profile.delivered_hz}} Hz** ({{stat:profile.samples}} samples over
+  {{stat:profile.window_s}} s), because `ITIMER_PROF` fires on the kernel tick
+  (`CONFIG_HZ`), not on demand. That does not bias which function is hottest — it bounds how finely
+  a share is resolved, which is why every share in §9 is quoted as a rank and a 1 % share must be
+  read as ±1 %, and why no candidate was ever scored against a predicted share.
 * CPU frequency governor `{{stat:manifest.environment.governor}}`; transparent huge pages
   `{{stat:manifest.environment.thp}}`; CPU mitigations
   `{{stat:manifest.environment.mitigations}}`; kernel
-  `{{stat:manifest.environment.kernel}}`. If these differ from the shipping If these differ from the shipping
+  `{{stat:manifest.environment.kernel}}`. If these differ from the shipping
   environment, absolute ns move; the *paired* differences in §3 and §8 are the robust part.
 * KieeKey's `TextEngine` is compiled here as the library the product builds; no benchmark-only
   source is added to `src/core`, and the two vendored competitor engines are verified pristine by

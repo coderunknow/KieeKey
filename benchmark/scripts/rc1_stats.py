@@ -420,6 +420,26 @@ def main():
                            "tier": (other.get("verdict") or {}).get("tier")}
         break
 
+    # What the sampler actually delivered, so the report can state the limit instead of
+    # asserting that a 1 kHz request was honoured: on this kernel the samples arrive on
+    # the CONFIG_HZ tick, and the count/window pair proves it.
+    pmetas = [r for r in rows if r.get("mode") == "profile-meta"
+              and r.get("engine") == SUBJECT and r.get("config") == "as-shipped"]
+    if pmetas:
+        pm = pmetas[0]
+        win = float(pm.get("window_ns") or 0.0)
+        n = int(pm.get("samples") or 0)
+        summary["profile"] = {
+            "requested_hz": int(pm.get("hz") or 0),
+            "delivered_hz": round(n / (win / 1e9), 1) if win else 0,
+            "samples": n, "window_s": round(win / 1e9, 2),
+            "keys": int(pm.get("keys") or 0),
+            "note": "delivered = samples / measured window; the gap to the requested rate is "
+                    "the kernel tick (CONFIG_HZ) limiting ITIMER_PROF, not the harness",
+        }
+    else:
+        summary["profile"] = {}
+
     summary["manifest"] = {
         "path": a.manifest,
         "git": man.get("git", {}),

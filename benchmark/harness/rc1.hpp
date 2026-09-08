@@ -445,8 +445,12 @@ inline int modeTimer(const Args& a, std::FILE* out) {
     j.addF("pair_max_ns", static_cast<double>(pairAg.mx), 0);
     j.addF("pair_mean_ns", pairAg.mean(), 2);
     j.end();
+    // pct() returns an integer count of nanoseconds: it must be cast before it
+    // meets %f, or the varargs read prints 0 (the JSON artifact was always right;
+    // a display-only defect still misleads the person watching a campaign run).
     std::printf("[timer] clock pair: res=%s min=%llu med=%.0f p99=%.0f ns\n", buf,
-                (unsigned long long)pairAg.mn, pairAg.pct(0.50), pairAg.pct(0.99));
+                (unsigned long long)pairAg.mn, static_cast<double>(pairAg.pct(0.50)),
+                static_cast<double>(pairAg.pct(0.99)));
     return 0;
 }
 

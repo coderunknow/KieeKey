@@ -74,6 +74,8 @@ def rate(v):
 
 class Report:
     def __init__(self, res, ref=None):
+        self.res = res
+        self.strict_stat = False
         self.s = load_json(os.path.join(res, "summary.json"))
         if self.s is None:
             sys.exit(f"missing {res}/summary.json — run scripts/summarize.py first")
@@ -83,6 +85,75 @@ class Report:
         self.refTables = load_tables(os.path.join(ref, "tables.md")) if ref else {}
 
     # ---------------------------------------------------------------- lookups --
+    # v1.3.0 RC1 artifacts. These read the summary the RC1 campaign writes
+    # (cells / gain / latency_cells / verdict) instead of the v1.2.2 shapes, and
+    # the gate log, so the report can quote a verdict without anyone retyping it.
+    def gate(self, name):
+        path = os.path.join(self.res, "logs", "gates.txt")
+        if not os.path.isfile(path):
+            return None
+        hit = None
+        for line in open(path, encoding="utf-8"):
+            if f"gate:{name}:" in line:
+                hit = line.strip()
+        if hit is None:
+            return None
+        # "[2026-..Z] gate:name: PASS — detail" -> "name: PASS — detail"
+        return hit.split(f"gate:{name}:", 1)[1].strip(" -")
+
+    def gates_summary(self):
+        path = os.path.join(self.res, "logs", "gates.txt")
+        if not os.path.isfile(path):
+            return "no gate log"
+        lines = [l.strip() for l in open(path, encoding="utf-8") if ": gate:" in l]
+        ok = sum(1 for l in lines if ": PASS" in l)
+        bad = [l.split("gate:", 1)[1] for l in lines if ": FAIL" in l]
+        out = f"{ok} of {len(lines)} gates PASS"
+        if bad:
+            out += "; FAILED: " + " | ".join(bad)
+        return out
+
+    @staticmethod
+    def _cell(summary, block, key, *path):
+        node = (summary or {}).get(block, {})
+        if key not in node and "|" in key:
+            key = "|".join(key.split("|"))          # keys are cfg|method|stream verbatim
+        node = node.get(key)
+        if node is None:
+            return None
+        for part in path:
+            if isinstance(node, dict):
+                node = node.get(part)
+            else:
+                return None
+        return node
+
+    def cell(self, key, engine, field):
+        v = self._cell(self.s, "cells", key, engine, field)
+        return num(v, 2) if isinstance(v, float) else ("n/a" if v is None else num(v))
+
+    def dcell(self, key, field):
+        v = self._cell(self.s, "cells", key, "d", field)
+        return num(v, 2) if isinstance(v, float) else ("n/a" if v is None else num(v))
+
+    def gaincell(self, key, field):
+        v = self._cell(self.s, "gain", key, field)
+        return num(v, 2) if isinstance(v, float) else ("n/a" if v is None else num(v))
+
+    def l2cell(self, key, engine, field):
+        v = self._cell(self.s, "latency_cells", key, engine, field)
+        return num(v, 2) if isinstance(v, float) else ("n/a" if v is None else num(v))
+
+    def regressing(self, limit=None):
+        cells = ((self.s or {}).get("verdict") or {}).get("regressing_cells") or []
+        if not cells:
+            return "none"
+        shown = cells if limit is None else cells[:limit]
+        txt = " · ".join(c.replace("|", " / ") for c in shown)
+        if limit is not None and len(cells) > limit:
+            txt += f" (+{len(cells) - limit} more — see the cell table)"
+        return txt
+
     def corr(self, cfg, method, cat, engine, field):
         for r in self.s.get("correctness", []):
             if (r["config"], r["method"], r["cat"], r["engine"]) == (cfg, method, cat, engine):
@@ -223,7 +294,10 @@ class Report:
             return None
         parts = arg.split("|")
         if kind == "table":
-            return self.t.get(parts[0], f"MISSING TABLE {parts[0]}")
+            # None (not a "MISSING TABLE" string) so the unresolved-token check
+            # below fails the build: a table that was never generated must not
+            # render as prose that looks like a measurement.
+            return self.t.get(parts[0])
         if kind == "meta":
             v = self.s.get("meta", {}).get(parts[0])
             if parts[0] == "t0_unix" and v:
@@ -294,7 +368,41 @@ class Report:
                 return ", ".join(f"{k}={v}" for k, v in sorted(node.items()))
             if isinstance(node, float):
                 return num(node, 2)
+            if node is None and getattr(self, "strict_stat", False):
+                return None
             return "n/a" if node is None else str(node)
+        if kind == "gate":
+            return self.gate(arg)
+        if kind == "gatesummary" and not arg:
+            return self.gates_summary()
+        if kind == "cell":
+            cfg, method, stream, engine, field = arg.split("|")
+            return self.cell(f"{cfg}|{method}|{stream}", engine, field)
+        if kind == "dcell":
+            cfg, method, stream, field = arg.split("|")
+            return self.dcell(f"{cfg}|{method}|{stream}", field)
+        if kind == "gaincell":
+            cfg, method, stream, field = arg.split("|")
+            return self.gaincell(f"{cfg}|{method}|{stream}", field)
+        if kind == "l2cell":
+            cfg, method, stream, engine, field = arg.split("|")
+            return self.l2cell(f"{cfg}|{method}|{stream}", engine, field)
+        if kind == "regressing":
+            return self.regressing(int(arg) if arg.isdigit() else None)
+        if kind == "statlist":
+            node = self.s
+            for part in arg.split("."):
+                node = node.get(part) if isinstance(node, dict) else None
+            if node is None:
+                return "n/a"
+            if isinstance(node, list):
+                return " · ".join(str(x).replace("|", " / ") for x in node) or "none"
+            return str(node)
+        if kind == "statcount":
+            node = self.s
+            for part in arg.split("."):
+                node = node.get(part) if isinstance(node, dict) else None
+            return str(len(node) if isinstance(node, (list, dict)) else 0)
         if kind == "paired":
             return self.paired()
         if kind == "campaign":
@@ -307,14 +415,22 @@ def main():
     ap.add_argument("--campaign", required=True)
     ap.add_argument("--ref", default="", help="second campaign dir name, for the noise band")
     ap.add_argument("--out", default="benchmark/REPORT.md")
+    ap.add_argument("--narrative", default="benchmark/REPORT.narrative.md",
+                    help="template with the prose; the RC1 report uses "
+                         "benchmark/REPORT.rc1.narrative.md")
+    ap.add_argument("--strict-stat", action="store_true",
+                    help="an unresolvable {{stat:…}} path fails the build instead of "
+                         "rendering as 'n/a' — the RC1 report uses this, because 'n/a' "
+                         "in a prose sentence reads uncomfortably like a measurement")
     a = ap.parse_args()
 
     res = os.path.join(ROOT, "benchmark", "results", a.campaign)
     refdir = os.path.join(ROOT, "benchmark", "results", a.ref) if a.ref else None
-    narr = os.path.join(ROOT, "benchmark", "REPORT.narrative.md")
+    narr = os.path.join(ROOT, a.narrative)
     if not os.path.exists(narr):
         sys.exit(f"missing {narr}")
     rep = Report(res, refdir)
+    rep.strict_stat = a.strict_stat
     text = open(narr, encoding="utf-8").read()
 
     missing = []

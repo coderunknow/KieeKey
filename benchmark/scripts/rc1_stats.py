@@ -184,14 +184,24 @@ TIERS = {
 
 
 def verdict_for(cells, aa_band_ns, deciding=DECIDING_DEFAULT, band_rel=1.0):
-    """Protocol §15: the deciding cell sets the tier, and ANY cell where the
-    subject is slower by more than the noise band cancels a win claim.
+    """Tier rules (docs/bench/rc1-130/PROTOCOL.md §6), stated exactly as coded.
 
-    The band is 2 x the A/A *median* |difference| — not the A/A p99. A p99-sized
-    band would be ~30 ns on this host and would relabel a genuine 10 % loss as a
-    tie, which is the opposite of what a noise band is for: it must absorb the
-    instrument, not the effect. The tails stay published (tables) so the reader
-    can see what the band rejected.
+    A cell REGRESSES when its paired median difference is positive and larger
+    than the A/A control's own median |difference| — 1x, not 2x. The A/A column
+    is two instances of identical code, so anything it cannot explain is not
+    noise; using 2x here would be choosing the forgiving constant at the moment
+    it flatters the subject. (The candidate-acceptance rule does use 2x, for the
+    opposite purpose: refusing to discard a change over a two-nanosecond blip.
+    Both constants are stated here so neither can be quietly swapped.)
+
+    The band is deliberately the *median*, not the A/A p99. A p99-sized band
+    would be ~30 ns on this host and would relabel a genuine 10 % loss as a tie;
+    it must absorb the instrument, not the effect. Tails stay published in the
+    tables so a reader can see what the band rejected.
+
+    Tier A additionally requires a >= 5 % win in the deciding cell with the
+    bootstrap CI excluding zero AND zero regressing cells — one regressing cell
+    demotes a claimed win to B, and a mixed picture across cells says MIXED.
     """
     if not cells:
         return "NONE", None, 0, []
@@ -240,6 +250,10 @@ def main():
     ap.add_argument("--results", required=True)
     ap.add_argument("--rival", default=RIVAL_DEFAULT)
     ap.add_argument("--deciding", default=DECIDING_DEFAULT)
+    ap.add_argument("--manifest", default="docs/bench/rc1-130/baseline_manifest.json",
+                    help="the build manifest; the report quotes the toolchain out of it "
+                         "rather than re-reading build.sh, so a report can never advertise "
+                         "flags that the build did not use")
     ap.add_argument("--aa-engine", default="kieekey-aa",
                     help="the A/A control column (a second instance of the subject engine, "
                          "identical code) whose spread defines the noise band; pass '' to "
@@ -277,6 +291,36 @@ def main():
                                  (-d["ci_lo"]) if d.get("ci_lo") is not None else None],
                           "n": d.get("n"), "wins": d.get("wins"), "losses": d.get("losses")}
 
+    # ---- candidate accept/reject, computed by the pre-registered rule -------
+    # (docs/bench/rc1-130/PROTOCOL.md §"candidate acceptance"). A candidate is
+    # ACCEPTed only if, in the deciding cell, it is faster than the frozen engine
+    # with a bootstrap CI that excludes zero, AND no cell is slower than the frozen
+    # engine by more than 2 x the A/A band. The second clause is what stops a 4 %
+    # average win from hiding a 9 % regression on edit-storms; it is evaluated on
+    # the SAME rounds, so campaign drift cannot rescue a bad candidate.
+    g_dec = dict(gain.get(a.deciding) or {})
+    band_ns = float(aa_band or 0.0)
+    worse = sorted(n for n, v in gain.items()
+                   if v.get("gain_ns") is not None and v["gain_ns"] < -2.0 * band_ns)
+    ci = g_dec.get("ci") or [None, None]
+    positive_ci = ci[0] is not None and ci[0] > 0
+    accept = (g_dec.get("gain_ns") or 0.0) > 0 and positive_ci and not worse
+    summary["candidate_verdict"] = {
+        "rule": ("ACCEPT iff deciding-cell gain > 0 with 95 % CI excluding 0, and no cell "
+                 "regressing by more than 2 x the A/A median band"),
+        "accept": bool(accept),
+        "decision": "ACCEPT" if accept else "REJECT",
+        "deciding_cell": a.deciding,
+        "deciding_gain_ns": g_dec.get("gain_ns"),
+        "deciding_gain_pct": g_dec.get("gain_pct"),
+        "deciding_ci_ns": ci,
+        "band_ns": band_ns,
+        "cells_regressing_beyond_band": worse,
+        "cells_measured": len(gain),
+        "note": ("a REJECT here is a measurement outcome, not a discarded file: the code, "
+                 "its numbers and the reason stay in OPTIMIZATION_LEDGER.md"),
+    }
+
     summary = {"campaign": os.path.basename(a.results.rstrip("/")),
                "cells": cells, "gain": gain, "rival": a.rival,
                "deciding_cell": a.deciding, "aa_band_ns": aa_band,
@@ -288,15 +332,148 @@ def main():
     def collect(mode, fields):
         return [r for r in rows if r.get("mode") == mode]
 
+    # the campaign's own header row (corpus, seed, counts) rides along so the
+    # report can state what was measured without parsing JSONL at render time
+    summary["meta"] = (collect("meta", 1) or [{}])[0]
+
+    man = {}
+    mpath = os.path.join(ROOT, a.manifest)
+    if os.path.isfile(mpath):
+        with open(mpath, encoding="utf-8") as f:
+            man = json.load(f)
+    if not man:
+        print(f"[stats] WARNING: no manifest at {a.manifest} — the report cannot state which "
+              f"build produced these numbers; run baseline_manifest.py")
+    tree = man.get("engine_sources_sha256") or {}
+    base = man.get("baseline_engine_sources_sha256") or {}
+    summary["manifest"] = {
+        "path": a.manifest,
+        "git": man.get("git", {}),
+        "toolchain": man.get("toolchain", {}),
+        "product_version": man.get("product_version"),
+        "n_engine_sources_tree": len(tree),
+        "n_engine_sources_baseline": len(base),
+        "n_identical_to_baseline": sum(1 for k, v in base.items() if tree.get(k) == v),
+        "n_differing_from_baseline": sorted(k for k, v in base.items() if tree.get(k) != v),
+        "environment": man.get("environment", {}),
+    }
     summary["timer"] = (collect("timer", 1) or [{}])[0]
     summary["attrib_guard"] = (collect("attrib-guard", 1) or [{}])[0]
     summary["walks"] = (collect("walks-selftest", 1) or [{}])[0]
     summary["cold"] = collect("cold", 1)
     summary["diffab"] = collect("diffab", 1)
     summary["latency"] = collect("latency", 1)
+    # L2 rows are per (cell, engine, round); the report needs the same
+    # median-over-rounds shape L1 has, otherwise prose would have to quote one
+    # arbitrary round. Tails are medians of the per-round tails, and the worst
+    # single sample is published next to them so a reader can see the difference
+    # between "the tail is usually this" and "the tail once reached this".
+    L2_FIELDS = ("p50_ns", "p90_ns", "p99_ns", "p999_ns", "mean_sample_ns", "max_sample_ns",
+                 "engine_ns_per_key", "engine_core_net_ns", "prep_ns_per_key", "full_ns_per_key")
+    lat_cells = {}
+    for r in summary["latency"]:
+        name = "|".join(str(r.get(x)) for x in ("config", "method", "stream"))
+        per = lat_cells.setdefault(name, {}).setdefault(r.get("engine"), {})
+        for fn in L2_FIELDS:
+            if r.get(fn) is not None:
+                per.setdefault(fn, []).append(float(r[fn]))
+    for name, eng in lat_cells.items():
+        for e, fields in eng.items():
+            med_by_field = {fn: med(v) for fn, v in fields.items()}
+            med_by_field["rounds"] = len(fields.get("p50_ns") or [])
+            med_by_field["max_seen_ns"] = max(fields.get("max_sample_ns") or [0])
+            lat_cells[name][e] = med_by_field
+    summary["latency_cells"] = lat_cells
     summary["mem"] = collect("mem", 1)
     summary["correctness"] = collect("example", 1)
     summary["robust"] = collect("robust", 1)
+
+    # ---- correctness rates per engine ----------------------------------------
+    # Two different questions are answered side by side, because conflating them
+    # is how a benchmark starts advertising "no bugs":
+    #   exact            — the engine produced the intended text
+    #   agrees_with_this_kieekey — the engine produced the same text as the
+    #                       subject of this campaign (which is NOT the same as
+    #                       being correct: all four can be wrong together)
+    #   flagged_ok       — the harness's own per-key verdict, when the row carries
+    #                       one (no crash / no rejected composition), kept separate
+    #                       from the linguistic judgement on purpose
+    def rate_block(rows, eng):
+        n = len(rows)
+        exact = sum(1 for r in rows if r.get("out_" + eng) == r.get("intended"))
+        out = {"rows": n, "exact": exact, "problems": n - exact,
+               "exact_rate": (exact / float(n)) if n else None}
+        if rows and ("ok_" + eng) in rows[0]:
+            out["flagged_ok"] = sum(1 for r in rows
+                                    if str(r.get("ok_" + eng)).lower() in ("true", "1", "yes"))
+        if eng != SUBJECT and rows and "out_" + SUBJECT in rows[0]:
+            out["agrees_with_" + SUBJECT] = sum(1 for r in rows
+                                                if r.get("out_" + eng) == r.get("out_" + SUBJECT))
+        return out
+
+    engines_in_rows = sorted({k[4:] for r in summary["correctness"] for k in r
+                              if k.startswith("out_")})
+    per_cell_corr = {}
+    for r in summary["correctness"]:
+        per_cell_corr.setdefault((r.get("config"), r.get("method")), []).append(r)
+    summary["correctness_rates"] = {
+        "|".join(str(x) for x in k): {e: rate_block(rs, e) for e in engines_in_rows}
+        for k, rs in sorted(per_cell_corr.items())}
+    summary["correctness_overall"] = {e: rate_block(summary["correctness"], e)
+                                      for e in engines_in_rows}
+
+    # ---- memory: one row per engine, for prose tokens -----------------------
+    # Engine names are dotted into the summary for {{stat:…}} lookups, and
+    # "unikey-4.x" would break a dotted path, so keys here are the same names with
+    # dots turned into underscores. The tables keep the real engine names.
+    alias = lambda e: str(e).replace(".", "_").replace("-", "_")
+    mem_by = {}
+    for r in summary["mem"]:
+        mem_by.setdefault(r.get("engine"), {})[r.get("config")] = r
+    summary["memory"] = {}
+    mem_labels = {}
+    for e, per in sorted(mem_by.items()):
+        ent = {}
+        for cfg in ("as-shipped", "matched-minimal"):
+            r = per.get(cfg) or {}
+            soak = int(r.get("soak_keys") or 0)
+            al = int(r.get("alloc_soak") or 0)
+            ent["allocs_" + cfg.replace("-", "_")] = al
+            ent["allocs_per_megakey_" + cfg.replace("-", "_")] = (al / float(soak) * 1e6) if soak else None
+            ent["rss_mib_" + cfg.replace("-", "_")] = (r.get("rss_after_soak") or 0) / 1048576.0
+            ent["bytes_per_key_" + cfg.replace("-", "_")] = ((r.get("bytes_soak") or 0) / float(soak)) if soak else None
+        summary["memory"][alias(e)] = ent
+        mem_labels[alias(e)] = e
+    summary["memory_labels"] = mem_labels
+    summary["memory_note"] = ("alloc_soak counts allocations made by the harness driver plus the "
+                              "engine over a soak of soak_keys keys; the engine itself is expected "
+                              "to contribute a constant, not a per-key cost")
+
+    # ---- list-artifacts reduced to the totals the report quotes -------------
+    # A template cannot sum a JSONL array, and "n/a" where a total should be is
+    # how a report starts quietly understating how much evidence exists.
+    dif = summary["diffab"]
+    summary["diffab_totals"] = {
+        "rows": len(dif),
+        "events": sum(int(r.get("events") or 0) for r in dif),
+        "per_key_mismatches": sum(int(r.get("per_key_mismatches") or 0) for r in dif),
+        "final_text_equal": bool(dif) and all(r.get("final_text_equal") for r in dif),
+        "builds": sorted({str(r.get("subject_build")) + " vs " + str(r.get("rival_build"))
+                          for r in dif}),
+    }
+    rob = summary["robust"]
+    summary["robust_totals"] = {
+        "rows": len(rob),
+        "ok": sum(1 for r in rob if r.get("outcome") == "ok"),
+        "crashes": sum(1 for r in rob if r.get("outcome") not in ("ok", None)),
+        "keys": sum(int(r.get("keys") or 0) for r in rob),
+        "outcomes": sorted({str(r.get("outcome")) for r in rob}),
+    }
+    corr = summary["correctness"]
+    summary["correctness_totals"] = {"rows": len(corr),
+                                     "configs": sorted({str(r.get("config")) for r in corr}),
+                                     "methods": sorted({str(r.get("method")) for r in corr}),
+                                     "categories": sorted({str(r.get("cat")) for r in corr})}
 
     # ---- fixed-lead vs rotated: is "who goes first" part of the answer? ------
     # The main table alternates the engine order every round, so a positional
@@ -384,12 +561,17 @@ def main():
             by.setdefault(k, []).append(r)
         rows_l2 = []
         for k, rs in sorted(by.items()):
-            p50 = med([r.get("p50_ns", 0) for r in rs])
-            p99 = med([r.get("p99_ns", 0) for r in rs])
-            mx = max(r.get("max_sample_ns", 0) for r in rs)
-            rows_l2.append([" · ".join(str(x) for x in k), f(p50), f(p99), f(mx),
-                            sum(r.get("n", 0) for r in rs)])
-        t["rc1_l2"] = table(["cell", "p50 ns", "p99 ns (median of rounds)", "max ns", "keys"], rows_l2)
+            rows_l2.append([" · ".join(str(x) for x in k),
+                            f(med([r.get("p50_ns", 0) for r in rs])),
+                            f(med([r.get("p90_ns", 0) for r in rs])),
+                            f(med([r.get("p99_ns", 0) for r in rs])),
+                            f(med([r.get("p999_ns", 0) for r in rs])),
+                            f(max(r.get("max_sample_ns", 0) for r in rs)),
+                            f(med([r.get("engine_core_net_ns", 0) for r in rs])),
+                            f(med([r.get("prep_ns_per_key", 0) for r in rs])),
+                            len(rs)])
+        t["rc1_l2"] = table(["cell", "p50 ns", "p90 ns", "p99 ns", "p999 ns", "worst sample ns",
+                             "engine core ns/key", "prep ns/key", "rounds"], rows_l2)
 
     if summary["cold"]:
         t["rc1_cold"] = table(["engine", "wall p50 ms", "wall min ms", "wall p95 ms", "wall max ms",
@@ -413,6 +595,33 @@ def main():
               f(v.get("shift_ns")), f(v.get("rel_rotated_pct"), 2), f(v.get("rel_fixed_pct"), 2),
               f(v.get("aa_shift_ns")), v.get("n_pairs")]
              for n, v in sorted(oe["per_cell"].items())])
+
+    if summary["memory"]:
+        t["rc1_mem"] = table(
+            ["engine", "allocs (as-shipped)", "allocs / megakey", "RSS MiB", "bytes / key",
+             "allocs (matched-minimal)", "allocs / megakey", "RSS MiB"],
+            [[summary["memory_labels"].get(e, e),
+              num(v.get("allocs_as_shipped")), f(v.get("allocs_per_megakey_as_shipped"), 3),
+              f(v.get("rss_mib_as_shipped"), 1), f(v.get("bytes_per_key_as_shipped"), 2),
+              num(v.get("allocs_matched_minimal")), f(v.get("allocs_per_megakey_matched_minimal"), 3),
+              f(v.get("rss_mib_matched_minimal"), 1)]
+             for e, v in sorted(summary["memory"].items())])
+    if summary["correctness_overall"]:
+        t["rc1_corr"] = table(
+            ["engine", "rows", "exact vs intended", "exact rate", "differs from intended"]
+            + (["agrees with kieekey"] if any("agrees_with_kieekey" in v for v in summary["correctness_overall"].values()) else []),
+            [[e, num(v.get("rows")), num(v.get("exact")),
+              f((v.get("exact_rate") or 0) * 100.0, 2) + " %", num(v.get("problems"))]
+             + ([f"{v.get('agrees_with_kieekey', 0) / max(v.get('rows', 1), 1) * 100.0:.2f} %"]
+                if "agrees_with_kieekey" in v else [])
+             for e, v in sorted(summary["correctness_overall"].items())])
+        rows_c = []
+        for name, per in sorted(summary["correctness_rates"].items()):
+            for e, v in sorted(per.items()):
+                rows_c.append([name.replace("|", " · "), e, num(v.get("rows")),
+                               f((v.get("exact_rate") or 0) * 100.0, 2) + " %",
+                               num(v.get("problems"))])
+        t["rc1_corr_cells"] = table(["cell", "engine", "rows", "exact rate", "non-intended"], rows_c)
 
     if summary["gain"] is not None and not gain:
         t["rc1_gain"] = ("_The attribution pair (kieekey-base / kieekey-cand) was not measured in this "
@@ -440,7 +649,10 @@ def main():
           f"A/A band {f(aa_band, 3)} ns")
     if regressing:
         print(f"[stats] regressing cells ({len(regressing)}): " + ", ".join(regressing[:6]))
+    cv = summary["candidate_verdict"]
     if gain:
+        print(f"[stats] candidate decision: {cv['decision']} (rule: {cv['rule']};"
+              f" {len(cv['cells_regressing_beyond_band'])} cell(s) regress beyond band)")
         g = gain.get(a.deciding) or {}
         print(f"[stats] gain over frozen v1.2.2 in the deciding cell: {f(g.get('gain_pct'), 2)} % "
               f"({f(g.get('base_ns'))} → {f(g.get('cand_ns'))} ns/key)")

@@ -225,3 +225,39 @@ dropped), `example` (worked divergences), `text`/`stress-digest`, `invariant`,
 
 `tables.md` is generated; `summary.json` is the machine-readable form of the same
 numbers that `make_report.py` splices into `REPORT.md`.
+
+## v1.3.0 RC1 — the optimisation campaign
+
+The v1.3.0 work is measured with a second, stricter layer in this directory, because "is the
+engine faster than the competitors" and "did *this change* make it faster" need different
+instruments:
+
+| file | what it is |
+|---|---|
+| `../docs/bench/rc1-130/PROTOCOL.md` | the pre-registered rules: passes, estimators, noise bands, tier vocabulary, gates, what is not measured |
+| `../docs/bench/rc1-130/OPTIMIZATION_LEDGER.md` | every candidate with its verdict, including the rejected ones |
+| `scripts/campaign_rc1.sh` | one campaign, fixed order, aborts on the first failed gate |
+| `scripts/rc1_gates.py` | pass/fail gates; every line lands in `results/<name>/logs/gates.txt` |
+| `scripts/rc1_stats.py` | paired-by-round, session-clustered statistics → `tables.md` + `summary.json` |
+| `scripts/baseline_manifest.py` | hashes the tree *and* the frozen v1.2.2 reference, plus the flags read out of `build.sh` |
+| `harness/rc1.hpp` | modes `tput`, `diffab`, `profile`, `timer`, `cold`, `walks`, `attrib-guard` |
+| `harness/kk_shim.cpp` | the attribution pair: `libkkbase.so` (frozen v1.2.2) vs `libkkcand.so` (this tree) through one shim |
+| `reference/kieekey-1.2.2/` | pristine previous-release engine sources, hash-verified — what "baseline" means |
+
+```bash
+./benchmark/scripts/campaign_rc1.sh --name=rc1-ca4 --candidate --sessions=6 --rounds=24 \
+    --keys=200000 --words=74000 --engines=contest,ctl,attrib
+python3 benchmark/scripts/rc1_stats.py --results=benchmark/results/rc1-ca4
+python3 benchmark/scripts/make_report.py --campaign=rc1-ca4 \
+    --narrative=benchmark/REPORT.rc1.narrative.md --out=benchmark/REPORT.rc1.md --strict-stat
+```
+
+New row kinds in the RC1 artifacts: `tput` (and `tput-lead`, fixed order), `diffab`,
+`attrib-guard`, `walks-selftest`, `timer`, `cold`, `profile-meta`/`profile-sample`, plus a
+`build` field on every timed row (`in-process`, `kk_base`, `kk_cand`) which is how a stale
+`.so` becomes visible instead of becoming a number.
+
+Two rules that are easy to break and hard to notice: **never run `build.sh` while a campaign is
+running** (it rebuilds the engine `.so`s from the live tree and would swap an engine mid-round),
+and **multi-invocation artifacts need `--append`** (the default `--out` truncates, which is how a
+108-row differential once became an 18-row one).

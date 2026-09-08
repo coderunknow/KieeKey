@@ -448,10 +448,19 @@ are paid once on a cold object and then earn. Root cause of the bad read: `cold`
 time and the campaign ran it in the same chunk as `sanitizers` and `robust`. Rule added to PROTOCOL §12;
 the artifact itself was left exactly as measured and the correction is prose beside the table.
 
-Open frontier after RC2: **P9** — folding spelling *verification* out of the profile would be worth
-~12 ns but is not a gate (the function publishes ranges the emit paths consume, so skipping the call corrupts
-valid text); it needs `checkSpelling` split into `ranges()` + `verdict()` — see plan §P9 for the analysis
-and for the two exact sub-levers pre-registered inside it.
+Open frontier after RC2: **P9, now bounded by measurement rather than by reading.** The cheap half of it
+was implemented and rejected (R11: coda non-adjudication, ~1.5 ns on prose, 8.67 % regression on
+`vni|pathological`, beyond band), which is the useful result — it says the ~12.8 ns attributed to
+`checkSpelling` is not one removable block. What is left inside the function is the nucleus work
+(`kVowelCombine` scan + `findAndCalculateVowel`), and that cannot be folded out of the profile at all: it
+publishes `spellingVowelStart_`/`spellingVowelEnd_`, which the emit paths read on every mark key, so a
+build that skipped it would corrupt *valid* text rather than merely accept invalid text. The leading
+cluster walk, the other half, is already memoised. So a full `ranges()` + `verdict()` split would be a
+restructure whose measurable ceiling is the ~2 ns of the bucket-walk overhead that R11 already tried to
+take — recorded here so the next cycle does not spend an evening discovering it. The two sub-levers
+pre-registered with P9 (end-consonant memo → R10, first-vowel buckets for the `kVowelCombine` loop) are
+likewise no longer free: the first is a measured cost, and the second has to beat the same ~0.7 ns of key
+construction that beat it, per the profile's flat line distribution (hottest single engine line 1.4 %)
 
 ### Closed by analysis rather than measurement: P1, P3, and most of P2
 `findAndCalculateVowel` is a backward scan that stops at the first consonant after the vowel run —
@@ -485,6 +494,8 @@ the campaign of record.
 | R3 | replace `FlatMap::find` with a dense 256-entry table | the dense table is 4× L1-resident for a lookup that is already register-cached after C-A; profile share did not justify it |
 | R4 | skip `checkSpelling` for words of length ≤ 2 | changes behaviour on `bâ`, `chê`-class inputs; correctness gates are not negotiable for a share this small |
 | R5 | batch two keystrokes per `process()` call | breaks the per-key contract the producers rely on (a key can arrive from a different window/context between the two) |
+| R10 | end-consonant walk memo, keyed on the cells the walk can read (`rc1-tailmemo`, 4×8) | the walk is only ≤3 bucket rows × ≤2 cells, so the key construction costs what the walk does: deciding cell **−0.673 ns (95 % CI [−1.061, −0.626], i.e. significantly slower, not "unresolved")**, 17 of 18 cells regressing. Reverted. The table's max row size being 2 is what killed it — the same fact that made the memo look provably safe makes it too small to pay for itself |
+| R11 | coda non-adjudication in the profile (`rc1-v13prof3`: `checkSpelling`'s end-consonant walk + the "ch"/"t" tone limits folded out, `spellingOK_` forced true) | worth ~1.5 ns on the prose cells (53.65 vs profile-B's 55.10 pooled, +25.62 % over frozen vs +23.79 %) but it **regresses `as-shipped\|vni\|pathological` by 8.67 % against frozen** (26.85 → 29.18 ns/key, beyond 2× the 0.771 ns band) and moves that stream's standing vs UniKey from +65.69 % to +73.84 %, because a word whose coda is invalid now *composes* — extra emit work — instead of being deferred. REJECT by the pre-registered rule; reverted; and it bounds plan P9 (see below) |
 | R9 | `undoHistory` as a runtime `EngineOptions` flag (implemented, then removed) | gating `saveWord()` on `opts_.undoHistory` put a load + branch on every key in the **strict** build to buy a knob that configuration never asked for — most of the 1.3 ns the fold saves, billed to the default. Replaced by `static constexpr useUndoSnapshot()`, verified by the strict object coming out byte-identical to v1.3.0-rc1's. The general rule: a knob on a hot-path defensive copy must be free to the configuration that leaves it alone, or it is not worth the copy |
 | C8 | per-slot result cache keyed on (word hash, slot) | falsified by the profile: the misses are near-universal during edit-storms, which is the only stream where the cache would have helped |
 

@@ -192,6 +192,16 @@ to keep working — end-consonant walk, the `kVowelCombine` loop), plus decide w
 when spelling is never wrong. That is a restructure of `checkSpelling` into `ranges()` + `verdict()`, not a
 gate.
 
+**Measured since (2026-09-08, `rc1-v13prof3`): the cheap half does not work.** The coda walk and the two
+tone limits were folded out behind `kProfileSkipsSpellingTail` — worth ~1.5 ns on every prose cell
+(53.65 vs profile-B's 55.10 pooled, +25.62 % over frozen) and free to the strict build (its object came out
+byte-identical to rc2's, as it must with a compile-time-false gate) — but `as-shipped|vni|pathological`
+regressed 8.67 % against frozen, beyond 2× the band, because a word with an illegal coda now *composes*
+instead of deferring, and that costs more than the adjudication did. REJECT, reverted, ledger R11. That
+also bounds the rest of this candidate: `checkSpelling` is not one removable block, and the nucleus work it
+spends its remaining time on publishes the vowel ranges the emit paths consume, so it cannot be skipped
+without corrupting valid text.
+
 Expected payoff if it is ever restructured that way: the profile would land near 44 ns/key against UniKey's
 61.5 on the deciding cell (−28 %), with the price being that invalid input composes instead of deferring —
 which is the product's namesake feature, so it needs an explicit owner sign-off rather than a benchmark

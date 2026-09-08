@@ -707,6 +707,20 @@ proof is also why `undoHistory` became compile-time-only: the first implementati
 flag per key and would have billed a load + branch to the strict build to buy a knob nobody in that
 configuration asked for.
 
+Two further levers were implemented past profile-B and **rejected by the pre-registered rule**, which is
+why profile-B is the shipped configuration rather than a stopping point of convenience. An end-consonant
+memo keyed on exactly the cells the coda walk reads (`rc1-tailmemo`) measured **−0.673 ns, CI
+[−1.061, −0.626]** — not "unresolved": the table's rows are at most 2 cells, so building the key costs as
+much as the walk it avoids. And a third profile fold that stops *adjudicating* the coda entirely
+(`rc1-v13prof3`) won ~1.5 ns on every prose cell (53.65 vs 55.10 pooled, +25.62 % over frozen) while
+regressing `as-shipped|vni|pathological` by 8.67 % against frozen, beyond 2× the band, because a word with
+an illegal coda then *composes* instead of deferring — a trade the campaign's own acceptance rule refuses,
+so it was reverted; its strict object was byte-identical to rc2's throughout, as it must be behind a
+compile-time-false gate. Both are in the ledger (R10, R11) with their numbers, and together they bound the
+one remaining large-looking target: `checkSpelling`'s 20.9 % is not a removable block, because the nucleus
+scan inside it publishes the vowel ranges the emit paths read on every mark key — skipping it would corrupt
+valid text, not merely accept invalid text.
+
 At L2 (profile-B, medians over 12 passes, ns/key) `p50` leads on 7 of 9 `as-shipped` streams — vni prose
 73.0 vs 86.0, telex-end prose 82.5 vs 90.5, telex-end pathological 64.5 vs 73.0, telex-end edit-storm 86.0
 vs 91.0 — and `p99` on 6 of 9, with the largest gaps on the streams a real user hits: telex-end edit-storm

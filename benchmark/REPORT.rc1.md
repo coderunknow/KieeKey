@@ -610,7 +610,7 @@ a fixed window:
 * keys processed in the window: 143,094,720 → 74.7 ns/key measured
 * unresolved sample count: 1 (0.0 %)
 
-## top functions
+### top functions
 
 | samples | % | function |
 |---:|---:|---|
@@ -640,7 +640,7 @@ a fixed window:
 | 1 | 0.0 % | `??` |
 | 1 | 0.0 % | `_init` |
 
-## top 30 source lines (of the hottest 30 pcs)
+### top 30 source lines (of the hottest 30 pcs)
 
 | samples | % | location |
 |---:|---:|---|

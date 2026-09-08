@@ -23,6 +23,7 @@ import argparse
 import json
 import os
 import random
+import re
 import statistics as st
 import sys
 
@@ -732,7 +733,12 @@ def main():
         md = os.path.join(ROOT, a.results, "logs", name + ".md")
         if os.path.isfile(md):
             key = "rc1_profile" if name.endswith("as-shipped") else "rc1_profile_matched_minimal"
-            t[key] = open(md, encoding="utf-8").read().strip()
+            prof_md = open(md, encoding="utf-8").read().strip()
+            # prof_sym writes its headings at level 2 because the file is also read on
+            # its own out of results/<campaign>/logs/; inside the report these blocks are
+            # subsections of §9, and an un-demoted "## top functions" renders as a section
+            # between §9 and §10, which reads like a second opinion rather than the profile.
+            t[key] = re.sub(r"(?m)^## ", "### ", prof_md)
 
     body = []
     for k, v in t.items():

@@ -393,7 +393,7 @@
 * keys processed in the window: 143,094,720 → 74.7 ns/key measured
 * unresolved sample count: 1 (0.0 %)
 
-## top functions
+### top functions
 
 | samples | % | function |
 |---:|---:|---|
@@ -423,7 +423,7 @@
 | 1 | 0.0 % | `??` |
 | 1 | 0.0 % | `_init` |
 
-## top 30 source lines (of the hottest 30 pcs)
+### top 30 source lines (of the hottest 30 pcs)
 
 | samples | % | location |
 |---:|---:|---|
@@ -465,7 +465,7 @@ _Ranking only. Decisions are made on `--mode=tput`, never here._
 * keys processed in the window: 143,094,720 → 58.3 ns/key measured
 * unresolved sample count: 11 (0.5 %)
 
-## top functions
+### top functions
 
 | samples | % | function |
 |---:|---:|---|
@@ -493,7 +493,7 @@ _Ranking only. Decisions are made on `--mode=tput`, never here._
 | 4 | 0.2 % | `ok::text::TextEngine::backspaceBranch(bool)` |
 | 1 | 0.0 % | `ok::text::TextEngine::insertD(char32_t, bool)` |
 
-## top 30 source lines (of the hottest 30 pcs)
+### top 30 source lines (of the hottest 30 pcs)
 
 | samples | % | location |
 |---:|---:|---|

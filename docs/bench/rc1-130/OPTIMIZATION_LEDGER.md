@@ -448,6 +448,11 @@ are paid once on a cold object and then earn. Root cause of the bad read: `cold`
 time and the campaign ran it in the same chunk as `sanitizers` and `robust`. Rule added to PROTOCOL §12;
 the artifact itself was left exactly as measured and the correction is prose beside the table.
 
+Open frontier after RC2: **P9** — folding spelling *verification* out of the profile would be worth
+~12 ns but is not a gate (the function publishes ranges the emit paths consume, so skipping the call corrupts
+valid text); it needs `checkSpelling` split into `ranges()` + `rationally` — see plan §P9 for the analysis
+and for the two exact sub-levers pre-registered inside it.
+
 ### Closed by analysis rather than measurement: P1, P3, and most of P2
 `findAndCalculateVowel` is a backward scan that stops at the first consonant after the vowel run —
 4 to 7 positions for a prose word — so fusing its two variants saves a handful of iterations

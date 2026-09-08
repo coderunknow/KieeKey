@@ -172,6 +172,34 @@ medium for "does it even belong to the engine" (part may be the harness's `confi
 *Why it matters for the objective:* it is a second axis where UniKey currently wins, and fixing it
 turns a documented loss into a documented win without touching the hot loop.
 
+### P9 (opened by RC2, deliberately not taken) — folding out spelling *verification* in the profile
+
+The obvious third lever after the repair pass and the undo snapshot is `checkSpelling` itself: it is now the
+largest stage (20.9 %, ≈ 12.8 ns of 61.0 ns/key profiled), and on a corpus of *valid* Vietnamese its verdict
+is `true` every time, so a profile that trusts the typist would compose identical text on prose while
+saving ~12 ns/key — the arithmetic is attractive enough that it deserves a real entry rather than a
+rejection by reflex. It is also the first candidate in this programme that is not a redundant copy.
+
+The naive version is already falsified, by reading rather than by measurement: the function does not only
+return a verdict. It publishes `spellingEndIndex_`, `spellingVowelStart_`/`spellingVowelEnd_` and
+`isCorect_`, and the emit paths *consume* them — `insertMark`/`insertW` gate on
+`spellingVowelStart_ + 1 < spellingEndIndex_` (TextEngine.cpp:311) and `spellingEndIndex_` advances inside
+the walk that is being skipped. Gating the call off therefore leaves the vowel ranges one key behind, which
+corrupts **valid** text, not just adversarial text — the opposite of the two folds that shipped, each of
+which was cheap because it only deleted a copy. A correct implementation must keep the range bookkeeping and
+drop only the table searches that decide `isCorect_` (leading-consonant walk — now memoised, so the memo has
+to keep working — end-consonant walk, the `kVowelCombine` loop), plus decide what `tempDisableKey_` means
+when spelling is never wrong. That is a restructure of `checkSpelling` into `ranges()` + `verdict()`, not a
+gate.
+
+Expected payoff if it is ever restructured that way: the profile would land near 44 ns/key against UniKey's
+61.5 on the deciding cell (−28 %), with the price being that invalid input composes instead of deferring —
+which is the product's namesake feature, so it needs an explicit owner sign-off rather than a benchmark
+win. Two sub-candidates are cheap enough to try inside that restructure and are worth pre-registering: the
+end-consonant memo beside the leading one (its result is a function of the tail slots plus `spellingEndIndex_`,
+so a key self-validates, ~1–2 ns), and bucketing the `kVowelCombine` loop by first vowel the way
+`handleMainKey`'s scans were bucketed in v1.2.2 (exact, no distribution assumption, ~1–2 ns).
+
 ### P7 — dispatch order in `handleMainKey`/`mainKeyBranch` (24 % ≈ 17.8 ns) — deliberately last
 Both C-A (automata, `REJECT`, −5 % in the deciding cell) and C-C1 (reorder, `REJECT`, −10 % on
 mark-thrash) failed *in this area*, and both failures are now explained by the same thing: the shape

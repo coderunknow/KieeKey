@@ -38,9 +38,24 @@ falsify the result left switched on rather than tuned away.
   **3.4-3.8x faster than either OpenKey revision** (325.40 / 290.67 ns/key). End-to-end latency p50
   is within +1…+11 ns of UniKey across the three as-shipped streams and **ahead** of it on
   VNI · pathological (56.5 vs 61.0 ns/key).
-* **Nothing was weakened to get there:** the free-marking budget, the O(1)/zero-allocation hot path
-  and the orthography rules are unchanged; 2 146 422 differential events match the frozen baseline
-  exactly; the allocation budget is unchanged at 21 per 2 M keys.
+* **What shipped from it (v1.3.0-RC1 engine work):** three hot-path changes — a self-validating
+  composition memo over the 21 emit loops, a memoised leading-consonant match in `checkSpelling`, and a
+  table-driven repair scan in `checkGrammar`. Measured in the release campaign (`rc1-v13rel`, 5 × 12
+  paired rounds, 60 samples, A/A band 1.587 ns): deciding cell **72.39 → 71.03 ns/key, +1.56 %**, best
+  cells +9.3 %, **0 cells regressing beyond 2× band** → ACCEPT. All 8 gates PASS, including
+  **digest-identity** (`9a78c1b4fcc6dad2` on both sides — bit-identical output versus v1.2.2), diffab
+  (0 mismatches / 2 146 422 events) and sanitizers (0 findings). Hot path stays allocation-free
+  (21 allocs / 2 M keys) and the O(1) core is untouched. Disclosed: `as-shipped · vni · pathological`
+  reads −6.0 % (a memo misses on every position when the whole word churns), and cold start moved
+  403 → 441 ms wall p50.
+* **Opt-in low-latency profile** (`build.sh --fast-profile`, `-DKIEEKEY_LOW_LATENCY_PROFILE=ON` in
+  CMake) compiles out the post-edit orthography repair, worth 5.5 ns/key into a marked word. Measured
+  (`rc1-v13prof`, same instrument): **faster than UniKey** on the deciding L1 cells — `telex-end · prose`
+  **57.77 vs 61.36 ns/key (−5.84 %)**, `telex-mid · prose` −15.78 %, `vni · prose` −9.57 % — and ahead at
+  p50 on **all nine** `as-shipped` end-to-end streams. Its price is measured too: 52 % of keys repaint
+  differently and 10 of 18 streams end in different composed text (a mark on the vowel the last key hit
+  rather than the one the rule picks), which is why it is a build profile and **not** the default. The
+  same behaviour is reachable per target at runtime via `grammarRepair` / `freeMark`.
 * **Optimisation attempts, with their numbers:** three engine candidates were built and **rejected** —
   a bucket-table restructure (-0.29…-9.52 %), a hot-path dispatch reordering (wins on prose,
   -10.9 % on VNI · pathological), a single-copy undo snapshot (-0.06 %, i.e. no measurable effect),

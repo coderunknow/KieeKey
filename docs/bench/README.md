@@ -185,3 +185,9 @@ performance campaign.
 | `stable/zig_cross.txt` | Windows x64 + ARM64 PE cross-build gate log |
 
 Report: [`docs/reports/V1.2.1_STABLE_RELEASE_REPORT.md`](../reports/V1.2.1_STABLE_RELEASE_REPORT.md).
+
+The [`rc1-130/`](rc1-130/) directory now covers a shipped release, not only a measurement: its
+`REPORT`-side documents (PROTOCOL §14, OPTIMIZATION_PLAN §5, OPTIMIZATION_LEDGER §3d) carry the
+v1.3.0-RC1 engine change (+1.56 % per key over v1.2.2 with bit-identical output, campaign `rc1-v13rel`)
+and the opt-in low-latency profile that measures −5.84 % against UniKey on the deciding cell with its
+behavioural price published (campaign `rc1-v13prof`).

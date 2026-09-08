@@ -138,11 +138,17 @@ build_variant() {
     done
 
     log "[$sfx] harness"
-    $CXX $common -I src/core -I "$HK" -I "$REFUK" -c "$HK/bench.cpp" -o "$od/bench.o"
+    # --fast-profile also builds the IN-PROCESS twin with the profile, because the L2 latency mode and
+    # the profiler time the in-process engine: without this, a profile campaign could only ever report
+    # the shim column's L1 numbers and its L2 distribution would be the strict build's. The define is
+    # a no-op unless the profile is requested, so the default build path is untouched.
+    prof_def=""
+    if [ "$FASTPROFILE" = 1 ]; then prof_def="-DKIEEKEY_LOW_LATENCY_PROFILE"; fi
+    $CXX $common $prof_def -I src/core -I "$HK" -I "$REFUK" -c "$HK/bench.cpp" -o "$od/bench.o"
     local objs=("$od/bench.o" "$od/kk_TextEngine.o" "$od"/uk_*.o)
     if [ -z "$sfx" ]; then
         $CXX $common "${objs[@]}" -ldl -o "$BUILD/bench"
-        $CXX $STD $OPT $WARN -DBENCH_ALLOC_TRACK -I src/core -I "$HK" -I "$REFUK" \
+        $CXX $STD $OPT $WARN $prof_def -DBENCH_ALLOC_TRACK -I src/core -I "$HK" -I "$REFUK" \
              -c "$HK/bench.cpp" -o "$od/bench_mem.o"
         $CXX $common "$od/bench_mem.o" "$od/kk_TextEngine.o" "$od"/uk_*.o -ldl -o "$BUILD/bench_mem"
         # Debug-info twin of the engine object, used ONLY by bench_prof so the
@@ -154,10 +160,10 @@ build_variant() {
         # which is valid only when the image is not relocated by ASLR. Built as a PIE
         # the entire run resolved to "??" (100 % of samples) — and an unreadable
         # profile looks exactly like "no hot spot", so this flag is load-bearing.
-        $CXX $common -g -fno-omit-frame-pointer -fno-pie -I src/core -c src/core/TextEngine.cpp \
-            -o "$od/kk_TextEngine_prof.o"
-        $CXX $common -g -fno-omit-frame-pointer -fno-pie -I src/core -I "$HK" -I "$REFUK" \
-            -c "$HK/bench.cpp" -o "$od/bench_prof.o"
+        $CXX $common $prof_def -g -fno-omit-frame-pointer -fno-pie -I src/core \
+            -c src/core/TextEngine.cpp -o "$od/kk_TextEngine_prof.o"
+        $CXX $common $prof_def -g -fno-omit-frame-pointer -fno-pie -I src/core -I "$HK" \
+            -I "$REFUK" -c "$HK/bench.cpp" -o "$od/bench_prof.o"
         $CXX $common -g -fno-omit-frame-pointer -no-pie "$od/bench_prof.o" \
             "$od/kk_TextEngine_prof.o" "$od"/uk_*.o -ldl -o "$BUILD/bench_prof"
         log "[$sfx] built $BUILD/bench, $BUILD/bench_mem, $BUILD/bench_prof, libok205.so, libokmaster.so, libkkbase.so, libkkcand.so"

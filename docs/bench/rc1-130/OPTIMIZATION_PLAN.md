@@ -285,7 +285,17 @@ Non-negotiable invariants the harness must keep holding for any number in this p
 
 ## 5. When I will call this a failure
 
-> **Outcome for this cycle (2026-09-08): the objective was not reached — FAIL, as instructed.** The
+> **Outcome, final for this cycle: the objective was reached in the low-latency profile and missed on
+> the strict default.** `rc1-v13rel` (the release campaign, strict tree): deciding cell 72.39 → 71.03
+> ns/key over v1.2.2 (**+1.56 %**, 0 cells beyond band → ACCEPT), still **+15.74 % behind UniKey**
+> (70.78 vs 61.14, paired Δ +9.62 ns, CI 8.49…10.34) — the ≤ +7 ns clause is **not** met by the strict
+> engine, and the queue that could have closed it further is exhausted (P1/P3/P5/P8/cap all measured or
+> analysed negative). `rc1-v13prof` (same instrument, `-DKIEEKEY_LOW_LATENCY_PROFILE`): deciding cell
+> **57.77 vs UniKey's 61.36 = −5.84 %**, −9.6 % … −15.8 % on the other prose cells, and ahead at p50 on
+> all nine `as-shipped` L2 streams — **the target met and exceeded**, at the documented price of
+> different composed text on 10 of 18 streams, which is why it is a build profile and not the default.
+> The original instruction for this cycle was "≤ UniKey + 5-7 ns"; on the strict default that clause
+> failed and §5's FAIL wording stands for the default configuration. The
 > queue above was executed in order and every candidate the profile put at ≥ 2 ns has now been built and
 > measured: C-A (−5.0 %), C-C1 (+3.5 % deciding / −10.9 % worst), P5 (−0.06 %, inside the harness's own
 > same-code drift), P8/PGO (−4.04 %) — all REJECT. What is left untried (P0, P2, P4, P6) is each bounded

@@ -308,3 +308,35 @@ bash re-reads an open script at a byte offset (§12). The full campaign above ta
 two cores this container exposes; a tput-only screening pass (`--steps=gate,selftest,tput,tput-lead,summarize
 --sessions=4 --rounds=12 --diffab-seeds=1`) is about 25 min and is what §8 decisions are screened
 with before a full campaign is spent.
+
+## 14. Gate policy for a declared divergence, and build-configuration campaigns (v1.3.0-RC1)
+
+Two additions came out of shipping an engine change instead of only measuring one.
+
+**Gate policy.** `rc1_gates.py --policy=identity|declared-divergence` (campaign flag
+`--divergence`). `identity` is the default and what every behaviour-preserving candidate uses: `diffab`
+must read 0 mismatches and `digest-identity` must reproduce the frozen digest. A release that *takes a
+rule away on purpose* cannot assert that, and switching the gate off would be worse than useless, so the
+policy substitutes the two properties that must survive any rule trade-off — final visible text
+identical in every `diffab` row, and this tree's in-process and shim builds identical to each other
+(`--oracle-engine=kieekey-cand`) — and publishes the payload divergence (count, share, first key, the
+row it appeared in) instead of hiding it. A difference in *composed text* under this policy is still a
+hard FAIL: it is a correctness regression, not a trade-off.
+
+**Build-configuration campaigns.** A configuration difference is measured the same way a source
+difference is: same tree, same rounds, one column marked. `build.sh --fast-profile` rebuilds the
+candidate library (and, for L2, `bench`/`bench_prof`/`bench_mem`, since the latency mode times the
+in-process engine) with `-DKIEEKEY_LOW_LATENCY_PROFILE`; `build.sh --pgo` rebuilds the candidate library
+with profile feedback. In both cases the campaign's own paired gain table *is* the configuration effect,
+the swap is recorded in `results/<name>/engine_hashes.txt` with the digests, and the measuring steps run
+without `--steps=gate` afterwards because the gate step rebuilds plain and would erase the variant.
+This is the matched-parity rule (§3) applied in the other direction: if a build configuration is claimed
+to help, it is measured against the plain build in the same rounds, and here one of the two claims
+(PGO) measured negative and was reported that way.
+
+**Campaign of record size.** The release campaign runs at the *same instrument size* as the campaign it
+replaces (5 sessions × 12 rounds, keys 150 000, 3 diffab seeds), not a larger one: bands and order
+controls are then directly comparable, and a bigger campaign of a different size would compare
+instruments rather than engines. The plan's earlier "6 × 24 at keys 200 000" is superseded by this
+rule; a chunked long campaign (steps split across invocations so each chunk's artifacts land in git
+before the next) is the operational form when a host may be reset mid-run.

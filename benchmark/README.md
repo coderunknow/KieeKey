@@ -271,6 +271,19 @@ effect" is a measurement rather than an impression:
 | `results/rc1-cc1` | C-C1, hot-path dispatch reordering | REJECT — −10.9 % on `matched-minimal\|vni\|pathological` |
 | `results/rc1-p5` | P5, single-copy undo snapshot | REJECT — −0.06 % deciding cell, i.e. the harness's own drift |
 | `results/rc1-p8` | P8, profile-guided `libkkcand.so` | REJECT — **−4.04 %**, 7/18 cells beyond 2× band |
+| `results/rc1-v13` | P4+P2+repair-scan screen | ACCEPT on re-run — deciding cell +2.98 %, band 0.912 ns |
+| `results/rc1-v13b`, `rc1-v13d` | a span cap on the emit memo, to dodge one pathological cell | REJECT — worse on all six pathological cells *and* the prose gain (branch broke inlining) |
+| `results/rc1-v13rel` | **the v1.3.0-RC1 release campaign of record** (5 × 12, 60 samples) | ACCEPT — +1.56 % over v1.2.2, all 8 gates PASS, digest-identical |
+| `results/rc1-v13prof` | the opt-in low-latency profile, same instrument | measured: **−5.84 % vs UniKey** on the deciding cell; price published |
+
+`build.sh --fast-profile` (and `-DKIEEKEY_LOW_LATENCY_PROFILE=ON` in CMake) marks the same
+campaign pair for a *build configuration* instead of a source change: it compiles out
+`checkGrammar`'s post-edit orthography repair. Because the L2 latency mode and the profiler time the
+in-process engine, `--fast-profile` rebuilds `bench`/`bench_prof`/`bench_mem` as well — otherwise the
+configuration could only ever be measured on the L1 shim column and its L2 table would silently still
+describe the strict build; that is recorded in the campaign's `engine_hashes.txt`. Run it after the
+campaign's `gate` step (which builds plain) and then run the measuring steps without `gate`, so nothing
+re-links the variant mid-campaign.
 
 `build.sh --pgo` is what made the last row measurable: it instruments the engine TU, trains with
 `--mode=tput`/`latency`/`correctness`/`robust` on a corpus window the campaign never measures

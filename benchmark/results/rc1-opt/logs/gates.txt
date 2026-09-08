@@ -1,0 +1,1 @@
+[2026-09-08T14:56:40Z] gate:manifest: PASS — baseline intact (18 frozen v1.2.2 sources verified in benchmark/reference/kieekey-1.2.2); the working tree differs in 3 of them (TextEngine.cpp, TextEngine.hpp, kieekey_core.hpp) — that is the candidate under test, and libkkbase.so still measures v1.2.2 exactly

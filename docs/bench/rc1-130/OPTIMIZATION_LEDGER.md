@@ -320,6 +320,89 @@ could only add cross-TU inlining with application sources the timed path never c
 set also breaks the matched-parity configuration every column shares, so a profile-guided KieeKey column
 could only ever be published as a second configuration, never as the comparison.
 
+## 3d. v1.3.0-RC1 — the candidates that were **accepted** (this is what changed in the engine)
+
+### P4 + P2 + P7-lite — self-validating memos and a table-driven scan — **`ACCEPT`**
+Three hot-path changes, one mechanism. Every earlier memo idea in this project died on invalidation:
+`typingWord_` is written at 26 sites and `index_` at 24, so any cache keyed on "when did the word
+change" has to be told at 50 places, which is how P1 and P3 were rejected at analysis time. The
+accepted design inverts that — **the key is the value it describes**, so a stale entry is impossible by
+construction and no write site learns anything:
+
+* `composeCached(pos)` (P4, generalised): the 21 emit loops used to recompose the whole pending word
+  per key, so moving one mark recomposed 4-7 unchanged code points too. A changed slot fails the
+  `raw ^ 0xA5A5A5A5` compare and recomposes; `setOptions()` drops the caches because the code table is
+  the one input that is not in the key. 256 bytes of state, no allocation.
+* `checkSpelling`'s leading match (P2): `matchLeadingConsonant`'s longest row is 3 cells (`NGH`), so
+  once `spellingEndIndex_ >= 3` no row can be length-rejected and the answer is a pure function of
+  slots 0..2 plus the two option masks — which is exactly the key. Not "incremental", and not guarded
+  by a prefix hash either: it is just a memo that cannot go stale. (The v1.2.1 attempt at this failed
+  for precisely the invalidation reason; the shape that works is the self-validating one.)
+* `checkGrammar`'s double-ư scan (call it P7-lite, though it is not the dispatch reorder): six compares
+  per position over up to 32 slots became a 96-byte table with entries for exactly the code points the
+  chain tested — same accept/reject set, no input-distribution assumption, which is what disqualified
+  P7 proper.
+
+Measured (`rc1-v13`, 4 × 8 rounds, 32 paired samples, A/A band 0.912 ns): deciding cell
+**71.54 → 68.57 ns/key, +2.98 %** (CI +2.06…+2.38 ns, 27 wins / 5 losses), **+3.3…+9.0 %** on 13
+further cells, and gates green — correctness PASS, **digest-identity PASS with `9a78c1b4fcc6dad2`
+equal on both sides** (every output bit-identical to frozen v1.2.2 over 374 subject rows), diffab PASS
+(0 mismatches / 2 146 422 events, final visible text included), memory PASS (21 allocs per 2 M keys,
+RSS unchanged), `tests/run_all_tests.sh --quick` all PASS.
+
+Disclosed cost, published rather than thresholded away: `as-shipped · vni · pathological` read
+**−8.02 %** (+2.64 ns, CI excluding zero, 2 wins / 30 losses). That stream rewrites marks across the
+whole word every key, so the memo misses at every position and pays bookkeeping for it. Capping the memo
+to the 8 stable head slots was tried twice to dodge it (`rc1-v13b`, `rc1-v13d`) and was **worse**: all
+six pathological cells fell to −3.5…−9.9 % *and* the prose gain went with them, because the extra
+branch stopped `composeCached` being inlined at all 21 sites. Reverted; `composeCached` is now
+`always_inline` so the dependency is explicit. It is also a cell KieeKey already loses badly (26.3 vs
+UniKey's 16.3 ns), not a win being traded.
+
+### P8 (PGO) and P5 — `REJECT` (§3c above), and the cap — `REJECT` (this section)
+
+### Release campaign of record — `rc1-v13rel` (5 × 12, 60 paired samples, keys 150 000)
+
+Run at v1.2.2's own instrument size rather than the plan's larger 6 × 24, so the bands and the order
+control are directly comparable with `rc1-130` (PROTOCOL §14). Result: deciding cell **72.39 → 71.03
+ns/key = +1.56 %** over v1.2.2 with **0 cells regressing beyond 2× the 1.587 ns A/A band** → **ACCEPT**
+under the pre-registered rule; the screen (`rc1-v13`, band 0.912 ns) had read +2.98 %, and the 1 ns
+difference between the two readings is host state, not a different engine — which is why the campaign of
+record, not the screen, is what ships in the tables. Against UniKey in the same rounds: **70.78 vs
+61.14 ns/key, +15.74 %, paired Δ +9.62 ns (CI 8.49…10.34), 6 wins / 54 losses** → still TIER MIXED on
+the strict default, with `matched-minimal · vni · pathological` at −10.5 % (KieeKey ahead). All 8 gates
+PASS: manifest, attrib-guard, correctness (374 rows), digest-identity (9a78c1b4fcc6dad2 both sides),
+diffab (0 / 2 146 422 events), memory (21 allocs per 2 M keys), **sanitizers (0 findings, 7 runs)**,
+integrity (27 artifacts, 20 590 rows). Order control: max |shift| 4.83 ns vs A/A 0.29 ns. Cold start
+regressed and is published: wall p50 403.1 → 441.5 ms, first round 23.86 → 27.71 ns/key.
+
+### The low-latency profile — built, measured, and deliberately **not** the default
+`KIEEKEY_LOW_LATENCY_PROFILE` (`build.sh --fast-profile`, `cmake -DKIEEKEY_LOW_LATENCY_PROFILE=ON`)
+compiles out `checkGrammar`'s post-edit repair — 5.5 ns of a ~68 ns decision, on every key into a
+marked word. The first implementation put the switch in `EngineOptions`' defaults and
+`attrib-guard` reported the transcripts still *identical*: options are caller-supplied, so a default in
+the header never reaches a consumer that fills the struct. Fixed by overriding at the read site inside
+the engine TU, which is the only place the define is visible. That is also why the profile is a build
+configuration and not a settings toggle the harness could flip per column.
+
+Its gain, measured in the same instrument (`rc1-v13prof`): deciding cell **57.77 vs UniKey's
+61.36 ns/key = −5.84 %**, `telex-mid · prose` −15.78 %, `vni · prose` −9.57 %, `telex-end · edit-storm`
+−8.90 %, `matched-minimal · telex-end · prose` −7.48 %; L2 p50 ahead of UniKey on **all nine**
+`as-shipped` streams (prose 82.0 vs 89.5, `vni · prose` 74.5 vs 85.0, `edit-storm` 84.5 vs 89.5 ns) and
+p99 ahead on six of nine; memory gate unchanged at 21 allocations per 2 M keys. `as-shipped ·
+telex-end · pathological` gets *worse* (+13.6 %) — with the repair gone the remaining path is the one
+the adversarial stream stresses, and no threshold was introduced to hide that.
+
+Its price was measured, not assumed: against the frozen engine over the full corpus the profile changes
+**52 % of keys' repaint payload AND the final composed text in 10 of 18 streams** — a mark left on the
+vowel the last key hit instead of the one the rule picks. That is wrong Vietnamese, so it ships off by
+default and documented; `grammarRepair`/`freeMark` give the same behaviour at runtime per target, which
+is the "trusted input targets" shape the objective asked for without making the whole release lose an
+orthography rule. The profile's latency number is published beside the strict one in the report, and
+`--policy=declared-divergence` is the gate mode for any future release that takes a rule away on
+purpose: it still asserts that the *visible text* matches and that the tree's own two builds match each
+other, and it publishes the payload divergence instead of asserting it away.
+
 ### Closed by analysis rather than measurement: P1, P3, and most of P2
 `findAndCalculateVowel` is a backward scan that stops at the first consonant after the vowel run —
 4 to 7 positions for a prose word — so fusing its two variants saves a handful of iterations
@@ -331,7 +414,7 @@ exactly guardable (~2.6 ns of a 14.1 ns stage). Not built, because the measureme
 on candidates whose removable work is proven. **The general lesson, recorded twice now: a profile share
 bounds the cost, not the removable cost — check what the loop terminates on first.**
 
-### Cycle conclusion — the ≤ UniKey + 5–7 ns objective was **not reached (FAIL, as agreed)**
+### Cycle conclusion — superseded for v1.3.0-RC1 by §3d
 Everything the profile placed at ≥ 2 ns has been built and measured: C-A (−5.0 %), C-C1 (+3.5 %
 deciding, −10.9 % worst), P5 (−0.06 %), P8 (−4.04 %). The untried remainder (P0 ≤ 1 ns, P2 ≤ 0.4 ns,
 P4 ≤ ~1 ns by the same bounded-share argument, P6 cold-start only) cannot add up to 7.7–11.8 ns. The

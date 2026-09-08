@@ -1,0 +1,12 @@
+{"mode":"meta","bench":"viet-ime-4way","action":"selftest","corpus":"tests/data/viet74k.txt","rounds":5,"keys":200000,"words":20000,"seed":20260907,"t0_unix":1788876581}
+[selftest] drivers=5
+[selftest] kieekey          -> xin chao ban doan ket ban lam quen
+[selftest] kieekey-aa       -> xin chao ban doan ket ban lam quen
+[selftest] openkey-2.0.5    -> xin chao ban doan ket ban lam quen
+[selftest] openkey-master   -> xin chao ban doan ket ban lam quen
+[selftest] unikey-4.x       -> xin chao ban doan ket ban lam quen
+[selftest] A/A (kieekey vs kieekey-aa) identical: YES
+[selftest] openkey-2.0.5 vs openkey-master identical on probe: YES (expected YES on plain text; corpus reports real divergences)
+[selftest] sizeof(TextEngine)=9152 sizeof(UkEngine)=7752 sizeof(UkSharedMem)=141384
+[selftest] encoder ok=1 stream="nguwx ^vieetj ^nam" (expect "nguwx ^vieetj ^nam") MATCH
+[selftest] clock pair overhead = 26 ns

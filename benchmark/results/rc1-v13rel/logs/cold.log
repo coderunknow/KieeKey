@@ -1,0 +1,7 @@
+[cold] kieekey        wall p50=865.51 ms  min=804.19 ms  first-round=24.71 ns/key
+[cold] openkey-2.0.5  wall p50=1517.08 ms  min=1358.20 ms  first-round=76.97 ns/key
+[cold] openkey-master wall p50=1141.52 ms  min=1057.70 ms  first-round=79.06 ns/key
+[cold] unikey-4.x     wall p50=323.78 ms  min=315.06 ms  first-round=14.70 ns/key
+[cold] kieekey-aa     wall p50=372.50 ms  min=362.95 ms  first-round=24.12 ns/key
+[cold] kieekey-base   wall p50=403.10 ms  min=394.48 ms  first-round=23.86 ns/key
+[cold] kieekey-cand   wall p50=441.45 ms  min=426.67 ms  first-round=27.71 ns/key

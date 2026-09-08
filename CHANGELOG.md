@@ -3,6 +3,86 @@
 All notable changes to KieeKey are documented here. Format based on
 Keep a Changelog; versioning: SemVer.
 
+## [1.3.0-RC1] — 2026-09-08
+
+Release candidate built on the cross-engine measurement campaign in
+[`docs/bench/rc1-130/`](docs/bench/rc1-130/) and [`benchmark/`](benchmark/README.md). Two things
+ship: an engine hot-path change that is bit-identical in output, and an opt-in low-latency build
+profile whose behavioural price is published rather than buried.
+
+### Engine — faster per-key decision, identical output
+
+* **Self-validating composition memo** (`TextEngine::composeCached`) over all 21 emit loops: moving one
+  mark used to recompose the whole pending word, so 4–7 unchanged code points were recomposed per key.
+  The cache key *is* the raw word slot, so an entry cannot go stale and no write site has to
+  invalidate anything; `setOptions()` drops the caches because the code table is the only input not in
+  the key. 256 bytes of state, still zero allocation on the hot path.
+* **Memoised leading-consonant match** inside `checkSpelling`: `matchLeadingConsonant`'s longest row is
+  3 cells (`NGH`), so once `spellingEndIndex_ >= 3` the answer is a pure function of slots 0..2 plus the
+  two option masks — which is the key.
+* **Table-driven repair scan** in `checkGrammar`: six compares per position over up to 32 slots replaced
+  by a 96-byte table holding exactly the code points the chain tested, so the accept/reject set is
+  unchanged (this is the worst case of a long word containing none of them, which used to scan the whole
+  buffer every key).
+* **Measured** (`rc1-v13rel`, 5 sessions × 12 paired rounds, 60 samples, A/A band 1.587 ns): deciding
+  cell `as-shipped · telex-end · prose` **72.39 → 71.03 ns/key, +1.56 %** over v1.2.2, best cells
+  +3.3…+9.3 %, **0 cells regressing beyond 2× band** → pre-registered **ACCEPT**.
+* **Gates, all 8 PASS**: manifest (drift named: 3 sources), attrib-guard, correctness (374 subject rows),
+  **digest-identity `9a78c1b4fcc6dad2` == `9a78c1b4fcc6dad2`** (every output bit-identical to v1.2.2),
+  diffab (**0 mismatches / 2 146 422 events**, per-key code, backspaces, replacement text and final
+  visible text), memory (21 allocs per 2 M keys, RSS 46.2 MiB), **sanitizers (0 findings, 7 runs)**,
+  integrity (27 artifacts / 20 590 rows). Native suite all PASS; `scripts/check_version.py` OK.
+* **Disclosed regression**: `as-shipped · vni · pathological` reads −6.0 % (that stream rewrites marks
+  across the whole word every key, so a memo misses everywhere and pays its bookkeeping). A cap to the
+  8 stable head slots was screened twice (`rc1-v13b`, `rc1-v13d`) and made all six pathological cells
+  *worse* (−3.5…−9.9 %) by breaking inlining at the 21 sites, so it was reverted and `composeCached` is
+  `always_inline`. The cell is a stress case KieeKey already loses (26.7 vs UniKey's 16.7 ns), not a win
+  being traded.
+* **Cold start moved the wrong way and is published**: wall p50 403.1 → 441.5 ms, first round
+  23.86 → 27.71 ns/key (`cold`, unexplained at this size — P6 territory in the plan).
+
+### New: low-latency build profile (opt-in, `KIEEKEY_LOW_LATENCY_PROFILE`)
+
+* Compiles out `checkGrammar`'s post-edit orthography repair — 5.5 ns of a ~68 ns decision on every key
+  into a marked word. `build.sh --fast-profile` and `cmake -DKIEEKEY_LOW_LATENCY_PROFILE=ON`; also
+  `cmake --build` for the product. `EngineOptions::grammarRepair` (and `freeMark`, which gates the same
+  pass) reach the same behaviour at runtime per target.
+* Measured (`rc1-v13prof`, same instrument): **faster than UniKey** on the L1 cells that decide —
+  `telex-end · prose` 57.77 vs 61.36 ns/key (**−5.84 %**), `telex-mid · prose` −15.78 %, `vni · prose`
+  −9.57 %, `telex-end · edit-storm` −8.90 %, `matched-minimal · telex-end · prose` −7.48 % — and ahead
+  at **p50 on all nine** `as-shipped` L2 streams (e.g. prose 82.0 vs 89.5, `vni · prose` 74.5 vs 85.0 ns),
+  with the memory gate unchanged at 21 allocs / 2 M keys.
+* **Price, measured**: 52.0 % of keys (372 242 / 715 474 events) repaint differently and **10 of 18
+  streams end with different composed text** — a mark left on the vowel the last key hit instead of the
+  one the rule picks. That is wrong Vietnamese, so the profile is never the default of a release whose
+  claim is orthographic correctness. It ships as a labelled configuration with this paragraph attached.
+* `rc1_gates.py --policy=declared-divergence` / `campaign_rc1.sh --divergence`: for a release that
+  trades a rule away on purpose, the gates still assert final visible text identity and this tree's
+  in-process/shim identity, and publish the payload divergence instead of turning the check off.
+  Not needed by this release's campaign of record — the strict tree is byte-identical output.
+
+### Tooling and measurement rules
+
+* `build.sh --pgo`: instrumented-train → `-fprofile-use` rebuild of the candidate library, failing
+  loudly if no `.gcda` was written. Screened (`rc1-p8`): **−4.04 %** — profile-guided codegen makes the
+  deciding cell slower here, so it stays available for re-testing and is not used.
+* A campaign now snapshots `baseline_manifest.json` into its own results directory and `rc1_stats`
+  derives baseline-vs-candidate wording from it (falling back to the campaign header), so a candidate
+  trial can no longer be labelled "NOT RUN — baseline campaign".
+* **Absolute ns is campaign-internal**: the same binary read 84.70 ns/key in one campaign and 68.73 in
+  another hours later (UniKey with it: 73.00 → 60.20; ratio stable 16.1 % → 13.1 %). No cross-campaign
+  subtraction anywhere; only paired same-round deltas and ratios are published.
+* The release campaign ran at v1.2.2's instrument size (5 × 12, keys 150 000) rather than the plan's
+  larger 6 × 24, so its bands are directly comparable with `rc1-130`'s — a bigger, differently-sized
+  campaign would have compared instruments, not engines. Documented in PROTOCOL §14.
+
+### Version carriers
+
+`CMakeLists.txt` 1.3.0 · `KieeKeyApp.rc` `1,3,0,0` + `1.3.0.0` · `KieeKeyApp.manifest` `1.3.0.0` ·
+`main.cpp` `1.3.0` / `1.3.0 RC1` / title · `kieekey_core.hpp` macros + `OPENKEY_KIEEKEY_VERSION_STRING`
+"1.3.0 RC1" · README headline and newest section · `scripts/check_version.py` expect/channel ·
+`SHA256SUMS.txt` regenerated.
+
 ## [1.2.2-Stable] — 2026-09-07
 
 ### Stable release — RC4 promoted unchanged, full re-verification on an independent host

@@ -27,16 +27,21 @@ Candidate-by-candidate verdicts (including the ones that were rejected):
 {{stat:verdict.paired_samples}} paired round samples. **{{statcount:verdict.regressing_cells}}** of
 the measured cells regress against UniKey: {{regressing:6}}.
 
-This campaign is a **baseline** campaign: the working tree's `src/core` is byte-identical to the
-frozen v1.2.2 engine (that is what `gate:manifest` asserts above), so every number in §3–§4 *is*
-v1.2.2 as it ships, with no optimisation applied. Two candidate changes were implemented, measured
-under this protocol, and **reverted** — C-A (spelling automata) and C-C1 (a `checkGrammar`
-short-circuit) — and the reasons are in
-[OPTIMIZATION_LEDGER.md](../docs/bench/rc1-130/OPTIMIZATION_LEDGER.md), with the full per-cell tables
-from the campaigns that decided them (`benchmark/results/rc1-ca4`, `benchmark/results/rc1-cc1`).
-§8 keeps the paired frozen/candidate columns for this campaign as an instrument check: the two
-columns run the *same* code, so their gain must read zero, and a non-zero reading there would
-invalidate every gain number in the ledger.
+This campaign measures **v1.3.0-rc1 as it ships**. The working tree differs from the frozen v1.2.2
+engine in three sources (`TextEngine.cpp`, `TextEngine.hpp`, `kieekey_core.hpp`) — `gate:manifest`
+names the drift instead of hiding it — so §3–§4 are the release candidate's numbers, with v1.2.2
+measured beside them in the same rounds as `kieekey-base`. What is in the engine: a self-validating
+composition memo over the emit loops, a memoised leading-consonant match inside `checkSpelling`, and a
+table-driven repair scan in `checkGrammar`. It is accepted because its paired gain clears the A/A band
+with **0 cells regressing beyond 2× band** *and* the output stays bit-identical to v1.2.2
+(`gate:digest-identity`, `gate:diffab` above). Everything tried and rejected is in
+[OPTIMIZATION_LEDGER.md](../docs/bench/rc1-130/OPTIMIZATION_LEDGER.md) with its own per-cell tables:
+`rc1-ca4`, `rc1-cc1`, `rc1-p5`, `rc1-p8` (PGO) and the memo-span cap in `rc1-v13b`/`rc1-v13d`.
+
+The instrument's own null test lives in the previous release's campaign rather than here: in `rc1-130`
+the frozen and candidate columns ran the *same* code and read −0.92 … +0.99 % across 18 cells, which is
+what sizes this design's floor and why a gain under ~1 % is never claimed. §8's two columns here are
+different code on purpose, so their spread is the release's gain over v1.2.2 instead.
 
 Correctness gates: **{{gatesummary}}**. Each gate is pass/fail, not a number to trade against speed:
 
@@ -225,11 +230,15 @@ the only difference between the columns is the engine code.
 
 {{table:rc1_gain}}
 
-**This campaign carries no candidate**, so the two columns above are the same code and the table is
-the instrument's own null test: with `kieekey-cand` and `kieekey-base` compiled from identical
-sources, the reported gain must be indistinguishable from zero, and its spread is an independent
-estimate of what this design can resolve. A non-zero value here would mean every gain figure in the
-ledger is measuring the harness. What it actually reads here is −0.92 % … +0.99 % across the 18
+Here the two columns are deliberately **different code**: `kieekey-base` is v1.2.2 and `kieekey-cand`
+is this tree, in the same rounds, so the table is the release's own gain over the previous engine —
++1.56 % in the deciding cell (72.39 → 71.03 ns/key) on 60 paired samples with a 1.587 ns A/A band, and
+**0 cells regressing beyond 2× band**, which is the pre-registered ACCEPT condition
+(`rc1_stats.candidate_verdict`). The screen that first measured the same change read +2.98 % with a
+0.912 ns band (`rc1-v13`); the difference between the two readings is 1 ns of host state, not two
+different engines, and it is why the release number is the campaign of record and not the screen.
+The null test that validates the instrument is `rc1-130`'s, where both columns were the same code and
+read −0.92 % … +0.99 % across the 18
 cells, mostly inside ±0.5 %, but two cells (`as-shipped · telex-mid · prose` +0.90 %, CI
 0.43…1.01 ns; `matched-minimal · telex-mid · pathological` −0.92 %, CI −0.47…−0.14 ns) have CIs that
 exclude zero **with identical code** — a residual ~0.5 ns of column-dependent bias, most plausibly
@@ -264,6 +273,51 @@ mismatches). None was accepted. `src/core` is byte-identical to v1.2.2, and the 
 release measurement. PGO is in `build.sh --pgo` rather than argued about, because a build-configuration
 claim deserves the same paired instrument as a source claim — and because a claim of "the compiler could
 have done this for free" left untested is how a release note gets written backwards.
+
+### 8.2 The opt-in low-latency profile — and its price, measured
+
+Everything above is the strict engine: bit-identical output, +1.56 % over v1.2.2. The objective for
+this cycle also asked what the engine looks like if the last strictness pass is allowed to go, and that
+is a **build configuration** rather than a code path: `KIEEKEY_LOW_LATENCY_PROFILE`
+(`build.sh --fast-profile`, `cmake -DKIEEKEY_LOW_LATENCY_PROFILE=ON`) compiles out `checkGrammar`'s
+post-edit orthography repair, which is 5.5 ns of a ~68 ns engine decision on every key typed into a
+word that already carries a mark.
+
+Numbers below are from `benchmark/results/rc1-v13prof/` — same corpus, same 5 × 12 paired sessions,
+same flags, `--ref` to nothing because the comparison that matters is against UniKey in the same rounds:
+
+| cell (median ns/key) | UniKey 4.x | KieeKey strict | KieeKey low-latency | vs UniKey |
+|---|---|---|---|---|
+| `as-shipped · telex-end · prose` (deciding) | 61.36 | 71.12 | **57.77** | **−5.84 %** |
+| `as-shipped · telex-mid · prose` | 61.56 | 67.65 | **51.85** | **−15.78 %** |
+| `as-shipped · vni · prose` | 58.47 | 64.64 | **52.87** | **−9.57 %** |
+| `as-shipped · telex-end · edit-storm` | 65.31 | 80.62 | **59.50** | **−8.90 %** |
+| `matched-minimal · telex-end · prose` | 40.75 | 49.00 | **37.70** | **−7.48 %** |
+| `as-shipped · telex-end · pathological` | 28.08 | 31.34 | 31.89 | +13.56 % |
+
+and for the end-to-end distribution (the latency mode times the in-process engine, so for this table
+`bench` itself was rebuilt with the profile — recorded in the campaign's `engine_hashes.txt`), KieeKey
+is ahead of UniKey at p50 on **all nine** `as-shipped` streams: prose `telex-end` 82.0 vs 89.5 ns,
+`vni · prose` 74.5 vs 85.0, `edit-storm` 84.5 vs 89.5, and the memory gate still reads 21 allocations
+per 2 M keys with RSS unchanged at 46.2 MiB.
+
+**What it costs.** Differential run against the frozen v1.2.2 engine over the full corpus: **52.0 % of
+keys repaint differently** (372 242 of 715 474 events) **and 10 of 18 streams end with different
+composed text** — a mark left on the vowel the last key hit rather than the one the rule picks. That is
+not a stylistic drift; for an input method it is the product's core promise, which is why the profile is
+not the default and why this paragraph is in the release report rather than a footnote. The same
+behaviour is reachable at runtime per target through `grammarRepair` / `freeMark` (they gate the same
+pass), which is the shape a "trusted app is fast, everything else is strict" policy wants; the build
+configuration exists for a device image that wants it everywhere without a per-app setting.
+
+Both builds are the same source tree, so this is a shipping choice and not a fork: the strict default is
+what `src/core` produces with no define, and reverting the profile is deleting one flag from a build
+line. A gate mode exists for releases that take a rule away on purpose —
+`rc1_gates.py --policy=declared-divergence` (campaign flag `--divergence`) — which keeps asserting the
+two properties that must survive (final visible text identical, and this tree's in-process and shim
+builds identical to each other) and publishes the payload divergence instead of switching the check off.
+It is not used for this release's campaign of record, because the strict tree needs none of that
+machinery: it is byte-identical output.
 
 ---
 

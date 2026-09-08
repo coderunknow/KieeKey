@@ -66,7 +66,7 @@ def load_all(res):
                 if line.startswith("{"):
                     try:
                         r = json.loads(line)
-                    except json.JSONDecodeError:
+                    except json.JSONDecodeError:   # torn final line of an interrupted step
                         continue
                     r["_file"] = fn
                     rows.append(r)

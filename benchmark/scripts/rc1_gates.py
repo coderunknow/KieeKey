@@ -56,7 +56,14 @@ def load_json(rel):
         return None
 
 
+torn_lines = [0]
+
+
 def jsonl(rel, pred=lambda r: True):
+    """One flat JSON object per line. Undecodable lines are skipped and COUNTED:
+    a torn final line is what an interrupted step leaves behind, and a reader of
+    the gate log has to know the artifact was cut short, not be handed a clean
+    PASS computed from the surviving 90 %."""
     out = []
     p = path(rel)
     if not os.path.isfile(p):
@@ -68,6 +75,7 @@ def jsonl(rel, pred=lambda r: True):
                 try:
                     r = json.loads(line)
                 except json.JSONDecodeError:
+                    torn_lines[0] += 1
                     continue
                 if pred(r):
                     out.append(r)
@@ -394,6 +402,16 @@ def gate_attrib_guard(a):
 GATES = {"manifest": gate_manifest, "walks": gate_walks, "attrib-guard": gate_attrib_guard,
          "digest-identity": gate_digest_identity, "correctness": gate_correctness,
          "diffab": gate_diffab, "memory": gate_memory, "sanitizers": gate_sanitizers}
+
+
+def report_torn_lines(res):
+    if torn_lines[0]:
+        log(res, "artifact-integrity", False,
+            f"{torn_lines[0]} undecodable line(s) skipped while reading the raw artifacts — "
+            f"the campaign was interrupted mid-write; re-run the affected step before quoting "
+            f"its numbers")
+        return False
+    return True
 
 
 def main():

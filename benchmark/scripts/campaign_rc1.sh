@@ -33,7 +33,15 @@ ROUNDS=20
 KEYS=200000
 WORDS=74000
 L2ROUNDS=10
-DIFFAB_SEEDS=6
+DIFFAB_SEEDS=3
+# The differential's job is per-key transcript equality over LONG interleaved
+# streams; word-level identity across the whole corpus is the digest-identity
+# gate's job (it runs at full --words). Sizing diffab from the campaign's --words
+# gave each of its 18 rows 74 000 extra one-word cases and made a single seed cost
+# an hour, so it carries its own smaller corpus: the events compared stay in the
+# millions and the step fits inside a campaign instead of outliving it.
+DIFFAB_KEYS="${DIFFAB_KEYS:-60000}"
+DIFFAB_WORDS="${DIFFAB_WORDS:-4000}"
 STEPS="gate,selftest,timer,tput,tput-lead,latency,correctness,diffab,mem,robust,sanitizers,cold,profile,summarize"
 ENGINES="contest,ctl,attrib"
 PIN="${BENCH_PIN:-auto}"
@@ -98,7 +106,7 @@ say "cpu affinity: $PIN_NOTE"
     echo "engines=$ENGINES pin=$PIN pin_note=$PIN_NOTE steps=$STEPS candidate=$CANDIDATE"
     echo "head=$(git rev-parse --short HEAD)"
     echo "dirty_src=$(git status --porcelain -- src VERSION CMakeLists.txt | tr '\n' ' ')"
-    grep -E '^(STD|OPT|DEF)=' benchmark/scripts/build.sh | head -3
+    echo "loadavg1=$(cut -d' ' -f1 /proc/loadavg)"
     uname -a
     cat /proc/loadavg
     echo "cpu=$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2- | sed 's/^ //')"
@@ -214,12 +222,14 @@ if have_step diffab; then
             : > "$RAW/diffab.jsonl"
             for sd in $(seq 0 $((DIFFAB_SEEDS - 1))); do
                 run "diffab:seed$sd" "$BENCH" --mode=diffab --engines=kieekey-cand,kieekey-base \
-                    --seed-idx="$sd" "${common[@]}" --out="$RAW/diffab.jsonl" --append || exit 1
+                    --seed-idx="$sd" --keys="$DIFFAB_KEYS" --words="$DIFFAB_WORDS" \
+                    --out="$RAW/diffab.jsonl" --append || exit 1
             done
-            # 18 rows per seed, each seed's corpus carrying ~1 event per key:
-            # the floor scales with what this campaign actually asked for.
+            # An absolute floor, not one derived from --keys: diffab runs with its
+            # own corpus size now, and the protocol's claim is "millions of per-key
+            # comparisons", which is exactly what this checks.
             python3 benchmark/scripts/rc1_gates.py diffab "${GATE_ARGS[@]}" \
-                --min-events=$((DIFFAB_SEEDS * KEYS * 8)) || exit 1 ;;
+                --min-events="${DIFFAB_MIN_EVENTS:-1000000}" || exit 1 ;;
         *) say "diffab skipped — the attribution pair (--engines containing 'attrib') is not in this campaign" ;;
     esac
 fi

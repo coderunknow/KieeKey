@@ -70,13 +70,33 @@ struct Agg {
         samples.push_back(ns);
     }
     double mean() const { return n ? sum / static_cast<double>(n) : 0.0; }
-    void sortSamples() { std::sort(samples.begin(), samples.end()); }
+    void sortSamples() {
+        std::sort(samples.begin(), samples.end());
+        ord_.clear();                       // samples is already in order now
+    }
+    // Percentiles need sorted data, and "call sortSamples() first" is a rule a
+    // caller can forget: a cold-start row once reported p95 BELOW p50 because it
+    // did not. pct() therefore sorts on demand and memoises, so a quantile can
+    // never be read out of whatever order the measurements happened to arrive in.
+    // Rank is nearest-lower (p * (n-1) truncated); with the handful of rounds a
+    // campaign runs, interpolating between ranks would invent resolution the
+    // samples do not have.
     uint64_t pct(double p) const {
         if (samples.empty()) { return 0; }
-        std::size_t i = static_cast<std::size_t>(p * static_cast<double>(samples.size() - 1));
-        if (i >= samples.size()) { i = samples.size() - 1; }
-        return samples[i];
+        if (ord_.empty()) {
+            ord_ = samples;
+            std::sort(ord_.begin(), ord_.end());
+        }
+        std::size_t i = static_cast<std::size_t>(p * static_cast<double>(ord_.size() - 1));
+        if (i >= ord_.size()) { i = ord_.size() - 1; }
+        return ord_[i];
     }
+    // p50/p90/p99/p999 of the SAMPLE DISTRIBUTION (what the user feels), as
+    // opposed to the round medians the tables quote (what the engine does).
+    double pmean() const { return mean(); }
+
+   private:
+    mutable std::vector<uint64_t> ord_;
 };
 
 //---------------------------------------------------------------------------

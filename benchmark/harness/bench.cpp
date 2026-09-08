@@ -62,6 +62,12 @@ namespace {
 struct Args {
     std::string mode = "correctness";
     std::string out;
+    // Multi-invocation artifacts (one file per campaign step, e.g. the six
+    // diffab seeds or the per-engine memory runs) must APPEND. Opening with "w"
+    // each time silently kept only the last invocation's rows — which turned the
+    // diffab gate into a check of 18 rows instead of 108 and made the memory
+    // gate read exactly one engine.
+    bool append = false;
     std::string engineFilter;               // for robust-child / targeted runs
     std::string probeFile;
     bool probeVni = false;
@@ -98,6 +104,7 @@ Args parseArgs(int argc, char** argv) {
         std::string v;
         if (!(v = val("--mode=")).empty()) { a.mode = v; }
         else if (!(v = val("--out=")).empty()) { a.out = v; }
+        else if (s == "--append") { a.append = true; }
         else if (!(v = val("--engine=")).empty()) { a.engineFilter = v; }
         else if (!(v = val("--engines=")).empty()) { a.drivers = v; }
         else if (!(v = val("--session=")).empty()) { a.session = v; }
@@ -193,7 +200,14 @@ std::vector<bench::Which> driverSet(const std::string& filter = std::string()) {
             else if (tok == "rc1") { for (auto w : bench::kRc1) { add(w); } }
             else if (tok == "attrib") { for (auto w : bench::kAttrib) { add(w); } }
             else if (tok == "all") { for (auto w : all) { add(w); } }
-            else { add(bench::whichFrom(tok)); }
+            else if (bench::whichKnown(tok)) { add(bench::whichFrom(tok)); }
+            else {
+                std::fprintf(stderr,
+                             "[bench] unknown engine '%s' in --engine/--engines (known: contest, "
+                             "rc1, attrib, all, kieekey, kieekey-aa, openkey-2.0.5, openkey-master, "
+                             "unikey-4.x, kieekey-base, kieekey-cand)\n", tok.c_str());
+                std::exit(2);
+            }
         }
         if (comma == std::string::npos) { break; }
         pos = comma + 1;
@@ -202,7 +216,10 @@ std::vector<bench::Which> driverSet(const std::string& filter = std::string()) {
 }
 
 // The engine list a mode should time: --engines= when given, else the legacy
-// --engine= narrow, else the default four-way set.
+// --drivers= (aliases welcome, e.g. "contest,attrib") when given, else the
+// --engine= narrow, else the default contest set. Every mode routes through
+// this so a one-off run cannot quietly measure a different engine set than a
+// campaign did — that mistake once burned four minutes and printed "NO DATA".
 std::vector<bench::Which> driverSetFor(const Args& a) {
     if (!a.drivers.empty()) { return driverSet(a.drivers); }
     return driverSet(a.engineFilter);
@@ -256,7 +273,7 @@ std::string makeEditStream(uint64_t seed, std::size_t nKeys, std::size_t nWords)
 void modeSelftest(const Args& a) {
     const std::vector<corpus::Event> probe = corpus::parse("xin chao ban doan ket ban lam quen");
     std::vector<std::unique_ptr<bench::IDriver>> drv;
-    for (auto w : driverSet(a.engineFilter)) { drv.push_back(bench::makeDriver(w)); }
+    for (auto w : driverSetFor(a)) { drv.push_back(bench::makeDriver(w)); }
     bench::Cfg c; c.asShipped = true;
     for (auto& d : drv) { d->configure(c); for (auto& e : probe) { d->feed(e); } }
     std::printf("[selftest] drivers=%zu\n", drv.size());
@@ -380,7 +397,7 @@ void modeCorrectness(const Args& a) {
             cfg.method = mv.method;
 
             std::vector<std::unique_ptr<bench::IDriver>> drv;
-            for (auto w : driverSet(a.engineFilter)) { drv.push_back(bench::makeDriver(w)); }
+            for (auto w : driverSetFor(a)) { drv.push_back(bench::makeDriver(w)); }
 
             // ---------------- category: words (isolated, space-committed) ----
             {
@@ -444,7 +461,7 @@ void modeCorrectness(const Args& a) {
         // ------------- behaviour categories (stream language, no encoding) ---
         {
             std::vector<std::unique_ptr<bench::IDriver>> drv;
-            for (auto w : driverSet(a.engineFilter)) { drv.push_back(bench::makeDriver(w)); }
+            for (auto w : driverSetFor(a)) { drv.push_back(bench::makeDriver(w)); }
 
             // stress: behaviour probes; per-stream text + agreement
             {
@@ -622,7 +639,7 @@ void modeProbe(const Args& a, const std::string& file) {
     std::ifstream f(file);
     if (!f) { std::fprintf(stderr, "cannot read %s\n", file.c_str()); return; }
     std::vector<std::unique_ptr<bench::IDriver>> drv;
-    for (auto w : driverSet(a.engineFilter)) { drv.push_back(bench::makeDriver(w)); }
+    for (auto w : driverSetFor(a)) { drv.push_back(bench::makeDriver(w)); }
     bench::Cfg cfg; cfg.asShipped = true;
     if (a.probeVni) { cfg.method = bench::Method::Vni; }
     std::string line;
@@ -665,7 +682,7 @@ void openkeyNoopLoop(bench::IDriver& d, int n) {
 void modeOverhead(const Args& a) {
     const uint64_t clockOverhead = stats::calibrateClockPair(200000);
     std::vector<std::unique_ptr<bench::IDriver>> drv;
-    for (auto w : driverSet(a.engineFilter)) { drv.push_back(bench::makeDriver(w)); }
+    for (auto w : driverSetFor(a)) { drv.push_back(bench::makeDriver(w)); }
     bench::Cfg cfg; cfg.asShipped = true;
     constexpr int kIters = 200000;
     for (auto& d : drv) {
@@ -713,7 +730,7 @@ void modeLatency(const Args& a) {
             lcfg.method = mv.method;
 
             std::vector<std::unique_ptr<bench::IDriver>> drv;
-            for (auto w : driverSet(a.engineFilter)) { drv.push_back(bench::makeDriver(w)); }
+            for (auto w : driverSetFor(a)) { drv.push_back(bench::makeDriver(w)); }
 
             const std::pair<const char*, std::vector<corpus::Event>*> streams[] = {
                 {"prose", &ls.words}, {"edit-storm", &ls.edit}, {"pathological", &ls.pathological}
@@ -881,7 +898,7 @@ void modeRobust(const Args& a) {
 
 int main(int argc, char** argv) {
     const Args a = parseArgs(argc, argv);
-    g_out = a.out.empty() ? stdout : std::fopen(a.out.c_str(), "w");
+    g_out = a.out.empty() ? stdout : std::fopen(a.out.c_str(), a.append ? "a" : "w");
     if (!g_out) { std::fprintf(stderr, "cannot open %s\n", a.out.c_str()); return 2; }
 
     stats::LineJson meta(g_out);

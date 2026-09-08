@@ -543,13 +543,25 @@ inline const char* whichName(Which w) {
 
 inline Which whichFrom(const std::string& s) {
     if (s == "kieekey") { return Which::KieeKey; }
-    if (s == "kieekey-aa") { return Which::KieeKeyCtl; }
+    if (s == "kieekey-aa" || s == "ctl" || s == "aa") { return Which::KieeKeyCtl; }
     if (s == "openkey-2.0.5") { return Which::OpenKey205; }
     if (s == "openkey-master") { return Which::OpenKeyMaster; }
     if (s == "unikey-4.x") { return Which::UniKey; }
     if (s == "kieekey-base") { return Which::KieeKeyBase; }
     if (s == "kieekey-cand") { return Which::KieeKeyCand; }
     return Which::UniKey;
+}
+
+// whichFrom deliberately cannot signal failure (it is called from parsing that
+// predates this), so the caller checks first. The reason: an unrecognised name
+// used to fall through to UniKey, so a typo like --engines=contest,ctl quietly
+// measured UniKey twice and dropped the A/A control — the one column whose whole
+// job is to say how much of a difference is noise. A campaign must not be able to
+// lose its control column silently.
+inline bool whichKnown(const std::string& s) {
+    return s == "kieekey" || s == "kieekey-aa" || s == "ctl" || s == "aa"
+        || s == "openkey-2.0.5" || s == "openkey-master" || s == "unikey-4.x"
+        || s == "kieekey-base" || s == "kieekey-cand";
 }
 
 //============================================================================

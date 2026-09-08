@@ -29,7 +29,8 @@ method and the verdicts:
 | `OPTIMIZATION_LEDGER.md` | every candidate with its ACCEPT/REJECT, including the rejected ones, and the rejections' reasons |
 | `baseline_manifest.json` | what a campaign measured: tree hashes, frozen-baseline hashes, flags, host facts |
 | `baseline_environment.txt` | the same facts in `k=v` form for the report generator |
-| `rc1-baseline/`, `rc1-ca4/` | per-campaign released trails (tables, gate log, environment) |
+| `rc1-baseline/`, `rc1-ca4/`, `rc1-cc1/`, `rc1-130/` | per-campaign released trails (tables, gate log, environment, manifest as built). `rc1-ca4` and `rc1-cc1` are *candidate* trials whose verdicts are REJECT; `rc1-130` is the release measurement |
+| `rc1-130/PROTOCOL.md` §12 | the deviations log: what broke in the instruments, in order, with consequences — including the profile shares that were withdrawn |
 
 The instruments are in [`benchmark/`](../../benchmark) — `scripts/campaign_rc1.sh` runs a
 campaign, `scripts/rc1_gates.py` decides pass/fail, `scripts/rc1_stats.py` produces the

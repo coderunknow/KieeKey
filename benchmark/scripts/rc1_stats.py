@@ -305,6 +305,31 @@ def main():
     # engine by more than 2 x the A/A band. The second clause is what stops a 4 %
     # average win from hiding a 9 % regression on edit-storms; it is evaluated on
     # the SAME rounds, so campaign drift cannot rescue a bad candidate.
+    # A campaign run without a candidate in the tree is not a candidate trial: the
+    # two shim columns then hold identical code, so the same machinery measures the
+    # harness's own drift. The manifest is loaded again here (not reused from below)
+    # because the verdict block runs before the manifest block, and it is compared the
+    # same way the gate compares it: source by source, against the frozen hash map.
+    man0, mp0 = {}, os.path.join(ROOT, a.results, "manifest_at_build.json")
+    if not os.path.isfile(mp0):
+        mp0 = os.path.join(ROOT, a.manifest)
+    if not os.path.isfile(mp0):
+        mp0 = os.path.join(ROOT, a.manifest)
+    if os.path.isfile(mp0):
+        try:
+            with open(mp0, encoding="utf-8") as fh0:
+                man0 = json.load(fh0)
+        except (OSError, ValueError):
+            man0 = {}
+    tree0 = man0.get("engine_sources_sha256") or {}
+    base0 = man0.get("baseline_engine_sources_sha256") or {}
+    differing0 = sorted(k for k, v in base0.items() if tree0.get(k) != v)
+    manifest_known = bool(base0) and bool(tree0)
+    is_baseline = manifest_known and not differing0
+    if not manifest_known:
+        print("[stats] WARNING: manifest has no frozen hash map — the campaign cannot be "
+              "classified as baseline or candidate; the candidate verdict says UNKNOWN")
+
     g_dec = dict(gain.get(a.deciding) or {})
     band_ns = float(aa_band or 0.0)
     worse = sorted(n for n, v in gain.items()
@@ -316,7 +341,14 @@ def main():
         "rule": ("ACCEPT iff deciding-cell gain > 0 with 95 % CI excluding 0, and no cell "
                  "regressing by more than 2 x the A/A median band"),
         "accept": bool(accept),
-        "decision": "ACCEPT" if accept else "REJECT",
+        "decision": ("NOT RUN — baseline campaign (frozen src/core)" if is_baseline else
+                     ("UNKNOWN — manifest unreadable" if not manifest_known else
+                      ("ACCEPT" if accept else "REJECT"))),
+        "baseline_campaign": bool(is_baseline),
+        "manifest_known": bool(manifest_known),
+        "differing_from_baseline": differing0,
+        "null_test_abs_max_pct": (round(max((abs(v.get("gain_pct") or 0.0) for v in gain.values()),
+                                            default=0.0), 2) if is_baseline else None),
         "deciding_cell": a.deciding,
         "deciding_gain_ns": g_dec.get("gain_ns"),
         "deciding_gain_pct": g_dec.get("gain_pct"),
@@ -337,7 +369,8 @@ def main():
     summary["meta"] = (collect("meta", 1) or [{}])[0]
 
     man = {}
-    mpath = os.path.join(ROOT, a.manifest)
+    mpath = mp0  # the same file the verdict above read, so the report cannot describe
+                 # one tree in §1 and another in §8
     if os.path.isfile(mpath):
         with open(mpath, encoding="utf-8") as fh:
             man = json.load(fh)
@@ -346,6 +379,31 @@ def main():
               f"build produced these numbers; run baseline_manifest.py")
     tree = man.get("engine_sources_sha256") or {}
     base = man.get("baseline_engine_sources_sha256") or {}
+    # Cross-campaign corroboration: the report may quote the most recent other campaign
+    # in benchmark/results/ for the same cell, because "we measured it twice at
+    # different sizes" is a claim that needs both numbers present, not remembered.
+    summary["prev"] = {}
+    for cand in sorted(os.listdir(os.path.join(ROOT, "benchmark/results")), reverse=True):
+        pth = os.path.join(ROOT, "benchmark/results", cand, "summary.json")
+        if cand == os.path.basename(a.results.rstrip("/")) or not os.path.isfile(pth):
+            continue
+        try:
+            with open(pth, encoding="utf-8") as fh:
+                other = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        cell = (other.get("cells") or {}).get(a.deciding) or {}
+        dd = cell.get("d") or {}
+        if dd.get("rel_pct") is None:
+            continue
+        summary["prev"] = {"campaign": cand, "rel_pct": dd.get("rel_pct"),
+                           "paired_samples": dd.get("n_pairs"),
+                           "n_differing": len((other.get("manifest") or {}).get("differing_files")
+                                              or (other.get("manifest") or {}).get("n_differing_from_baseline")
+                                              or []),
+                           "tier": (other.get("verdict") or {}).get("tier")}
+        break
+
     summary["manifest"] = {
         "path": a.manifest,
         "git": man.get("git", {}),
@@ -359,7 +417,8 @@ def main():
     }
     summary["timer"] = (collect("timer", 1) or [{}])[0]
     summary["attrib_guard"] = (collect("attrib-guard", 1) or [{}])[0]
-    summary["walks"] = (collect("walks-selftest", 1) or [{}])[0]
+    # (a "walks-selftest" row used to be read here; the mode was retired with the
+    # candidate it guarded — see PROTOCOL.md §9)
     summary["cold"] = collect("cold", 1)
     summary["diffab"] = collect("diffab", 1)
     summary["latency"] = collect("latency", 1)
@@ -629,6 +688,16 @@ def main():
                          "campaign, so no gain-over-v1.2.2 figure is published. Run the campaign with "
                          "`--engines=contest,attrib`._")
 
+    # The sampling profile is appended here rather than by the campaign driver, so
+    # "re-run the statistics" reproduces the whole artifact set — an append that
+    # lives in a shell script gets lost the first time summarize.py runs alone (it
+    # did: rc1-ca4's tables.md had no profile block after a manual re-summarise).
+    for name in ("profile_kieekey_as-shipped", "profile_kieekey_matched-minimal"):
+        md = os.path.join(ROOT, a.results, "logs", name + ".md")
+        if os.path.isfile(md):
+            key = "rc1_profile" if name.endswith("as-shipped") else "rc1_profile_matched_minimal"
+            t[key] = open(md, encoding="utf-8").read().strip()
+
     body = []
     for k, v in t.items():
         body.append(f"<<<TABLE:{k}>>>\n{v}\n<<<END>>>")
@@ -651,7 +720,13 @@ def main():
     if regressing:
         print(f"[stats] regressing cells ({len(regressing)}): " + ", ".join(regressing[:6]))
     cv = summary["candidate_verdict"]
-    if gain:
+    if gain and not cv.get("manifest_known"):
+        print(f"[stats] candidate decision: {cv['decision']}")
+    if gain and cv.get("baseline_campaign"):
+        print(f"[stats] candidate decision: {cv['decision']} — the same-code column pair drifted by "
+              f"at most {cv['null_test_abs_max_pct']} % (max |gain %| over {cv['cells_measured']} "
+              f"cells): that is the harness's own drift, not the engine's")
+    if gain and not cv.get("baseline_campaign"):
         print(f"[stats] candidate decision: {cv['decision']} (rule: {cv['rule']};"
               f" {len(cv['cells_regressing_beyond_band'])} cell(s) regress beyond band)")
         g = gain.get(a.deciding) or {}

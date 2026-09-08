@@ -1404,17 +1404,10 @@ void TextEngine::checkGrammar(int deltaBackspace) {
 
     // "thuơn"/"ưoi"/"ưom"/"ưoc" double-ư repair
     if (index_ >= 3) {
-        // v1.3.0 RC1 C-C1: the two-slot vowel prefix test is the condition that
-        // almost always fails on ordinary text, so it runs first and the
-        // six-way tail-letter test only pays its comparisons behind it. This is
-        // a short-circuit reorder only — the body still runs exactly when all
-        // three tests hold, and i >= 2 still precedes every i - 1 / i - 2 read,
-        // so no index can underflow on the first iterations.
         for (std::size_t i = index_ - 1; i != std::size_t(-1); --i) {
-            if (i >= 2 && chr(i - 1) == U'O' && chr(i - 2) == U'U') {
-                const std::uint16_t tail = chr(i);
-                if (tail == U'N' || tail == U'C' || tail == U'I' ||
-                    tail == U'M' || tail == U'P' || tail == U'T') {
+            if (chr(i) == U'N' || chr(i) == U'C' || chr(i) == U'I' ||
+                chr(i) == U'M' || chr(i) == U'P' || chr(i) == U'T') {
+                if (i >= 2 && chr(i - 1) == U'O' && chr(i - 2) == U'U') {
                     if ((typingWord_[i - 1] & kToneWMask) ^ (typingWord_[i - 2] & kToneWMask)) {
                         typingWord_[i - 2] |= kToneWMask;
                         typingWord_[i - 1] |= kToneWMask;

@@ -1,0 +1,8 @@
+{"mode":"meta","bench":"viet-ime-4way","action":"cold","corpus":"tests/data/viet74k.txt","rounds":5,"keys":150000,"words":74000,"seed":20260907,"t0_unix":1788855071}
+{"mode":"cold","engine":"kieekey","reps":12,"wall_min_ns":474966526,"wall_p50_ns":484418656,"wall_p95_ns":492663385,"wall_max_ns":494269256,"first_round_engine_ns_per_key":30.886}
+{"mode":"cold","engine":"openkey-2.0.5","reps":12,"wall_min_ns":1580597400,"wall_p50_ns":1602596329,"wall_p95_ns":1677897627,"wall_max_ns":1771247925,"first_round_engine_ns_per_key":89.518}
+{"mode":"cold","engine":"openkey-master","reps":12,"wall_min_ns":1316878112,"wall_p50_ns":1333570875,"wall_p95_ns":1358560880,"wall_max_ns":1399367341,"first_round_engine_ns_per_key":103.559}
+{"mode":"cold","engine":"unikey-4.x","reps":12,"wall_min_ns":409770184,"wall_p50_ns":418476756,"wall_p95_ns":472043481,"wall_max_ns":487133932,"first_round_engine_ns_per_key":17.521}
+{"mode":"cold","engine":"kieekey-aa","reps":12,"wall_min_ns":474866630,"wall_p50_ns":487776292,"wall_p95_ns":493909339,"wall_max_ns":496127085,"first_round_engine_ns_per_key":31.419}
+{"mode":"cold","engine":"kieekey-base","reps":12,"wall_min_ns":503541693,"wall_p50_ns":519063609,"wall_p95_ns":526240141,"wall_max_ns":552067297,"first_round_engine_ns_per_key":31.872}
+{"mode":"cold","engine":"kieekey-cand","reps":12,"wall_min_ns":495681945,"wall_p50_ns":515847846,"wall_p95_ns":529178989,"wall_max_ns":598486266,"first_round_engine_ns_per_key":31.538}

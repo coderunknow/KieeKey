@@ -1,0 +1,4 @@
+{"mode":"meta","bench":"viet-ime-4way","action":"walks","corpus":"tests/data/viet74k.txt","rounds":5,"keys":200000,"words":20000,"seed":20260907,"t0_unix":1788845139}
+{"mode":"walks-selftest","max_len":5,"leading_cases":12519536,"end_cases":6955302,"mismatches":0,"ref_digest":2914537616136238717}
+{"mode":"meta","bench":"viet-ime-4way","action":"attrib-guard","corpus":"tests/data/viet74k.txt","rounds":5,"keys":8000,"words":20000,"seed":20260907,"t0_unix":1788845140}
+{"mode":"attrib-guard","transcripts_equal":true,"kieekey_build":"in-process","base_build":"kk_base","cand_build":"kk_cand","ns_per_key_inprocess":85.027,"ns_per_key_base":89.880,"ns_per_key_cand":92.752,"base_over_inprocess":1.057,"band_ok":true}

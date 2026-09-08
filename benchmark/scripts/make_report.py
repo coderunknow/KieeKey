@@ -109,7 +109,21 @@ class Report:
         path = os.path.join(self.res, "logs", "gates.txt")
         if not os.path.isfile(path):
             return "no gate log"
-        lines = [l.strip() for l in open(path, encoding="utf-8") if ": gate:" in l]
+        # One gate can appear more than once — a resumed campaign or a manual re-run
+        # appends, and the newest line is the one `gate()` quotes. Counting raw lines
+        # would print "9 of 10 gates" for eight gates, so the tally is taken over the
+        # last line per gate name, which is the same row the table below quotes.
+        last = {}
+        for l in open(path, encoding="utf-8"):
+            l = l.strip()
+            if ": gate:" not in l:
+                continue
+            try:
+                name = l.split("gate:", 1)[1].split(":", 1)[0]
+            except IndexError:
+                continue
+            last[name] = l
+        lines = [last[k] for k in sorted(last)]
         ok = sum(1 for l in lines if ": PASS" in l)
         bad = [l.split("gate:", 1)[1] for l in lines if ": FAIL" in l]
         out = f"{ok} of {len(lines)} gates PASS"

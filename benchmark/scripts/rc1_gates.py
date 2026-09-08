@@ -379,9 +379,64 @@ def gate_attrib_guard(a):
                f"{g.get('base_over_inprocess')}× (in band)")
 
 
+def gate_integrity(a):
+    """Do the campaign's own artifacts say they are complete?
+
+    Every other gate reads a slice of `raw/` for its own purpose. This one reads all
+    of it, because the failures it is looking for are shape failures that no single
+    question about correctness can see: a step that wrote nothing, an `--out` that
+    truncated a multi-invocation artifact, a session that measured six engines while
+    the others measured seven, and the torn trailing line an interrupted run leaves
+    behind. Reading each file through `jsonl()` is what makes the torn-line count
+    complete here regardless of which gates ran before it.
+    """
+    raw = os.path.join(a.res, "raw")
+    if not os.path.isdir(raw):
+        return log(a.res, "integrity", False, "no raw/ directory in this campaign")
+    files = sorted(glob.glob(os.path.join(raw, "*.jsonl")))
+    if not files:
+        return log(a.res, "integrity", False, f"{raw}: no .jsonl artifacts at all")
+    problems, total, rows_per = [], 0, {}
+    for p in files:
+        name = os.path.basename(p)
+        with open(p, encoding="utf-8", errors="replace") as fh:
+            n_nonblank = sum(1 for ln in fh if ln.strip())
+        rows = jsonl(p)
+        total += len(rows)
+        rows_per[name] = len(rows)
+        if n_nonblank == 0:
+            problems.append(f"{name}: empty")
+        elif len(rows) != n_nonblank:
+            problems.append(f"{name}: {n_nonblank - len(rows)} non-blank line(s) undecodable")
+    # engine coverage must be identical across sessions, or a truncated artifact
+    # quietly becomes "the campaign measured what it measured"
+    for prefix in ("tput_s", "tput_lead_s"):
+        sess = [p for p in files if os.path.basename(p).startswith(prefix)]
+        if len(sess) < 2:
+            continue
+        cov = {}
+        for p in sess:
+            for r in jsonl(p):
+                e = r.get("engine")
+                if e is not None:
+                    cov.setdefault(e, set()).add(os.path.basename(p))
+        widths = {e: len(v) for e, v in cov.items()}
+        wide = max(widths.values()) if widths else 0
+        for e, n in sorted(widths.items()):
+            if n != wide:
+                problems.append(f"{prefix}* engine {e} appears in {n}/{len(sess)} sessions")
+    ok = not problems and not torn_lines[0]
+    detail = (f"{len(files)} artifact(s), {total} row(s) parsed, identical engine "
+              f"coverage across tput sessions, {torn_lines[0]} undecodable line(s)"
+              if ok else "; ".join(problems) +
+              (f"; {torn_lines[0]} undecodable line(s)" if torn_lines[0] else ""))
+    return log(a.res, "integrity", ok, detail)
+
+
 GATES = {"manifest": gate_manifest, "attrib-guard": gate_attrib_guard,
          "digest-identity": gate_digest_identity, "correctness": gate_correctness,
-         "diffab": gate_diffab, "memory": gate_memory, "sanitizers": gate_sanitizers}
+         "diffab": gate_diffab, "memory": gate_memory, "sanitizers": gate_sanitizers,
+         "integrity": gate_integrity}
 
 
 def report_torn_lines(res):
@@ -413,6 +468,13 @@ def main():
     for name, fn in GATES.items():
         if a.gate in ("all", name):
             rc |= fn(a)
+    # The torn-line counter accumulates while *any* gate reads the artifacts, so it is
+    # reported here rather than inside one gate: a run that only checked `diffab` must
+    # still refuse to leave an interrupted campaign looking clean. (It used to be dead
+    # code — the counter grew and nothing read it, which is exactly the class of defect
+    # this gate exists to catch.)
+    if not report_torn_lines(a.res):
+        rc |= 1
     return rc
 
 

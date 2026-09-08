@@ -240,24 +240,34 @@ instruments:
 | `scripts/rc1_gates.py` | pass/fail gates; every line lands in `results/<name>/logs/gates.txt` |
 | `scripts/rc1_stats.py` | paired-by-round, session-clustered statistics → `tables.md` + `summary.json` |
 | `scripts/baseline_manifest.py` | hashes the tree *and* the frozen v1.2.2 reference, plus the flags read out of `build.sh` |
-| `harness/rc1.hpp` | modes `tput`, `diffab`, `profile`, `timer`, `cold`, `walks`, `attrib-guard` |
+| `harness/rc1.hpp` | modes `tput`, `diffab`, `profile`, `timer`, `cold`, `attrib-guard` (a `walks` mode existed for one candidate and was retired with it — [ledger §2](../docs/bench/rc1-130/OPTIMIZATION_LEDGER.md)) |
 | `harness/kk_shim.cpp` | the attribution pair: `libkkbase.so` (frozen v1.2.2) vs `libkkcand.so` (this tree) through one shim |
 | `reference/kieekey-1.2.2/` | pristine previous-release engine sources, hash-verified — what "baseline" means |
 
 ```bash
+# release measurement: the campaign of record, run on the frozen tree
+DIFFAB_KEYS=40000 ./benchmark/scripts/campaign_rc1.sh --name=rc1-130 \
+    --sessions=5 --rounds=12 --keys=150000 --words=74000 --l2rounds=6 --diffab-seeds=3
+./benchmark/scripts/build.sh --sanitizers                      # only for the sanitizers step
+./benchmark/scripts/campaign_rc1.sh --name=rc1-130 --steps=sanitizers
+python3 benchmark/scripts/rc1_stats.py --results=benchmark/results/rc1-130
+python3 benchmark/scripts/make_report.py --campaign=rc1-130 \
+    --narrative=benchmark/REPORT.rc1.narrative.md --out=benchmark/REPORT.rc1.md --strict-stat
+
+# a candidate trial is the same campaign with --candidate, which also relaxes the manifest
+# gate from "the tree must equal the frozen reference" to "name the drift you are measuring"
 ./benchmark/scripts/campaign_rc1.sh --name=rc1-ca4 --candidate --sessions=6 --rounds=24 \
     --keys=200000 --words=74000 --engines=contest,ctl,attrib
-python3 benchmark/scripts/rc1_stats.py --results=benchmark/results/rc1-ca4
-python3 benchmark/scripts/make_report.py --campaign=rc1-ca4 \
-    --narrative=benchmark/REPORT.rc1.narrative.md --out=benchmark/REPORT.rc1.md --strict-stat
 ```
 
 New row kinds in the RC1 artifacts: `tput` (and `tput-lead`, fixed order), `diffab`,
-`attrib-guard`, `walks-selftest`, `timer`, `cold`, `profile-meta`/`profile-sample`, plus a
+`attrib-guard`, `timer`, `cold`, `profile-meta`/`profile-sample`, plus a
 `build` field on every timed row (`in-process`, `kk_base`, `kk_cand`) which is how a stale
 `.so` becomes visible instead of becoming a number.
 
-Two rules that are easy to break and hard to notice: **never run `build.sh` while a campaign is
+Three rules that are easy to break and hard to notice: **never run `build.sh` while a campaign is
 running** (it rebuilds the engine `.so`s from the live tree and would swap an engine mid-round),
+**never edit `campaign_rc1.sh` while it is running** (bash re-reads the open script at a byte offset
+and parses garbage — it cost one campaign its first pass, see [PROTOCOL §12](../docs/bench/rc1-130/PROTOCOL.md)),
 and **multi-invocation artifacts need `--append`** (the default `--out` truncates, which is how a
 108-row differential once became an 18-row one).

@@ -25,13 +25,16 @@ Candidate-by-candidate verdicts (including the ones that were rejected):
 {{stat:verdict.paired_samples}} paired round samples. **{{statcount:verdict.regressing_cells}}** of
 the measured cells regress against UniKey: {{regressing:6}}.
 
-Against the frozen v1.2.2 engine, measured in the same rounds of the same campaign, the current
-tree's change is **{{stat:candidate_verdict.deciding_gain_pct}} %** in the deciding cell
-({{stat:candidate_verdict.deciding_gain_ns}} ns/key saved, 95 % CI
-{{stat:candidate_verdict.deciding_ci_ns.0}}…{{stat:candidate_verdict.deciding_ci_ns.1}} ns against a
-noise floor of {{stat:candidate_verdict.band_ns}} ns), and
-{{statcount:candidate_verdict.cells_regressing_beyond_band}} cell(s) regress beyond that floor.
-Candidate decision by the pre-registered rule: **{{stat:candidate_verdict.decision}}**.
+This campaign is a **baseline** campaign: the working tree's `src/core` is byte-identical to the
+frozen v1.2.2 engine (that is what `gate:manifest` asserts above), so every number in §3–§4 *is*
+v1.2.2 as it ships, with no optimisation applied. Two candidate changes were implemented, measured
+under this protocol, and **reverted** — C-A (spelling automata) and C-C1 (a `checkGrammar`
+short-circuit) — and the reasons are in
+[OPTIMIZATION_LEDGER.md](../docs/bench/rc1-130/OPTIMIZATION_LEDGER.md), with the full per-cell tables
+from the campaigns that decided them (`benchmark/results/rc1-ca4`, `benchmark/results/rc1-cc1`).
+§8 keeps the paired frozen/candidate columns for this campaign as an instrument check: the two
+columns run the *same* code, so their gain must read zero, and a non-zero reading there would
+invalidate every gain number in the ledger.
 
 Correctness gates: **{{gatesummary}}**. Each gate is pass/fail, not a number to trade against speed:
 
@@ -130,6 +133,20 @@ reference for what a shift means.
 
 {{table:rc1_order}}
 
+### 3.1b How big this campaign is, and what that buys
+
+{{env:sessions}} sessions × {{env:rounds}} paired rounds at {{env:keys}} keys per stream = the sample
+count behind every CI above ({{stat:verdict.paired_samples}} paired samples in the deciding cell).
+That is a screening size, not the size the first pass of this work used: `rc1-ca4` ran
+6 sessions × 24 rounds (144 paired samples per cell) and measured the same deciding cell at
++25.24 % for an engine carrying a different candidate. The two campaigns are not averaged, and the
+gap between them is explained by the engine difference, not by sample size — which is why this report
+quotes its neighbour: the most recent other campaign in `benchmark/results/`
+(`{{stat:prev.campaign}}`, {{stat:prev.paired_samples}} paired samples per cell, its tree carrying
+{{stat:prev.n_differing}} engine source(s) that differ from the frozen baseline) put the same cell at
+{{stat:prev.rel_pct}} %. A campaign smaller than its
+neighbour is stated here rather than left to the reader to notice.
+
 ### 3.2 Noise floor
 
 The tier boundary uses 2 × the A/A **median** absolute difference, deliberately not the A/A p99: a
@@ -204,6 +221,14 @@ the same binary, not against a number remembered from last month's campaign. Two
 the only difference between the columns is the engine code.
 
 {{table:rc1_gain}}
+
+**This campaign carries no candidate**, so the two columns above are the same code and the table is
+the instrument's own null test: with `kieekey-cand` and `kieekey-base` compiled from identical
+sources, the reported gain must be indistinguishable from zero, and its spread is an independent
+estimate of what this design can resolve. A non-zero value here would mean every gain figure in the
+ledger is measuring the harness. The verdict row prints `NOT RUN — baseline campaign (frozen src/core)` — derived by
+comparing the manifest's per-source hashes, not by a flag someone remembered to pass —
+because there is nothing to decide.
 
 The guard that makes that claim checkable: the shim columns must reproduce the in-process transcript
 exactly, and their per-key cost must land in a plausible band around the in-process column

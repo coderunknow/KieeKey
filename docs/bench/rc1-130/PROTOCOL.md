@@ -173,13 +173,20 @@ zero-allocation-per-key hot path (§9 `memory` gate), the transcript digest iden
 | gate | rule |
 |---|---|
 | `manifest` | a baseline campaign must measure the tree the manifest hashed; if `src/core` differs from the frozen v1.2.2 reference, `--candidate` is required and the differing files are named |
-| `walks` | the walk automata equal the exhaustive reference oracle (12 519 536 leading + 6 955 302 end cases), 0 mismatches, reference digest recorded |
+| `integrity` | reads every `raw/*.jsonl` (runs before stats, so it can also state the row total the campaign wrote): no empty artifact, every non-blank line decodable — a torn trailing line from an interrupted run is a FAIL, never a silently dropped row — and identical engine coverage across the `tput_s*` / `tput_lead_s*` sessions, which is the shape a truncating `--out` destroys |
 | `attrib-guard` | §7 |
 | `digest-identity` | every KieeKey output row is bit-identical to the frozen-engine column of the same campaign; a missing oracle (file or column) is a FAIL, never a free pass |
 | `correctness` | all example rows evaluated; absolute per-engine exact rates published, no baseline oracle required |
-| `diffab` | keystroke-by-keystroke differential vs the frozen engine: 0 mismatches over ≥ 8 × seeds × keys events (the floor scales with what the campaign asked for) |
+| `diffab` | keystroke-by-keystroke differential vs the frozen engine: 0 mismatches over ≥ 8 × seeds × keys events (the floor scales with what the campaign asked for). Its corpus is sized by `DIFFAB_KEYS`, **not** by the timing campaign's `--words`: 18 cells × 274 k keys is ~52 min per seed, which buys no extra differential power because `buildStreams` treats every word as its own case — word-level identity is `digest-identity`'s job at full `--words` |
 | `memory` | allocations over the 2 M-key soak within budget (as-shipped ≤ 21, matched-minimal ≤ 20) and RSS within 96 MiB; no rows for the subject engine = FAIL |
-| `sanitizers` | ASan+UBSan+LSan clean in KieeKey-owned sources; findings inside vendored reference code are recorded as upstream defects, not fixed here |
+| `sanitizers` | ASan+UBSan+LSan clean in KieeKey-owned sources; findings inside vendored reference code are recorded as upstream defects, not fixed here. It runs as its own labelled step against a `--sanitizers` rebuild *after* the timing campaign, never interleaved with its rows, because `bench_san` belongs to whichever tree built it |
+
+A `walks` gate existed for one candidate (exhaustive equivalence of the walk automata against a
+12 519 536-case leading / 6 955 302-case end-of-word reference oracle). It was retired together with
+the code it guarded when that candidate was rejected; any future automaton-shaped candidate must
+re-add an exhaustive oracle of its own **before** it is timed, because `diffab` only proves equality
+on streams the corpus generator produced, and an automaton is exactly the kind of change that is
+equivalent on prose and wrong on a corner case.
 
 Units are stated in the gate output (RSS is bytes in `bench_mem`, printed as MiB) because a
 KiB limit once failed a 46 MiB run that was well inside budget. A gate that only prints is
@@ -195,6 +202,18 @@ worse than no gate: every gate was made to FAIL, on purpose, before being truste
   count is published next to the shares so a 1 % share is read as ±1 %.
 * Shares are ranks. A candidate is not scored by its predicted share; it is scored by the L1
   gain against the frozen column.
+* The sampler must be able to name the PC it caught. A `SIGPROF` handler installed without
+  `SA_SIGINFO` cannot: `__builtin_return_address(0)` there returns through glibc's signal restorer,
+  so every sample reports one libc address and the profile is 100 % `??` — which is indistinguishable
+  from "no hotspot" and therefore worse than no measurement. `Sampler::install` uses
+  `SA_SIGINFO` and reads `ucontext_t::uc_mcontext.gregs[REG_RIP]`; where that is unavailable the
+  build refuses to attribute and counts the samples as unresolved instead of guessing.
+* `bench_prof` is compiled `-fno-pie -no-pie` so a raw PC maps onto the same address space `nm`
+  reports, and `prof_sym.py` bounds each function by the extent to the next symbol rather than by a
+  fixed `+0x4000` window. It refuses an empty symbol table and a profile with zero samples rather
+  than emitting an empty table, and prints the unresolved share next to the shares.
+* A profile is only citable from the campaign whose binary it came from: shares measured by a
+  broken instrument are withdrawn, not footnoted.
 
 ## 11. NOT AVAILABLE register
 
@@ -231,6 +250,33 @@ consequence:
 * `docs/bench/rc1-130/` earlier contained narrative from a run whose artifacts did not survive;
   this protocol and the ledger are now written against the campaign directories in
   `benchmark/results/` only. Numbers quoted in prose always name their campaign.
+* 2026-09-08 — **the sampling profiler was published before it was validated**, and it was broken
+  (§10). `rc1-ca4`'s profile row is therefore *unusable* (100 % `??`) and every share quoted from an
+  earlier session is withdrawn; the only citable profiles are `rc1-cc1`'s and `rc1-130`'s, taken with
+  the fixed instrument (1 225 samples, 0.1 % unresolved, 25 functions named).
+* 2026-09-08 — a campaign was **aborted by editing `campaign_rc1.sh` while it ran**: bash re-reads the
+  file at a saved byte offset, so the next chunk parsed as garbage (`syntax error near unexpected
+  token 'fi'`). It was resumed with `--steps=` that exclude `gate`, so the same binaries were reused
+  and no row in the resumed file describes a different build. Two consequences were fixed rather than
+  worked around: `gates.txt` is now appended to, never truncated, so a resume cannot lose gate rows;
+  and `rc1_stats.py` appends the profile blocks itself, so a re-summarise cannot drop them. Standing
+  rule, same family as "never rebuild mid-campaign": **never edit a script that a running campaign is
+  executing**, nor the tree it is timing.
+* 2026-09-08 — **campaign sizes differ between campaigns and were not equalised.** `rc1-ca4` ran
+  6 sessions × 24 rounds (144 paired samples/cell); `rc1-cc1` and `rc1-130` run 5 × 12 (60). The
+  difference is stated in §3.1b of the report rather than hidden, because a decision rule that is
+  easier to pass with fewer samples in one direction is easier to fail in the other; no numbers from
+  the two sizes are averaged.
+* 2026-09-08 — `rc1-cc1` was **promoted from a screening pass to the deciding campaign** for its
+  candidate after C-A's revert made the tree final. That is a change of plan after seeing a number,
+  so it is recorded here as such: the promotion could not affect the candidate's own columns (both
+  were measured in the same rounds before the decision existed), but it does mean the screening-sized
+  distribution was chosen for the release, and the frozen-tree release campaign `rc1-130` was then
+  run *after* that decision, which is the direction of travel that keeps the release number honest.
+* 2026-09-08 — the baseline/candidate classification of a campaign stopped depending on a remembered
+  flag: `rc1_stats.py` compares the manifest's per-source hashes itself and each campaign now keeps
+  `results/<name>/manifest_at_build.json`, because the tree-level manifest is overwritten by every
+  build. `rc1-cc1`'s copy was regenerated after the fact from `03492b4` in a detached worktree.
 
 ## 13. Reproducing a campaign
 
@@ -238,15 +284,19 @@ consequence:
 git rev-parse HEAD                       # must match environment.txt / manifest
 ./benchmark/scripts/build.sh --sanitizers       # the campaign's own gate step does this
 python3 benchmark/scripts/baseline_manifest.py  # hashes tree + frozen baseline + flags
-./benchmark/scripts/campaign_rc1.sh --name=rc1-ca4 --candidate \
-    --sessions=6 --rounds=24 --keys=200000 --words=74000 \
-    --engines=contest,ctl,attrib --diffab-seeds=6 --l2rounds=10
-python3 benchmark/scripts/make_report.py --campaign=rc1-ca4 \
+# release measurement (frozen tree; no candidate applied)
+./benchmark/scripts/campaign_rc1.sh --name=rc1-130 \
+    --sessions=5 --rounds=12 --keys=150000 --words=74000 \
+    --engines=contest,ctl,attrib --diffab-seeds=3 --l2rounds=6     # env DIFFAB_KEYS=40000
+# a candidate trial adds --candidate (which also relaxes the manifest gate to name the drift)
+python3 benchmark/scripts/rc1_stats.py --results=benchmark/results/rc1-130
+python3 benchmark/scripts/make_report.py --campaign=rc1-130 \
     --narrative=benchmark/REPORT.rc1.narrative.md --out=benchmark/REPORT.rc1.md --strict-stat
 ```
 
 Never rebuild while a campaign is running (`build.sh` recompiles the engine `.so`s from the live
-tree, which would swap an engine mid-round). The full campaign above takes roughly 1.5–2 h on the
+tree, which would swap an engine mid-round), and never edit `campaign_rc1.sh` itself while it runs —
+bash re-reads an open script at a byte offset (§12). The full campaign above takes roughly 1.5–2 h on the
 two cores this container exposes; a tput-only screening pass (`--steps=gate,selftest,tput,tput-lead,summarize
 --sessions=4 --rounds=12 --diffab-seeds=1`) is about 25 min and is what §8 decisions are screened
 with before a full campaign is spent.

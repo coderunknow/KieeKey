@@ -1,0 +1,4 @@
+[2026-09-08T06:40:31Z] gate:diffab: PASS — 0 mismatches over 3,219,486 events (54 rows) — per-key code, backspaces, replacement text and final visible text all identical; builds compared: kk_base, kk_cand
+[2026-09-08T06:40:34Z] gate:memory: PASS — hot path stays allocation-free — as-shipped: 21 allocs / 2,000,000 keys, RSS 46.2 MiB; matched-minimal: 20 allocs / 2,000,000 keys, RSS 49.4 MiB
+[2026-09-08T06:40:39Z] gate:sanitizers: PASS — 0 findings in KieeKey-owned sources across 7 runs
+[2026-09-08T08:18:26Z] gate:integrity: PASS — 29 artifact(s), 40252 row(s) parsed, identical engine coverage across tput sessions, 0 undecodable line(s)

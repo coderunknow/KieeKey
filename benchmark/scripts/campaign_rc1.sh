@@ -72,7 +72,12 @@ RES="benchmark/results/$NAME"
 RAW="$RES/raw"
 LOGS="$RES/logs"
 mkdir -p "$RAW" "$LOGS"
-: > "$LOGS/gates.txt"
+# gates.txt is APPENDED to, never truncated: a campaign resumed with --steps=…
+# (after an interruption) must keep the gate lines its earlier steps already
+# established, otherwise the report loses the manifest / correctness evidence for
+# a run that is otherwise still valid. Delete the file by hand to start a record
+# from scratch.
+touch "$LOGS/gates.txt"
 GATE_ARGS=(--res="$RES")
 [ "$CANDIDATE" = 1 ] && GATE_ARGS+=(--candidate)
 case ",$ENGINES," in *,attrib,*) GATE_ARGS+=(--oracle-engine=kieekey-base) ;; esac
@@ -285,20 +290,22 @@ fi
 
 if have_step summarize; then
     say "summarising"
+    # The artifact-shape gate runs *before* stats on purpose: it reads every raw file,
+    # so it can state how many rows the campaign actually wrote, and a torn trailing
+    # line from an interrupted step fails the campaign instead of being silently
+    # skipped by whichever gate happened to read that file.
+    python3 benchmark/scripts/rc1_gates.py integrity --res="$RES" || exit 1
     python3 benchmark/scripts/rc1_stats.py --results="$RES" || exit 1
-    if [ -f "$LOGS/profile_kieekey_as-shipped.md" ]; then
-        python3 - "$RES" <<'PY'
-import os, sys
-res = sys.argv[1]
-md = os.path.join(res, "tables.md")
-prof = os.path.join(res, "logs", "profile_kieekey_as-shipped.md")
-if os.path.isfile(md) and os.path.isfile(prof):
-    body = open(prof, encoding="utf-8").read()
-    with open(md, "a", encoding="utf-8") as f:
-        f.write("\n<<<TABLE:rc1_profile>>>\n" + body + "\n<<<END>>>\n")
-    print("[rc1] appended the sampling profile to tables.md as rc1_profile")
-PY
-    fi
+    # rc1_stats owns the profile append: it writes those blocks into the tables.md it
+    # just generated, so a re-summarise cannot duplicate or drop them (both have
+    # happened when the shell driver appended them after the fact).
+    for need in timer.jsonl selftest.jsonl; do
+        if [ ! -s "$RAW/$need" ]; then
+            say "WARNING: raw/$need is missing or empty — a step was excluded from this "
+            say "         run, and the report will refuse to resolve the tokens that read"
+            say "         it (that refusal is the intended failure, not a rendering bug)"
+        fi
+    done
 fi
 
 say "release trail: docs/bench/rc1-130/$NAME"

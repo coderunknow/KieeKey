@@ -5,7 +5,7 @@
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20ARM64-0078D6.svg)
 ![Build](https://img.shields.io/badge/build-CMake%20%3E%3D%203.28-064FAD.svg)
 
-**KieeKey v1.2.2 Stable** is a modern, low-latency Vietnamese input method
+**KieeKey v1.3.0 RC1** is a modern, low-latency Vietnamese input method
 engine (bộ gõ Tiếng Việt) for Windows, with a system-tray application, a TSF
 text-store composer and an optional WinUI 3 Fluent settings UI.
 
@@ -20,7 +20,7 @@ text-store composer and an optional WinUI 3 Fluent settings UI.
 
 ---
 
-## v1.3.0 RC1 — cross-engine latency campaign (engine still byte-identical to v1.2.2)
+## What's new in v1.3.0 RC1 — cross-engine latency campaign, and the fast emit path
 
 This cycle was measurement, not micro-optimisation: a self-contained campaign under
 [`benchmark/`](benchmark/README.md) that pits the current engine against **UniKey** and **OpenKey**

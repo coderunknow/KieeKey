@@ -181,6 +181,11 @@ def gate_digest_identity(a):
     """
     eng = a.engine
     cur = correctness_rows(a.res, eng)
+    if a.policy == "declared-divergence" and not a.oracle_engine:
+        return log(a.res, "digest-identity", False,
+                   "POLICY declared-divergence needs --oracle-engine=<this tree's shim column> "
+                   "(the integrity property becomes 'the two builds of this tree agree'), and the "
+                   "campaign supplies kieekey-cand for exactly that")
     if a.oracle_engine:
         oracle = correctness_rows(a.res, a.oracle_engine)
         if not oracle:
@@ -256,6 +261,28 @@ def gate_diffab(a):
     events = sum(int(r.get("events", 0)) for r in rows)
     tailbad = [r for r in rows if not r.get("final_text_equal")]
     builds = {r.get("subject_build") for r in rows} | {r.get("rival_build") for r in rows}
+    if a.policy == "declared-divergence":
+        # The one assertion the policy keeps is the one about the user's screen.
+        if tailbad:
+            first = tailbad[0]
+            return log(a.res, "diffab", False,
+                       f"{len(tailbad)} row(s) differ in FINAL VISIBLE TEXT "
+                       f"(first: {first.get('config')}/{first.get('method')}/{first.get('stream')} "
+                       f"at key {first.get('first_mismatch_key')}) — a declared rule trade-off may "
+                       f"change the keystroke payload, never the composed text; this is a "
+                       f"correctness regression, not a trade-off")
+        share = (100.0 * mism / events) if events else 0.0
+        first = next((r for r in rows if int(r.get("per_key_mismatches", 0))), None)
+        det = ""
+        if first:
+            det = (f"; first at key {first.get('first_mismatch_key')} of "
+                   f"{first.get('config')}/{first.get('method')}/{first.get('stream')}")
+        return log(a.res, "diffab", True,
+                   f"POLICY declared-divergence — {mism:,} per-key payload differences over "
+                   f"{events:,} events ({share:.4f} %){det}; final visible text identical in all "
+                   f"{len(rows)} rows, so the skipped rule changes HOW the engine repainted, not "
+                   f"WHAT it wrote{'' if mism else ' (no payload difference on this corpus at all)'}; "
+                   f"builds compared: {', '.join(sorted(x for x in builds if x))}")
     if mism or tailbad:
         first = next((r for r in rows if int(r.get("per_key_mismatches", 0))), None)
         d = f"{mism} per-key mismatches over {events:,} events"
@@ -460,6 +487,13 @@ def main():
                          "(e.g. kieekey-base) instead of a frozen artifact directory")
     ap.add_argument("--min-events", type=int, default=1_000_000)
     ap.add_argument("--candidate", action="store_true")
+    ap.add_argument("--policy", choices=("identity", "declared-divergence"), default="identity",
+                    help="identity = the tree must be indistinguishable from frozen v1.2.2 "
+                         "(the default, and what every behaviour-preserving candidate uses). "
+                         "declared-divergence = the release trades a named rule away: visible "
+                         "text must still match everywhere, the two builds of this tree must "
+                         "still match each other, and the divergence from the baseline is "
+                         "measured and published instead of asserted away.")
     ap.add_argument("--regen", action="store_true")
     a = ap.parse_args()
     a.allow_engine_change = a.candidate

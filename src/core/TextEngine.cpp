@@ -602,8 +602,8 @@ void TextEngine::backspaceBranch(bool /*caps*/) {
             startNewSession();
             specialChar_.clear();
             restoreLastTypingState();
-        } else if (wordHasTransform_) {
-            checkGrammar(1);   // v1.2.0: gated — see member doc
+        } else if (wordHasTransform_ && opts_.grammarRepair) {
+            checkGrammar(1);   // v1.2.0: gated — see member doc; v1.3.0: option-gated
         }
     }
 }
@@ -672,7 +672,8 @@ void TextEngine::mainKeyBranch(char32_t c, bool caps) {
         handleMainKey(c, caps);
     }
 
-    if (!opts_.freeMark && !isKeyD(c) && wordHasTransform_) {
+    // v1.3.0 RC1: the whole pass is behind opts_.grammarRepair — see EngineOptions.
+    if (opts_.grammarRepair && !opts_.freeMark && !isKeyD(c) && wordHasTransform_) {
         // v1.2.0: grammar repair can only act on transform masks in the
         // buffer; a word with no transform (pure raw typing) provably has
         // nothing to repair, so the per-key vowel re-scan is skipped.
@@ -1248,7 +1249,30 @@ void TextEngine::checkSpelling(bool forceCheckVowel) {
         if (isConsonantAt(0)) {
             const std::uint16_t maskA = opts_.quickStartConsonant ? kEndConsonantMask : std::uint16_t{0};
             const std::uint16_t maskB = opts_.allowConsonantZfwj ? kConsonantAllowMask : std::uint16_t{0};
-            j = matchLeadingConsonant(typingWord_.data(), spellingEndIndex_, maskA, maskB);
+            // v1.3.0 RC1 (plan P2): the leading cluster is decided by slots 0..2
+            // once the word is at least as long as the longest row, so appending a
+            // tail key does not have to re-run the walk. Self-validating — the key
+            // IS the head — so no write site needs to know about it.
+            if (spellingEndIndex_ >= 3) {
+                const std::uint32_t k0 = typingWord_[0];
+                const std::uint32_t k1 = typingWord_[1];
+                const std::uint32_t k2 = typingWord_[2];
+                const std::uint32_t km = static_cast<std::uint32_t>(maskA) |
+                                          (static_cast<std::uint32_t>(maskB) << 16);
+                if (leadMemoKey_[0] == k0 && leadMemoKey_[1] == k1 &&
+                    leadMemoKey_[2] == k2 && leadMemoKey_[3] == km) {
+                    j = leadMemoJ_;
+                } else {
+                    j = matchLeadingConsonant(typingWord_.data(), spellingEndIndex_,
+                                              maskA, maskB);
+                    leadMemoKey_[0] = k0; leadMemoKey_[1] = k1;
+                    leadMemoKey_[2] = k2; leadMemoKey_[3] = km;
+                    leadMemoJ_ = j;
+                }
+            } else {
+                j = matchLeadingConsonant(typingWord_.data(), spellingEndIndex_,
+                                          maskA, maskB);
+            }
         }
 
         if (j == spellingEndIndex_) {   // for "d" case
@@ -1390,6 +1414,22 @@ void TextEngine::checkSpelling(bool forceCheckVowel) {
 //===========================================================================
 // Grammar repair after edits (port of checkGrammar)
 //===========================================================================
+namespace {
+// v1.3.0 RC1 — the double-ư repair in checkGrammar scans the word backwards for
+// the first of N/C/I/M/P/T, six compares per position, over up to kMaxBuff slots
+// (the worst case is a long word that contains none of them). typingWord_ stores
+// base letters upper-case in the low 16 bits, so the test is a 96-byte table
+// load; entries exist for exactly the code points the compare chain tested, so
+// the scan accepts and rejects the same positions as before.
+constexpr std::size_t kTailConsTableSize = 96;
+constexpr std::array<std::uint8_t, kTailConsTableSize> makeTailConsTable() {
+    std::array<std::uint8_t, kTailConsTableSize> t{};
+    t[U'N'] = 1; t[U'C'] = 1; t[U'I'] = 1; t[U'M'] = 1; t[U'P'] = 1; t[U'T'] = 1;
+    return t;
+}
+inline constexpr auto kTailConsTable = makeTailConsTable();
+}   // namespace
+
 void TextEngine::checkGrammar(int deltaBackspace) {
     if (index_ <= 1 || index_ >= kMaxBuff) {
         return;
@@ -1405,8 +1445,8 @@ void TextEngine::checkGrammar(int deltaBackspace) {
     // "thuơn"/"ưoi"/"ưom"/"ưoc" double-ư repair
     if (index_ >= 3) {
         for (std::size_t i = index_ - 1; i != std::size_t(-1); --i) {
-            if (chr(i) == U'N' || chr(i) == U'C' || chr(i) == U'I' ||
-                chr(i) == U'M' || chr(i) == U'P' || chr(i) == U'T') {
+            const std::uint16_t tail = chr(i);
+            if (tail < kTailConsTableSize && kTailConsTable[tail]) {
                 if (i >= 2 && chr(i - 1) == U'O' && chr(i - 2) == U'U') {
                     if ((typingWord_[i - 1] & kToneWMask) ^ (typingWord_[i - 2] & kToneWMask)) {
                         typingWord_[i - 2] |= kToneWMask;
@@ -1446,7 +1486,7 @@ void TextEngine::checkGrammar(int deltaBackspace) {
                 break;
             }
             ++result_.backspaceCount;
-            result_.newChars[idx++] = getCharacterCode(typingWord_[i]);
+            result_.newChars[idx++] = composeCached(i);
         }
         result_.newCharCount = result_.backspaceCount;
         result_.backspaceCount += static_cast<std::uint8_t>(deltaBackspace);
@@ -1533,7 +1573,7 @@ void TextEngine::removeMark() {
                 break;
             }
             ++result_.backspaceCount;
-            result_.newChars[idx++] = getCharacterCode(typingWord_[i]);
+            result_.newChars[idx++] = composeCached(i);
         }
         result_.newCharCount = result_.backspaceCount;
     } else {
@@ -1710,7 +1750,7 @@ void TextEngine::insertMark(std::uint32_t markMask, bool canModify) {
         }
         for (std::size_t ii = vowelStart_; ii < index_; ++ii) {
             typingWord_[ii] &= ~kMarkMask;
-            result_.newChars[kk--] = getCharacterCode(typingWord_[ii]);
+            result_.newChars[kk--] = composeCached(ii);
         }
         tempDisableKey_ = true;
     } else {
@@ -1720,7 +1760,7 @@ void TextEngine::insertMark(std::uint32_t markMask, bool canModify) {
             if (ii != vowelWillSetMark_) {
                 typingWord_[ii] &= ~kMarkMask;
             }
-            result_.newChars[kk--] = getCharacterCode(typingWord_[ii]);
+            result_.newChars[kk--] = composeCached(ii);
         }
         result_.backspaceCount = static_cast<std::uint8_t>(index_ - vowelStart_);
     }
@@ -1745,10 +1785,10 @@ void TextEngine::insertD(char32_t /*c*/, bool /*caps*/) {
                 break;
             }
             typingWord_[ii] |= kToneMask;
-            result_.newChars[index_ - 1 - ii] = getCharacterCode(typingWord_[ii]);
+            result_.newChars[index_ - 1 - ii] = composeCached(ii);
             break;
         }
-        result_.newChars[index_ - 1 - ii] = getCharacterCode(typingWord_[ii]);
+        result_.newChars[index_ - 1 - ii] = composeCached(ii);
     }
     result_.newCharCount = result_.backspaceCount;
 }
@@ -1784,7 +1824,7 @@ void TextEngine::insertAOE(char32_t data, bool /*caps*/) {
                 // Emitting the raw coded entry produced a 0-resolution in
                 // resolveChar → the visible character vanished from the
                 // replacement while backspaceCount still counted it.
-                result_.newChars[index_ - 1 - ii] = getCharacterCode(typingWord_[ii]);
+                result_.newChars[index_ - 1 - ii] = composeCached(ii);
                 if (data != U'O') {   // case "thoòng" stays enabled
                     tempDisableKey_ = true;
                 }
@@ -1794,11 +1834,11 @@ void TextEngine::insertAOE(char32_t data, bool /*caps*/) {
             if (!isKeyD(data)) {
                 typingWord_[ii] &= ~kToneWMask;
             }
-            result_.newChars[index_ - 1 - ii] = getCharacterCode(typingWord_[ii]);
+            result_.newChars[index_ - 1 - ii] = composeCached(ii);
             break;
         }
         // present old char
-        result_.newChars[index_ - 1 - ii] = getCharacterCode(typingWord_[ii]);
+        result_.newChars[index_ - 1 - ii] = composeCached(ii);
     }
     result_.newCharCount = result_.backspaceCount;
 }
@@ -1826,7 +1866,7 @@ void TextEngine::insertW(char32_t /*data*/, bool /*caps*/) {
             // -Wunused-but-set-variable (C4189-adjacent) in strict builds.
             for (std::size_t ii = vowelStart_; ii < index_; ++ii) {
                 typingWord_[ii] &= ~kToneWMask;
-                result_.newChars[index_ - 1 - ii] = getCharacterCode(typingWord_[ii]) & ~kStandaloneMask;
+                result_.newChars[index_ - 1 - ii] = composeCached(ii) & ~kStandaloneMask;
             }
             isRestoredW_ = true;
             tempDisableKey_ = true;
@@ -1861,7 +1901,7 @@ void TextEngine::insertW(char32_t /*data*/, bool /*caps*/) {
             }
 
             for (std::size_t ii = vowelStart_; ii < index_; ++ii) {
-                result_.newChars[index_ - 1 - ii] = getCharacterCode(typingWord_[ii]);
+                result_.newChars[index_ - 1 - ii] = composeCached(ii);
             }
         }
         return;
@@ -1896,18 +1936,18 @@ void TextEngine::insertW(char32_t /*data*/, bool /*caps*/) {
                         // Emit the still-decoded character — a mark on the
                         // vowel ('ừ' → mark stays when the ư-hook toggles
                         // off) must remain visible, not resolve to 0.
-                        result_.newChars[index_ - 1 - ii] = getCharacterCode(typingWord_[ii]);
+                        result_.newChars[index_ - 1 - ii] = composeCached(ii);
                         isRestoredW_ = true;
                     }
                     tempDisableKey_ = true;
                 } else {
                     typingWord_[ii] |= kToneWMask;
                     typingWord_[ii] &= ~kToneMask;
-                    result_.newChars[index_ - 1 - ii] = getCharacterCode(typingWord_[ii]);
+                    result_.newChars[index_ - 1 - ii] = composeCached(ii);
                 }
                 break;
             default:
-                result_.newChars[index_ - 1 - ii] = getCharacterCode(typingWord_[ii]);
+                result_.newChars[index_ - 1 - ii] = composeCached(ii);
                 break;
         }
     }
@@ -1925,7 +1965,7 @@ void TextEngine::reverseLastStandaloneChar(char32_t keyCode, bool caps) {
     result_.extCode = 4;
     typingWord_[index_ - 1] =
         (keyCode | kToneWMask | kStandaloneMask | (caps ? kCapsMask : 0));
-    result_.newChars[0] = getCharacterCode(typingWord_[index_ - 1]);
+    result_.newChars[0] = composeCached(index_ - 1);
 }
 
 void TextEngine::checkForStandaloneChar(char32_t c, bool caps, char32_t keyWillReverse) {
@@ -1940,7 +1980,7 @@ void TextEngine::checkForStandaloneChar(char32_t c, bool caps, char32_t keyWillR
         result_.backspaceCount = 1;
         result_.newCharCount = 1;
         typingWord_[index_ - 1] = c | (caps ? kCapsMask : 0);
-        result_.newChars[0] = getCharacterCode(typingWord_[index_ - 1]);
+        result_.newChars[0] = composeCached(index_ - 1);
         return;
     }
 
@@ -2062,7 +2102,7 @@ bool TextEngine::checkQuickConsonant() {
             hasHandleQuickConsonant_ = true;
             std::size_t idx = 0;
             for (std::size_t i = index_ - 1; i != std::size_t(-1); --i) {
-                result_.newChars[idx++] = getCharacterCode(typingWord_[i]);
+                result_.newChars[idx++] = composeCached(i);
             }
             return true;
         }
@@ -2076,7 +2116,7 @@ void TextEngine::upperCaseFirstCharacter() {
         result_.backspaceCount = 0;
         result_.newCharCount = 1;
         typingWord_[0] |= kCapsMask;
-        result_.newChars[0] = getCharacterCode(typingWord_[0]);
+        result_.newChars[0] = composeCached(0);
         upperCaseStatus_ = 0;
         if (opts_.useMacro && result_.macroKey.size() > 0) {
             result_.macroKey[0] |= kCapsMask;
@@ -2177,7 +2217,7 @@ bool TextEngine::checkRestoreIfNotInDictionary(EngineCode handleCode) {
     // Composed word → resolved code points → lexicon lookup.
     dictScratch_.clear();
     for (std::size_t i = 0; i < index_; ++i) {
-        const std::uint32_t ch = getCharacterCode(typingWord_[i]);
+        const std::uint32_t ch = composeCached(i);
         const std::uint32_t v = resolveChar(ch);
         if (v == 0) { return false; }   // unresolvable — never veto
         dictScratch_.push_back(v);
@@ -2220,7 +2260,7 @@ bool TextEngine::checkRestoreIfNotInDictionary(EngineCode handleCode) {
             // getCharacterCode (not the raw internal entry): the candidate's
             // W-hooked 'o' must resolve to ơ — raw entries carry payload bits
             // that resolveChar alone would strip to the plain key.
-            result_.newChars[candidateLen - 1 - i] = getCharacterCode(typingWord_[i]);
+            result_.newChars[candidateLen - 1 - i] = composeCached(i);
         }
         // index_ unchanged: the candidate has exactly the composed length
         // (only the W-hook mask was cleared).
@@ -2298,7 +2338,7 @@ bool TextEngine::switchToneStyle() {
         if (i != target) {
             typingWord_[i] &= ~kMarkMask;   // never two marks in one group
         }
-        result_.newChars[index_ - 1 - i] = getCharacterCode(typingWord_[i]);
+        result_.newChars[index_ - 1 - i] = composeCached(i);
     }
     result_.newCharCount = result_.backspaceCount;
     vowelWillSetMark_ = target;   // scratch left consistent for composition

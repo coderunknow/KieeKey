@@ -47,6 +47,7 @@ ENGINES="contest,ctl,attrib"
 PIN="${BENCH_PIN:-auto}"
 LOAD_LIMIT="${LOAD_LIMIT:-2.5}"
 CANDIDATE=0
+DIVERGENCE=0
 SAN_WORDS="${SAN_WORDS:-20000}"
 SAN_ENGINES="${SAN_ENGINES:-kieekey kieekey-aa kieekey-base kieekey-cand unikey-4.x openkey-2.0.5 openkey-master}"
 BUILD="benchmark/.build"
@@ -63,6 +64,7 @@ for arg in "$@"; do
         --engines=*) ENGINES="${arg#*=}" ;;
         --pin=*) PIN="${arg#*=}" ;;
         --candidate) CANDIDATE=1 ;;
+        --divergence) DIVERGENCE=1 ;;   # declared rule trade-off: gate policy, not a gate removal
         *) echo "unknown option: $arg" >&2; exit 2 ;;
     esac
 done
@@ -80,7 +82,22 @@ mkdir -p "$RAW" "$LOGS"
 touch "$LOGS/gates.txt"
 GATE_ARGS=(--res="$RES")
 [ "$CANDIDATE" = 1 ] && GATE_ARGS+=(--candidate)
-case ",$ENGINES," in *,attrib,*) GATE_ARGS+=(--oracle-engine=kieekey-base) ;; esac
+if [ "$DIVERGENCE" = 1 ]; then
+    # The tree deliberately trades a documented rule away (v1.3.0 RC1's grammarRepair default), so
+    # "indistinguishable from frozen v1.2.2" is no longer the property under test. The policy keeps
+    # the two that are: final visible text identical everywhere, and this tree's two builds identical
+    # to each other. It is a stricter reading of "we know exactly what changed", not a loosened one.
+    GATE_ARGS+=(--policy=declared-divergence)
+    say "GATE POLICY: declared-divergence — payload differences are measured and published, " \
+        "visible text and in-process/cand identity are still asserted"
+fi
+case ",$ENGINES," in *,attrib,*)
+    if [ "$DIVERGENCE" = 1 ]; then
+        GATE_ARGS+=(--oracle-engine=kieekey-cand)
+    else
+        GATE_ARGS+=(--oracle-engine=kieekey-base)
+    fi ;;
+esac
 
 have_step() { [[ ",$STEPS," == *",$1,"* ]]; }
 say() { printf '[rc1] %s\n' "$*"; }

@@ -42,10 +42,12 @@ DEF="${BENCH_DEF:--DNDEBUG}"
 WARN="-w"
 WITH_SAN=0
 WITH_PGO=0
+FASTPROFILE=0
 for arg in "$@"; do
     case "$arg" in
         --sanitizers) WITH_SAN=1 ;;
         --pgo) WITH_PGO=1 ;;
+        --fast-profile) FASTPROFILE=1 ;;
         --clean) rm -rf "$BUILD" ;;
         *) echo "unknown option: $arg" >&2; exit 2 ;;
     esac
@@ -118,7 +120,16 @@ build_variant() {
         else
             edir="src/core"
         fi
-        $CXX $common -fPIC -fvisibility=hidden -DKK_BUILD_ID=kk_$side -I "$edir" \
+        # --fast-profile marks the CANDIDATE library only, so `kieekey-base` stays the plain
+        # strict build and the campaign's paired gain table is the profile's effect measured in
+        # the same rounds against the same A/A band. libkkbase.so and the in-process column are
+        # never touched: that is the whole point of the attribution pair.
+        cand_extra=""
+        if [ "$side" = cand ] && [ "$FASTPROFILE" = 1 ]; then
+            cand_extra="-DKIEEKEY_LOW_LATENCY_PROFILE"
+            log "[$sfx] candidate library built with the LOW-LATENCY PROFILE define"
+        fi
+        $CXX $common $cand_extra -fPIC -fvisibility=hidden -DKK_BUILD_ID=kk_$side -I "$edir" \
             -c "$edir/TextEngine.cpp" -o "$od/kk_${side}_engine.o"
         $CXX $common -fPIC -fvisibility=hidden -DKK_BUILD_ID=kk_$side -I "$edir" \
             -I "$HK" -c "$HK/kk_shim.cpp" -o "$od/kk_${side}_shim.o"

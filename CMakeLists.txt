@@ -33,7 +33,7 @@
 cmake_minimum_required(VERSION 3.28)
 
 project(KieeKey
-        VERSION 1.2.2
+        VERSION 1.3.0
         DESCRIPTION "KieeKey — Vietnamese input method (modern core)"
         LANGUAGES CXX)
 
@@ -680,4 +680,25 @@ if(WIN32)
             RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
     install(DIRECTORY src/core DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/openkey
             FILES_MATCHING PATTERN "*.hpp")
+endif()
+
+#----------------------------------------------------------------------------
+# v1.3.0 RC1 — low-latency profile (opt-in build configuration, NOT the default).
+#
+# Compiles out the two strictness passes the RC1 campaign measured on the hot path: the post-edit
+# orthography repair (checkGrammar, ~5.5 ns/key into a marked word) and strict mark placement
+# (freeMark, ~8.8 ns across insertMark/checkCorrectVowel). Measured price, from the same campaign's
+# differential run: 52 % of keys repaint differently AND 10 of 18 corpus streams end with different
+# COMPOSED TEXT — a mark left on the vowel the last key hit instead of the one the rule picks. That
+# is wrong Vietnamese, so it ships off: this option exists for a target where latency outranks the
+# last rule pass, and the numbers on both sides are published in docs/bench/rc1-130/.
+#----------------------------------------------------------------------------
+option(KIEEKEY_LOW_LATENCY_PROFILE "Opt-in latency profile: compile out the strict-mark passes (see docs/bench/rc1-130/OPTIMIZATION_PLAN.md)" OFF)
+if(KIEEKEY_LOW_LATENCY_PROFILE)
+    if(TARGET openkey)
+        target_compile_definitions(openkey PRIVATE KIEEKEY_LOW_LATENCY_PROFILE)
+        message(STATUS "KieeKey: LOW-LATENCY PROFILE ON — strict-mark passes compiled out (composed text can differ from the strict build)")
+    else()
+        message(WARNING "KIEEKEY_LOW_LATENCY_PROFILE=ON but this configuration has no `openkey` target — the profile is NOT applied")
+    endif()
 endif()

@@ -152,7 +152,36 @@ struct EngineOptions {
     bool useModernOrthography = false;   // oà/uý vs òa/úy
     bool quickTelex           = false;
     bool restoreIfWrongSpelling = true;
-    bool freeMark             = false;   // "tự do dấu" (marks allowed on any vowel)
+    // The low-latency profile also relaxes mark placement to "any vowel" (which is what
+    // removes checkCorrectVowel's relocation work, 8.8 ns alongside the 5.5 ns above). Same
+    // reasoning as grammarRepair: it changes composed text, so it ships off and is opt-in only.
+    bool freeMark             =
+#ifdef KIEEKEY_LOW_LATENCY_PROFILE
+        true;
+#else
+        false;   // "tự do dấu" (marks allowed on any vowel)
+#endif
+    // v1.3.0 RC1 — the post-edit orthography repair (checkGrammar: the double-ư
+    // fix plus moving a mark back onto the vowel the strict rule chooses, run on
+    // every key typed into a word that already carries a mark). Measured cost of
+    // the pass: 5.5 ns of a ~68 ns decision, on every key typed into a marked
+    // word. OFF skips it — and this is NOT a payload-only saving: screening the
+    // full corpus against the frozen engine showed 52 % of keys repaint differently
+    // AND 10 of 18 streams ending in DIFFERENT COMPOSED TEXT (a mark left on the
+    // vowel the last key hit instead of the one the rule picks). That is wrong
+    // Vietnamese, not a stylistic drift, so it cannot be the shipped default of a
+    // release whose whole claim is orthographic correctness.
+    // It IS available as the low-latency profile: define KIEEKEY_LOW_LATENCY_PROFILE
+    // at build time (`build.sh --fast-profile`, or -D KIEEKEY_LOW_LATENCY_PROFILE=ON
+    // in CMake) and the two strictness switches ship off, for a target where the
+    // latency matters more than the last rule pass. The profile's own latency and
+    // its exact behavioural price are published side by side in the RC1 report.
+    bool grammarRepair =
+#ifdef KIEEKEY_LOW_LATENCY_PROFILE
+        false;
+#else
+        true;    // v1.2.2 behaviour, byte-identical
+#endif
     bool allowConsonantZfwj   = false;
     bool quickStartConsonant  = false;
     bool quickEndConsonant    = false;
@@ -311,7 +340,15 @@ public:
     void setDictionaryResolver(DictionaryResolver r) noexcept { dictResolver_ = std::move(r); }
 
     // ---- settings (thread-affine: call from consumer thread only) --------
-    void setOptions(EngineOptions opts) noexcept { opts_ = opts; resetSpellingFlag(); }
+    void setOptions(EngineOptions opts) noexcept {
+        opts_ = opts;
+        resetSpellingFlag();
+        // The code table (and the two masks the leading match reads) are options:
+        // a memo keyed on the word alone would be stale across a switch, so drop
+        // both caches here. Once per configuration change, never on the hot path.
+        emitMemoKey_.fill(0);
+        leadMemoKey_.fill(0);
+    }
     [[nodiscard]] const EngineOptions& options() const noexcept { return opts_; }
     void tempOffSpellChecking() noexcept;   // toggles while a Ctrl combo is held
     void tempOffEngine(bool off) noexcept { willTempOffEngine_ = off; }
@@ -574,6 +611,20 @@ private:
     void checkCorrectVowel(const FlatVec<FlatVec<std::uint16_t>>& charset,
                            int& i, int& k, char32_t markKey);
     std::uint32_t getCharacterCode(const std::uint32_t& data) const noexcept;
+
+    // Compose slot `pos`, reusing the cached code when the slot is bit-identical
+    // to what produced it. See emitMemoKey_ for why no invalidation is needed.
+    __attribute__((always_inline)) inline std::uint32_t composeCached(std::size_t pos) noexcept {
+        const std::uint32_t raw = typingWord_[pos];
+        const std::uint32_t key = raw ^ kEmitMemoFlip;
+        if (emitMemoKey_[pos] == key) {
+            return emitMemoCode_[pos];
+        }
+        const std::uint32_t code = getCharacterCode(raw);
+        emitMemoKey_[pos]  = key;
+        emitMemoCode_[pos] = code;
+        return code;
+    }
     bool findMacro(const std::vector<std::uint32_t>& key, std::vector<std::uint32_t>& data);
     void resetSpellingFlag() noexcept { useSpellingBefore_ = opts_.checkSpelling; }
     void finalizeResult() noexcept;
@@ -581,6 +632,34 @@ private:
     // ---- state (was: 30+ file-scope globals in Engine.cpp) ----
     EngineOptions opts_;
     std::array<std::uint32_t, kMaxBuff> typingWord_{};
+    // v1.3.0 RC1 — self-validating emit memo (plan P4, generalised). Every emit
+    // loop recomposes the whole pending word, so a key that moves one mark
+    // recomposes the 4-7 unchanged code points around it as well. The cache KEY
+    // is the raw word slot itself, so an entry can never be stale: any slot that
+    // changed fails the compare and recomposes. Two details make that sound:
+    //   * `getCharacterCode` is a pure function of (raw, opts_.codeTable), and
+    //     setOptions() zeroes the keys — the only invalidation this needs;
+    //   * keys are stored as `raw ^ kEmitMemoFlip`, so a zero-initialised table
+    //     cannot match a zeroed word slot (which is what a cleared word holds).
+    // Bounded, allocation-free, O(1) per key, like the rest of the hot path.
+    static constexpr std::uint32_t kEmitMemoFlip = 0xA5A5A5A5u;
+    // Sized to the whole word buffer, deliberately: a screening campaign tried capping the memo to
+    // the 8 stable head slots to avoid the miss-stores in adversarial long words, and it made
+    // `· pathological` WORSE (−3.5…−9.9 % across all six cells, versus one cell at −8.0 % and the
+    // other five inside ±1.7 % when uncapped) while also costing the prose gain. The extra branch is
+    // what did it: with it, composeCached stopped being inlined into the 21 emit sites, so every
+    // position paid a call. Uncapped and branch-free is both the faster and the simpler shape — the
+    // one cell it does cost is disclosed in the report rather than hidden by a threshold.
+    std::array<std::uint32_t, kMaxBuff> emitMemoKey_{};
+    std::array<std::uint32_t, kMaxBuff> emitMemoCode_{};
+
+    // v1.3.0 RC1 — leading-consonant memo (plan P2). matchLeadingConsonant's
+    // longest row is 3 cells (NGH), so with spellingEndIndex_ >= 3 no row can be
+    // length-rejected and the result is a function of slots 0..2 plus the two
+    // option masks — which is exactly what this key holds (slot 3 packs the
+    // masks). Same self-validating rule: a changed head fails the compare.
+    std::array<std::uint32_t, 4> leadMemoKey_{};
+    std::size_t leadMemoJ_ = 0;
     std::array<std::uint32_t, kMaxBuff> keyStates_{};
     std::size_t index_      = 0;   // typing word length
     std::size_t stateIndex_ = 0;   // key-state history length

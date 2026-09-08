@@ -169,11 +169,9 @@ if have_step gate; then
 fi
 
 if have_step selftest; then
-    say "selftest (drivers, A/A identity, encoder, walk oracle, attribution guard)"
+    say "selftest (drivers, A/A identity, encoder, attribution guard)"
     : > "$RAW/selftest.jsonl"
     run "selftest" "$BENCH" --mode=selftest || exit 1
-    run "walks" "$BENCH" --mode=walks --out="$RAW/selftest.jsonl" --append || exit 1
-    python3 benchmark/scripts/rc1_gates.py walks "${GATE_ARGS[@]}" || exit 1
     case ",$ENGINES," in
         *,attrib,*)
             run "attrib-guard" "$BENCH" --mode=attrib-guard --keys=8000 \

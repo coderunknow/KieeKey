@@ -135,12 +135,17 @@ build_variant() {
         # SIGPROF samples can be attributed to source lines inside the engine.
         # Same flags plus -g: the profile ranks, and every decision is made on
         # the plain binary above.
-        $CXX $common -g -fno-omit-frame-pointer -I src/core -c src/core/TextEngine.cpp \
+        # -no-pie/-fno-pie on the profiling twin only: the profile artifact stores
+        # raw program counters and prof_sym.py resolves them against `nm` addresses,
+        # which is valid only when the image is not relocated by ASLR. Built as a PIE
+        # the entire run resolved to "??" (100 % of samples) — and an unreadable
+        # profile looks exactly like "no hot spot", so this flag is load-bearing.
+        $CXX $common -g -fno-omit-frame-pointer -fno-pie -I src/core -c src/core/TextEngine.cpp \
             -o "$od/kk_TextEngine_prof.o"
-        $CXX $common -g -fno-omit-frame-pointer -I src/core -I "$HK" -I "$REFUK" \
+        $CXX $common -g -fno-omit-frame-pointer -fno-pie -I src/core -I "$HK" -I "$REFUK" \
             -c "$HK/bench.cpp" -o "$od/bench_prof.o"
-        $CXX $common -g -fno-omit-frame-pointer "$od/bench_prof.o" "$od/kk_TextEngine_prof.o" \
-            "$od"/uk_*.o -ldl -o "$BUILD/bench_prof"
+        $CXX $common -g -fno-omit-frame-pointer -no-pie "$od/bench_prof.o" \
+            "$od/kk_TextEngine_prof.o" "$od"/uk_*.o -ldl -o "$BUILD/bench_prof"
         log "[$sfx] built $BUILD/bench, $BUILD/bench_mem, $BUILD/bench_prof, libok205.so, libokmaster.so, libkkbase.so, libkkcand.so"
     else
         $CXX $common "${objs[@]}" -ldl -o "$BUILD/bench$sfx"

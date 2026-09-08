@@ -38,7 +38,6 @@ Correctness gates: **{{gatesummary}}**. Each gate is pass/fail, not a number to 
 | gate | measured statement |
 |---|---|
 | manifest | {{gate:manifest}} |
-| walk oracle | {{gate:walks}} |
 | attribution guard | {{gate:attrib-guard}} |
 | output digest identity | {{gate:digest-identity}} |
 | corpus correctness | {{gate:correctness}} |
@@ -80,9 +79,11 @@ the current tree measured in-process, and the pristine v1.2.2 sources (
   produced code, backspaces, replacement spans, final visible text — with
   {{stat:diffab_totals.per_key_mismatches}} mismatches; final texts equal:
   {{stat:diffab_totals.final_text_equal}}; builds {{statlist:diffab_totals.builds}}.
-* Consonant-walk automata (the new structures in this tree) are checked against an exhaustive
-  reference over {{stat:walks.leading_cases}} leading and {{stat:walks.end_cases}} end-of-word
-  cases: {{stat:walks.mismatches}} mismatches.
+* Candidate C-A (consonant-walk automata) carried its own exhaustive equivalence oracle over
+  12 519 536 leading and 6 955 302 end-of-word cases with 0 mismatches — it was proven
+  *equivalent* and then measured *slower* than the frozen engine in all 18 cells, so it was
+  reverted, oracle and all. See
+  [the ledger](../docs/bench/rc1-130/OPTIMIZATION_LEDGER.md) §2 for the numbers.
 
 {{table:rc1_diffab}}
 

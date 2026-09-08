@@ -53,7 +53,7 @@
   "governor": "NOT AVAILABLE (not exposed in this container)",
   "host_note": "containerised host; perf_event_open is blocked by seccomp and valgrind is not installed, so hardware counters and callgrind-style attribution are recorded as NOT AVAILABLE rather than substituted",
   "kernel": "Linux-6.1.158+-x86_64-with-glibc2.36",
-  "loadavg_at_manifest": "0.73 0.50 0.34 1/80 3963",
+  "loadavg_at_manifest": "0.98 0.71 0.49 1/79 4801",
   "lto": "OFF for every engine (LTO across a dlopen boundary would be an asymmetry)",
   "machine": "x86_64",
   "max_freq_khz": "NOT AVAILABLE (not exposed in this container)",
@@ -71,8 +71,8 @@
  "git": {
   "branch": "arena/01a07b1c-kieekey",
   "dirty_src": "clean",
-  "git_head": "c7f982cfe79504f5bc40ae7bcf9467aeb6c19a6b",
-  "git_head_short": "c7f982c"
+  "git_head": "72fa5cede6fac59cbbb524d103f5fcd1067fbae0",
+  "git_head_short": "72fa5ce"
  },
  "harness": {
   "files": 9,
@@ -83,7 +83,7 @@
  "schema": "kieekey-bench-baseline/1",
  "scripts": {
   "files": 11,
-  "tree_sha256": "d945d6065eaf8705783de1aa601b53f9b883fd97a59760b9b14b514aa67d7b2e"
+  "tree_sha256": "cd576ab622b5333eb64d5d8ffd22e635fbdfd47c41f22a324adaa14920be40c2"
  },
  "toolchain": {
   "compiler": "g++ (Debian 12.2.0-14+deb12u1) 12.2.0",

@@ -291,6 +291,13 @@ def main():
                                  (-d["ci_lo"]) if d.get("ci_lo") is not None else None],
                           "n": d.get("n"), "wins": d.get("wins"), "losses": d.get("losses")}
 
+    summary = {"campaign": os.path.basename(a.results.rstrip("/")),
+               "cells": cells, "gain": gain, "rival": a.rival,
+               "deciding_cell": a.deciding, "aa_band_ns": aa_band,
+               "verdict": {"tier": tier, "label": TIERS[tier], "rel_pct": rel,
+                           "paired_samples": npairs, "regressing_cells": regressing},
+               "n_tput_rows": len(perf)}
+
     # ---- candidate accept/reject, computed by the pre-registered rule -------
     # (docs/bench/rc1-130/PROTOCOL.md §"candidate acceptance"). A candidate is
     # ACCEPTed only if, in the deciding cell, it is faster than the frozen engine
@@ -321,13 +328,6 @@ def main():
                  "its numbers and the reason stay in OPTIMIZATION_LEDGER.md"),
     }
 
-    summary = {"campaign": os.path.basename(a.results.rstrip("/")),
-               "cells": cells, "gain": gain, "rival": a.rival,
-               "deciding_cell": a.deciding, "aa_band_ns": aa_band,
-               "verdict": {"tier": tier, "label": TIERS[tier], "rel_pct": rel,
-                           "paired_samples": npairs, "regressing_cells": regressing},
-               "n_tput_rows": len(perf)}
-
     # ---- other artifacts ------------------------------------------------------
     def collect(mode, fields):
         return [r for r in rows if r.get("mode") == mode]
@@ -339,8 +339,8 @@ def main():
     man = {}
     mpath = os.path.join(ROOT, a.manifest)
     if os.path.isfile(mpath):
-        with open(mpath, encoding="utf-8") as f:
-            man = json.load(f)
+        with open(mpath, encoding="utf-8") as fh:
+            man = json.load(fh)
     if not man:
         print(f"[stats] WARNING: no manifest at {a.manifest} — the report cannot state which "
               f"build produced these numbers; run baseline_manifest.py")
@@ -602,26 +602,26 @@ def main():
             ["engine", "allocs (as-shipped)", "allocs / megakey", "RSS MiB", "bytes / key",
              "allocs (matched-minimal)", "allocs / megakey", "RSS MiB"],
             [[summary["memory_labels"].get(e, e),
-              num(v.get("allocs_as_shipped")), f(v.get("allocs_per_megakey_as_shipped"), 3),
+              f(v.get("allocs_as_shipped")), f(v.get("allocs_per_megakey_as_shipped"), 3),
               f(v.get("rss_mib_as_shipped"), 1), f(v.get("bytes_per_key_as_shipped"), 2),
-              num(v.get("allocs_matched_minimal")), f(v.get("allocs_per_megakey_matched_minimal"), 3),
+              f(v.get("allocs_matched_minimal")), f(v.get("allocs_per_megakey_matched_minimal"), 3),
               f(v.get("rss_mib_matched_minimal"), 1)]
              for e, v in sorted(summary["memory"].items())])
     if summary["correctness_overall"]:
         t["rc1_corr"] = table(
             ["engine", "rows", "exact vs intended", "exact rate", "differs from intended"]
             + (["agrees with kieekey"] if any("agrees_with_kieekey" in v for v in summary["correctness_overall"].values()) else []),
-            [[e, num(v.get("rows")), num(v.get("exact")),
-              f((v.get("exact_rate") or 0) * 100.0, 2) + " %", num(v.get("problems"))]
+            [[e, f(v.get("rows")), f(v.get("exact")),
+              f((v.get("exact_rate") or 0) * 100.0, 2) + " %", f(v.get("problems"))]
              + ([f"{v.get('agrees_with_kieekey', 0) / max(v.get('rows', 1), 1) * 100.0:.2f} %"]
                 if "agrees_with_kieekey" in v else [])
              for e, v in sorted(summary["correctness_overall"].items())])
         rows_c = []
         for name, per in sorted(summary["correctness_rates"].items()):
             for e, v in sorted(per.items()):
-                rows_c.append([name.replace("|", " · "), e, num(v.get("rows")),
+                rows_c.append([name.replace("|", " · "), e, f(v.get("rows")),
                                f((v.get("exact_rate") or 0) * 100.0, 2) + " %",
-                               num(v.get("problems"))])
+                               f(v.get("problems"))])
         t["rc1_corr_cells"] = table(["cell", "engine", "rows", "exact rate", "non-intended"], rows_c)
 
     if summary["gain"] is not None and not gain:

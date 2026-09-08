@@ -65,7 +65,15 @@ def main():
     resolved, unresolved = [], 0
     for pc, n in counts.items():
         i = bisect.bisect_right(addrs, pc) - 1 if addrs else -1
-        if i >= 0 and addrs[i] + 0x4000 > pc:
+        # extent = up to the NEXT symbol, so a sample that falls past a small
+        # function is not attributed to it because a fixed window happened to
+        # cover the gap.
+        if i < 0:
+            by_fn["??"] += n
+            unresolved += n
+            continue
+        end = addrs[i + 1] if i + 1 < len(addrs) else addrs[i] + 0x4000
+        if i >= 0 and addrs[i] <= pc < end:
             by_fn[names[i]] += n
             resolved.append(n)
         else:

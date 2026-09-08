@@ -30,7 +30,11 @@
 //   cold          fresh-process wall time per engine (exec + dlopen + static init
 //                 + first round), measured by spawning this binary once per
 //                 engine and timing the child.
-//   walks         exhaustive equivalence oracle for src/core/ConsonantWalks.hpp.
+// (a "walks" mode lived here: the exhaustive equivalence oracle for candidate
+//  C-A's automata. The candidate was proven equivalent, then measured slower than
+//  the frozen engine in every cell, and reverted — so the oracle lost its subject
+//  and left with it. Its numbers are recorded in
+//  docs/bench/rc1-130/OPTIMIZATION_LEDGER.md §2.)
 //   attrib-guard sanity check for the attribution pair: the two shim columns must
 //                 reproduce the in-process column's transcript EXACTLY and their
 //                 per-key cost must be within a plausible band of it. This is the
@@ -41,9 +45,9 @@
 
 #include <algorithm>
 
-#include "ConsonantWalks.hpp"   // the walks oracle is a product-side selftest, run here
 #include <cerrno>
 #include <csignal>
+#include <ucontext.h>
 #include <cstdint>
 #include <ctime>
 #include <cstdio>
@@ -59,7 +63,7 @@ namespace rc1 {
 
 inline bool isRc1Mode(const std::string& m) {
     return m == "tput" || m == "diffab" || m == "profile" || m == "timer" || m == "cold"
-           || m == "walks" || m == "attrib-guard";
+           || m == "attrib-guard";
 }
 
 //---------------------------------------------------------------- streams --
@@ -334,14 +338,24 @@ struct Sampler {
         self->key.assign(kSlots, 0);
         self->cnt.assign(kSlots, 0);
         struct sigaction sa{};
-        // A plain handler: the address the handler returns to IS the interrupted
-        // instruction, which is the pc we want. (SA_SIGINFO would give the exact
-        // mcontext, but it also makes the sampler depend on glibc internals; the
-        // profile ranks functions, and 4 ms of skid cannot change a ranking.)
-        sa.sa_handler = [](int) {
-            void* pc = __builtin_return_address(0);
-            self->hit(reinterpret_cast<uint64_t>(pc));
+        // SA_SIGINFO + the interrupted RIP from the ucontext. The obvious
+        // shortcut — a plain handler reading __builtin_return_address(0) — was
+        // what this file did before, and it produced ONE pc for 1 248 samples:
+        // for a non-real-time handler glibc returns through a fixed trampoline,
+        // so the "return address" is the restorer stub, not the profiled
+        // instruction. A profile that resolves to a single address looks exactly
+        // like "no hot spot", which is worse than no profile at all.
+        // REG_RIP is part of the x86-64 Linux ABI (ucontext.h), not a glibc
+        // private; on any other layout the guard below keeps the count honest.
+#if defined(__x86_64__) && defined(REG_RIP)
+        sa.sa_sigaction = [](int, siginfo_t*, void* uc) {
+            const auto* g = &static_cast<ucontext_t*>(uc)->uc_mcontext.gregs;
+            self->hit(static_cast<uint64_t>((*g)[REG_RIP]));
         };
+        sa.sa_flags = SA_SIGINFO | SA_RESTART;
+#else
+        sa.sa_handler = [](int) { self->hit(0); };   // unresolved, but counted
+#endif
         sigaction(SIGPROF, &sa, nullptr);
         struct itimerval tv{};
         const uint64_t per = 1000000ull / (a.hz ? a.hz : 1000ull);
@@ -506,21 +520,6 @@ inline int modeCold(const Args& a, std::FILE* out) {
     return 0;
 }
 
-//------------------------------------------------------------------- walks --
-inline int modeWalks(const Args& a, std::FILE* out) {
-    const std::size_t maxLen = 5;
-    auto R = ok::text::walks::kk_walks_selftest(maxLen, "ACDGHKLNQRTX1", 3000000u);
-    stats::LineJson j(out);
-    j.addStr("mode", "walks-selftest"); j.addInt("max_len", maxLen);
-    j.addInt("leading_cases", R.leadCases); j.addInt("end_cases", R.endCases);
-    j.addInt("mismatches", R.mismatches); j.addInt("ref_digest", R.digest);
-    j.end();
-    std::printf("[selftest] consonant walks: leading %llu cases / %llu mismatch · "
-                "end %llu cases · reference digest %llu\n",
-                (unsigned long long)R.leadCases, (unsigned long long)R.mismatches,
-                (unsigned long long)R.endCases, (unsigned long long)R.digest);
-    return R.mismatches ? 1 : 0;
-}
 
 inline int run(const Args& a) {
     std::FILE* out = g_out ? g_out : stdout;
@@ -529,7 +528,6 @@ inline int run(const Args& a) {
     if (a.mode == "profile") { return modeProfile(a, out); }
     if (a.mode == "timer") { return modeTimer(a, out); }
     if (a.mode == "cold") { return modeCold(a, out); }
-    if (a.mode == "walks") { return modeWalks(a, out); }
     if (a.mode == "attrib-guard") { return modeAttribGuard(a, out); }
     return 1;
 }

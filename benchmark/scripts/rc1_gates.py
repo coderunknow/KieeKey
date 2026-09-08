@@ -12,7 +12,6 @@ have); a gate that cannot find its artifact fails the same way.
     manifest        the frozen v1.2.2 reference copy still matches the manifest
                     (so "identical to baseline" can mean anything), and in
                     baseline mode the working tree equals it too
-    walks           ConsonantWalks automaton/reference equivalence oracle: 0 mismatches
                     over a non-zero case count
     attrib-guard    the two shim columns reproduce the in-process transcript and
                     measure a plausible per-key cost (see rc1.hpp)
@@ -358,25 +357,6 @@ def gate_sanitizers(a):
     return log(a.res, "sanitizers", True, note)
 
 
-def gate_walks(a):
-    s = load_json(os.path.join(a.res, "summary.json")) or {}
-    w = s.get("walks") or {}
-    rows = jsonl(os.path.join(a.res, "raw", "selftest.jsonl"), lambda r: r.get("mode") == "walks-selftest")
-    w = w or (rows[0] if rows else {})
-    if not w:
-        return log(a.res, "walks", False, "no walks-selftest row — the oracle never ran")
-    cases = int(w.get("leading_cases", 0)) + int(w.get("end_cases", 0))
-    bad = int(w.get("mismatches", -1))
-    if cases <= 0:
-        return log(a.res, "walks", False, "the oracle enumerated 0 cases")
-    if bad:
-        return log(a.res, "walks", False, f"{bad} mismatches over {cases:,} enumerated cases")
-    return log(a.res, "walks", True,
-               f"automaton == reference over {cases:,} enumerated cases "
-               f"(leading {w.get('leading_cases')}, end {w.get('end_cases')}), "
-               f"reference digest {w.get('ref_digest')}")
-
-
 def gate_attrib_guard(a):
     s = load_json(os.path.join(a.res, "summary.json")) or {}
     g = s.get("attrib_guard") or {}
@@ -399,7 +379,7 @@ def gate_attrib_guard(a):
                f"{g.get('base_over_inprocess')}× (in band)")
 
 
-GATES = {"manifest": gate_manifest, "walks": gate_walks, "attrib-guard": gate_attrib_guard,
+GATES = {"manifest": gate_manifest, "attrib-guard": gate_attrib_guard,
          "digest-identity": gate_digest_identity, "correctness": gate_correctness,
          "diffab": gate_diffab, "memory": gate_memory, "sanitizers": gate_sanitizers}
 

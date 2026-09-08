@@ -1,0 +1,16 @@
+campaign=rc1-p8
+utc=2026-09-08T12:54:44Z
+sessions=4 rounds=8 keys=150000 words=74000 l2rounds=4
+engines=contest,ctl,attrib pin=1 pin_note=pinned to core 1 (affinity mask exposes 2 cores) steps=gate candidate=1
+head=717bbed
+dirty_src=
+loadavg1=0.28
+Linux e2b.local 6.1.158+ #1 SMP PREEMPT_DYNAMIC Mon May 11 18:48:24 UTC 2026 x86_64 GNU/Linux
+0.28 0.51 0.45 1/86 2275
+cpu=Intel(R) Xeon(R) Processor @ 2.60GHz
+cores_online=2
+governor=NOT AVAILABLE
+thp=always [madvise] never
+mitigations=Not affected
+perf=NOT AVAILABLE (seccomp blocks perf_event_open in this container)
+valgrind=NOT AVAILABLE

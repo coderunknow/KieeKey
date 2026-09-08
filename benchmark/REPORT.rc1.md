@@ -593,6 +593,22 @@ True). An earlier version of this instrument failed silently — its
 `prepare()` never reached the engine, so both columns measured an early-out and the "gain" looked
 tidy. `PASS — shim columns reproduce the in-process transcript exactly; base/cand builds kk_base/kk_cand, ratio 1.021× (in band)` is now a gate precisely so that failure cannot come back as a number.
 
+### 8.1 What the candidate screens said
+
+Four candidate trials have run on this instrument since the campaign of record, each in `--candidate`
+mode with the frozen column beside it in the same rounds, so every one of them is a paired A/B rather
+than a comparison of two campaigns: C-A, the bucket-table restructure (−0.29 … −9.52 % across the 18
+cells, deciding cell −4.98 %); C-C1, the hot-path dispatch reordering (faster on the prose streams,
+−10.9 % on `matched-minimal · vni · pathological` — the cell that punishes an ordering tuned for
+ordinary text); P5, a single-copy undo snapshot (−0.06 % deciding cell, i.e. exactly the size of the
+null-test drift described above, so "no measurable effect" is the finding rather than a small win); and
+P8, a profile-guided rebuild of the candidate library (**−4.04 %** — PGO made the deciding cell slower,
+with 7 of 18 cells beyond 2× the band, over 3 219 486 differential events showing 0 behavioural
+mismatches). None was accepted. `src/core` is byte-identical to v1.2.2, and the tables above remain the
+release measurement. PGO is in `build.sh --pgo` rather than argued about, because a build-configuration
+claim deserves the same paired instrument as a source claim — and because a claim of "the compiler could
+have done this for free" left untested is how a release note gets written backwards.
+
 ---
 
 ## 9. Where the time actually goes

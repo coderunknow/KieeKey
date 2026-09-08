@@ -144,6 +144,17 @@ unchanged by definition), and record `index_` so restore is a length reset plus 
 *Expected:* 0.6–1.4 ns, every cell. *Risk:* low — an incomplete snapshot makes the *next* key wrong
 and shows up in the first `attrib-guard` run.
 
+**P5 — screened in `rc1-p5`: `REJECT`, no measurable effect.** Implemented (write the word straight
+into the ring slot, skip the scratch round-trip), proven behaviour-identical (`attrib-guard` transcripts
+identical, `diffab` 2 146 422 events / 0 mismatches, 21/20 allocations unchanged), then measured over
+32 paired rounds with a 0.72 ns A/A band: **−0.06 % in the deciding cell**, +0.54 % best cell,
+−0.32 % worst — i.e. the whole swing sits inside the harness's own same-code drift, which is 0.54 % for
+this instrument. Reverted. Lesson kept: `saveWord`'s 2.1 % share is the cost of *touching the history*,
+which any snapshot design pays; the second loop was free. It also bounds **P4** — the emit-tail cache
+attacks the same class (copy/compose work the compiler already overlaps), and `getCharacterCode` /
+`composeCharacter` do not appear among the profile's ranked symbols at all, so P4 is expected at
+≤ ~1 ns and is no longer queued ahead of the untried build-level levers.
+
 ### P6 — first-touch cost: the cold-start and first-round deficit
 *Target:* cold `wall p50` 484.4 ms vs UniKey 418.5 ms, and first round 30.9 vs 17.5 ns/key.
 *Change:* whatever the tables cost at first touch (code table, `gCharacterIndex`, per-`configure`
@@ -196,6 +207,19 @@ reused from this campaign.
 one build variant, and if it alone reaches the +7 ns clause, several risky engine edits become
 unnecessary. Run it second (right after P5), not last.
 
+**P8 — screened in `rc1-p8`: `REJECT`, it costs 4 %.** `build.sh --pgo` was implemented as specified
+(instrumented engine TU, training on `--seed-idx=7` which the campaign never measures, `-fprofile-use`
+rebuild of `libkkcand.so` only, hard failure if no `.gcda` appears) and screened with the same
+4 × 8-round paired protocol. Result: **deciding cell 71.04 → 73.47 ns/key = −4.04 %**, 7 of 18 cells
+regressing beyond 2× the band, with only `as-shipped|vni|pathological` improving (~+3.5 %); behaviour
+unchanged (3 219 486 differential events, 0 mismatches). The mechanism is C-C1's failure mode reached
+from the opposite direction — feedback sharpened the layout for the predictable stream and spent
+front-end capacity, and the corpus-shaped stream that decides got worse. **Conclusion: codegen inside
+the engine TU is not an unused lever; it was tried and measured negative.** LTO needs no campaign: the
+hot path is one translation unit, so LTO could only inline across into application sources the timed
+loop never calls, and either flag set also breaks the matched-parity configuration all four engines
+share (PROTOCOL §3), so such a column could only ever be published as a second configuration.
+
 ### P1 — result of the loop-level analysis (why it is now a *small* candidate)
 The share (13.2 % across two instantiations) is real but the work is not removable: the scan stops at
 the first consonant after the vowel run, so it examines ~4–7 positions for a prose word. Computing
@@ -222,6 +246,11 @@ the estimate is recorded here so a future reader sees the correction, not just t
    diffuse-cost build lever second, the state-carrying ones only if the target still is not met.
    Objective as agreed: L1 deciding cell **and** L2 p50 in all three `as-shipped` streams must reach
    ≤ UniKey + 7 ns; parity is the stretch, tails are published and not gated.
+   **Executed:** P5 → REJECT (−0.06 %, no measurable effect) · P8 → REJECT (−4.04 %, PGO slower) ·
+   P1/P3 → closed by analysis (≤ 0.8 ns) · P0/P4/P6/P2 → left unimplemented, each bounded at ≤ ~1 ns
+   by the same profile-share arithmetic · P7 → never viable under the no-regression clause. No
+   candidate was accepted, so no release campaign was run on a changed tree: the number of record
+   remains `rc1-130` on the frozen engine, and `src/core` is unchanged from v1.2.2.
 5. After the last accepted candidate, a **fresh release campaign** on the final tree is the number
    that ships (`rc1-opt` at 6 × 24), and the report is re-rendered from it. Interim campaigns are
    screening evidence only, and the report says so.
@@ -248,7 +277,24 @@ Non-negotiable invariants the harness must keep holding for any number in this p
   `perf_event_open` (so no hardware counters), competitors' Windows TSF/hook path not measurable
   (NOT AVAILABLE, never estimated).
 
+11. **Absolute nanoseconds are campaign-internal.** Re-measuring the same binary on the same flags
+    hours later moved the frozen engine's deciding-cell median from 84.70 to 68.73 ns/key and UniKey's
+    from 73.00 to 60.20 with it (ratio 16.1 % → 13.1 %). So no subtraction across campaigns is allowed
+    anywhere in this project's documents, and an objective stated in ns — like the +7 ns clause below —
+    can only be adjudicated *inside* the campaign of record, which is why it is.
+
 ## 5. When I will call this a failure
+
+> **Outcome for this cycle (2026-09-08): the objective was not reached — FAIL, as instructed.** The
+> queue above was executed in order and every candidate the profile put at ≥ 2 ns has now been built and
+> measured: C-A (−5.0 %), C-C1 (+3.5 % deciding / −10.9 % worst), P5 (−0.06 %, inside the harness's own
+> same-code drift), P8/PGO (−4.04 %) — all REJECT. What is left untried (P0, P2, P4, P6) is each bounded
+> at ≲ 1 ns by the profile-share arithmetic in §1, which cannot add up to 7.7–11.8 ns. The separation is
+> feature-level: a 32-bit code-point word recomposed per emitted character, a per-key snapshot/restore
+> for undo, and an orthography-repair pass UniKey does not run. Reaching parity means giving one of
+> those up, which "keep the current version" forbids — so the honest output is this table plus the
+> published MIXED-tier result, not a re-labelled win.
+
 
 I will report **FAIL**, with the measured numbers and the reason, if any of these is the end state:
 

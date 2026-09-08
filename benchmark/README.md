@@ -260,6 +260,36 @@ python3 benchmark/scripts/make_report.py --campaign=rc1-130 \
     --keys=200000 --words=74000 --engines=contest,ctl,attrib
 ```
 
+### Screens run after the release campaign
+
+Each is a candidate trial of the same campaign, with its own gates and raw artifacts, so that "no
+effect" is a measurement rather than an impression:
+
+| campaign | candidate | verdict |
+|---|---|---|
+| `results/rc1-ca4` | C-A, bucket-table restructure | REJECT — −0.29 … −9.52 % across the 18 cells |
+| `results/rc1-cc1` | C-C1, hot-path dispatch reordering | REJECT — −10.9 % on `matched-minimal\|vni\|pathological` |
+| `results/rc1-p5` | P5, single-copy undo snapshot | REJECT — −0.06 % deciding cell, i.e. the harness's own drift |
+| `results/rc1-p8` | P8, profile-guided `libkkcand.so` | REJECT — **−4.04 %**, 7/18 cells beyond 2× band |
+
+`build.sh --pgo` is what made the last row measurable: it instruments the engine TU, trains with
+`--mode=tput`/`latency`/`correctness`/`robust` on a corpus window the campaign never measures
+(`--seed-idx=7`), then rebuilds **`libkkcand.so` only** with `-fprofile-use -Werror=coverage-mismatch`,
+and fails if no `.gcda` was written — because a silently missing profile falls back to plain `-O3` and
+would be labelled a measurement. Everything else stays plain `-O3` by design, so the campaign's paired
+gain table *is* the build-configuration difference, read in the same rounds against the same A/A band:
+the matched-parity rule applied in the other direction. A candidate's own verdict wording is derived
+from `results/<name>/manifest_at_build.json` (snapshotted at gate time), falling back — loudly — to the
+`candidate=` flag in `environment.txt`, which is what caught `rc1-p5` being mislabelled "baseline".
+
+**Absolute ns figures are campaign-internal.** Re-measuring the same binary on the same flags hours
+later moved the frozen engine's deciding-cell median from 84.70 to 68.73 ns/key, with UniKey moving
+with it (73.00 → 60.20); the ratio held (16.1 % → 13.1 %). Cross-campaign subtractions are therefore not
+allowed anywhere in these documents, and a target stated in absolute ns — the "+7 ns" clause — can only
+be adjudicated inside one campaign: the campaign of record decides, and the ratio is what generalises.
+
+---
+
 New row kinds in the RC1 artifacts: `tput` (and `tput-lead`, fixed order), `diffab`,
 `attrib-guard`, `timer`, `cold`, `profile-meta`/`profile-sample`, plus a
 `build` field on every timed row (`in-process`, `kk_base`, `kk_cand`) which is how a stale

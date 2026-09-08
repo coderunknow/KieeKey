@@ -20,6 +20,43 @@ text-store composer and an optional WinUI 3 Fluent settings UI.
 
 ---
 
+## v1.3.0 RC1 — cross-engine latency campaign (engine still byte-identical to v1.2.2)
+
+This cycle was measurement, not micro-optimisation: a self-contained campaign under
+[`benchmark/`](benchmark/README.md) that pits the current engine against **UniKey** and **OpenKey**
+on the axis a typist actually feels — the per-key engine decision — with every control that could
+falsify the result left switched on rather than tuned away.
+
+* **Engines:** KieeKey 1.2.2 (in-process, and twice more through one shared shim — frozen v1.2.2 and
+  this tree — so a build effect can never be read as an engine effect) · UniKey 4.x (the vendored
+  engine source, the newest publicly available) · OpenKey 2.0.5 · OpenKey master (`89c2fd3`).
+  Competitors' Windows TSF/hook path is **not measured and not estimated** — what is measured is
+  their engine decision.
+* **Headline (campaign `rc1-130`: 5 sessions x 12 paired rounds, 8/8 gates green):** on the deciding
+  cell (as-shipped · telex-end · prose) KieeKey runs **84.70 ns/key against UniKey's 73.00**
+  (+16.1 %, while the A/A control band is 1.47 ns — the gap is ~8x the noise floor), and is
+  **3.4-3.8x faster than either OpenKey revision** (325.40 / 290.67 ns/key). End-to-end latency p50
+  is within +1…+11 ns of UniKey across the three as-shipped streams and **ahead** of it on
+  VNI · pathological (56.5 vs 61.0 ns/key).
+* **Nothing was weakened to get there:** the free-marking budget, the O(1)/zero-allocation hot path
+  and the orthography rules are unchanged; 2 146 422 differential events match the frozen baseline
+  exactly; the allocation budget is unchanged at 21 per 2 M keys.
+* **Optimisation attempts, with their numbers:** three engine candidates were built and **rejected** —
+  a bucket-table restructure (-0.29…-9.52 %), a hot-path dispatch reordering (wins on prose,
+  -10.9 % on VNI · pathological), a single-copy undo snapshot (-0.06 %, i.e. no measurable effect),
+  and a profile-guided build of the engine (-4.04 % — PGO made the deciding cell *slower*, measured
+  against the same plain build in the same rounds). They stay rejected, with the reasoning and the profile behind them, in
+  [`docs/bench/rc1-130/OPTIMIZATION_LEDGER.md`](docs/bench/rc1-130/OPTIMIZATION_LEDGER.md); the
+  follow-up queue is [`docs/bench/rc1-130/OPTIMIZATION_PLAN.md`](docs/bench/rc1-130/OPTIMIZATION_PLAN.md).
+* **A finding that qualifies every absolute number here:** the same binary re-measured hours later on
+  the same flags read 68.73 ns/key instead of 84.70, with UniKey moving with it (73.00 → 60.20).
+  Cross-campaign nanosecond comparisons are therefore meaningless in this environment — claims are
+  paired *within* one campaign, and it is the ratio that travels.
+* **Artifacts:** [`benchmark/REPORT.rc1.md`](benchmark/REPORT.rc1.md), rendered from the campaign so
+  every figure is looked up, not typed · raw data in `benchmark/results/rc1-130/` · method and
+  pre-registered acceptance rules in
+  [`docs/bench/rc1-130/PROTOCOL.md`](docs/bench/rc1-130/PROTOCOL.md).
+
 ## What's new in v1.2.2 Stable — release
 
 **v1.2.2 Stable promotes the qualified RC4 tree unchanged** — a boring,

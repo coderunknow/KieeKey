@@ -52,7 +52,7 @@
   "governor": "NOT AVAILABLE (not exposed in this container)",
   "host_note": "containerised host; perf_event_open is blocked by seccomp and valgrind is not installed, so hardware counters and callgrind-style attribution are recorded as NOT AVAILABLE rather than substituted",
   "kernel": "Linux-6.1.158+-x86_64-with-glibc2.36",
-  "loadavg_at_manifest": "0.68 0.84 0.82 1/80 3049",
+  "loadavg_at_manifest": "0.66 0.58 0.48 1/83 2441",
   "lto": "OFF for every engine (LTO across a dlopen boundary would be an asymmetry)",
   "machine": "x86_64",
   "max_freq_khz": "NOT AVAILABLE (not exposed in this container)",

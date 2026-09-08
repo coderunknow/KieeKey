@@ -300,6 +300,49 @@ problem.
 
 ---
 
+### P8 — profile-guided codegen — **`REJECT`, it costs 4 % on the deciding cell** (`rc1-p8`)
+`build.sh --pgo` was implemented to measure the plan's P8: instrument the engine TU, train on a corpus
+window the campaign never measures (`--seed-idx=7`), rebuild `libkkcand.so` alone with `-fprofile-use`
+`-Werror=coverage-mismatch`, and let the campaign's paired gain table read the difference. The build
+fails loudly if no `.gcda` was written, because a silently missing profile falls back to plain `-O3` —
+and a plain build labelled PGO is exactly the kind of fiction this harness exists to prevent.
+
+Screened like everything else (4 × 8 rounds, 32 paired samples, A/A band 0.72 ns): the deciding cell
+read **71.04 → 73.47 ns/key, i.e. PGO is 4.04 % slower**, 7 of 18 cells regressed beyond 2× the band,
+and only `as-shipped|vni|pathological` improved (~+3.5 %). `diffab` was re-run against the PGO library:
+3 219 486 events, 0 mismatches — pure codegen, not behaviour.
+
+The shape mirrors C-C1 from the opposite direction: profile feedback sharpened branch layout for the
+*predictable* stream and spent front-end capacity doing it, so the corpus-shaped stream that decides got
+worse. **Codegen inside the single engine TU is therefore not a lever left on the table — it was picked
+and it measured negative.** LTO needs no campaign: the hot loop lives in one translation unit, so LTO
+could only add cross-TU inlining with application sources the timed path never calls; and either flag
+set also breaks the matched-parity configuration every column shares, so a profile-guided KieeKey column
+could only ever be published as a second configuration, never as the comparison.
+
+### Closed by analysis rather than measurement: P1, P3, and most of P2
+`findAndCalculateVowel` is a backward scan that stops at the first consonant after the vowel run —
+4 to 7 positions for a prose word — so fusing its two variants saves a handful of iterations
+(≤ 0.8 ns), and a per-key vowel-span memo would have to be invalidated at 26 `typingWord_` write sites
+plus 24 `index_` mutations. `checkSpelling` is already bucket-driven (`matchLeadingConsonant` reads at
+most 8 rows × 3 cells out of constexpr tables, with a length-1 fast path) and its answer legitimately
+depends on `spellingEndIndex_ = index_`, which moves on every append, so only its *leading* match is
+exactly guardable (~2.6 ns of a 14.1 ns stage). Not built, because the measurement budget is better spent
+on candidates whose removable work is proven. **The general lesson, recorded twice now: a profile share
+bounds the cost, not the removable cost — check what the loop terminates on first.**
+
+### Cycle conclusion — the ≤ UniKey + 5–7 ns objective was **not reached (FAIL, as agreed)**
+Everything the profile placed at ≥ 2 ns has been built and measured: C-A (−5.0 %), C-C1 (+3.5 %
+deciding, −10.9 % worst), P5 (−0.06 %), P8 (−4.04 %). The untried remainder (P0 ≤ 1 ns, P2 ≤ 0.4 ns,
+P4 ≤ ~1 ns by the same bounded-share argument, P6 cold-start only) cannot add up to 7.7–11.8 ns. The
+separation is feature-level: a 32-bit code-point word recomposed per emitted character, a per-key
+snapshot/restore for undo, and an orthography-repair pass UniKey does not run. Closing it means trading
+a behaviour away, which "keep the current version" forbids — so the deliverable is the published MIXED
+result plus this ledger, not a re-labelled win. `src/core` is byte-identical to v1.2.2; `rc1-130` stays
+the campaign of record.
+
+---
+
 ## 4. Rejected before or during measurement
 
 | id | idea | why it is not in the tree |

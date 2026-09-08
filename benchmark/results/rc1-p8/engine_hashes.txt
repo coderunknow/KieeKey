@@ -1,0 +1,7 @@
+# deliberate mid-campaign swap (this screening campaign only): the measured
+# candidate library is the profile-guided rebuild made after the gate step's plain
+# build, so the lines above describe libkkbase.so and the plain bench, not
+# libkkcand.so. The PGO artifact's own digests:
+aca56948970c2fca0c49cf1e090608aa1ad71a7be8c999b426ea53a7625c293e  benchmark/.build/libkkcand.so
+# training profile (.gcda) digests:
+f1f21e924c99cd7fdf6a73a709bf5888402ba5d5aa0b65d8c0a0837d143eb838  ./#home#user#KieeKey#benchmark#.build#obj_pgo#kk_cand_engine.gcda

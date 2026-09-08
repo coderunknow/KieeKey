@@ -79,21 +79,35 @@ current word. Expected effect: a few percent of the window, concentrated in `pro
 **Falsifier:** if the profile's `findAndCalculateVowel` + `checkCorrectVowel` shares stay under
 ~4 % after C-A, the work is not worth the invalidation surface and C-B is `DROP`ped.
 
-### C-C — `ư` scan reorder + `kTailClassMask` + forced-inline `isVowelChar`
+### C-C — `ư` scan reorder (`C-C1`, implemented) + the parts deferred on evidence
 **Target.** Three verified hot spots: (i) the `ư` reconstruction test in `checkGrammar` compares
 tone-mask residues of two adjacent slots before it has established that the pair is `U`+`O` at all —
 reordering to `i >= 2 && chr(i-1)==U'O' && chr(i-2)==U'U'` first turns a mask XOR into a cheap
 mismatch exit; (ii) the tail-consonant question (C I M N P T) becomes a 26-bit
 `kTailClassMask` test; (iii) `isVowelChar` is out-of-line in the `-O3` build (visible as a separate
 symbol in the profile), which a `KK_FORCE_INLINE` on the mask-test variant removes.
-**Expected effect:** ~4–5 % of the window in the streams that hit the grammar path.
+**Status.** `C-C1` is implemented (short-circuit reorder of the double-`ư` repair loop in
+`TextEngine::checkGrammar`: the `chr(i-1) == U'O' && chr(i-2) == U'U'` test now runs before the
+six-way tail-letter test, so the ordinary case costs two comparisons instead of six, and `i >= 2`
+still precedes every `i - 1` / `i - 2` read). It changes no predicate, only their order.
+`C-C2` (force-inline `isVowelChar`) and `C-C3` (a 26-bit `kTailClassMask` replacing the six
+comparisons) are **deferred, not forgotten**: the profile that motivated them was measured by a run
+whose artifacts are no longer in the repository, and `isVowelChar` is already a branchless
+`static constexpr` bit test in this tree — re-measuring it against the `rc1-ca4` profile has to come
+before adding an inline hint or a table. A mask built from `letterIdx` would also be a *behaviour*
+change, because `letterIdx` folds precomposed letters onto their base while the current test
+compares raw code points (`U'Ế'` must not match `I`) — that variant is only admissible with a
+differential that proves the fold away, so it stays out until it is worth that risk.
 
 ### C-D — hoist the code table out of the code-rebuild loop
 **Target.** `getCharacterCode`/`buildCode`-side lookups re-resolve `opts_.codeTable` (and thus
 re-run `FlatCodeTable::find`) inside a loop over the word's characters, although the table pointer
 cannot change during one `process()` call. Hoisting it is a pure loop-invariant move with an
-expected share equal to the `getCharacterCode` + `FlatCodeTable::find` line pair in the profile
-(~5 % before C-A).
+expected share equal to the `getCharacterCode` + `FlatCodeTable::find` line pair in the profile.
+Note: `codeTableFor(opts_.codeTable)` is a switch returning a reference to a static table, so this
+is only worth doing if `rc1-ca4`'s profile shows that switch and the per-character `table.find` as
+separable cost; a loop-invariant hoist that saves two instructions per character is not a candidate,
+it is noise with a commit.
 
 ### C-E — `process()` prologue
 **Target.** the unscoped prologue of `TextEngine::process` (state snapshot + argument decode) which

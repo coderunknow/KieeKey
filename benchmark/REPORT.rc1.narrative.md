@@ -175,9 +175,11 @@ it true.
 
 {{table:rc1_mem}}
 
-* KieeKey, as-shipped: {{stat:memory.kieekey.allocs_as_shipped}} allocations across
-  {{stat:memory.kieekey.allocs_per_megakey_as_shipped}} per megakey-equivalent,
-  {{stat:memory.kieekey.rss_mib_as_shipped}} MiB RSS after the soak.
+* KieeKey, as-shipped: {{stat:memory.kieekey.allocs_as_shipped}} allocations over the whole soak
+  ({{stat:memory.kieekey.allocs_per_megakey_as_shipped}} per megakey), and
+  {{stat:memory.kieekey.rss_mib_as_shipped}} MiB resident after {{stat:memory.kieekey.soak_keys}}
+  keys. The matched-minimal configuration: {{stat:memory.kieekey.allocs_matched_minimal}}
+  allocations, {{stat:memory.kieekey.rss_mib_matched_minimal}} MiB.
 * Note on comparability: {{stat:memory_note}}.
 
 ---
@@ -250,9 +252,12 @@ each one measured. Rejected candidates stay in the ledger: {{stat:candidate_verd
   and the same treatment of warm-up; nothing is excluded per engine.
 * Both shipping and feature-matched configurations are reported for all engines (§3 tables contain
   both), so the flattering configuration cannot be quoted alone.
-* The rival set is UniKey's latest publicly available engine source and *two* OpenKey revisions
-  ({{stat:diffab_totals.builds}} aside: OpenKey 2.0.5 and OpenKey master), because OpenKey master
-  changes the input-type model relative to 2.0.5 and reporting only the release would understate it.
+* The rival set is UniKey's latest publicly available engine source (the vendored 2015 snapshot,
+  labelled as a source snapshot rather than as the shipped 4.6.x binary, which is Windows-only and
+  not obtainable here) and *two* OpenKey revisions — the 2.0.5 release and current master — because
+  master changes the input-type model relative to 2.0.5 (`vSimpleTelex1/2`, the macro predicates that
+  moved from `== vTelex` to `!= vVNI`, the new vowel patterns), and quoting only the release would
+  understate the latest OpenKey behaviour. Both are reported, never averaged.
 * To falsify any claim here: re-run `benchmark/scripts/campaign_rc1.sh` (the exact invocation is in
   §12) and diff `tables.md`. Every figure is a function of the committed raw artifacts; if a number
   in this document cannot be reproduced by the generator, the generator refuses to produce the file.

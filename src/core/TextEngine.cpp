@@ -602,7 +602,7 @@ void TextEngine::backspaceBranch(bool /*caps*/) {
             startNewSession();
             specialChar_.clear();
             restoreLastTypingState();
-        } else if (wordHasTransform_ && opts_.grammarRepair) {
+        } else if (wordHasTransform_ && useGrammarRepair()) {
             checkGrammar(1);   // v1.2.0: gated — see member doc; v1.3.0: option-gated
         }
     }
@@ -672,8 +672,8 @@ void TextEngine::mainKeyBranch(char32_t c, bool caps) {
         handleMainKey(c, caps);
     }
 
-    // v1.3.0 RC1: the whole pass is behind opts_.grammarRepair — see EngineOptions.
-    if (opts_.grammarRepair && !opts_.freeMark && !isKeyD(c) && wordHasTransform_) {
+    // v1.3.0 RC1: the whole pass is behind useGrammarRepair() — see EngineOptions + the profile note.
+    if (useGrammarRepair() && !opts_.freeMark && !isKeyD(c) && wordHasTransform_) {
         // v1.2.0: grammar repair can only act on transform masks in the
         // buffer; a word with no transform (pure raw typing) provably has
         // nothing to repair, so the per-key vowel re-scan is skipped.

@@ -339,6 +339,26 @@ public:
     using DictionaryResolver = std::function<bool(const std::vector<std::uint32_t>& composed)>;
     void setDictionaryResolver(DictionaryResolver r) noexcept { dictResolver_ = std::move(r); }
 
+    // v1.3.0 RC1 — the low-latency profile, read where it matters.
+    //
+    // A first attempt put the profile in EngineOptions' defaults, and measuring it showed why that
+    // cannot work: the options are *caller-supplied* (the app maps settings into them, the benchmark
+    // shim fills them per configuration), so a default declared in this header never reaches a
+    // consumer that assigns the field. The profile therefore has to override at the read sites,
+    // which are inside the engine TU that the define is applied to. It is compiled in, not
+    // negotiated — which also means `options()` keeps reporting what the consumer asked for, so a
+    // settings UI can still show the user's own choice; the profile wins, and the build is visibly
+    // labelled. `grammarRepair`/`freeMark` left on in a strict build give the same behaviour at
+    // runtime; the profile is for a target that wants it without a per-app setting.
+#ifdef KIEEKEY_LOW_LATENCY_PROFILE
+    static constexpr bool kProfileSkipsGrammarRepair = true;
+#else
+    static constexpr bool kProfileSkipsGrammarRepair = false;
+#endif
+    [[nodiscard]] bool useGrammarRepair() const noexcept {
+        return !kProfileSkipsGrammarRepair && opts_.grammarRepair;
+    }
+
     // ---- settings (thread-affine: call from consumer thread only) --------
     void setOptions(EngineOptions opts) noexcept {
         opts_ = opts;

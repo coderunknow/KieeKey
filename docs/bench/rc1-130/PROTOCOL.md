@@ -277,6 +277,14 @@ consequence:
   flag: `rc1_stats.py` compares the manifest's per-source hashes itself and each campaign now keeps
   `results/<name>/manifest_at_build.json`, because the tree-level manifest is overwritten by every
   build. `rc1-cc1`'s copy was regenerated after the fact from `03492b4` in a detached worktree.
+* 2026-09-08 — **an ignored file left the record without any command failing.** `*.log` is
+  git-ignored under `benchmark/results/` (only `docs/bench/**` is un-ignored), so a commit made after
+  the branch's parent moved did not re-stage six historical sanitizer logs that were tracked in the
+  previous tree: the files sat on disk, `git status` was clean, and the tree quietly lost them.
+  Recovered with `git add -f`. Same failure class as a manifest describing the wrong build — an
+  artifact that silently stops being part of the record — and the concrete reason a campaign's release
+  trail is *copied* under `docs/bench/rc1-130/<campaign>/` by `rc1_trail.sh` (which refuses empty
+  sources) instead of being referenced in place inside an ignored subtree.
 
 ## 13. Reproducing a campaign
 

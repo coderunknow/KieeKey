@@ -25,6 +25,10 @@ Keep a Changelog; versioning: SemVer.
   `as-shipped · telex-end · prose` improving from 240.91 to 80.76 ns/key in this noisy VM campaign.
   Direct UniKey comparison is not yet a comprehensive win (`TIER D — SLOWER`), so the benchmark record
   deliberately does not claim that goal is complete.
+* Added `benchmark/scripts/run_windows_physical_benchmark.ps1` plus
+  `benchmark/scripts/windows_physical_report.py` so the final KieeKey-vs-UniKey verdict is produced on
+  the user's physical Windows host, with same-machine raw measurements, CPU/wall/memory process metrics,
+  host-noise probes, randomized independent samples, and explicit PASS/FAIL.
 
 ## [1.3.0-RC1] — 2026-09-08
 

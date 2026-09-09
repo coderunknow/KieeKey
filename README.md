@@ -33,8 +33,22 @@ The correctness gate stayed locked: candidate vs frozen v1.2.2 produced **0 diff
 1,072,224 events** and `digest-identity` passed across **374 rows**.  The 60-sample pinned L1 campaign
 (`benchmark/results/rc1-m6`) measured an accepted candidate-vs-v1.2.2 gain on the pre-registered deciding
 cell (`as-shipped · telex-end · prose`), but not a comprehensive UniKey win: the campaign verdict remains
-**TIER D — SLOWER** versus UniKey on this noisy 2-vCPU VM.  The result is intentionally published as
-measured rather than worded as a win.
+**TIER D — SLOWER** versus UniKey on this noisy 2-vCPU VM.  That VM result is a development signal only,
+not the real-user verdict.
+
+For the actual same-machine Windows answer, run the reproducible physical-host controller from an elevated
+PowerShell prompt on the target PC:
+
+```powershell
+./benchmark/scripts/run_windows_physical_benchmark.ps1 `
+  -Campaign winphys-local -Sessions 6 -Rounds 20 -Keys 200000 -Words 74000 `
+  -L2Rounds 10 -DiffabSeeds 3 -PinCore 4 -Priority High
+```
+
+It refuses obvious VMs by default, records power/Defender/background-load/thermal state, pins child
+processes when requested, randomizes per-engine process samples, keeps warm-up rows separate, and writes
+raw JSONL plus `benchmark/results/<campaign>/windows_physical_report.md`.  Only that same physical Windows
+machine report may be used to claim KieeKey is faster than UniKey.
 
 ## What's new in v1.3.0-RC1 — cross-engine latency campaign, and the fast emit path
 

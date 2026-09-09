@@ -1,0 +1,18 @@
+campaign=rc1-130
+utc=2026-09-08T08:19:25Z
+sessions=5 rounds=12 keys=150000 words=74000 l2rounds=6
+engines=contest,ctl,attrib pin=1 pin_note=pinned to core 1 (affinity mask exposes 2 cores) steps=gate,selftest,tput,tput-lead,latency,correctness,diffab,mem,profile,robust,cold,summarize candidate=0
+head=03492b4
+dirty_src=M  src/core/TextEngine.cpp 
+loadavg1=0.17
+Linux e2b.local 6.1.158+ #1 SMP PREEMPT_DYNAMIC Mon May 11 18:48:24 UTC 2026 x86_64 GNU/Linux
+0.17 0.67 0.83 1/83 8876
+cpu=Intel(R) Xeon(R) Processor @ 2.60GHz
+cores_online=2
+governor=NOT AVAILABLE
+thp=always [madvise] never
+mitigations=Not affected
+perf=NOT AVAILABLE (seccomp blocks perf_event_open in this container)
+valgrind=NOT AVAILABLE
+note=the campaign ran in two invocations: 07:53-08:11 UTC for the measurement steps (5 sessions x 12 rounds, keys=150000, words=74000, l2rounds=6, diffab seeds=3, DIFFAB_KEYS=40000) and 08:17-08:22 UTC for sanitizers/timer/summarize re-runs; the first version of this file was overwritten by the third invocation with its own defaults, so sessions/rounds/keys above are the campaign's real arguments, corroborated by the meta rows in raw/tput_s*.jsonl and the session file count. Reconstructed 2026-09-08T08:2xZ when the report generator stopped trusting this file for measurement shape.
+diffab_seeds=3 diffab_keys_env=40000

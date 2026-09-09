@@ -6,6 +6,7 @@ v1.2.1 campaign and must not be overwritten by v1.2.2 runs.
 
 | directory | campaign | documented in |
 |---|---|---|
+| `rc1-130/` | **v1.3.0 RC1** engine-decision benchmark + optimisation campaign (four-way, frozen-engine attribution pair) | [`rc1-130/PROTOCOL.md`](rc1-130/PROTOCOL.md) |
 | `stable-122/` | v1.2.2 Stable release campaign (independent-host re-verification + three-way 1.2.1/RC4/Stable) | this file, below |
 | `rc4-122/` | v1.2.2 RC4 stable-qualification campaign | this file, below |
 | `rc1-122/` | v1.2.2 RC1 engine A/B vs v1.2.1 Stable | this file, below |
@@ -14,6 +15,28 @@ v1.2.1 campaign and must not be overwritten by v1.2.2 runs.
 | `rc1/`, `rc2/` | v1.2.1 RC1-vs-RC2 | this file, below |
 | `rc3/` | v1.2.1 RC2-vs-RC3 | this file, below |
 | `stable/` | v1.2.1 RC3-vs-Stable | this file, below |
+
+## v1.3.0 RC1 (engine-decision benchmark + optimisation campaign)
+
+`rc1-130/` is a campaign directory with a different shape from the v1.2.2 ones: its raw
+artifacts live in [`benchmark/results/`](../../benchmark/results) (one directory per campaign
+run, JSON Lines + per-step logs + `tables.md`/`summary.json`), and what lives *here* is the
+method and the verdicts:
+
+| file | role |
+|---|---|
+| `PROTOCOL.md` | the pre-registered rules: passes, estimators, noise bands, tier vocabulary, gates, exclusions, deviations log |
+| `OPTIMIZATION_LEDGER.md` | every candidate with its ACCEPT/REJECT, including the rejected ones, and the rejections' reasons |
+| `OPTIMIZATION_PLAN.md` | the forward plan: measured gap arithmetic, profile-grounded candidate specs with expected nanoseconds and falsifiers, and the conditions for declaring the objective unreachable |
+| `baseline_manifest.json` | what a campaign measured: tree hashes, frozen-baseline hashes, flags, host facts |
+| `baseline_environment.txt` | the same facts in `k=v` form for the report generator |
+| `rc1-130/`, `rc1-cc1/`, `rc1-ca4/` | per-campaign released trails, each holding `tables.md`, `summary.json`, `gates.txt`, `environment.txt`, `manifest_at_build.json`, `build.log`, `attrib-guard.log` — copied by `benchmark/scripts/rc1_trail.sh`, which refuses empty artifacts. `rc1-ca4` (C-A) and `rc1-cc1` (C-C1) are candidate trials, both REJECT; `rc1-130` is the release measurement of the frozen engine. Raw JSON Lines for all three stay in [`benchmark/results/`](../../benchmark/results) |
+| `rc1-130/PROTOCOL.md` §12 | the deviations log: what broke in the instruments, in order, with consequences — including the profile shares that were withdrawn |
+
+The instruments are in [`benchmark/`](../../benchmark) — `scripts/campaign_rc1.sh` runs a
+campaign, `scripts/rc1_gates.py` decides pass/fail, `scripts/rc1_stats.py` produces the
+tables, and `benchmark/REPORT.rc1.md` is generated from those artifacts and refuses to
+render a number it cannot resolve.
 
 ## v1.2.2 Stable (release campaign)
 
@@ -162,3 +185,11 @@ performance campaign.
 | `stable/zig_cross.txt` | Windows x64 + ARM64 PE cross-build gate log |
 
 Report: [`docs/reports/V1.2.1_STABLE_RELEASE_REPORT.md`](../reports/V1.2.1_STABLE_RELEASE_REPORT.md).
+
+The [`rc1-130/`](rc1-130/) directory now covers a shipped release, not only a measurement: its
+`REPORT`-side documents (PROTOCOL §14, OPTIMIZATION_PLAN §5, OPTIMIZATION_LEDGER §3d) carry the
+v1.3.0-RC1 engine change (+1.56 % per key over v1.2.2 with bit-identical output, campaign `rc1-v13rel`)
+and the opt-in low-latency profile that measures −5.84 % against UniKey on the deciding cell with its
+behavioural price published (campaigns `rc1-v13prof` for RC1's grammar-only profile and
+`rc1-v13prof2` for RC2's grammar-plus-undo profile, which reads −7.69 % against UniKey on the
+pre-registered deciding cell).

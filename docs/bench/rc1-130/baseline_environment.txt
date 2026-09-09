@@ -1,0 +1,22 @@
+affinity=2
+compiler=g++ (Debian 12.2.0-14+deb12u1) 12.2.0
+cores_online=2
+cpu_model=Intel(R) Xeon(R) Processor @ 2.60GHz
+defines_bench=-DNDEBUG
+governor=NOT AVAILABLE (not exposed in this container)
+host_note=containerised host; perf_event_open is blocked by seccomp and valgrind is not installed, so hardware counters and callgrind-style attribution are recorded as NOT AVAILABLE rather than substituted
+kernel=Linux-6.1.158+-x86_64-with-glibc2.36
+loadavg_at_manifest=2.00 1.95 1.52 2/82 23671
+lto=OFF for every engine (LTO across a dlopen boundary would be an asymmetry)
+machine=x86_64
+max_freq_khz=NOT AVAILABLE (not exposed in this container)
+min_freq_khz=NOT AVAILABLE (not exposed in this container)
+mitigations=Not affected
+nohz_=clocksource=kvm-clock i8042.noaux i8042.nokbd init=/sbin/init ip=169.254.0.21::169.254.0.22:255.255.255.252:instance:eth0:off:tap0 ipv6.autoconf=1 ipv6.disable=0 loglevel=1 panic=1 pci=off quiet random.trust_cpu=on reboot=k rootflags=discard pci=off virtio_mmio.device=4K@0xc0001000:6 root=/dev/vda rw virtio_mmio.device=4K@0xc0002000:7 virtio_mmio.device=4K@0xc0003000:8 virtio_mmio.device=4K@0xc0004000:9
+note_flags=these are what build.sh uses for EVERY engine TU; the product's CMake Release configuration is -O3 -DNDEBUG, and the manifest is generated from the build script rather than typed, so the two cannot drift apart silently
+opt=-O3
+pgo=NOT USED (a PGO build trained on the benchmark corpus would be benchmark overfitting by construction)
+python=3.11.2
+std=-std=c++17
+thp=always [madvise] never
+warn_flags_bench=-w (bench builds are warning-silent by design; the engine itself is compiled with the repo's own CMake warning set for product builds)

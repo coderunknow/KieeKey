@@ -5,7 +5,7 @@
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20ARM64-0078D6.svg)
 ![Build](https://img.shields.io/badge/build-CMake%20%3E%3D%203.28-064FAD.svg)
 
-**KieeKey v1.2.2 Stable** is a modern, low-latency Vietnamese input method
+**KieeKey v1.3.0-RC1** is a modern, low-latency Vietnamese input method
 engine (bộ gõ Tiếng Việt) for Windows, with a system-tray application, a TSF
 text-store composer and an optional WinUI 3 Fluent settings UI.
 
@@ -19,6 +19,91 @@ text-store composer and an optional WinUI 3 Fluent settings UI.
 ![KieeKey preview](src/app/KieeKeyApp-preview.png)
 
 ---
+
+## What's new in v1.3.0-RC1 — M-6 pair-index LUT, with correctness locked
+
+This branch keeps every release carrier fixed at **`1.3.0-RC1`**.  It implements Matrix item **M-6**:
+`canHasEndConsonant()` now answers two-vowel `kVowelCombine` cases with a generator-produced O(1)
+pair-index lookup table instead of scanning the source rows (the hot `U` bucket had 21 candidates).
+`tools/gen_flat_tables.py` emits the LUT and a `static_assert` verifier that walks the generated
+`kVowelCombine` rows at compile time, checks every populated pair cell, and fails the build if the LUT
+and source verdicts drift.
+
+The correctness gate stayed locked: candidate vs frozen v1.2.2 produced **0 diffab event mismatches over
+1,072,224 events** and `digest-identity` passed across **374 rows**.  The 60-sample pinned L1 campaign
+(`benchmark/results/rc1-m6`) measured an accepted candidate-vs-v1.2.2 paired-median gain on the
+pre-registered deciding cell (`as-shipped · telex-end · prose`), but not a comprehensive UniKey win: the
+campaign verdict remains **TIER D — SLOWER** versus UniKey on this noisy 2-vCPU VM.  That VM result is a
+development signal only, not the real-user verdict.  The regenerated `rc1-m6` tables now separate
+**descriptive median improvement** (`v1.2.2 median - candidate median`) from the **paired median gain**
+used by ACCEPT/REJECT, so the reviewer-visible `240.91 → 80.76` row reads as both `160.15 ns / 66.48 %`
+descriptive median improvement and `2.55 ns / 1.06 %` paired median gain.
+
+For the actual same-machine Windows answer, run the reproducible physical-host controller from an elevated
+PowerShell prompt on the target PC:
+
+```powershell
+./benchmark/scripts/run_windows_physical_benchmark.ps1 `
+  -Campaign winphys-local -Sessions 6 -Rounds 20 -Keys 200000 -Words 74000 `
+  -L2Rounds 10 -DiffabSeeds 3 -PinCore 4 -Priority High
+```
+
+It refuses obvious VMs by default, records power/Defender/background-load/thermal state, pins child
+processes when requested, randomizes per-engine process samples, keeps warm-up rows separate, and writes
+raw JSONL plus `benchmark/results/<campaign>/windows_physical_report.md`.  Only that same physical Windows
+machine report may be used to claim KieeKey is faster than UniKey.
+
+## What's new in v1.3.0-RC1 — cross-engine latency campaign, and the fast emit path
+
+This cycle was measurement, not micro-optimisation: a self-contained campaign under
+[`benchmark/`](benchmark/README.md) that pits the current engine against **UniKey** and **OpenKey**
+on the axis a typist actually feels — the per-key engine decision — with every control that could
+falsify the result left switched on rather than tuned away.
+
+* **Engines:** KieeKey 1.2.2 (in-process, and twice more through one shared shim — frozen v1.2.2 and
+  this tree — so a build effect can never be read as an engine effect) · UniKey 4.x (the vendored
+  engine source, the newest publicly available) · OpenKey 2.0.5 · OpenKey master (`89c2fd3`).
+  Competitors' Windows TSF/hook path is **not measured and not estimated** — what is measured is
+  their engine decision.
+* **Headline (campaign `rc1-130`: 5 sessions x 12 paired rounds, 8/8 gates green):** on the deciding
+  cell (as-shipped · telex-end · prose) KieeKey runs **84.70 ns/key against UniKey's 73.00**
+  (+16.1 %, while the A/A control band is 1.47 ns — the gap is ~8x the noise floor), and is
+  **3.4-3.8x faster than either OpenKey revision** (325.40 / 290.67 ns/key). End-to-end latency p50
+  is within +1…+11 ns of UniKey across the three as-shipped streams and **ahead** of it on
+  VNI · pathological (56.5 vs 61.0 ns/key).
+* **What shipped from it (v1.3.0-RC1 engine work):** three hot-path changes — a self-validating
+  composition memo over the 21 emit loops, a memoised leading-consonant match in `checkSpelling`, and a
+  table-driven repair scan in `checkGrammar`. Measured in the release campaign (`rc1-v13rel`, 5 × 12
+  paired rounds, 60 samples, A/A band 1.587 ns): deciding cell **72.39 → 71.03 ns/key, +1.56 %**, best
+  cells +9.3 %, **0 cells regressing beyond 2× band** → ACCEPT. All 8 gates PASS, including
+  **digest-identity** (`9a78c1b4fcc6dad2` on both sides — bit-identical output versus v1.2.2), diffab
+  (0 mismatches / 2 146 422 events) and sanitizers (0 findings). Hot path stays allocation-free
+  (21 allocs / 2 M keys) and the O(1) core is untouched. Disclosed: `as-shipped · vni · pathological`
+  reads −6.0 % (a memo misses on every position when the whole word churns), and cold start moved
+  403 → 441 ms wall p50.
+* **Opt-in low-latency profile** (`build.sh --fast-profile`, `-DKIEEKEY_LOW_LATENCY_PROFILE=ON` in
+  CMake) compiles out the post-edit orthography repair, worth 5.5 ns/key into a marked word. Measured
+  (`rc1-v13prof`, same instrument): **faster than UniKey** on the deciding L1 cells — `telex-end · prose`
+  **57.77 vs 61.36 ns/key (−5.84 %)**, `telex-mid · prose` −15.78 %, `vni · prose` −9.57 % — and ahead at
+  p50 on **all nine** `as-shipped` end-to-end streams. Its price is measured too: 52 % of keys repaint
+  differently and 10 of 18 streams end in different composed text (a mark on the vowel the last key hit
+  rather than the one the rule picks), which is why it is a build profile and **not** the default. The
+  same behaviour is reachable per target at runtime via `grammarRepair` / `freeMark`.
+* **Optimisation attempts, with their numbers:** three engine candidates were built and **rejected** —
+  a bucket-table restructure (-0.29…-9.52 %), a hot-path dispatch reordering (wins on prose,
+  -10.9 % on VNI · pathological), a single-copy undo snapshot (-0.06 %, i.e. no measurable effect),
+  and a profile-guided build of the engine (-4.04 % — PGO made the deciding cell *slower*, measured
+  against the same plain build in the same rounds). They stay rejected, with the reasoning and the profile behind them, in
+  [`docs/bench/rc1-130/OPTIMIZATION_LEDGER.md`](docs/bench/rc1-130/OPTIMIZATION_LEDGER.md); the
+  follow-up queue is [`docs/bench/rc1-130/OPTIMIZATION_PLAN.md`](docs/bench/rc1-130/OPTIMIZATION_PLAN.md).
+* **A finding that qualifies every absolute number here:** the same binary re-measured hours later on
+  the same flags read 68.73 ns/key instead of 84.70, with UniKey moving with it (73.00 → 60.20).
+  Cross-campaign nanosecond comparisons are therefore meaningless in this environment — claims are
+  paired *within* one campaign, and it is the ratio that travels.
+* **Artifacts:** [`benchmark/REPORT.rc1.md`](benchmark/REPORT.rc1.md), rendered from the campaign so
+  every figure is looked up, not typed · raw data in `benchmark/results/rc1-130/` · method and
+  pre-registered acceptance rules in
+  [`docs/bench/rc1-130/PROTOCOL.md`](docs/bench/rc1-130/PROTOCOL.md).
 
 ## What's new in v1.2.2 Stable — release
 

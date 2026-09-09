@@ -1,0 +1,2 @@
+{"mode":"meta","bench":"viet-ime-4way","action":"timer","corpus":"tests/data/viet74k.txt","rounds":5,"keys":200000,"words":20000,"seed":20260907,"t0_unix":1788855443}
+{"mode":"timer","reps":200000,"clock":"CLOCK_MONOTONIC_RAW","resolution":"1 ns","pair_min_ns":27,"pair_p50_ns":31,"pair_p95_ns":33,"pair_p99_ns":36,"pair_max_ns":36500,"pair_mean_ns":32.10}

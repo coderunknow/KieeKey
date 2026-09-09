@@ -1,0 +1,6 @@
+# rc1-v13prof2: after the gate step's plain build, the whole .build tree was rebuilt with -DKIEEKEY_LOW_LATENCY_PROFILE
+# (candidate library AND bench/bench_prof/bench_mem, so L1's cand column and L2's in-process column are both the profile).
+# v1.3.0-rc2 adds the profile's second lever: saveWord()'s per-key undo snapshot folded out.
+2d5ad6737cbd299cb13124f36f2f2c8eef86d3e9f18b1b2b6e5c141860faa2f2  benchmark/.build/libkkcand.so
+3db33c777dc4e708bad71f8ed9e34c30fb49084d383b3d28ada16e27e16c2ede  benchmark/.build/libkkbase.so
+167de30dad09d195c80c054108938c271a51e72aa50f924a9fcf5983a699213a  benchmark/.build/bench

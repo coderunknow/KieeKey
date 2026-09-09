@@ -1,0 +1,6 @@
+# build tree: objects, binaries, the dlopen-able engine libraries
+.build/
+*.o
+*.so
+__pycache__/
+*.pyc

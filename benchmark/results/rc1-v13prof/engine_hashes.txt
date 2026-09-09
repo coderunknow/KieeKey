@@ -1,0 +1,4 @@
+# profile campaign: the measured candidate library is the LOW-LATENCY build made AFTER the gate step's plain build
+a272b5cc9921e488f8f842a3152a0ea9bfd3371c98dd723c1cee84d12162fccf  benchmark/.build/libkkcand.so
+3db33c777dc4e708bad71f8ed9e34c30fb49084d383b3d28ada16e27e16c2ede  benchmark/.build/libkkbase.so
+# second swap in this campaign dir: after the L1/shim measurement above, bench (in-process), bench_prof and bench_mem were rebuilt WITH the profile define so that the L2 latency mode and the profiler describe the profile as its shipped engine. Read the L2/profile artifacts in this directory as the profile's; the tput table's kieekey-cand column is the same code through the shim.

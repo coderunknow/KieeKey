@@ -1,0 +1,12 @@
+[2026-09-08T07:53:33Z] gate:manifest: PASS — 18 engine sources hash-match the frozen baseline and the pristine reference copy is intact; head=03492b431445
+[2026-09-08T07:53:34Z] gate:attrib-guard: PASS — shim columns reproduce the in-process transcript exactly; base/cand builds kk_base/kk_cand, ratio 1.021× (in band)
+[2026-09-08T08:05:23Z] gate:correctness: PASS — no baseline oracle (absolute rates published) in 374 subject rows (words/passages/invariant/macro), both configs, all methods
+[2026-09-08T08:05:23Z] gate:digest-identity: PASS — every kieekey output is bit-identical to the baseline column kieekey-base (374 rows across both configs and all methods); digests 9a78c1b4fcc6dad2 == 9a78c1b4fcc6dad2
+[2026-09-08T08:11:07Z] gate:diffab: PASS — 0 mismatches over 2,146,422 events (54 rows) — per-key code, backspaces, replacement text and final visible text all identical; builds compared: kk_base, kk_cand
+[2026-09-08T08:11:10Z] gate:memory: PASS — hot path stays allocation-free — as-shipped: 21 allocs / 2,000,000 keys, RSS 46.2 MiB; matched-minimal: 20 allocs / 2,000,000 keys, RSS 49.4 MiB
+[2026-09-08T08:17:16Z] gate:sanitizers: PASS — 0 findings in KieeKey-owned sources across 7 runs
+[2026-09-08T08:18:25Z] gate:integrity: PASS — 27 artifact(s), 20763 row(s) parsed, identical engine coverage across tput sessions, 0 undecodable line(s)
+[2026-09-08T08:19:25Z] gate:integrity: PASS — 27 artifact(s), 20763 row(s) parsed, identical engine coverage across tput sessions, 0 undecodable line(s)
+[2026-09-08T08:21:21Z] gate:integrity: PASS — 27 artifact(s), 20763 row(s) parsed, identical engine coverage across tput sessions, 0 undecodable line(s)
+[2026-09-08T08:24:03Z] gate:integrity: PASS — 27 artifact(s), 20763 row(s) parsed, identical engine coverage across tput sessions, 0 undecodable line(s)
+[2026-09-08T08:24:39Z] gate:integrity: PASS — 27 artifact(s), 20763 row(s) parsed, identical engine coverage across tput sessions, 0 undecodable line(s)

@@ -1,0 +1,16 @@
+campaign=smoke
+utc=2026-09-08T14:52:00Z
+sessions=1 rounds=2 keys=200000 words=74000 l2rounds=10
+engines=contest,ctl,attrib pin=1 pin_note=pinned to core 1 (affinity mask exposes 2 cores) steps=selftest candidate=0
+head=0a854d1
+dirty_src=
+loadavg1=0.91
+Linux e2b.local 6.1.158+ #1 SMP PREEMPT_DYNAMIC Mon May 11 18:48:24 UTC 2026 x86_64 GNU/Linux
+0.91 0.91 0.87 2/87 30238
+cpu=Intel(R) Xeon(R) Processor @ 2.60GHz
+cores_online=2
+governor=NOT AVAILABLE
+thp=always [madvise] never
+mitigations=Not affected
+perf=NOT AVAILABLE (seccomp blocks perf_event_open in this container)
+valgrind=NOT AVAILABLE

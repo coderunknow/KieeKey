@@ -1,0 +1,2 @@
+{"mode":"meta","bench":"viet-ime-4way","action":"attrib-guard","corpus":"tests/data/viet74k.txt","rounds":5,"keys":8000,"words":20000,"seed":20260907,"t0_unix":1788876581}
+{"mode":"attrib-guard","transcripts_equal":true,"kieekey_build":"in-process","base_build":"kk_base","cand_build":"kk_cand","ns_per_key_inprocess":69.879,"ns_per_key_base":98.870,"ns_per_key_cand":72.871,"base_over_inprocess":1.415,"band_ok":true}

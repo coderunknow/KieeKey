@@ -1,0 +1,16 @@
+campaign=rc1-tailmemo
+utc=2026-09-08T16:18:56Z
+sessions=4 rounds=8 keys=150000 words=74000 l2rounds=10
+engines=contest,ctl,attrib pin=1 pin_note=pinned to core 1 (affinity mask exposes 2 cores) steps=tput,summarize candidate=1
+head=24c959d
+dirty_src= M src/core/TextEngine.cpp  M src/core/TextEngine.hpp 
+loadavg1=0.49
+Linux e2b.local 6.1.158+ #1 SMP PREEMPT_DYNAMIC Mon May 11 18:48:24 UTC 2026 x86_64 GNU/Linux
+0.49 0.27 0.44 1/84 81959
+cpu=Intel(R) Xeon(R) Processor @ 2.60GHz
+cores_online=2
+governor=NOT AVAILABLE
+thp=always [madvise] never
+mitigations=Not affected
+perf=NOT AVAILABLE (seccomp blocks perf_event_open in this container)
+valgrind=NOT AVAILABLE

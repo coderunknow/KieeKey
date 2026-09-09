@@ -1,0 +1,32 @@
+[build] OpenKey latest reference: pristine (14 files match the recorded hashes)
+[build] KieeKey v1.2.2 baseline reference: pristine (19 files match the recorded hashes)
+[build] [] KieeKey engine (this working tree)
+[build] [] UniKey UKEngine (pristine reference)
+[build] [] OpenKey 2.0.5 -> libok205.so
+[build] [] OpenKey latest (master) -> libokmaster.so
+[build] [] KieeKey attribution pair (frozen v1.2.2 vs this tree)
+[build] [] harness
+/usr/bin/ld: benchmark/.build/obj/uk_convert.o: in function `VnFileConvert':
+convert.cpp:(.text+0x3c9): warning: the use of `tempnam' is dangerous, better use `mkstemp'
+/usr/bin/ld: benchmark/.build/obj/uk_convert.o: in function `VnFileConvert':
+convert.cpp:(.text+0x3c9): warning: the use of `tempnam' is dangerous, better use `mkstemp'
+/usr/bin/ld: benchmark/.build/obj/uk_convert.o: in function `VnFileConvert':
+convert.cpp:(.text+0x3c9): warning: the use of `tempnam' is dangerous, better use `mkstemp'
+[build] [] built benchmark/.build/bench, benchmark/.build/bench_mem, benchmark/.build/bench_prof, libok205.so, libokmaster.so, libkkbase.so, libkkcand.so
+[build] sanitizer build (ASan + UBSan + LSan) — separate objects, same sources
+[build] [_san] KieeKey engine (this working tree)
+[build] [_san] UniKey UKEngine (pristine reference)
+[build] [_san] OpenKey 2.0.5 -> libok205.so
+tests/reference/openkey-2.0.5/engine/Vietnamese.cpp: In function 'void __static_initialization_and_destruction_0(int, int)':
+tests/reference/openkey-2.0.5/engine/Vietnamese.cpp:575:1: note: variable tracking size limit exceeded with '-fvar-tracking-assignments', retrying without
+  575 | }
+      | ^
+[build] [_san] OpenKey latest (master) -> libokmaster.so
+benchmark/reference/openkey-master/engine/Vietnamese.cpp: In function 'void __static_initialization_and_destruction_0(int, int)':
+benchmark/reference/openkey-master/engine/Vietnamese.cpp:576:1: note: variable tracking size limit exceeded with '-fvar-tracking-assignments', retrying without
+  576 | }
+      | ^
+[build] [_san] KieeKey attribution pair (frozen v1.2.2 vs this tree)
+[build] [_san] harness
+[build] [_san] built benchmark/.build/bench_san
+[build] done

@@ -1,0 +1,96 @@
+{
+ "baseline_engine_sources_sha256": {
+  "src/core/CpuPause.hpp": "a94688ff219545a43cd14580b39095866832588ff1d866a4aaf1664b5aa7dc15",
+  "src/core/FlatTables.hpp": "f66c7703886e03c6963988b073fc620b8ee850554d63efd208bfd2e234453e9e",
+  "src/core/LockFreeQueue.hpp": "182a21310313a7e90d051903b145d9f43531fe3748c6dc5d3f5436d49f2c4fe7",
+  "src/core/ModernKeyHook.cpp": "78a9485f273c06136798ddd7565880875f79fc1a43a66036f9a60ea45c9185f3",
+  "src/core/ModernKeyHook.hpp": "4cafe0b4d61b35b886b439a72ce37084e9c9e009d68118b08de2f41d5f082910",
+  "src/core/Notifications.hpp": "fc94ed98c0b47c51d7e9801ddef2dee45b5be1421b7305edaf1fe154aa6c6365",
+  "src/core/PerfProfile.hpp": "2a7dbc761996ab3de1cf746e3f75e0a0bd789d8cf9dbf059df67ffa272a8811d",
+  "src/core/ProcessMonitor.cpp": "e9bc7ba087f363958e244e1f66dc84085219574cf4f1b3e8551894c892dae8f2",
+  "src/core/ProcessMonitor.hpp": "a285dc40aa3381889f10dc6ca26f76bd603739fff659f65bdfdb0cde7ea327c5",
+  "src/core/Profiler.hpp": "c0021ec10b1c28c8a3a7a591b3d22790e3421e82fc7b329d6b0840f57dd648a3",
+  "src/core/TextEngine.cpp": "c00d617d47b4f3b596dcd4044ff6d3fb34e79560082b64ab9f2f2a3ad8fc71c8",
+  "src/core/TextEngine.hpp": "4b79c8f4160f469c36d1f3e0a8a24a8c308c17e7cf6413a8e733d9c0d5156d3f",
+  "src/core/VietnameseTables.hpp": "3d20cd81c5982dcc4ead2b5287cb4f5410744a7b721600e9158f06170a805c4b",
+  "src/core/VietnameseTables.source.hpp": "0e3fc771407f046d23d2fff5585540a584b0d4bc43eac67e0099ee8d80011367",
+  "src/core/Win32RAII.hpp": "4bd9478dc829c583be48181605157994f7efe4721340a2ff41a99424c1da89df",
+  "src/core/kieekey_core.hpp": "e4e4faa2f877788a29ff6e8bd21cc88a87167d521e94573462e81741a5533f07",
+  "src/core/win32_wrapper.cpp": "4a60bf6fd263d7bbf90476026bbc9617108a8fde9f2524edb2b80c7d434110e1",
+  "src/core/win32_wrapper.hpp": "bc0549825654e4a7382ec8f92b7f066e7ba19efd6be0832a07dfa57f46b3a714"
+ },
+ "data": {
+  "benchmark/harness/viet_table.inc": "b48d153f82ab05a6be27dd7be6c457ce03bca536117d95ea328ef950b6824cc7",
+  "tests/data/viet74k.txt": "b83d49308336f12ca46d06287d8db6e2cdc7a725d9a9dac56930051775fafb90"
+ },
+ "engine_sources_sha256": {
+  "src/core/CpuPause.hpp": "a94688ff219545a43cd14580b39095866832588ff1d866a4aaf1664b5aa7dc15",
+  "src/core/FlatTables.hpp": "f66c7703886e03c6963988b073fc620b8ee850554d63efd208bfd2e234453e9e",
+  "src/core/LockFreeQueue.hpp": "182a21310313a7e90d051903b145d9f43531fe3748c6dc5d3f5436d49f2c4fe7",
+  "src/core/ModernKeyHook.cpp": "78a9485f273c06136798ddd7565880875f79fc1a43a66036f9a60ea45c9185f3",
+  "src/core/ModernKeyHook.hpp": "4cafe0b4d61b35b886b439a72ce37084e9c9e009d68118b08de2f41d5f082910",
+  "src/core/Notifications.hpp": "fc94ed98c0b47c51d7e9801ddef2dee45b5be1421b7305edaf1fe154aa6c6365",
+  "src/core/PerfProfile.hpp": "2a7dbc761996ab3de1cf746e3f75e0a0bd789d8cf9dbf059df67ffa272a8811d",
+  "src/core/ProcessMonitor.cpp": "e9bc7ba087f363958e244e1f66dc84085219574cf4f1b3e8551894c892dae8f2",
+  "src/core/ProcessMonitor.hpp": "a285dc40aa3381889f10dc6ca26f76bd603739fff659f65bdfdb0cde7ea327c5",
+  "src/core/Profiler.hpp": "c0021ec10b1c28c8a3a7a591b3d22790e3421e82fc7b329d6b0840f57dd648a3",
+  "src/core/TextEngine.cpp": "4003fa63729e779a79e691afa5f9ea4cf30fbf845ccaeb7c0c1d2f3c19e186b6",
+  "src/core/TextEngine.hpp": "460b0995dec4dbfd3ae834076aa33c687ebbba70fe2f7e2a456c060717db883d",
+  "src/core/VietnameseTables.hpp": "3d20cd81c5982dcc4ead2b5287cb4f5410744a7b721600e9158f06170a805c4b",
+  "src/core/VietnameseTables.source.hpp": "0e3fc771407f046d23d2fff5585540a584b0d4bc43eac67e0099ee8d80011367",
+  "src/core/Win32RAII.hpp": "4bd9478dc829c583be48181605157994f7efe4721340a2ff41a99424c1da89df",
+  "src/core/kieekey_core.hpp": "a9ea2ef35c8e6a8fa4dfbd8df36a6f9511914261bbbc14c8ae626f50651d9a30",
+  "src/core/win32_wrapper.cpp": "4a60bf6fd263d7bbf90476026bbc9617108a8fde9f2524edb2b80c7d434110e1",
+  "src/core/win32_wrapper.hpp": "bc0549825654e4a7382ec8f92b7f066e7ba19efd6be0832a07dfa57f46b3a714"
+ },
+ "environment": {
+  "affinity": 2,
+  "compiler": "g++ (Debian 12.2.0-14+deb12u1) 12.2.0",
+  "cores_online": 2,
+  "cpu_model": "Intel(R) Xeon(R) Processor @ 2.60GHz",
+  "defines_bench": "-DNDEBUG",
+  "governor": "NOT AVAILABLE (not exposed in this container)",
+  "host_note": "containerised host; perf_event_open is blocked by seccomp and valgrind is not installed, so hardware counters and callgrind-style attribution are recorded as NOT AVAILABLE rather than substituted",
+  "kernel": "Linux-6.1.158+-x86_64-with-glibc2.36",
+  "loadavg_at_manifest": "0.86 0.77 0.73 1/83 5008",
+  "lto": "OFF for every engine (LTO across a dlopen boundary would be an asymmetry)",
+  "machine": "x86_64",
+  "max_freq_khz": "NOT AVAILABLE (not exposed in this container)",
+  "min_freq_khz": "NOT AVAILABLE (not exposed in this container)",
+  "mitigations": "Not affected",
+  "nohz_": "clocksource=kvm-clock i8042.noaux i8042.nokbd init=/sbin/init ip=169.254.0.21::169.254.0.22:255.255.255.252:instance:eth0:off:tap0 ipv6.autoconf=1 ipv6.disable=0 loglevel=1 panic=1 pci=off quiet random.trust_cpu=on reboot=k rootflags=discard pci=off virtio_mmio.device=4K@0xc0001000:6 root=/dev/vda rw virtio_mmio.device=4K@0xc0002000:7 virtio_mmio.device=4K@0xc0003000:8 virtio_mmio.device=4K@0xc0004000:9",
+  "note_flags": "these are what build.sh uses for EVERY engine TU; the product's CMake Release configuration is -O3 -DNDEBUG, and the manifest is generated from the build script rather than typed, so the two cannot drift apart silently",
+  "opt": "-O3",
+  "pgo": "NOT USED (a PGO build trained on the benchmark corpus would be benchmark overfitting by construction)",
+  "python": "3.11.2",
+  "std": "-std=c++17",
+  "thp": "always [madvise] never",
+  "warn_flags_bench": "-w (bench builds are warning-silent by design; the engine itself is compiled with the repo's own CMake warning set for product builds)"
+ },
+ "git": {
+  "branch": "arena/01a07b1c-kieekey",
+  "dirty_src": "M CMakeLists.txt\n M src/app/KieeKeyApp.manifest\n M src/app/KieeKeyApp.rc\n M src/app/main.cpp\n M src/core/TextEngine.cpp\n M src/core/TextEngine.hpp\n M src/core/kieekey_core.hpp",
+  "git_head": "140ebff1f985195856cea9d99c0e713f0d52651f",
+  "git_head_short": "140ebff"
+ },
+ "harness": {
+  "files": 9,
+  "tree_sha256": "5264269e195c73f42ccfc9c5b0dd7f05f474b95d7ea7d0136da863748b4fc427"
+ },
+ "manifest_note": "regenerate freely per campaign; the baseline half always comes from the hash-verified pristine reference copy, never from the working tree",
+ "product_version": "?",
+ "schema": "kieekey-bench-baseline/1",
+ "scripts": {
+  "files": 12,
+  "tree_sha256": "0a82821e8a7c3958f18894a55f71b7ece97b3bbd95c345a100827c3e00f279bf"
+ },
+ "toolchain": {
+  "compiler": "g++ (Debian 12.2.0-14+deb12u1) 12.2.0",
+  "defines_bench": "-DNDEBUG",
+  "lto": "OFF for every engine (LTO across a dlopen boundary would be an asymmetry)",
+  "opt": "-O3",
+  "pgo": "NOT USED (a PGO build trained on the benchmark corpus would be benchmark overfitting by construction)",
+  "std": "-std=c++17",
+  "warn_flags_bench": "-w (bench builds are warning-silent by design; the engine itself is compiled with the repo's own CMake warning set for product builds)"
+ }
+}

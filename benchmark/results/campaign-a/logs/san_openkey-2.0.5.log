@@ -1,0 +1,26 @@
+tests/reference/openkey-2.0.5/engine/Engine.cpp:995:9: runtime error: index -1 out of bounds for type 'unsigned int [32]'
+    #0 0x7f2f2a72923e in checkForStandaloneChar(unsigned short const&, bool const&, unsigned int const&) tests/reference/openkey-2.0.5/engine/Engine.cpp:995
+    #1 0x7f2f2a72b830 in handleMainKey(unsigned short const&, bool const&) tests/reference/openkey-2.0.5/engine/Engine.cpp:1187
+    #2 0x7f2f2a7326ea in vKeyHandleEvent(vKeyEvent const&, vKeyEventState const&, unsigned short const&, unsigned char const&, bool const&) tests/reference/openkey-2.0.5/engine/Engine.cpp:1500
+    #3 0x7f2f2a77f022 in ok205::processChar(char32_t, bool, bool, ok205::Delta&) tests/engine205.cpp:309
+    #4 0x55d946114abe in bench::IDriver::feed(corpus::Event const&) benchmark/harness/engines.hpp:97
+    #5 0x55d946114abe in runHostileChild benchmark/harness/bench.cpp:778
+    #6 0x55d946102c75 in modeRobust benchmark/harness/bench.cpp:814
+    #7 0x55d946102c75 in main benchmark/harness/bench.cpp:841
+    #8 0x7f2f2c645249  (/lib/x86_64-linux-gnu/libc.so.6+0x27249)
+    #9 0x7f2f2c645304 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x27304)
+    #10 0x55d946107960 in _start (/home/user/KieeKey/benchmark/.build/bench_san+0x155960)
+
+tests/reference/openkey-2.0.5/engine/Engine.cpp:995:9: runtime error: index -1 out of bounds for type 'unsigned int [32]'
+    #0 0x7f2f2a72923e in checkForStandaloneChar(unsigned short const&, bool const&, unsigned int const&) tests/reference/openkey-2.0.5/engine/Engine.cpp:995
+    #1 0x7f2f2a72b830 in handleMainKey(unsigned short const&, bool const&) tests/reference/openkey-2.0.5/engine/Engine.cpp:1187
+    #2 0x7f2f2a7326ea in vKeyHandleEvent(vKeyEvent const&, vKeyEventState const&, unsigned short const&, unsigned char const&, bool const&) tests/reference/openkey-2.0.5/engine/Engine.cpp:1500
+    #3 0x7f2f2a77f022 in ok205::processChar(char32_t, bool, bool, ok205::Delta&) tests/engine205.cpp:309
+    #4 0x55d946114abe in bench::IDriver::feed(corpus::Event const&) benchmark/harness/engines.hpp:97
+    #5 0x55d946114abe in runHostileChild benchmark/harness/bench.cpp:778
+    #6 0x55d946102c75 in modeRobust benchmark/harness/bench.cpp:814
+    #7 0x55d946102c75 in main benchmark/harness/bench.cpp:841
+    #8 0x7f2f2c645249  (/lib/x86_64-linux-gnu/libc.so.6+0x27249)
+    #9 0x7f2f2c645304 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x27304)
+    #10 0x55d946107960 in _start (/home/user/KieeKey/benchmark/.build/bench_san+0x155960)
+

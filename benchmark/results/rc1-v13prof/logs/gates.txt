@@ -1,0 +1,7 @@
+[2026-09-08T15:19:09Z] gate:manifest: PASS — baseline intact (18 frozen v1.2.2 sources verified in benchmark/reference/kieekey-1.2.2); the working tree differs in 3 of them (TextEngine.cpp, TextEngine.hpp, kieekey_core.hpp) — that is the candidate under test, and libkkbase.so still measures v1.2.2 exactly
+[2026-09-08T15:29:12Z] gate:correctness: PASS — no baseline oracle (absolute rates published) in 376 subject rows (words/passages/invariant/macro), both configs, all methods
+[2026-09-08T15:29:12Z] gate:digest-identity: PASS — every kieekey output is bit-identical to the baseline column kieekey-base (376 rows across both configs and all methods); digests bf181ae9ecced112 == bf181ae9ecced112
+[2026-09-08T15:29:14Z] gate:memory: PASS — hot path stays allocation-free — as-shipped: 21 allocs / 2,000,000 keys, RSS 46.2 MiB; matched-minimal: 20 allocs / 2,000,000 keys, RSS 49.4 MiB
+[2026-09-08T15:29:44Z] gate:integrity: PASS — 22 artifact(s), 20510 row(s) parsed, identical engine coverage across tput sessions, 0 undecodable line(s)
+[2026-09-08T15:32:42Z] gate:memory: PASS — hot path stays allocation-free — as-shipped: 21 allocs / 2,000,000 keys, RSS 46.2 MiB; matched-minimal: 20 allocs / 2,000,000 keys, RSS 49.4 MiB
+[2026-09-08T15:33:10Z] gate:integrity: PASS — 22 artifact(s), 20377 row(s) parsed, identical engine coverage across tput sessions, 0 undecodable line(s)

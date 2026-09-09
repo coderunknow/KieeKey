@@ -1,0 +1,20 @@
+{"mode":"meta","bench":"viet-ime-4way","action":"robust","corpus":"tests/data/viet74k.txt","rounds":5,"keys":200000,"words":20000,"seed":20260907,"t0_unix":1788786616}
+[child] openkey-2.0.5 long-word-5k out_len=4999 digest=10084598865821911048
+{"mode":"meta","bench":"viet-ime-4way","action":"robust","corpus":"tests/data/viet74k.txt","rounds":5,"keys":200000,"words":20000,"seed":20260907,"t0_unix":1788786616}
+{"mode":"robust","engine":"openkey-2.0.5","stream":"long-word-5k","keys":5000,"outcome":"ok"}
+[child] openkey-2.0.5 hat-thrash-9k out_len=9600 digest=4976367381810859558
+{"mode":"robust","engine":"openkey-2.0.5","stream":"hat-thrash-9k","keys":9600,"outcome":"ok"}
+[child] openkey-2.0.5 backspace-flood out_len=0 digest=1469598103934665603
+{"mode":"robust","engine":"openkey-2.0.5","stream":"backspace-flood","keys":4000,"outcome":"ok"}
+[child] openkey-2.0.5 tone-storm out_len=11200 digest=2631693743831221763
+{"mode":"robust","engine":"openkey-2.0.5","stream":"tone-storm","keys":11200,"outcome":"ok"}
+[child] openkey-2.0.5 mixed-with-shift out_len=3999 digest=1602990380303181035
+{"mode":"robust","engine":"openkey-2.0.5","stream":"mixed-with-shift","keys":8000,"outcome":"ok"}
+[child] openkey-2.0.5 all-symbols out_len=2000 digest=4642311855146661763
+{"mode":"robust","engine":"openkey-2.0.5","stream":"all-symbols","keys":2000,"outcome":"ok"}
+[child] openkey-2.0.5 break-hammer out_len=7000 digest=9660908142286234987
+{"mode":"robust","engine":"openkey-2.0.5","stream":"break-hammer","keys":9000,"outcome":"ok"}
+[child] openkey-2.0.5 digit-hammer-vni-keys out_len=10000 digest=1149254984642045763
+{"mode":"robust","engine":"openkey-2.0.5","stream":"digit-hammer-vni-keys","keys":10000,"outcome":"ok"}
+{"mode":"robust","engine":"openkey-2.0.5","stream":"fuzz-200k","keys":200000,"outcome":"exit","exit_code":1}
+{"mode":"robust","engine":"openkey-2.0.5","stream":"fuzz-1m","keys":1000000,"outcome":"exit","exit_code":1}

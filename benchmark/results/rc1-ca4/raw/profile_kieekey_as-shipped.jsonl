@@ -1,0 +1,3 @@
+{"mode":"meta","bench":"viet-ime-4way","action":"profile","corpus":"tests/data/viet74k.txt","rounds":8,"keys":200000,"words":74000,"seed":20260907,"t0_unix":1788849724}
+{"mode":"profile-meta","engine":"kieekey","build":"in-process","config":"as-shipped","stage":"invoke","keys":190802880,"window_ns":14727788246,"samples":3681,"hz":1000}
+{"mode":"sample","pc":140256154591312,"n":3681}

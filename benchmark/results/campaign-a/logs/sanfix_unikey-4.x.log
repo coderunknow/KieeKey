@@ -1,0 +1,12 @@
+tests/reference/unikey/ukengine.cpp:1629:24: runtime error: index -1 out of bounds for type 'ConSeqInfo [30]'
+    #0 0x56360b50e4a0 in UkEngine::appendConsonnant(UkKeyEvent&) tests/reference/unikey/ukengine.cpp:1629
+    #1 0x56360b5223fa in UkEngine::process(unsigned int, int&, unsigned char*, int&, UkOutputType&) tests/reference/unikey/ukengine.cpp:1752
+    #2 0x56360b460859 in bench::UniKeyDriver::invoke() benchmark/harness/engines.hpp:429
+    #3 0x56360b449b7b in bench::IDriver::feed(corpus::Event const&) benchmark/harness/engines.hpp:97
+    #4 0x56360b449b7b in runStreamOnAll benchmark/harness/bench.cpp:283
+    #5 0x56360b44cb09 in modeCorrectness benchmark/harness/bench.cpp:338
+    #6 0x56360b42231b in main benchmark/harness/bench.cpp:838
+    #7 0x7ff7e6a45249  (/lib/x86_64-linux-gnu/libc.so.6+0x27249)
+    #8 0x7ff7e6a45304 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x27304)
+    #9 0x56360b42c960 in _start (/home/user/KieeKey/benchmark/.build/bench_san+0x155960)
+

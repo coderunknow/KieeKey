@@ -1,0 +1,3 @@
+[2026-09-08T16:25:18Z] gate:manifest: PASS — baseline intact (18 frozen v1.2.2 sources verified in benchmark/reference/kieekey-1.2.2); the working tree differs in 3 of them (TextEngine.cpp, TextEngine.hpp, kieekey_core.hpp) — that is the candidate under test, and libkkbase.so still measures v1.2.2 exactly
+[2026-09-08T16:34:57Z] gate:memory: PASS — hot path stays allocation-free — as-shipped: 21 allocs / 2,000,000 keys, RSS 46.2 MiB; matched-minimal: 20 allocs / 2,000,000 keys, RSS 49.4 MiB
+[2026-09-08T16:35:24Z] gate:integrity: PASS — 22 artifact(s), 19382 row(s) parsed, identical engine coverage across tput sessions, 0 undecodable line(s)

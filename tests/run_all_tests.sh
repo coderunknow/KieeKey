@@ -221,6 +221,15 @@ if command -v python3 >/dev/null 2>&1; then
         printf ' FAILED — %s\n' "$OUT/logs/version.log"
         rc=1
     fi
+    printf '  [check] %-22s' "benchmark stats"
+    if ( cd "$REPO_ROOT" && python3 benchmark/scripts/check_rc1_stats_consistency.py \
+            --results=benchmark/results/rc1-m6 ) \
+            > "$OUT/logs/benchmark_stats.log" 2>&1; then
+        printf ' ok\n'
+    else
+        printf ' FAILED — %s\n' "$OUT/logs/benchmark_stats.log"
+        rc=1
+    fi
 fi
 
 # --- release manifest matches the tracked tree ------------------------------

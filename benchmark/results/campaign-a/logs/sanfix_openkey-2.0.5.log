@@ -1,0 +1,13 @@
+tests/reference/openkey-2.0.5/engine/Engine.cpp:995:9: runtime error: index -1 out of bounds for type 'unsigned int [32]'
+    #0 0x7fb42312923e in checkForStandaloneChar(unsigned short const&, bool const&, unsigned int const&) tests/reference/openkey-2.0.5/engine/Engine.cpp:995
+    #1 0x7fb42312b830 in handleMainKey(unsigned short const&, bool const&) tests/reference/openkey-2.0.5/engine/Engine.cpp:1187
+    #2 0x7fb4231326ea in vKeyHandleEvent(vKeyEvent const&, vKeyEventState const&, unsigned short const&, unsigned char const&, bool const&) tests/reference/openkey-2.0.5/engine/Engine.cpp:1500
+    #3 0x7fb42317f022 in ok205::processChar(char32_t, bool, bool, ok205::Delta&) tests/engine205.cpp:309
+    #4 0x55930a41ab7b in bench::IDriver::feed(corpus::Event const&) benchmark/harness/engines.hpp:97
+    #5 0x55930a41ab7b in runStreamOnAll benchmark/harness/bench.cpp:283
+    #6 0x55930a4270f9 in modeCorrectness benchmark/harness/bench.cpp:458
+    #7 0x55930a3f331b in main benchmark/harness/bench.cpp:838
+    #8 0x7fb425245249  (/lib/x86_64-linux-gnu/libc.so.6+0x27249)
+    #9 0x7fb425245304 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x27304)
+    #10 0x55930a3fd960 in _start (/home/user/KieeKey/benchmark/.build/bench_san+0x155960)
+

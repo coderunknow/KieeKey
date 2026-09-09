@@ -123,6 +123,14 @@ def main() -> int:
         lines.append(f"* words: `{meta.get('words')}`")
         lines.append("")
 
+    defs = summary.get("stat_definitions") or {}
+    if defs:
+        lines.append("## Statistic definitions")
+        lines.append("")
+        for k, v in defs.items():
+            lines.append(f"* `{k}`: {v}")
+        lines.append("")
+
     lines.append("## Direct L1 same-process KieeKey NEW vs UniKey")
     lines.append("")
     lines.append("| cell | KieeKey NEW ns/key | UniKey ns/key | Δ ns | Δ % | 95% CI | paired rounds |")
@@ -157,14 +165,16 @@ def main() -> int:
 
     lines.append("## Frozen KieeKey v1.2.2 baseline")
     lines.append("")
-    lines.append("| cell | v1.2.2 ns/key | KieeKey NEW ns/key | gain ns | gain % | 95% CI | rounds |")
-    lines.append("|---|---:|---:|---:|---:|---:|---:|")
+    lines.append("| cell | v1.2.2 median ns/key | KieeKey NEW median ns/key | median improvement ns | median improvement % | paired median gain ns | paired relative effect % | 95% CI for paired gain ns | rounds |")
+    lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|")
     for name in sorted(gain):
         g = gain[name]
+        ci = g.get("paired_gain_ci_ns") or [None, None]
         lines.append("| " + " | ".join([
-            cell_name(name), fmt(g.get("base_ns")), fmt(g.get("cand_ns")), fmt(g.get("gain_ns")),
-            fmt(g.get("gain_pct")), f"{fmt((g.get('ci') or [None, None])[0])}…{fmt((g.get('ci') or [None, None])[1])}",
-            fmt(g.get("n"), 0),
+            cell_name(name), fmt(g.get("base_median_ns")), fmt(g.get("candidate_median_ns")),
+            fmt(g.get("median_improvement_ns")), fmt(g.get("median_improvement_pct")),
+            fmt(g.get("paired_gain_median_ns")), fmt(g.get("paired_relative_effect_pct")),
+            f"{fmt(ci[0])}…{fmt(ci[1])}", fmt(g.get("n"), 0),
         ]) + " |")
     lines.append("")
 

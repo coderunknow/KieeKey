@@ -1,5 +1,9 @@
 {
  "aa_band_ns": 26.918099999999995,
+ "accounting_revision": {
+  "id": "rc1-stats-explicit-paired-vs-descriptive-2026-09-09",
+  "note": "Raw measurements are preserved; summary/tables were regenerated to separate descriptive median differences from paired estimators."
+ },
  "attrib_guard": {
   "_file": "selftest.jsonl",
   "band_ok": true,
@@ -21,12 +25,15 @@
   "cells_measured": 18,
   "cells_regressing_beyond_band": [],
   "deciding_cell": "as-shipped|telex-end|prose",
-  "deciding_ci_ns": [
+  "deciding_median_improvement_ns": 160.15175,
+  "deciding_median_improvement_pct": 66.47844112976001,
+  "deciding_paired_delta_median_ns": -2.5466500000000067,
+  "deciding_paired_gain_ci_ns": [
    1.304000000000002,
    6.469549999999998
   ],
-  "deciding_gain_ns": 2.5466500000000067,
-  "deciding_gain_pct": 1.0571056644907333,
+  "deciding_paired_gain_median_ns": 2.5466500000000067,
+  "deciding_paired_relative_effect_pct": 1.0571056644907333,
   "decision": "ACCEPT",
   "differing_from_baseline": [
    "src/core/FlatTables.hpp",
@@ -37,7 +44,7 @@
   "manifest_known": true,
   "note": "a REJECT here is a measurement outcome, not a discarded file: the code, its numbers and the reason stay in OPTIMIZATION_LEDGER.md",
   "null_test_abs_max_pct": null,
-  "rule": "ACCEPT iff deciding-cell gain > 0 with 95 % CI excluding 0, and no cell regressing by more than 2 x the A/A median band"
+  "rule": "ACCEPT iff deciding-cell paired median gain > 0 with 95 % CI excluding 0, and no cell regressing by more than 2 x the A/A median band"
  },
  "cells": {
   "as-shipped|telex-end|edit-storm": {
@@ -10222,237 +10229,381 @@
  },
  "gain": {
   "as-shipped|telex-end|edit-storm": {
-   "base_ns": 251.8632,
-   "cand_ns": 249.774,
-   "ci": [
+   "base_median_ns": 251.8632,
+   "candidate_median_ns": 249.774,
+   "definition": "base/candidate medians are descriptive per-engine medians; median_improvement = base_median - candidate_median; paired_delta_median = median over matched (candidate - baseline) rounds; paired_relative_effect_pct = paired_gain_median / base_median * 100",
+   "losses": 24,
+   "median_improvement_ns": 2.0892000000000053,
+   "median_improvement_pct": 0.8294979179173477,
+   "n": 60,
+   "paired_delta_ci_ns": [
+    -15.581400000000016,
+    84.1919
+   ],
+   "paired_delta_median_ns": -2.8203499999999906,
+   "paired_gain_ci_ns": [
     -84.1919,
     15.581400000000016
    ],
-   "gain_ns": 2.8203499999999906,
-   "gain_pct": 1.1197943963230796,
-   "losses": 24,
-   "n": 60,
+   "paired_gain_median_ns": 2.8203499999999906,
+   "paired_relative_effect_pct": 1.1197943963230796,
    "wins": 36
   },
   "as-shipped|telex-end|pathological": {
-   "base_ns": 39.991299999999995,
-   "cand_ns": 42.01235,
-   "ci": [
+   "base_median_ns": 39.991299999999995,
+   "candidate_median_ns": 42.01235,
+   "definition": "base/candidate medians are descriptive per-engine medians; median_improvement = base_median - candidate_median; paired_delta_median = median over matched (candidate - baseline) rounds; paired_relative_effect_pct = paired_gain_median / base_median * 100",
+   "losses": 42,
+   "median_improvement_ns": -2.0210500000000025,
+   "median_improvement_pct": -5.053724185010246,
+   "n": 60,
+   "paired_delta_ci_ns": [
+    1.531600000000001,
+    7.1331500000000005
+   ],
+   "paired_delta_median_ns": 2.639900000000001,
+   "paired_gain_ci_ns": [
     -7.1331500000000005,
     -1.531600000000001
    ],
-   "gain_ns": -2.639900000000001,
-   "gain_pct": -6.601185757902346,
-   "losses": 42,
-   "n": 60,
+   "paired_gain_median_ns": -2.639900000000001,
+   "paired_relative_effect_pct": -6.601185757902346,
    "wins": 18
   },
   "as-shipped|telex-end|prose": {
-   "base_ns": 240.9078,
-   "cand_ns": 80.75605,
-   "ci": [
+   "base_median_ns": 240.9078,
+   "candidate_median_ns": 80.75605,
+   "definition": "base/candidate medians are descriptive per-engine medians; median_improvement = base_median - candidate_median; paired_delta_median = median over matched (candidate - baseline) rounds; paired_relative_effect_pct = paired_gain_median / base_median * 100",
+   "losses": 19,
+   "median_improvement_ns": 160.15175,
+   "median_improvement_pct": 66.47844112976001,
+   "n": 60,
+   "paired_delta_ci_ns": [
+    -6.469549999999998,
+    -1.304000000000002
+   ],
+   "paired_delta_median_ns": -2.5466500000000067,
+   "paired_gain_ci_ns": [
     1.304000000000002,
     6.469549999999998
    ],
-   "gain_ns": 2.5466500000000067,
-   "gain_pct": 1.0571056644907333,
-   "losses": 19,
-   "n": 60,
+   "paired_gain_median_ns": 2.5466500000000067,
+   "paired_relative_effect_pct": 1.0571056644907333,
    "wins": 41
   },
   "as-shipped|telex-mid|edit-storm": {
-   "base_ns": 251.0059,
-   "cand_ns": 246.5788,
-   "ci": [
+   "base_median_ns": 251.0059,
+   "candidate_median_ns": 246.5788,
+   "definition": "base/candidate medians are descriptive per-engine medians; median_improvement = base_median - candidate_median; paired_delta_median = median over matched (candidate - baseline) rounds; paired_relative_effect_pct = paired_gain_median / base_median * 100",
+   "losses": 24,
+   "median_improvement_ns": 4.427099999999996,
+   "median_improvement_pct": 1.7637434020475198,
+   "n": 60,
+   "paired_delta_ci_ns": [
+    -7.084099999999992,
+    16.29405
+   ],
+   "paired_delta_median_ns": -4.214100000000002,
+   "paired_gain_ci_ns": [
     -16.29405,
     7.084099999999992
    ],
-   "gain_ns": 4.214100000000002,
-   "gain_pct": 1.6788848389619537,
-   "losses": 24,
-   "n": 60,
+   "paired_gain_median_ns": 4.214100000000002,
+   "paired_relative_effect_pct": 1.6788848389619537,
    "wins": 36
   },
   "as-shipped|telex-mid|pathological": {
-   "base_ns": 41.82495,
-   "cand_ns": 65.73949999999999,
-   "ci": [
+   "base_median_ns": 41.82495,
+   "candidate_median_ns": 65.73949999999999,
+   "definition": "base/candidate medians are descriptive per-engine medians; median_improvement = base_median - candidate_median; paired_delta_median = median over matched (candidate - baseline) rounds; paired_relative_effect_pct = paired_gain_median / base_median * 100",
+   "losses": 45,
+   "median_improvement_ns": -23.91454999999999,
+   "median_improvement_pct": -57.177713302705655,
+   "n": 60,
+   "paired_delta_ci_ns": [
+    2.5315499999999993,
+    11.146500000000001
+   ],
+   "paired_delta_median_ns": 6.351850000000006,
+   "paired_gain_ci_ns": [
     -11.146500000000001,
     -2.5315499999999993
    ],
-   "gain_ns": -6.351850000000006,
-   "gain_pct": -15.186748579496223,
-   "losses": 45,
-   "n": 60,
+   "paired_gain_median_ns": -6.351850000000006,
+   "paired_relative_effect_pct": -15.186748579496223,
    "wins": 15
   },
   "as-shipped|telex-mid|prose": {
-   "base_ns": 131.49394999999998,
-   "cand_ns": 87.12915,
-   "ci": [
+   "base_median_ns": 131.49394999999998,
+   "candidate_median_ns": 87.12915,
+   "definition": "base/candidate medians are descriptive per-engine medians; median_improvement = base_median - candidate_median; paired_delta_median = median over matched (candidate - baseline) rounds; paired_relative_effect_pct = paired_gain_median / base_median * 100",
+   "losses": 18,
+   "median_improvement_ns": 44.36479999999999,
+   "median_improvement_pct": 33.7390427468336,
+   "n": 60,
+   "paired_delta_ci_ns": [
+    -8.3765,
+    -2.8490500000000054
+   ],
+   "paired_delta_median_ns": -4.761600000000001,
+   "paired_gain_ci_ns": [
     2.8490500000000054,
     8.3765
    ],
-   "gain_ns": 4.761600000000001,
-   "gain_pct": 3.621155193832113,
-   "losses": 18,
-   "n": 60,
+   "paired_gain_median_ns": 4.761600000000001,
+   "paired_relative_effect_pct": 3.621155193832113,
    "wins": 42
   },
   "as-shipped|vni|edit-storm": {
-   "base_ns": 245.35674999999998,
-   "cand_ns": 239.8706,
-   "ci": [
+   "base_median_ns": 245.35674999999998,
+   "candidate_median_ns": 239.8706,
+   "definition": "base/candidate medians are descriptive per-engine medians; median_improvement = base_median - candidate_median; paired_delta_median = median over matched (candidate - baseline) rounds; paired_relative_effect_pct = paired_gain_median / base_median * 100",
+   "losses": 14,
+   "median_improvement_ns": 5.486149999999981,
+   "median_improvement_pct": 2.2359890241454456,
+   "n": 60,
+   "paired_delta_ci_ns": [
+    -8.292850000000001,
+    -3.629649999999998
+   ],
+   "paired_delta_median_ns": -7.756900000000002,
+   "paired_gain_ci_ns": [
     3.629649999999998,
     8.292850000000001
    ],
-   "gain_ns": 7.756900000000002,
-   "gain_pct": 3.1614781333711024,
-   "losses": 14,
-   "n": 60,
+   "paired_gain_median_ns": 7.756900000000002,
+   "paired_relative_effect_pct": 3.1614781333711024,
    "wins": 46
   },
   "as-shipped|vni|pathological": {
-   "base_ns": 31.827150000000003,
-   "cand_ns": 34.111450000000005,
-   "ci": [
+   "base_median_ns": 31.827150000000003,
+   "candidate_median_ns": 34.111450000000005,
+   "definition": "base/candidate medians are descriptive per-engine medians; median_improvement = base_median - candidate_median; paired_delta_median = median over matched (candidate - baseline) rounds; paired_relative_effect_pct = paired_gain_median / base_median * 100",
+   "losses": 43,
+   "median_improvement_ns": -2.2843000000000018,
+   "median_improvement_pct": -7.177205624757484,
+   "n": 60,
+   "paired_delta_ci_ns": [
+    2.526200000000001,
+    8.043600000000005
+   ],
+   "paired_delta_median_ns": 3.0334499999999984,
+   "paired_gain_ci_ns": [
     -8.043600000000005,
     -2.526200000000001
    ],
-   "gain_ns": -3.0334499999999984,
-   "gain_pct": -9.531013615733732,
-   "losses": 43,
-   "n": 60,
+   "paired_gain_median_ns": -3.0334499999999984,
+   "paired_relative_effect_pct": -9.531013615733732,
    "wins": 17
   },
   "as-shipped|vni|prose": {
-   "base_ns": 234.95260000000002,
-   "cand_ns": 232.2317,
-   "ci": [
+   "base_median_ns": 234.95260000000002,
+   "candidate_median_ns": 232.2317,
+   "definition": "base/candidate medians are descriptive per-engine medians; median_improvement = base_median - candidate_median; paired_delta_median = median over matched (candidate - baseline) rounds; paired_relative_effect_pct = paired_gain_median / base_median * 100",
+   "losses": 16,
+   "median_improvement_ns": 2.7209000000000287,
+   "median_improvement_pct": 1.1580633710799662,
+   "n": 60,
+   "paired_delta_ci_ns": [
+    -7.049449999999993,
+    3.826350000000005
+   ],
+   "paired_delta_median_ns": -5.768150000000006,
+   "paired_gain_ci_ns": [
     -3.826350000000005,
     7.049449999999993
    ],
-   "gain_ns": 5.768150000000006,
-   "gain_pct": 2.455027099082966,
-   "losses": 16,
-   "n": 60,
+   "paired_gain_median_ns": 5.768150000000006,
+   "paired_relative_effect_pct": 2.455027099082966,
    "wins": 44
   },
   "matched-minimal|telex-end|edit-storm": {
-   "base_ns": 72.24885,
-   "cand_ns": 64.98875,
-   "ci": [
+   "base_median_ns": 72.24885,
+   "candidate_median_ns": 64.98875,
+   "definition": "base/candidate medians are descriptive per-engine medians; median_improvement = base_median - candidate_median; paired_delta_median = median over matched (candidate - baseline) rounds; paired_relative_effect_pct = paired_gain_median / base_median * 100",
+   "losses": 7,
+   "median_improvement_ns": 7.260100000000008,
+   "median_improvement_pct": 10.048741260241524,
+   "n": 60,
+   "paired_delta_ci_ns": [
+    -8.319849999999992,
+    -2.654600000000009
+   ],
+   "paired_delta_median_ns": -3.552299999999999,
+   "paired_gain_ci_ns": [
     2.654600000000009,
     8.319849999999992
    ],
-   "gain_ns": 3.552299999999999,
-   "gain_pct": 4.916756460483452,
-   "losses": 7,
-   "n": 60,
+   "paired_gain_median_ns": 3.552299999999999,
+   "paired_relative_effect_pct": 4.916756460483452,
    "wins": 53
   },
   "matched-minimal|telex-end|pathological": {
-   "base_ns": 49.04885,
-   "cand_ns": 49.613299999999995,
-   "ci": [
+   "base_median_ns": 49.04885,
+   "candidate_median_ns": 49.613299999999995,
+   "definition": "base/candidate medians are descriptive per-engine medians; median_improvement = base_median - candidate_median; paired_delta_median = median over matched (candidate - baseline) rounds; paired_relative_effect_pct = paired_gain_median / base_median * 100",
+   "losses": 41,
+   "median_improvement_ns": -0.5644499999999937,
+   "median_improvement_pct": -1.1507915068345,
+   "n": 60,
+   "paired_delta_ci_ns": [
+    1.1479999999999997,
+    2.151
+   ],
+   "paired_delta_median_ns": 1.7267499999999991,
+   "paired_gain_ci_ns": [
     -2.151,
     -1.1479999999999997
    ],
-   "gain_ns": -1.7267499999999991,
-   "gain_pct": -3.520469898886516,
-   "losses": 41,
-   "n": 60,
+   "paired_gain_median_ns": -1.7267499999999991,
+   "paired_relative_effect_pct": -3.520469898886516,
    "wins": 19
   },
   "matched-minimal|telex-end|prose": {
-   "base_ns": 68.4897,
-   "cand_ns": 56.20915,
-   "ci": [
+   "base_median_ns": 68.4897,
+   "candidate_median_ns": 56.20915,
+   "definition": "base/candidate medians are descriptive per-engine medians; median_improvement = base_median - candidate_median; paired_delta_median = median over matched (candidate - baseline) rounds; paired_relative_effect_pct = paired_gain_median / base_median * 100",
+   "losses": 10,
+   "median_improvement_ns": 12.280549999999998,
+   "median_improvement_pct": 17.930506338909353,
+   "n": 60,
+   "paired_delta_ci_ns": [
+    -7.899999999999999,
+    -1.517700000000005
+   ],
+   "paired_delta_median_ns": -4.034499999999994,
+   "paired_gain_ci_ns": [
     1.517700000000005,
     7.899999999999999
    ],
-   "gain_ns": 4.034499999999994,
-   "gain_pct": 5.890666771791954,
-   "losses": 10,
-   "n": 60,
+   "paired_gain_median_ns": 4.034499999999994,
+   "paired_relative_effect_pct": 5.890666771791954,
    "wins": 50
   },
   "matched-minimal|telex-mid|edit-storm": {
-   "base_ns": 72.75515,
-   "cand_ns": 64.73259999999999,
-   "ci": [
+   "base_median_ns": 72.75515,
+   "candidate_median_ns": 64.73259999999999,
+   "definition": "base/candidate medians are descriptive per-engine medians; median_improvement = base_median - candidate_median; paired_delta_median = median over matched (candidate - baseline) rounds; paired_relative_effect_pct = paired_gain_median / base_median * 100",
+   "losses": 12,
+   "median_improvement_ns": 8.02255000000001,
+   "median_improvement_pct": 11.026779547564686,
+   "n": 60,
+   "paired_delta_ci_ns": [
+    -9.261549999999996,
+    -2.5145499999999963
+   ],
+   "paired_delta_median_ns": -5.906649999999999,
+   "paired_gain_ci_ns": [
     2.5145499999999963,
     9.261549999999996
    ],
-   "gain_ns": 5.906649999999999,
-   "gain_pct": 8.118531815273556,
-   "losses": 12,
-   "n": 60,
+   "paired_gain_median_ns": 5.906649999999999,
+   "paired_relative_effect_pct": 8.118531815273556,
    "wins": 48
   },
   "matched-minimal|telex-mid|pathological": {
-   "base_ns": 49.551950000000005,
-   "cand_ns": 50.2605,
-   "ci": [
+   "base_median_ns": 49.551950000000005,
+   "candidate_median_ns": 50.2605,
+   "definition": "base/candidate medians are descriptive per-engine medians; median_improvement = base_median - candidate_median; paired_delta_median = median over matched (candidate - baseline) rounds; paired_relative_effect_pct = paired_gain_median / base_median * 100",
+   "losses": 37,
+   "median_improvement_ns": -0.7085499999999954,
+   "median_improvement_pct": -1.4299134544654555,
+   "n": 60,
+   "paired_delta_ci_ns": [
+    0.21879999999999455,
+    2.2023500000000027
+   ],
+   "paired_delta_median_ns": 1.4190500000000021,
+   "paired_gain_ci_ns": [
     -2.2023500000000027,
     -0.21879999999999455
    ],
-   "gain_ns": -1.4190500000000021,
-   "gain_pct": -2.8637621728307403,
-   "losses": 37,
-   "n": 60,
+   "paired_gain_median_ns": -1.4190500000000021,
+   "paired_relative_effect_pct": -2.8637621728307403,
    "wins": 23
   },
   "matched-minimal|telex-mid|prose": {
-   "base_ns": 67.12440000000001,
-   "cand_ns": 55.7825,
-   "ci": [
+   "base_median_ns": 67.12440000000001,
+   "candidate_median_ns": 55.7825,
+   "definition": "base/candidate medians are descriptive per-engine medians; median_improvement = base_median - candidate_median; paired_delta_median = median over matched (candidate - baseline) rounds; paired_relative_effect_pct = paired_gain_median / base_median * 100",
+   "losses": 15,
+   "median_improvement_ns": 11.34190000000001,
+   "median_improvement_pct": 16.896836321814433,
+   "n": 60,
+   "paired_delta_ci_ns": [
+    -15.273150000000001,
+    -2.2435500000000026
+   ],
+   "paired_delta_median_ns": -5.890800000000002,
+   "paired_gain_ci_ns": [
     2.2435500000000026,
     15.273150000000001
    ],
-   "gain_ns": 5.890800000000002,
-   "gain_pct": 8.775944365983161,
-   "losses": 15,
-   "n": 60,
+   "paired_gain_median_ns": 5.890800000000002,
+   "paired_relative_effect_pct": 8.775944365983161,
    "wins": 45
   },
   "matched-minimal|vni|edit-storm": {
-   "base_ns": 63.12975,
-   "cand_ns": 55.531800000000004,
-   "ci": [
+   "base_median_ns": 63.12975,
+   "candidate_median_ns": 55.531800000000004,
+   "definition": "base/candidate medians are descriptive per-engine medians; median_improvement = base_median - candidate_median; paired_delta_median = median over matched (candidate - baseline) rounds; paired_relative_effect_pct = paired_gain_median / base_median * 100",
+   "losses": 8,
+   "median_improvement_ns": 7.597949999999997,
+   "median_improvement_pct": 12.035450797761749,
+   "n": 60,
+   "paired_delta_ci_ns": [
+    -7.8081,
+    -2.498000000000008
+   ],
+   "paired_delta_median_ns": -5.656299999999998,
+   "paired_gain_ci_ns": [
     2.498000000000008,
     7.8081
    ],
-   "gain_ns": 5.656299999999998,
-   "gain_pct": 8.959801044673862,
-   "losses": 8,
-   "n": 60,
+   "paired_gain_median_ns": 5.656299999999998,
+   "paired_relative_effect_pct": 8.959801044673862,
    "wins": 52
   },
   "matched-minimal|vni|pathological": {
-   "base_ns": 22.8069,
-   "cand_ns": 25.565,
-   "ci": [
+   "base_median_ns": 22.8069,
+   "candidate_median_ns": 25.565,
+   "definition": "base/candidate medians are descriptive per-engine medians; median_improvement = base_median - candidate_median; paired_delta_median = median over matched (candidate - baseline) rounds; paired_relative_effect_pct = paired_gain_median / base_median * 100",
+   "losses": 41,
+   "median_improvement_ns": -2.7581000000000024,
+   "median_improvement_pct": -12.09327001916088,
+   "n": 60,
+   "paired_delta_ci_ns": [
+    1.6463999999999999,
+    2.656749999999999
+   ],
+   "paired_delta_median_ns": 2.1557499999999994,
+   "paired_gain_ci_ns": [
     -2.656749999999999,
     -1.6463999999999999
    ],
-   "gain_ns": -2.1557499999999994,
-   "gain_pct": -9.452183330483315,
-   "losses": 41,
-   "n": 60,
+   "paired_gain_median_ns": -2.1557499999999994,
+   "paired_relative_effect_pct": -9.452183330483315,
    "wins": 19
   },
   "matched-minimal|vni|prose": {
-   "base_ns": 55.98995,
-   "cand_ns": 48.1611,
-   "ci": [
+   "base_median_ns": 55.98995,
+   "candidate_median_ns": 48.1611,
+   "definition": "base/candidate medians are descriptive per-engine medians; median_improvement = base_median - candidate_median; paired_delta_median = median over matched (candidate - baseline) rounds; paired_relative_effect_pct = paired_gain_median / base_median * 100",
+   "losses": 13,
+   "median_improvement_ns": 7.828850000000003,
+   "median_improvement_pct": 13.98259866279574,
+   "n": 60,
+   "paired_delta_ci_ns": [
+    -9.17935,
+    -2.756649999999997
+   ],
+   "paired_delta_median_ns": -6.853600000000004,
+   "paired_gain_ci_ns": [
     2.756649999999997,
     9.17935
    ],
-   "gain_ns": 6.853600000000004,
-   "gain_pct": 12.24076820929471,
-   "losses": 13,
-   "n": 60,
+   "paired_gain_median_ns": 6.853600000000004,
+   "paired_relative_effect_pct": 12.24076820929471,
    "wins": 47
   }
  },
@@ -34846,6 +34997,15 @@
    "ok"
   ],
   "rows": 40
+ },
+ "stat_definitions": {
+  "descriptive_engine_median_ns": "median of that engine's non-warm tput engine_ns_per_key samples in the cell",
+  "median_improvement_ns": "baseline_median_ns - candidate_median_ns; descriptive only, not paired",
+  "median_improvement_pct": "median_improvement_ns / baseline_median_ns * 100",
+  "paired_delta_median_ns": "median over matched (session, round) samples of candidate_ns - baseline_ns; negative means candidate faster",
+  "paired_gain_ci_ns": "95% bootstrap CI for paired_gain_median_ns, resampling whole sessions",
+  "paired_gain_median_ns": "-paired_delta_median_ns; positive means candidate faster",
+  "paired_relative_effect_pct": "paired_gain_median_ns / baseline_median_ns * 100"
  },
  "timer": {
   "_file": "timer.jsonl",

@@ -29,6 +29,11 @@ Keep a Changelog; versioning: SemVer.
   `benchmark/scripts/windows_physical_report.py` so the final KieeKey-vs-UniKey verdict is produced on
   the user's physical Windows host, with same-machine raw measurements, CPU/wall/memory process metrics,
   host-noise probes, randomized independent samples, and explicit PASS/FAIL.
+* Audited the `rc1_gain` accounting after review: the old `gain ns/%` values were the paired median
+  estimator, not the displayed-median subtraction.  They were statistically meaningful for the paired
+  ACCEPT rule but badly labelled next to descriptive medians.  `rc1_stats.py` now publishes both
+  `median improvement` and `paired median gain`, documents the CI target, and
+  `check_rc1_stats_consistency.py` recomputes every row from raw artifacts.
 
 ## [1.3.0-RC1] — 2026-09-08
 

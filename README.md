@@ -31,10 +31,13 @@ and source verdicts drift.
 
 The correctness gate stayed locked: candidate vs frozen v1.2.2 produced **0 diffab event mismatches over
 1,072,224 events** and `digest-identity` passed across **374 rows**.  The 60-sample pinned L1 campaign
-(`benchmark/results/rc1-m6`) measured an accepted candidate-vs-v1.2.2 gain on the pre-registered deciding
-cell (`as-shipped · telex-end · prose`), but not a comprehensive UniKey win: the campaign verdict remains
-**TIER D — SLOWER** versus UniKey on this noisy 2-vCPU VM.  That VM result is a development signal only,
-not the real-user verdict.
+(`benchmark/results/rc1-m6`) measured an accepted candidate-vs-v1.2.2 paired-median gain on the
+pre-registered deciding cell (`as-shipped · telex-end · prose`), but not a comprehensive UniKey win: the
+campaign verdict remains **TIER D — SLOWER** versus UniKey on this noisy 2-vCPU VM.  That VM result is a
+development signal only, not the real-user verdict.  The regenerated `rc1-m6` tables now separate
+**descriptive median improvement** (`v1.2.2 median - candidate median`) from the **paired median gain**
+used by ACCEPT/REJECT, so the reviewer-visible `240.91 → 80.76` row reads as both `160.15 ns / 66.48 %`
+descriptive median improvement and `2.55 ns / 1.06 %` paired median gain.
 
 For the actual same-machine Windows answer, run the reproducible physical-host controller from an elevated
 PowerShell prompt on the target PC:

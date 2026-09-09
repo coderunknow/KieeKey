@@ -44,27 +44,31 @@
 | matched-minimal · vni · prose | 46.65 | 44.62 | 2.45 | 5.49 | 1.24…2.61 | 60 | 3 | 45.14…221.64 | 43.33 / 212.35 |
 <<<END>>>
 
+<<<TABLE:rc1_gain_methodology>>>
+**Attribution statistics methodology.** `v1.2.2 median` and `candidate median` are descriptive per-engine medians of non-warm `engine_ns_per_key` samples. `median improvement` is exactly `v1.2.2 median - candidate median`, with percent relative to the v1.2.2 median. `paired median gain` is a different inferential estimator: for each matched `(session, round)` sample compute `candidate - v1.2.2`, take the median, then negate it so positive means faster. The CI is a 95% bootstrap CI for that paired median gain, resampling whole sessions. The candidate ACCEPT/REJECT rule uses the paired estimator, not the descriptive median subtraction.
+<<<END>>>
+
 <<<TABLE:rc1_gain>>>
-| cell | v1.2.2 ns/key | candidate ns/key | gain ns | gain % | 95 % CI | rounds | favouring |
-|---|---|---|---|---|---|---|---|
-| as-shipped · telex-end · edit-storm | 251.86 | 249.77 | 2.82 | 1.12 | -84.19…15.58 | 60 | 36/24 |
-| as-shipped · telex-end · pathological | 39.99 | 42.01 | -2.64 | -6.60 | -7.13…-1.53 | 60 | 18/42 |
-| as-shipped · telex-end · prose | 240.91 | 80.76 | 2.55 | 1.06 | 1.30…6.47 | 60 | 41/19 |
-| as-shipped · telex-mid · edit-storm | 251.01 | 246.58 | 4.21 | 1.68 | -16.29…7.08 | 60 | 36/24 |
-| as-shipped · telex-mid · pathological | 41.82 | 65.74 | -6.35 | -15.19 | -11.15…-2.53 | 60 | 15/45 |
-| as-shipped · telex-mid · prose | 131.49 | 87.13 | 4.76 | 3.62 | 2.85…8.38 | 60 | 42/18 |
-| as-shipped · vni · edit-storm | 245.36 | 239.87 | 7.76 | 3.16 | 3.63…8.29 | 60 | 46/14 |
-| as-shipped · vni · pathological | 31.83 | 34.11 | -3.03 | -9.53 | -8.04…-2.53 | 60 | 17/43 |
-| as-shipped · vni · prose | 234.95 | 232.23 | 5.77 | 2.46 | -3.83…7.05 | 60 | 44/16 |
-| matched-minimal · telex-end · edit-storm | 72.25 | 64.99 | 3.55 | 4.92 | 2.65…8.32 | 60 | 53/7 |
-| matched-minimal · telex-end · pathological | 49.05 | 49.61 | -1.73 | -3.52 | -2.15…-1.15 | 60 | 19/41 |
-| matched-minimal · telex-end · prose | 68.49 | 56.21 | 4.03 | 5.89 | 1.52…7.90 | 60 | 50/10 |
-| matched-minimal · telex-mid · edit-storm | 72.76 | 64.73 | 5.91 | 8.12 | 2.51…9.26 | 60 | 48/12 |
-| matched-minimal · telex-mid · pathological | 49.55 | 50.26 | -1.42 | -2.86 | -2.20…-0.22 | 60 | 23/37 |
-| matched-minimal · telex-mid · prose | 67.12 | 55.78 | 5.89 | 8.78 | 2.24…15.27 | 60 | 45/15 |
-| matched-minimal · vni · edit-storm | 63.13 | 55.53 | 5.66 | 8.96 | 2.50…7.81 | 60 | 52/8 |
-| matched-minimal · vni · pathological | 22.81 | 25.57 | -2.16 | -9.45 | -2.66…-1.65 | 60 | 19/41 |
-| matched-minimal · vni · prose | 55.99 | 48.16 | 6.85 | 12.24 | 2.76…9.18 | 60 | 47/13 |
+| cell | v1.2.2 median ns/key | candidate median ns/key | median improvement ns | median improvement % | paired median gain ns | paired relative effect % | 95 % CI for paired gain ns | paired rounds | paired favouring cand/base |
+|---|---|---|---|---|---|---|---|---|---|
+| as-shipped · telex-end · edit-storm | 251.86 | 249.77 | 2.09 | 0.83 | 2.82 | 1.12 | -84.19…15.58 | 60 | 36/24 |
+| as-shipped · telex-end · pathological | 39.99 | 42.01 | -2.02 | -5.05 | -2.64 | -6.60 | -7.13…-1.53 | 60 | 18/42 |
+| as-shipped · telex-end · prose | 240.91 | 80.76 | 160.15 | 66.48 | 2.55 | 1.06 | 1.30…6.47 | 60 | 41/19 |
+| as-shipped · telex-mid · edit-storm | 251.01 | 246.58 | 4.43 | 1.76 | 4.21 | 1.68 | -16.29…7.08 | 60 | 36/24 |
+| as-shipped · telex-mid · pathological | 41.82 | 65.74 | -23.91 | -57.18 | -6.35 | -15.19 | -11.15…-2.53 | 60 | 15/45 |
+| as-shipped · telex-mid · prose | 131.49 | 87.13 | 44.36 | 33.74 | 4.76 | 3.62 | 2.85…8.38 | 60 | 42/18 |
+| as-shipped · vni · edit-storm | 245.36 | 239.87 | 5.49 | 2.24 | 7.76 | 3.16 | 3.63…8.29 | 60 | 46/14 |
+| as-shipped · vni · pathological | 31.83 | 34.11 | -2.28 | -7.18 | -3.03 | -9.53 | -8.04…-2.53 | 60 | 17/43 |
+| as-shipped · vni · prose | 234.95 | 232.23 | 2.72 | 1.16 | 5.77 | 2.46 | -3.83…7.05 | 60 | 44/16 |
+| matched-minimal · telex-end · edit-storm | 72.25 | 64.99 | 7.26 | 10.05 | 3.55 | 4.92 | 2.65…8.32 | 60 | 53/7 |
+| matched-minimal · telex-end · pathological | 49.05 | 49.61 | -0.56 | -1.15 | -1.73 | -3.52 | -2.15…-1.15 | 60 | 19/41 |
+| matched-minimal · telex-end · prose | 68.49 | 56.21 | 12.28 | 17.93 | 4.03 | 5.89 | 1.52…7.90 | 60 | 50/10 |
+| matched-minimal · telex-mid · edit-storm | 72.76 | 64.73 | 8.02 | 11.03 | 5.91 | 8.12 | 2.51…9.26 | 60 | 48/12 |
+| matched-minimal · telex-mid · pathological | 49.55 | 50.26 | -0.71 | -1.43 | -1.42 | -2.86 | -2.20…-0.22 | 60 | 23/37 |
+| matched-minimal · telex-mid · prose | 67.12 | 55.78 | 11.34 | 16.90 | 5.89 | 8.78 | 2.24…15.27 | 60 | 45/15 |
+| matched-minimal · vni · edit-storm | 63.13 | 55.53 | 7.60 | 12.04 | 5.66 | 8.96 | 2.50…7.81 | 60 | 52/8 |
+| matched-minimal · vni · pathological | 22.81 | 25.57 | -2.76 | -12.09 | -2.16 | -9.45 | -2.66…-1.65 | 60 | 19/41 |
+| matched-minimal · vni · prose | 55.99 | 48.16 | 7.83 | 13.98 | 6.85 | 12.24 | 2.76…9.18 | 60 | 47/13 |
 <<<END>>>
 
 <<<TABLE:rc1_noise>>>

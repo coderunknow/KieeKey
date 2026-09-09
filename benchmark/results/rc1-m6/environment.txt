@@ -1,0 +1,16 @@
+campaign=rc1-m6
+utc=2026-09-09T13:00:40Z
+sessions=3 rounds=20 keys=50000 words=20000 l2rounds=8
+engines=contest,ctl,attrib pin=1 pin_note=pinned to core 1 (affinity mask exposes 2 cores) steps=gate,selftest,timer,tput,latency,correctness,diffab,robust,sanitizers,summarize candidate=1
+head=c5f9bbe
+dirty_src= M src/app/main.cpp  M src/core/FlatTables.hpp  M src/core/TextEngine.cpp  M src/core/kieekey_core.hpp
+loadavg1=1.85
+Linux e2b.local 6.1.158+ #1 SMP PREEMPT_DYNAMIC Mon May 11 18:48:24 UTC 2026 x86_64 GNU/Linux
+1.85 1.63 1.12 2/82 23391
+cpu=Intel(R) Xeon(R) Processor @ 2.60GHz
+cores_online=2
+governor=NOT AVAILABLE
+thp=always [madvise] never
+mitigations=Not affected
+perf=NOT AVAILABLE (seccomp blocks perf_event_open in this container)
+valgrind=NOT AVAILABLE

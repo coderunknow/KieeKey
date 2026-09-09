@@ -284,13 +284,33 @@ def main():
             d = c.get("d") or {}
             base = (c.get(BASELINE_ENGINES[0]) or {}).get("median")
             cand = (c.get(BASELINE_ENGINES[1]) or {}).get("median")
-            # d = cand - base, so a NEGATIVE d is time the candidate saved
-            gain[name] = {"base_ns": base, "cand_ns": cand,
-                          "gain_ns": (-d["median_d"]) if d.get("median_d") is not None else None,
-                          "gain_pct": (-d["rel_pct"]) if d.get("rel_pct") is not None else None,
-                          "ci": [(-d["ci_hi"]) if d.get("ci_hi") is not None else None,
-                                 (-d["ci_lo"]) if d.get("ci_lo") is not None else None],
-                          "n": d.get("n"), "wins": d.get("wins"), "losses": d.get("losses")}
+            median_improvement = (base - cand) if (base is not None and cand is not None) else None
+            median_improvement_pct = (median_improvement / base * 100.0) if (median_improvement is not None and base) else None
+            # d = cand - base, paired by (session, round).  A NEGATIVE d means
+            # the candidate was faster in that same round.  Publish this paired
+            # estimator separately from the descriptive difference of the two
+            # displayed medians: on a bimodal/noisy host those are different
+            # statistical questions and can legitimately have very different
+            # magnitudes.
+            paired_delta = d.get("median_d")
+            paired_gain = (-paired_delta) if paired_delta is not None else None
+            gain[name] = {
+                "base_median_ns": base,
+                "candidate_median_ns": cand,
+                "median_improvement_ns": median_improvement,
+                "median_improvement_pct": median_improvement_pct,
+                "paired_delta_median_ns": paired_delta,          # candidate - baseline; negative is faster
+                "paired_gain_median_ns": paired_gain,            # baseline - candidate, paired; positive is faster
+                "paired_relative_effect_pct": (-d["rel_pct"]) if d.get("rel_pct") is not None else None,
+                "paired_delta_ci_ns": [d.get("ci_lo"), d.get("ci_hi")],
+                "paired_gain_ci_ns": [(-d["ci_hi"]) if d.get("ci_hi") is not None else None,
+                                       (-d["ci_lo"]) if d.get("ci_lo") is not None else None],
+                "n": d.get("n"), "wins": d.get("wins"), "losses": d.get("losses"),
+                "definition": ("base/candidate medians are descriptive per-engine medians; "
+                               "median_improvement = base_median - candidate_median; "
+                               "paired_delta_median = median over matched (candidate - baseline) rounds; "
+                               "paired_relative_effect_pct = paired_gain_median / base_median * 100"),
+            }
 
     summary = {"campaign": os.path.basename(a.results.rstrip("/")),
                "cells": cells, "gain": gain, "rival": a.rival,
@@ -355,13 +375,13 @@ def main():
     g_dec = dict(gain.get(a.deciding) or {})
     band_ns = float(aa_band or 0.0)
     worse = sorted(n for n, v in gain.items()
-                   if v.get("gain_ns") is not None and v["gain_ns"] < -2.0 * band_ns)
-    ci = g_dec.get("ci") or [None, None]
+                   if v.get("paired_gain_median_ns") is not None and v["paired_gain_median_ns"] < -2.0 * band_ns)
+    ci = g_dec.get("paired_gain_ci_ns") or [None, None]
     positive_ci = ci[0] is not None and ci[0] > 0
-    accept = (g_dec.get("gain_ns") or 0.0) > 0 and positive_ci and not worse
+    accept = (g_dec.get("paired_gain_median_ns") or 0.0) > 0 and positive_ci and not worse
     summary["candidate_verdict"] = {
-        "rule": ("ACCEPT iff deciding-cell gain > 0 with 95 % CI excluding 0, and no cell "
-                 "regressing by more than 2 x the A/A median band"),
+        "rule": ("ACCEPT iff deciding-cell paired median gain > 0 with 95 % CI excluding 0, "
+                 "and no cell regressing by more than 2 x the A/A median band"),
         "accept": bool(accept),
         "decision": ("NOT RUN — baseline campaign (frozen src/core)" if is_baseline else
                      ("UNKNOWN — manifest unreadable" if not manifest_known else
@@ -369,12 +389,15 @@ def main():
         "baseline_campaign": bool(is_baseline),
         "manifest_known": bool(manifest_known),
         "differing_from_baseline": differing0,
-        "null_test_abs_max_pct": (round(max((abs(v.get("gain_pct") or 0.0) for v in gain.values()),
+        "null_test_abs_max_pct": (round(max((abs(v.get("paired_relative_effect_pct") or 0.0) for v in gain.values()),
                                             default=0.0), 2) if is_baseline else None),
         "deciding_cell": a.deciding,
-        "deciding_gain_ns": g_dec.get("gain_ns"),
-        "deciding_gain_pct": g_dec.get("gain_pct"),
-        "deciding_ci_ns": ci,
+        "deciding_median_improvement_ns": g_dec.get("median_improvement_ns"),
+        "deciding_median_improvement_pct": g_dec.get("median_improvement_pct"),
+        "deciding_paired_delta_median_ns": g_dec.get("paired_delta_median_ns"),
+        "deciding_paired_gain_median_ns": g_dec.get("paired_gain_median_ns"),
+        "deciding_paired_relative_effect_pct": g_dec.get("paired_relative_effect_pct"),
+        "deciding_paired_gain_ci_ns": ci,
         "band_ns": band_ns,
         "cells_regressing_beyond_band": worse,
         "cells_measured": len(gain),
@@ -628,6 +651,20 @@ def main():
             "per_cell": order,
         }
 
+    summary["stat_definitions"] = {
+        "descriptive_engine_median_ns": "median of that engine's non-warm tput engine_ns_per_key samples in the cell",
+        "median_improvement_ns": "baseline_median_ns - candidate_median_ns; descriptive only, not paired",
+        "median_improvement_pct": "median_improvement_ns / baseline_median_ns * 100",
+        "paired_delta_median_ns": "median over matched (session, round) samples of candidate_ns - baseline_ns; negative means candidate faster",
+        "paired_gain_median_ns": "-paired_delta_median_ns; positive means candidate faster",
+        "paired_relative_effect_pct": "paired_gain_median_ns / baseline_median_ns * 100",
+        "paired_gain_ci_ns": "95% bootstrap CI for paired_gain_median_ns, resampling whole sessions",
+    }
+    summary["accounting_revision"] = {
+        "id": "rc1-stats-explicit-paired-vs-descriptive-2026-09-09",
+        "note": "Raw measurements are preserved; summary/tables were regenerated to separate descriptive median differences from paired estimators.",
+    }
+
     # ---- tables.md ------------------------------------------------------------
     t = {}
     eng_names = sorted({e for c in cells.values() for e in c if not e.startswith(("d", "aa", "per_session"))})
@@ -655,11 +692,26 @@ def main():
           f"{f((c.get(a.rival) or {}).get('p05'))} / {f((c.get(a.rival) or {}).get('p95'))}"]
          for n, c in sorted(cells.items())])
 
+    t["rc1_gain_methodology"] = (
+        "**Attribution statistics methodology.** `v1.2.2 median` and `candidate median` are descriptive "
+        "per-engine medians of non-warm `engine_ns_per_key` samples. `median improvement` is exactly "
+        "`v1.2.2 median - candidate median`, with percent relative to the v1.2.2 median. "
+        "`paired median gain` is a different inferential estimator: for each matched `(session, round)` "
+        "sample compute `candidate - v1.2.2`, take the median, then negate it so positive means faster. "
+        "The CI is a 95% bootstrap CI for that paired median gain, resampling whole sessions. The candidate "
+        "ACCEPT/REJECT rule uses the paired estimator, not the descriptive median subtraction."
+    )
+
     t["rc1_gain"] = table(
-        ["cell", "v1.2.2 ns/key", "candidate ns/key", "gain ns", "gain %", "95 % CI", "rounds", "favouring"],
-        [[n.replace("|", " · "), g.get("base_ns") and f(g["base_ns"]), g.get("cand_ns") and f(g["cand_ns"]),
-          f(g.get("gain_ns")), f(g.get("gain_pct")),
-          f"{f((g.get('ci') or [None, None])[0])}…{f((g.get('ci') or [None, None])[1])}",
+        ["cell", "v1.2.2 median ns/key", "candidate median ns/key",
+         "median improvement ns", "median improvement %",
+         "paired median gain ns", "paired relative effect %", "95 % CI for paired gain ns",
+         "paired rounds", "paired favouring cand/base"],
+        [[n.replace("|", " · "),
+          f(g.get("base_median_ns")), f(g.get("candidate_median_ns")),
+          f(g.get("median_improvement_ns")), f(g.get("median_improvement_pct")),
+          f(g.get("paired_gain_median_ns")), f(g.get("paired_relative_effect_pct")),
+          f"{f((g.get('paired_gain_ci_ns') or [None, None])[0])}…{f((g.get('paired_gain_ci_ns') or [None, None])[1])}",
           g.get("n"), f"{g.get('wins')}/{g.get('losses')}"]
          for n, g in sorted(gain.items())]) or "_attribution pair not measured in this campaign_"
 
@@ -793,8 +845,11 @@ def main():
         print(f"[stats] candidate decision: {cv['decision']} (rule: {cv['rule']};"
               f" {len(cv['cells_regressing_beyond_band'])} cell(s) regress beyond band)")
         g = gain.get(a.deciding) or {}
-        print(f"[stats] gain over frozen v1.2.2 in the deciding cell: {f(g.get('gain_pct'), 2)} % "
-              f"({f(g.get('base_ns'))} → {f(g.get('cand_ns'))} ns/key)")
+        print(f"[stats] paired median gain over frozen v1.2.2 in the deciding cell: "
+              f"{f(g.get('paired_relative_effect_pct'), 2)} % "
+              f"(descriptive medians {f(g.get('base_median_ns'))} → {f(g.get('candidate_median_ns'))} ns/key; "
+              f"median-improvement {f(g.get('median_improvement_ns'))} ns, paired-gain "
+              f"{f(g.get('paired_gain_median_ns'))} ns)")
     return 0
 
 

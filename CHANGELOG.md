@@ -3,74 +3,37 @@
 All notable changes to KieeKey are documented here. Format based on
 Keep a Changelog; versioning: SemVer.
 
-## [1.3.0-RC2] — 2026-09-08
+## [1.3.0-RC1] — 2026-09-09
 
-One release, one configuration: the opt-in low-latency profile gains a second folded lever. **The shipped
-strict default is untouched — its engine object is byte-identical to the `v1.3.0-rc1` tree's** (both
-`TextEngine.cpp` translation units were compiled with the same flags and `cmp`'d clean), so `rc1-v13rel`
-remains the release campaign of record for what users get by default, and its numbers are not restated
-here.
+### Engine — Matrix item M-6 pair-index LUT
 
-### The low-latency profile now folds out two per-key copies, and beats UniKey on the pre-registered cell
+* Implemented the generator-produced `kVowelCombine` pair verdict LUT in `FlatTables.hpp` and routed
+  `canHasEndConsonant()` through it for two-vowel groups, replacing the previous per-call scan over the
+  source rows (up to 21 candidates in the `U` bucket) with an O(1) indexed answer.
+* Added compile-time verification generated from the same table source: every populated pair cell is
+  checked against `kVowelCombine`, and the build fails on missing, conflicting, or stale cells.
+* Kept all version carriers pinned to `1.3.0-RC1`; no version bump was made.
 
-`KIEEKEY_LOW_LATENCY_PROFILE` already compiled out the strict grammar-repair pass; it now also folds out
-`saveWord()` — the per-key snapshot of the pending word into the fixed-capacity undo ring, 2.2 % of the
-engine plus the ring's cache footprint. Campaign of record `benchmark/results/rc1-v13prof2` (5x12,
-A/A band 1.085 ns, order control max shift 5.10 ns, `--engine=kieekey-cand` against the same vendored
-UniKey column as rc1):
+### Validation
 
-| L1 cell (ns/key, profile-B vs UniKey) | this profile | UniKey | vs UniKey | profile-A (grammar only) |
-|---|---:|---:|---:|---:|
-| `as-shipped` telex-end prose — **deciding cell** | **55.10** | 61.51 | **−10.41 %** | 57.77 (−5.84 %) |
-| `as-shipped` telex-mid prose | 50.61 | 62.28 | −18.74 % | 51.85 (−15.78 %) |
-| `as-shipped` vni prose | 50.53 | 59.05 | −14.43 % | 52.87 (−9.57 %) |
-| `as-shipped` telex-end edit-storm | 55.85 | 65.09 | −14.20 % | 59.50 (−8.90 %) |
-| `as-shipped` vni edit-storm | 51.22 | 62.47 | −18.01 % | — |
-| `matched-minimal` telex-mid prose | 31.90 | 41.14 | −22.45 % | — |
-| `matched-minimal` vni edit-storm | 31.88 | 41.14 | −22.53 % | — |
-| `as-shipped` telex-end pathological | 30.91 | 27.77 | **+11.33 %** | 31.89 (+13.56 %) |
-| `as-shipped` vni pathological | 28.58 | 17.25 | **+65.69 %** | — |
-
-The campaign's own paired statistic on the deciding cell reads **−7.69 % vs UniKey** (60 paired samples,
-band 1.085 ns), and **+23.79 % over frozen v1.2.2** (72.91 → 55.10 ns/key, CI [+16.88, +17.81] ns,
-candidate decision ACCEPT). TIER MIXED stands: three cells regress and they are all `pathological`, the
-deliberately adversarial stream — the mixed label is the rule's output, not a wording choice. At L2 the
-profile's `p50` is ahead on 7 of 9 `as-shipped` streams (−2.0…−19.0 ns/key) and `p99` on 6 of 9
-(telex-end edit-storm −120.5 ns, telex-end prose −52.5 ns); the two streams where `p50` reads behind
-(+3.5, +4.0 ns) move less than the 5.10 ns column-order shift measured on the same host, so they are
-published as undecidable rather than as regressions. The memory gate is unchanged by the fold: **21
-allocations per 2 000 000 keys** as-shipped (20 matched-minimal), RSS 46.2 MiB — the allocation-free
-`O(1)` core is intact under the profile.
-
-**Price, measured rather than asserted.** Payload divergence on the full 715 474-key corpus went from
-52.03 % of keys (profile-A) to **55.03 %** (393 388 keys), with the count of streams whose final text
-differs unchanged at 10 of 18. The `correctness` step's `digest-identity` gate now fails on 22 of 376
-rows, and that failure *is* the price, published instead of hidden: the concrete case is `soos ddieejn
-thoaji cura tooi` composing `Số điện thọai của tôi` where strict composes `Số điện thoại của tôi` — the
-`oai`-pattern mark lands on the wrong vowel once the repair pass is gone. The undo fold adds a second,
-narrower divergence: with the ring empty, a backspace immediately after a transform deletes a character
-instead of restoring the word's previous form (`restoreLastTypingState()` is written against an empty
-ring, so this degrades one interaction rather than corrupting state). Both are why the profile stays
-opt-in and why it can never be described as "v1.3.0 is faster than UniKey" for the default build: on that
-build the answer is **+15.74 % behind**, published in `rc1-v13rel`.
-
-### Design decision recorded: this lever is deliberately *not* a runtime option
-
-`grammarRepair` is a runtime flag because its gate already sat on a value the engine loads anyway. The
-undo snapshot has no such anchor: gating `saveWord()` on `opts_.undoHistory` was implemented first, and
-it put a load + branch on every key **in the strict build too** — most of the 1.3 ns the fold saves,
-paid by the configuration that never asked for it. So `useUndoSnapshot()` is `static constexpr` and the
-branch folds away; the cost is that per-target control would need a measured strict-build number, not a
-silent one. The strict engine object being byte-identical to rc1's is the proof that this reasoning held.
-
-### Tooling
-
-`benchmark/scripts/build.sh --fast-profile` now marks `bench`, `bench_prof` and `bench_mem` as well, so a
-profile campaign can report L2 latency and attribution honestly (the plain path is untouched). Running a
-profile campaign *without* the `correctness` gate step is required — see `docs/bench/rc1-130/PROTOCOL.md`
-§14: a build configuration that changes composed text satisfies neither the identity policy's digest
-clause nor the declared-divergence policy's final-text clause, so its price is published as the manual
-`diffab` plus the gate's own failure line.
+* `benchmark/results/rc1-m6`: pinned campaign, 3 sessions × 20 rounds = 60 paired L1 samples per cell.
+  Gates passed: manifest, attribution guard, correctness, digest-identity, diffab, artifact integrity,
+  and sanitizers (0 KieeKey-owned findings across 7 ASan/UBSan/LSan runs).
+* Candidate vs frozen v1.2.2: `digest-identity` PASS across 374 rows; `diffab` PASS with 0 per-key
+  mismatches over 1,072,224 events.
+* Latency: candidate decision ACCEPT for the v1.2.2 comparison, with the deciding cell
+  `as-shipped · telex-end · prose` improving from 240.91 to 80.76 ns/key in this noisy VM campaign.
+  Direct UniKey comparison is not yet a comprehensive win (`TIER D — SLOWER`), so the benchmark record
+  deliberately does not claim that goal is complete.
+* Added `benchmark/scripts/run_windows_physical_benchmark.ps1` plus
+  `benchmark/scripts/windows_physical_report.py` so the final KieeKey-vs-UniKey verdict is produced on
+  the user's physical Windows host, with same-machine raw measurements, CPU/wall/memory process metrics,
+  host-noise probes, randomized independent samples, and explicit PASS/FAIL.
+* Audited the `rc1_gain` accounting after review: the old `gain ns/%` values were the paired median
+  estimator, not the displayed-median subtraction.  They were statistically meaningful for the paired
+  ACCEPT rule but badly labelled next to descriptive medians.  `rc1_stats.py` now publishes both
+  `median improvement` and `paired median gain`, documents the CI target, and
+  `check_rc1_stats_consistency.py` recomputes every row from raw artifacts.
 
 ## [1.3.0-RC1] — 2026-09-08
 
@@ -165,8 +128,8 @@ asserted.
 ### Version carriers
 
 `CMakeLists.txt` 1.3.0 · `KieeKeyApp.rc` `1,3,0,0` + `1.3.0.0` · `KieeKeyApp.manifest` `1.3.0.0` ·
-`main.cpp` `1.3.0` / `1.3.0 RC1` / title · `kieekey_core.hpp` macros + `OPENKEY_KIEEKEY_VERSION_STRING`
-"1.3.0 RC1" · README headline and newest section · `scripts/check_version.py` expect/channel ·
+`main.cpp` `1.3.0` / `1.3.0-RC1` / title · `kieekey_core.hpp` macros + `OPENKEY_KIEEKEY_VERSION_STRING`
+"1.3.0-RC1" · README headline and newest section · `scripts/check_version.py` expect/channel ·
 `SHA256SUMS.txt` regenerated.
 
 ## [1.2.2-Stable] — 2026-09-07

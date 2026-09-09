@@ -63,7 +63,7 @@ import pathlib
 # word; the PE VERSIONINFO needs a 4-part number, the manifest needs 4 parts,
 # and the UI shows the 3-part form plus the channel.
 DEFAULT_EXPECT = "1.3.0"
-CHANNEL = "RC2"
+CHANNEL = "RC1"
 
 
 def _fail(msg: str) -> None:
@@ -79,7 +79,7 @@ def main() -> int:
     root = pathlib.Path(args.repo)
     want = args.expect
     want4 = f"{want}.0"
-    want_ui = f"{want} {CHANNEL}" if CHANNEL else want
+    want_ui = f"{want}-{CHANNEL}" if CHANNEL else want
 
     problems: list[str] = []
 
@@ -200,14 +200,14 @@ def main() -> int:
     # was RC1 — the first thing every visitor reads was a stale release.
     readme = read("README.md")
     if readme:
-        m = re.search(r"\*\*KieeKey v([0-9][0-9.]*(?: (?:Stable|RC[0-9]+))?)\*\* is a modern", readme)
+        m = re.search(r"\*\*KieeKey v([0-9][0-9.]*(?:[- ](?:Stable|RC[0-9]+))?)\*\* is a modern", readme)
         if not m:
             problems.append("README.md: headline '**KieeKey vX.Y.Z …** is a modern' not found")
         elif m.group(1) != want_ui:
             problems.append(f"README.md: headline version {m.group(1)!r} != {want_ui!r}")
 
         # The newest "What's new in vX" section must be THIS release.
-        secs = re.findall(r"^## What's new in v([0-9][0-9.]*(?: (?:Stable|RC[0-9]+))?)",
+        secs = re.findall(r"^## What's new in v([0-9][0-9.]*(?:[- ](?:Stable|RC[0-9]+))?)",
                           readme, re.M)
         if not secs:
             problems.append("README.md: no \"What's new in v…\" section found")
@@ -266,7 +266,7 @@ def main() -> int:
         except OSError:
             continue
         for m in re.finditer(
-                r"^\s*(?://|#)\s*KieeKey v[0-9][0-9.]*(?: (?:Stable|RC[0-9]+))?\s*(?:-|—)",
+                r"^\s*(?://|#)\s*KieeKey v[0-9][0-9.]*(?:[- ](?:Stable|RC[0-9]+))?\s*(?:-|—)",
                 head, re.M):
             line = head[m.start():head.find("\n", m.start())].strip()
             boiler.append(f"{rel}: versioned header boilerplate — {line[:80]}")

@@ -683,7 +683,7 @@ if(WIN32)
 endif()
 
 #----------------------------------------------------------------------------
-# v1.3.0 RC1 — low-latency profile (opt-in build configuration, NOT the default).
+# v1.3.0-RC1 — low-latency profile (opt-in build configuration, NOT the default).
 #
 # Compiles out the two strictness passes the RC1 campaign measured on the hot path: the post-edit
 # orthography repair (checkGrammar, ~5.5 ns/key into a marked word) and strict mark placement

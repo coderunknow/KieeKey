@@ -1526,8 +1526,25 @@ void TextEngine::findAndCalculateVowel(bool forGrammar) {
 }
 
 bool TextEngine::canHasEndConsonant() {
-    // v1.2.2 RC1: direct A/E/I/O/U/Y index (vowelCombineFor) — same 6-key
-    // table as kVowelCombine.find, without the binary search.
+    const auto vowelCodeAt = [this](std::size_t pos) noexcept -> std::uint32_t {
+        return static_cast<std::uint32_t>(chr(pos)) |
+               (typingWord_[pos] & kToneMask) |
+               (typingWord_[pos] & kToneWMask);
+    };
+
+    // M-6: canHasEndConsonant() is reached from tone-placement branches that
+    // only query two-vowel groups.  Replace the U-heavy kVowelCombine linear
+    // walk (up to 21 rows) with the generator-produced direct pair verdict.
+    // FlatTables.hpp statically verifies every populated LUT cell against the
+    // source kVowelCombine rows, so this path cannot silently drift.
+    if (vowelStart_ + 1 == vowelEnd_) {
+        return vowelCombinePairAllowsEnd(vowelCodeAt(vowelStart_),
+                                         vowelCodeAt(vowelEnd_));
+    }
+
+    // Defensive compatibility fallback for any future caller that asks about a
+    // non-pair group: keep the legacy scan, still behind the direct A/E/I/O/U/Y
+    // index that removed the map search in the v1.2.2 cycle.
     const auto* voPtr = vowelCombineFor(chr(vowelStart_));
     if (voPtr == nullptr) {
         return false;
@@ -1537,8 +1554,7 @@ bool TextEngine::canHasEndConsonant() {
         std::size_t kk = vowelStart_;
         std::size_t iii = 1;
         for (; iii < vo[ii].size(); ++iii) {
-            if (kk > vowelEnd_ ||
-                (chr(kk) | (typingWord_[kk] & kToneMask) | (typingWord_[kk] & kToneWMask)) != vo[ii][iii]) {
+            if (kk > vowelEnd_ || vowelCodeAt(kk) != vo[ii][iii]) {
                 break;
             }
             ++kk;

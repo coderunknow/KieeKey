@@ -277,7 +277,7 @@ effect" is a measurement rather than an impression:
 | `results/rc1-v13prof` | the opt-in low-latency profile, same instrument | measured: **−5.84 % vs UniKey** on the deciding cell; price published |
 | `results/rc1-tailmemo` | screening for the end-consonant memo (4 × 8) | **REJECT — −0.673 ns, CI [−1.061, −0.626] (significantly slower)**; key costs what the ≤2-cell walk saves |
 | `results/rc1-v13prof3` | profile-C: coda adjudication also folded out | prose −12.15 % vs UniKey, but `as-shipped\|vni\|pathological` regresses 8.67 % beyond band → **REJECT**, reverted (ledger R11) |
-| `results/rc1-v13prof2` | v1.3.0-RC2 profile (grammar repair **and** undo snapshot folded out) | paired **−7.69 % vs UniKey** on the deciding cell, +23.79 % over frozen, ACCEPT, TIER MIXED (3 pathological cells); price 55.03 % of payload, `digest-identity` FAIL published |
+| `results/rc1-v13prof2` | v1.3.0-RC1 profile (grammar repair **and** undo snapshot folded out) | paired **−7.69 % vs UniKey** on the deciding cell, +23.79 % over frozen, ACCEPT, TIER MIXED (3 pathological cells); price 55.03 % of payload, `digest-identity` FAIL published |
 
 `build.sh --fast-profile` (and `-DKIEEKEY_LOW_LATENCY_PROFILE=ON` in CMake) marks the same
 campaign pair for a *build configuration* instead of a source change: it compiles out

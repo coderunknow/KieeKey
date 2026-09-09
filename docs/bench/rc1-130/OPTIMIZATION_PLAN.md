@@ -155,7 +155,7 @@ attacks the same class (copy/compose work the compiler already overlaps), and `g
 `composeCharacter` do not appear among the profile's ranked symbols at all, so P4 is expected at
 ≤ ~1 ns and is no longer queued ahead of the untried build-level levers.
 
-### P6 — first-touch cost: the cold-start and first-round deficit — CLOSED by measurement (v1.3.0-RC2)
+### P6 — first-touch cost: the cold-start and first-round deficit — CLOSED by measurement (v1.3.0-RC1)
 
 Result, recorded here so the candidate is not re-litigated: the cold-start deficit I reported from a single
 campaign pass **does not exist** (three 12-launch repeats: 455.6/457.0/457.7 ms base vs 449.3/445.1/441.2
@@ -339,7 +339,7 @@ Non-negotiable invariants the harness must keep holding for any number in this p
 > **57.77 vs UniKey's 61.36 = −5.84 %**, −9.6 % … −15.8 % on the other prose cells, and ahead at p50 on
 > all nine `as-shipped` L2 streams — **the target met and exceeded**, at the documented price of
 > different composed text on 10 of 18 streams, which is why it is a build profile and not the default.
-> **v1.3.0-RC2 (`rc1-v13prof2`) went one lever further** — the profile also folds out `saveWord()`'s
+> **v1.3.0-RC1 (`rc1-v13prof2`) went one lever further** — the profile also folds out `saveWord()`'s
 > per-key undo snapshot — and the pre-registered cell is now negative on the campaign's own paired
 > statistic: **−7.69 % vs UniKey** (55.10 vs 61.51 pooled = −10.41 %), +23.79 % over frozen, ACCEPT,
 > p50 ahead on 7/9 L2 streams, price 55.03 % of keys' payload and a `digest-identity` failure on 22/376

@@ -661,7 +661,7 @@ rejected candidates reached from the other side, now measured on the shipped cod
 
 The profile (`-DKIEEKEY_LOW_LATENCY_PROFILE`, `build.sh --fast-profile`) skips work the strict default
 does, in two stages across two release candidates. **Profile-A** (v1.3.0-RC1) compiles out the strict
-grammar-repair pass; **profile-B** (v1.3.0-RC2) additionally folds out `saveWord()`'s per-key undo
+grammar-repair pass; **profile-B** (v1.3.0-RC1) additionally folds out `saveWord()`'s per-key undo
 snapshot. Both are build configurations, not defaults, and the runtime-nearest switch for A is
 `freeMark=true` / `grammarRepair=false`.
 

@@ -422,7 +422,7 @@ orthography rule. The profile's latency number is published beside the strict on
 purpose: it still asserts that the *visible text* matches and that the tree's own two builds match each
 other, and it publishes the payload divergence instead of asserting it away.
 
-### Profile, second lever — `rc1-v13prof2`, shipped as v1.3.0-RC2
+### Profile, second lever — `rc1-v13prof2`, shipped as v1.3.0-RC1
 
 `KIEEKEY_LOW_LATENCY_PROFILE` gained a second folded-out copy: `saveWord()`'s per-key snapshot into the
 fixed-capacity undo ring (2.2 % of the engine, 1.3 ns/key, plus the ring's cache footprint). Campaign of

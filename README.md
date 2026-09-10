@@ -1,4 +1,15 @@
 # KieeKey
+## Project Status
+
+**KieeKey is currently frozen.**
+
+Development is paused due to the project's growing bug count and maintenance complexity.
+
+The current Stable release remains available for anyone who wants to use or experiment with it. No new features or major optimizations are planned at this time.
+
+Only critical bug fixes may be considered in the future.
+
+This project may be resumed later if there is a clear reason and enough motivation to continue development.
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 ![Language](https://img.shields.io/badge/language-C%2B%2B20%2FC%2B%2B23-00599C.svg)

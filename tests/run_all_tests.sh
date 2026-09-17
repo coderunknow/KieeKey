@@ -211,6 +211,15 @@ build test_lifecycle      -std=c++2b -O2 -pthread $INC tests/test_lifecycle.cpp 
 build test_state_transitions -std=c++2b -O2 $INC tests/test_state_transitions.cpp $ENGINE23 || rc=1
 build soak_pipeline       -std=c++2b -O2 -pthread $INC tests/soak_pipeline.cpp         || rc=1
 
+# --- v1.3.0 Arcade, Chaos, AI & Progression additions -----------------------
+build test_arcade         -std=c++2b -O2 $INC tests/test_arcade.cpp src/core/Arcade.cpp || rc=1
+build test_chaos          -std=c++2b -O2 $INC tests/test_chaos.cpp src/core/ChaosEngine.cpp || rc=1
+build test_ai_rival       -std=c++2b -O2 $INC tests/test_ai_rival.cpp src/core/AiRival.cpp || rc=1
+build test_progression    -std=c++2b -O2 $INC tests/test_progression.cpp src/core/Progression.cpp || rc=1
+build test_analytics      -std=c++2b -O2 $INC tests/test_analytics.cpp src/core/TypingAnalytics.cpp || rc=1
+build test_online_ghost   -std=c++2b -O2 $INC tests/test_online_ghost.cpp src/core/OnlineGhost.cpp || rc=1
+build test_soak_arcade    -std=c++2b -O2 $INC tests/test_soak_arcade.cpp src/core/Arcade.cpp src/core/ChaosEngine.cpp src/core/AiRival.cpp src/core/Progression.cpp src/core/TypingAnalytics.cpp || rc=1
+
 # --- version-identifier consistency (no mixed version strings) --------------
 if command -v python3 >/dev/null 2>&1; then
     printf '  [check] %-22s' "version consistency"
@@ -322,9 +331,19 @@ run test_lifecycle           300
 run test_state_transitions   300
 if [ "$QUICK" -eq 1 ]; then
     run soak_pipeline    300 20000
+    run test_soak_arcade 120 50
 else
     run soak_pipeline    900 2000000
+    run test_soak_arcade 300 500
 fi
+
+# --- v1.3.0 new layer runners ----------------------------------------------
+run test_arcade              120
+run test_chaos               60
+run test_ai_rival            60
+run test_progression         60
+run test_analytics           60
+run test_online_ghost        60
 
 dispatch_runs
 

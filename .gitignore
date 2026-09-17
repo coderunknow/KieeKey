@@ -2,6 +2,7 @@
 build/
 build-*/
 out/
+bench_runs/
 cmake-build-*/
 bin/*
 !bin/README.txt

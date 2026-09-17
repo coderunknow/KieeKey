@@ -33,7 +33,7 @@
 cmake_minimum_required(VERSION 3.28)
 
 project(KieeKey
-        VERSION 1.2.2
+        VERSION 1.3.0
         DESCRIPTION "KieeKey — Vietnamese input method (modern core)"
         LANGUAGES CXX)
 
@@ -135,6 +135,18 @@ if(WIN32)
         src/core/TextEngine.cpp
         src/core/PerfProfile.hpp       # v1.2.1 RC2: performance preference profiles
         src/core/Notifications.hpp     # v1.2.1 RC2: notification center + QuickTelex detector
+        src/core/Arcade.hpp            # v1.3.0: Arcade hub framework & minigames
+        src/core/Arcade.cpp
+        src/core/ChaosEngine.hpp       # v1.3.0: Chaos Case & visual glyph transforms
+        src/core/ChaosEngine.cpp
+        src/core/AiRival.hpp           # v1.3.0: Personal AI typing rival & simulation
+        src/core/AiRival.cpp
+        src/core/Progression.hpp       # v1.3.0: Global level, stats & achievements
+        src/core/Progression.cpp
+        src/core/TypingAnalytics.hpp   # v1.3.0: Typing metrics & intelligent coach
+        src/core/TypingAnalytics.cpp
+        src/core/OnlineGhost.hpp       # v1.3.0: Solo ghost, replay & leaderboard abstraction
+        src/core/OnlineGhost.cpp
     )
     target_include_directories(ok_core PUBLIC src/core)
     target_compile_features(ok_core PUBLIC cxx_std_23)
@@ -366,6 +378,35 @@ else()
         target_compile_features(ok_option_matrix PRIVATE cxx_std_23)
         target_link_libraries(ok_option_matrix PRIVATE Threads::Threads)
 
+        # v1.3.0 Arcade, Chaos, AI & Progression harnesses
+        add_executable(ok_arcade_tests tests/test_arcade.cpp src/core/Arcade.cpp)
+        target_include_directories(ok_arcade_tests PRIVATE src/core)
+        target_compile_features(ok_arcade_tests PRIVATE cxx_std_23)
+
+        add_executable(ok_chaos_tests tests/test_chaos.cpp src/core/ChaosEngine.cpp)
+        target_include_directories(ok_chaos_tests PRIVATE src/core)
+        target_compile_features(ok_chaos_tests PRIVATE cxx_std_23)
+
+        add_executable(ok_ai_tests tests/test_ai_rival.cpp src/core/AiRival.cpp)
+        target_include_directories(ok_ai_tests PRIVATE src/core)
+        target_compile_features(ok_ai_tests PRIVATE cxx_std_23)
+
+        add_executable(ok_progression_tests tests/test_progression.cpp src/core/Progression.cpp)
+        target_include_directories(ok_progression_tests PRIVATE src/core)
+        target_compile_features(ok_progression_tests PRIVATE cxx_std_23)
+
+        add_executable(ok_analytics_tests tests/test_analytics.cpp src/core/TypingAnalytics.cpp)
+        target_include_directories(ok_analytics_tests PRIVATE src/core)
+        target_compile_features(ok_analytics_tests PRIVATE cxx_std_23)
+
+        add_executable(ok_online_tests tests/test_online_ghost.cpp src/core/OnlineGhost.cpp)
+        target_include_directories(ok_online_tests PRIVATE src/core)
+        target_compile_features(ok_online_tests PRIVATE cxx_std_23)
+
+        add_executable(ok_soak_arcade tests/test_soak_arcade.cpp src/core/Arcade.cpp src/core/ChaosEngine.cpp src/core/AiRival.cpp src/core/Progression.cpp src/core/TypingAnalytics.cpp)
+        target_include_directories(ok_soak_arcade PRIVATE src/core)
+        target_compile_features(ok_soak_arcade PRIVATE cxx_std_23)
+
         add_test(NAME ok_outputitem_tests COMMAND ok_outputitem_tests)
         add_test(NAME ok_hotfix_tests    COMMAND ok_hotfix_tests)
         add_test(NAME ok_diff_ab_tests   COMMAND ok_diff_ab_tests)
@@ -387,6 +428,15 @@ else()
         #   ctest -R ok_option_matrix --extra-args ... or run the exe directly
         add_test(NAME ok_option_matrix   COMMAND ok_option_matrix)
 
+        # v1.3.0 Arcade, Chaos, AI, Progression, Analytics & Ghost
+        add_test(NAME ok_arcade_tests      COMMAND ok_arcade_tests)
+        add_test(NAME ok_chaos_tests       COMMAND ok_chaos_tests)
+        add_test(NAME ok_ai_tests          COMMAND ok_ai_tests)
+        add_test(NAME ok_progression_tests COMMAND ok_progression_tests)
+        add_test(NAME ok_analytics_tests   COMMAND ok_analytics_tests)
+        add_test(NAME ok_online_tests      COMMAND ok_online_tests)
+        add_test(NAME ok_soak_arcade       COMMAND ok_soak_arcade 500)
+
         # Every registered test gets a hard cap. A regression that turns a
         # barrier/wait path into an infinite block must fail the gate in
         # minutes, not hang the job until the runner's own limit kills it.
@@ -396,6 +446,8 @@ else()
             ok_stress_tests ok_soak_tests ok_queue_stress_tests
             ok_gate_tests ok_key_tests ok_state_tests ok_lifecycle_tests
             ok_soak_pipeline ok_perf_profiles
+            ok_arcade_tests ok_chaos_tests ok_ai_tests ok_progression_tests
+            ok_analytics_tests ok_online_tests ok_soak_arcade
             PROPERTIES TIMEOUT 300)
         set_tests_properties(ok_option_matrix PROPERTIES TIMEOUT 600)
 

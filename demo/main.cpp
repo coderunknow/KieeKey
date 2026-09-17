@@ -75,10 +75,9 @@ void draw(const std::wstring& text, InputMethod method, bool diag) {
     ::FillConsoleOutputCharacterW(h, L' ', info.dwSize.X, {0, 0}, nullptr);
     ::SetConsoleCursorPosition(h, {0, 0});
 
-    std::wprintf(L"  " KK_DEMO_TITLE L"      [%s]   (F2: %s | F3: diag | Esc: clear | Ctrl+C: quit)\n",
+    std::wprintf(L"  " KK_DEMO_TITLE L"      [%s]   (F2: switch | F3: diag | F4: Arcade | F5: Chaos | F6: AI | F7: Level | Esc: clear | Ctrl+C: quit)\n",
                  method == InputMethod::Telex ? L"TELEX"
-                 : method == InputMethod::Vni ? L"VNI" : L"SIMPLE TELEX",
-                 method == InputMethod::Telex ? L"switch to VNI" : L"switch to Telex");
+                 : method == InputMethod::Vni ? L"VNI" : L"SIMPLE TELEX");
     std::wprintf(L"  --------------------------------------------------------------------------------\n");
     std::wprintf(L"  > %ls\n", text.c_str());
     if (diag) {
@@ -143,6 +142,39 @@ int wmain() {
                 diag = !diag;
                 draw(text, opts.inputMethod, diag);
                 continue;
+            case 0xE03E: { // F4 - Arcade Demo
+                auto& mgr = ok::arcade::ArcadeManager::instance();
+                mgr.launchGame(ok::arcade::GameType::Snake);
+                std::string render = mgr.renderCurrentGame();
+                std::wprintf(L"\n%hs\n", render.c_str());
+                mgr.stopGame();
+                continue;
+            }
+            case 0xE03F: { // F5 - Chaos Lab Toggle
+                auto& chaos = ok::chaos::ChaosEngine::instance();
+                auto cfg = chaos.getConfig();
+                cfg.masterEnabled = !cfg.masterEnabled;
+                cfg.randomCaseEnabled = cfg.masterEnabled;
+                chaos.setConfig(cfg);
+                std::wprintf(L"\n  [Chaos Lab: %ls]\n", cfg.masterEnabled ? L"ON" : L"OFF");
+                continue;
+            }
+            case 0xE040: { // F6 - AI & Analytics
+                auto stats = ok::analytics::TypingAnalyticsEngine::instance().computeSnapshot();
+                std::wprintf(L"\n  [AI & Analytics: %llu keys, %d WPM, %d%% acc]\n",
+                             static_cast<unsigned long long>(stats.totalKeystrokes),
+                             static_cast<int>(stats.netWpm),
+                             static_cast<int>(stats.accuracyPercent));
+                continue;
+            }
+            case 0xE041: { // F7 - Progression
+                auto prog = ok::progression::ProgressionEngine::instance().getStats();
+                std::wprintf(L"\n  [Progression: Level %u, %llu XP, %llu Keys]\n",
+                             static_cast<unsigned int>(prog.currentLevel),
+                             static_cast<unsigned long long>(prog.totalXp),
+                             static_cast<unsigned long long>(prog.totalKeystrokes));
+                continue;
+            }
             default: break;
         }
 

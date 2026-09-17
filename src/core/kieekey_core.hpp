@@ -75,12 +75,18 @@
 // v1.2.1 RC3: this carrier had drifted to 1.2.0 through RC1/RC2 — the
 // check_version.py gate now covers it, so it can never silently drift again.
 #define OPENKEY_KIEEKEY_VERSION_MAJOR 1
-#define OPENKEY_KIEEKEY_VERSION_MINOR 2
-#define OPENKEY_KIEEKEY_VERSION_PATCH 2
-#define OPENKEY_KIEEKEY_VERSION_STRING "1.2.2 Stable"
+#define OPENKEY_KIEEKEY_VERSION_MINOR 3
+#define OPENKEY_KIEEKEY_VERSION_PATCH 0
+#define OPENKEY_KIEEKEY_VERSION_STRING "1.3.0 Stable"
 
 #include "TextEngine.hpp"       // engine + options + result contract
 #include "VietnameseTables.hpp" // encoding masks (public contract of results)
+#include "Arcade.hpp"           // v1.3.0: Arcade Hub & Minigames
+#include "ChaosEngine.hpp"      // v1.3.0: Chaos Case & Glyph Transforms
+#include "AiRival.hpp"          // v1.3.0: Personal AI Rival
+#include "Progression.hpp"      // v1.3.0: Global Level & Progression
+#include "TypingAnalytics.hpp"  // v1.3.0: Real-time Analytics & Coach
+#include "OnlineGhost.hpp"      // v1.3.0: Online & Ghost Abstraction
 
 namespace ok::kieekey {
 

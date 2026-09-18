@@ -86,8 +86,15 @@ function roundedRect(x, y, w, h, r) {
 }
 
 function drawFrame(frame) {
-  const scale = canvas.width / frame.w;
-  ctx.setTransform(scale, 0, 0, scale, 0, 0);
+  // Match the native viewport: fit BOTH axes and center the world. Width-only
+  // scaling cropped the bottom HUD of tall games on this 16:9 canvas.
+  const scale = Math.min(canvas.width / frame.w, canvas.height / frame.h);
+  const dx = (canvas.width - frame.w * scale) / 2;
+  const dy = (canvas.height - frame.h * scale) / 2;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = cssColor(frame.bg);
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.setTransform(scale, 0, 0, scale, dx, dy);
   ctx.clearRect(0, 0, frame.w, frame.h);
 
   if (frame.bg === frame.bg2) {

@@ -1,6 +1,6 @@
 {
  "note": "Captured from the real C++ engine through the HTTP bridge (tools/arcade_serve): each game is auto-played for a few seconds through /api/input + /api/text — the typing players type the passage the engine just drew, the rhythm player hits the lane nearest the hit line — and the richest frame is kept. Replay material for tests/web_render_test.js and tests/render_web_frames.js.",
- "captured_at": "2026-09-18T15:57:19Z",
+ "captured_at": "2026-09-18T16:08:48Z",
  "capture": {
   "driver": "tests/capture_web_frames.py",
   "seconds_per_game": 4.0,
@@ -448,7 +448,7 @@
    "cmds": 42,
    "played": {
     "score": 0,
-    "elapsed": 3950,
+    "elapsed": 3940,
     "gameOver": false
    }
   },
@@ -1147,7 +1147,7 @@
    "cmds": 58,
    "played": {
     "score": 207,
-    "elapsed": 3457,
+    "elapsed": 3458,
     "gameOver": false
    }
   },
@@ -1167,8 +1167,8 @@
      "lives": 0,
      "wpm": 0,
      "acc": 100,
-     "progress": 0.8347,
-     "meter": 64.6795,
+     "progress": 0.8353,
+     "meter": 64.9171,
      "meterMax": 100,
      "hasMeter": true,
      "paused": false,
@@ -1177,7 +1177,7 @@
      "hasBest": true
     },
     "title": "🎣 Câu cá",
-    "status": "Thoát sau 14.8s",
+    "status": "Thoát sau 14.9s",
     "banner": "",
     "hint": "Gõ đúng câu mồi · F1 tạm dừng · F2 chơi lại · Esc thoát",
     "cmds": [
@@ -1208,8 +1208,8 @@
       150,
       400,
       700,
-      26,
-      13,
+      22,
+      11,
       "#1B212EFF",
       "#00000000",
       0
@@ -1218,9 +1218,9 @@
       0,
       150,
       400,
-      584.29,
-      26,
-      13,
+      584.7,
+      22,
+      11,
       "#4CC2FFFF",
       "#00000000",
       0
@@ -1240,7 +1240,7 @@
       0,
       150,
       450,
-      452.76,
+      454.42,
       16,
       8,
       "#51E88AFF",
@@ -1429,7 +1429,7 @@
       488.28,
       330,
       "#FFD14AFF",
-      3.29
+      3.3
      ],
      [
       2,
@@ -1474,13 +1474,13 @@
       2,
       false,
       false,
-      "83%",
+      "84%",
       0
      ],
      [
       4,
       150,
-      426,
+      436,
       16,
       "#9AA7B8FF",
       0,
@@ -1572,8 +1572,8 @@
     "lives": 0,
     "wpm": 0,
     "acc": 100,
-    "progress": 0.8347,
-    "meter": 64.6795,
+    "progress": 0.8353,
+    "meter": 64.9171,
     "meterMax": 100,
     "hasMeter": true,
     "paused": false,
@@ -1584,7 +1584,7 @@
    "cmds": 37,
    "played": {
     "score": 800,
-    "elapsed": 3878,
+    "elapsed": 3861,
     "gameOver": false
    }
   },
@@ -1602,7 +1602,7 @@
      "combo": 0,
      "maxCombo": 0,
      "lives": 0,
-     "wpm": 472.3,
+     "wpm": 468.2,
      "acc": 81.3,
      "progress": 0.9559,
      "meter": 0,
@@ -1631,7 +1631,7 @@
      ],
      [
       0,
-      131.72,
+      132.57,
       156,
       88,
       34,
@@ -1642,7 +1642,7 @@
      ],
      [
       0,
-      145.72,
+      146.57,
       162,
       60,
       14,
@@ -1708,7 +1708,7 @@
      ],
      [
       1,
-      149.72,
+      150.57,
       190,
       7,
       "#20242CFF",
@@ -1717,7 +1717,7 @@
      ],
      [
       1,
-      201.72,
+      202.57,
       190,
       7,
       "#20242CFF",
@@ -1868,7 +1868,7 @@
       0,
       true,
       false,
-      "WPM: 472",
+      "WPM: 468",
       0
      ],
      [
@@ -1892,7 +1892,7 @@
       0,
       false,
       false,
-      "Thời gian: 1.5s",
+      "Thời gian: 1.6s",
       0
      ],
      [
@@ -1976,7 +1976,7 @@
     "combo": 0,
     "maxCombo": 0,
     "lives": 0,
-    "wpm": 472.3,
+    "wpm": 468.2,
     "acc": 81.3,
     "progress": 0.9559,
     "meter": 0,
@@ -1990,7 +1990,7 @@
    "cmds": 34,
    "played": {
     "score": 0,
-    "elapsed": 1549,
+    "elapsed": 1563,
     "gameOver": false
    }
   },
@@ -2011,7 +2011,7 @@
      "wpm": 0,
      "acc": 100,
      "progress": 0,
-     "meter": 89.0284,
+     "meter": 88.9731,
      "meterMax": 100,
      "hasMeter": true,
      "paused": false,
@@ -2301,10 +2301,10 @@
      ],
      [
       0,
-      294.52,
-      141.04,
-      44.29,
-      29.96,
+      294.47,
+      142.16,
+      44.38,
+      30.02,
       6,
       "#D04A4AFF",
       "#00000000",
@@ -2312,10 +2312,10 @@
      ],
      [
       0,
-      302.34,
-      146.25,
-      28.66,
-      13.03,
+      302.31,
+      147.39,
+      28.72,
+      13.05,
       4,
       "#301212FF",
       "#00000000",
@@ -2358,7 +2358,7 @@
       0,
       690,
       90,
-      50.11,
+      50.01,
       26,
       13,
       "#FF8A3DFF",
@@ -2380,7 +2380,7 @@
       0,
       690,
       160,
-      151.35,
+      151.25,
       26,
       13,
       "#51E88AFF",
@@ -2514,7 +2514,7 @@
     "wpm": 0,
     "acc": 100,
     "progress": 0,
-    "meter": 89.0284,
+    "meter": 88.9731,
     "meterMax": 100,
     "hasMeter": true,
     "paused": false,
@@ -2525,7 +2525,7 @@
    "cmds": 43,
    "played": {
     "score": 20,
-    "elapsed": 3945,
+    "elapsed": 3968,
     "gameOver": false
    }
   },
@@ -2661,7 +2661,7 @@
      [
       0,
       466,
-      405.11,
+      401.95,
       78,
       32,
       8,
@@ -2672,7 +2672,7 @@
      [
       0,
       466,
-      253.32,
+      250.17,
       78,
       32,
       8,
@@ -2797,7 +2797,7 @@
    "cmds": 19,
    "played": {
     "score": 0,
-    "elapsed": 3968,
+    "elapsed": 3939,
     "gameOver": true
    }
   },
@@ -2991,7 +2991,7 @@
    "cmds": 12,
    "played": {
     "score": 10000,
-    "elapsed": 3956,
+    "elapsed": 3940,
     "gameOver": false
    }
   },
@@ -3021,7 +3021,7 @@
      "hasBest": false
     },
     "title": "🗿 Flexing Mode",
-    "status": "WPM hiển thị 145",
+    "status": "WPM hiển thị 146",
     "banner": "",
     "hint": "Gõ phím bất kỳ · F1 tạm dừng · F2 chơi lại · Esc thoát",
     "cmds": [
@@ -3103,7 +3103,7 @@
       0,
       true,
       false,
-      "WPM hiển thị: 145",
+      "WPM hiển thị: 146",
       0
      ],
      [
@@ -3165,7 +3165,7 @@
    "cmds": 10,
    "played": {
     "score": 145,
-    "elapsed": 3961,
+    "elapsed": 3947,
     "gameOver": false
    }
   }

@@ -11,6 +11,8 @@ Keep a Changelog; versioning: SemVer.
   colored runs in native/web renderers, one viewport scale (no second DPI
   multiplier), bounded scrolling caret windows for all four passage games.
   Add font-aware tests over 1,440 evolving native-shim frames at four DPIs.
+  Pixel review also exposed a Fishing meter-label overlap and width-only web
+  scaling that clipped tall games; both now have regression checks.
 * Separate tab content from native tab headers; move the welcome/level-up toast
   off the Hub title into an opaque panel and display native pause/finish banners.
 * Typing-game polish: immediate correct/wrong/catch/escape feedback, working

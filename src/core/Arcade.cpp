@@ -1133,9 +1133,9 @@ void FishingGame::buildFrame(Frame& frame) const {
     frame.addLine(470, 120, fishX - fishR, fishY, lineColor, 2 + static_cast<float>(m_lineTension) * 0.02f);
 
     // Pull progress bar
-    frame.addRect(150, 400, 700, 26, palette::kPanel, 13);
+    frame.addRect(150, 400, 700, 22, palette::kPanel, 11);
     frame.addRect(150, 400, 700.0f * static_cast<float>(std::clamp(m_pullProgress / 100.0, 0.0, 1.0)),
-                  26, palette::kAccent, 13);
+                  22, palette::kAccent, 11);
     frame.addText(150, 372, 18, palette::kTextDim, TextAlign::Left, U"Tiến độ kéo cá");
     frame.addText(850, 372, 18, palette::kText, TextAlign::Right,
                   frame.internDouble(U"", m_pullProgress, 0, U"%"));
@@ -1145,7 +1145,7 @@ void FishingGame::buildFrame(Frame& frame) const {
     frame.addRect(150, 450, 700, 16, palette::kPanel, 8);
     frame.addRect(150, 450, 700.0f * static_cast<float>(std::clamp(m_lineTension / 100.0, 0.0, 1.0)),
                   16, tensionColor, 8);
-    frame.addText(150, 426, 16, palette::kTextDim, TextAlign::Left, U"Độ căng dây (quá căng → đứt)");
+    frame.addText(150, 436, 16, palette::kTextDim, TextAlign::Left, U"Độ căng dây (quá căng → đứt)");
 
     // Prompt line with per-character state
     PassageStyle style{};

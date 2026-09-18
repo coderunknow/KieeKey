@@ -199,9 +199,12 @@ function testEveryGameDraws() {
     assert(frame.cmds.length === fixture.cmds, slug + ': fixture matches its command count');
     assert(drawCalls.find((c) => c.kind === 'setTransform') !== undefined,
            slug + ': the canvas transform is set (scaling to the CSS size)');
-    const transform = drawCalls.find((c) => c.kind === 'setTransform');
-    assert(transform && Math.abs(transform.arg[0] - 1280 / frame.w) < 1e-9,
-           slug + ': scale = canvas width / frame width');
+    const transform = drawCalls.filter((c) => c.kind === 'setTransform').at(-1);
+    assert(transform && Math.abs(transform.arg[0] - Math.min(1280 / frame.w, 720 / frame.h)) < 1e-9,
+           slug + ': scale fits both axes');
+    const [scale, , , , dx, dy] = transform.arg;
+    assert(dx >= 0 && dy >= 0 && dx + frame.w * scale <= 1280.001 &&
+      dy + frame.h * scale <= 720.001, slug + ': whole world is inside viewport');
     assert(drawCalls.find((c) => c.kind === 'clearRect') !== undefined,
            slug + ': the frame is cleared before drawing');
     // Every command kind maps onto draw calls: rects/circles/lines/polys/text.

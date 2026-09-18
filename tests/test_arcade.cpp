@@ -1201,6 +1201,12 @@ static void testTypingFeedbackAndEditing() {
         if (t.text.find(U"Sai ký tự") != std::u32string_view::npos) { hint = true; }
     }
     CHECK(hint);
+    for (const auto& t : frame.texts) {
+        if (t.text.starts_with(U"Độ căng dây")) {
+            CHECK(t.y - t.size / 2 >= 428); // six-pixel clearance after first bar
+            CHECK(t.y + t.size / 2 <= 444); // six-pixel clearance before second bar
+        }
+    }
     fishing.handleKey({0x71, 0, true});
     CHECK(fishing.getPromptIndex() == 0 && fishing.getCatches() == 0);
     NoMistakeGame strict; strict.start();

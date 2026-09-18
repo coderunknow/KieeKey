@@ -1,15 +1,18 @@
 # KieeKey
 ## Project Status
 
-**KieeKey is currently frozen.**
+**KieeKey is currently under active development!**
 
-Development is paused due to the project's growing bug count and maintenance complexity.
+Development has resumed after a period of being frozen due to the project's growing bug count and maintenance complexity.
 
-The current Stable release remains available for anyone who wants to use or experiment with it. No new features or major optimizations are planned at this time.
+The current Stable release remains available for anyone who wants to use or experiment with it. New development is focused on improving reliability, fixing known issues, and carefully introducing changes without expanding the scope unnecessarily.
 
-Only critical bug fixes may be considered in the future.
+New features and major changes may be introduced during development, but they will be tested before being considered for a Stable release.
 
-This project may be resumed later if there is a clear reason and enough motivation to continue development.
+At this stage, development builds should be considered **pre-release** and may contain bugs or incomplete changes.
+
+The project may still be paused again in the future if development no longer provides enough value to justify the maintenance cost.
+
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 ![Language](https://img.shields.io/badge/language-C%2B%2B20%2FC%2B%2B23-00599C.svg)

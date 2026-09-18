@@ -3,6 +3,53 @@
 All notable changes to KieeKey are documented here. Format based on
 Keep a Changelog; versioning: SemVer.
 
+## [1.3.0-beta1] — 2026-09-18
+
+### Beta release — KieeKey Arcade, Chaos Playground, AI Rival, Progression & Analytics
+
+> **Scope:** v1.3.0-beta1 is the pre-release beta delivering a rich feature set
+> (Arcade Hub, Chaos Lab, Personal AI Rival, Global Progression, Analytics & Coach)
+> while strictly preserving core IME performance and stability guardrails.
+> Full gate correctness: 2,059,419 events vs oracle (0 errors, 100% correct).
+> Zero hot-path regression: memory +0%, decision latency 40–49 ns.
+
+### Added
+* **KieeKey Arcade Hub**: 8 playable minigames designed as isolated optional modules:
+  * 🐍 `SnakeGame`: Classic snake with responsive controls and input stress-test mode.
+  * 🧱 `TetrisGame`: Complete 7-piece Tetris with rotation, soft/hard drop, line clear scoring, and leveling.
+  * 🎣 `FishingGame`: Typing-based fishing game with tension meter, fish rarities (Common to Legendary), equipment upgrades (Rod, Bait, Reel), and optional automation modes.
+  * 🏎️ `TypingRaceGame`: Typing speed racing with live WPM, accuracy, and ghost abstraction.
+  * 🏎️ `WasdRaceGame`: Multitasking driving + typing mode (steering with WASD while typing to refuel).
+  * 🎵 `RhythmTypingGame`: FNF-inspired rhythm mode with strict hit timing windows (Perfect, Too Early, Too Late, Miss).
+  * 🎯 `NoMistakeGame`: Endless typing with massive penalties on any mistake (-250 combo, -120k score).
+  * 🗿 `FlexingGame`: Joke feature emitting pre-loaded text at ludicrous speeds with disclaimers.
+* **Chaos / Experimental Lab**:
+  * 🌀 `Chaos Case`: Configurable random casing by character or word with master killswitch.
+  * 🔄 `Glyph Transform`: Visual presentation transforms (flip vertical/horizontal, rotate 180) maintaining 100% original Unicode for copy/paste and cursor editing.
+* **Personal AI Typing Rival**:
+  * Async offline statistical biometric learner (inter-key intervals, pauses, burst behavior, Vietnamese tone latency).
+  * Modes: User vs AI, and Yesterday You vs Today You ghost replays.
+  * Explicit privacy opt-in, 100% local, instant profile reset.
+* **Global Progression & Achievements**:
+  * Deterministic XP and level calculations with uint64 overflow guards.
+  * Lifetime statistics tracking and milestone achievements.
+  * Checksum-verified persistence with corrupt file tolerance.
+* **Typing Analytics & Intelligent Coach**:
+  * O(1) zero-allocation telemetry observation on a fixed ring buffer.
+  * Actionable coaching recommendations separating measured facts from heuristic suggestions.
+* **Online/Ghost Abstraction**:
+  * Standardized interfaces for replay, ghost, and leaderboard without unauthorized network calls.
+* **Demonstrator CLI**:
+  * `demo/arcade_cli.cpp`: Portable interactive terminal demonstrator.
+* **Test Suite Expansion**:
+  * 7 new test targets: `test_arcade`, `test_chaos`, `test_ai_rival`, `test_progression`, `test_analytics`, `test_online_ghost`, `test_soak_arcade`.
+
+## [1.3.0-dev1] — 2026-09-17
+
+### Development release — Minor version bump and subsystem architecture
+* Incremented minor version to 1.3.0, reset patch to 0.
+* Integrated Arcade, Chaos, AI, Progression, and Analytics architecture modules.
+
 ## [1.2.2-Stable] — 2026-09-07
 
 ### Stable release — RC4 promoted unchanged, full re-verification on an independent host

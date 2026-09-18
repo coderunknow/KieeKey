@@ -145,6 +145,12 @@
 #include "Win32RAII.hpp"
 #include "win32_wrapper.hpp"   // v3.3.1: pipeline (OutputRing 1024, batched
                                // SendInput emitter, self-healing hook wrapper)
+#include "Arcade.hpp"          // v1.3.0: Arcade hub & minigames
+#include "ChaosEngine.hpp"     // v1.3.0: Chaos case & glyph transforms
+#include "AiRival.hpp"         // v1.3.0: Personal AI rival
+#include "Progression.hpp"     // v1.3.0: Global progression & levels
+#include "TypingAnalytics.hpp" // v1.3.0: Analytics & coach
+#include "OnlineGhost.hpp"     // v1.3.0: Online & ghost abstraction
 
 #include "resource.h"
 
@@ -170,12 +176,12 @@ namespace {
 // "which build am I running" from File Explorer. `scripts/check_version.py`
 // fails the build if they drift apart again.
 //===========================================================================
-constexpr wchar_t kAppVersion[]     = L"1.2.2";           // numeric, 3-part
+constexpr wchar_t kAppVersion[]     = L"1.3.0";           // numeric, 3-part
 // v1.2.2 RC1: [[maybe_unused]] — this is a documented VERSION CARRIER
 // (check_version.py reads it), not a code-level constant; the UI shows the
 // title/version forms. Keeping it zero-maintenance and warning-clean.
-[[maybe_unused]] constexpr wchar_t kAppVersionFull[] = L"1.2.2 Stable";  // with channel
-constexpr wchar_t kAppTitle[]       = L"KieeKey v1.2.2 Stable";  // sync with kAppVersionFull
+[[maybe_unused]] constexpr wchar_t kAppVersionFull[] = L"1.3.0-beta1";  // with channel
+constexpr wchar_t kAppTitle[]       = L"KieeKey v1.3.0-beta1";  // sync with kAppVersionFull
 
 //===========================================================================
 // Output item: what the consumer thread must emit (trivially copyable → can
@@ -1097,6 +1103,17 @@ PD onHookEventImpl(const KeyEvent& ev) {
     // The hook thread no longer toggles anything.
     if (!g.engineEnabled.load(std::memory_order_relaxed)) { return PD{}; }
 
+    // v1.3.0 Arcade Hub: if Arcade minigame is actively consuming keyboard, handle it here
+    if (ok::arcade::ArcadeManager::instance().isConsumingKeyboard() &&
+        ev.source == EventSource::Keyboard &&
+        (ev.action == KeyAction::KeyDown || ev.action == KeyAction::SysKeyDown)) {
+        char32_t cch = layoutChar(ev.vkCode, ev.scanCode, ev.modifiers);
+        if (cch == 0) { cch = produceChar(ev.vkCode, ev.modifiers.shift, false); }
+        if (ok::arcade::ArcadeManager::instance().handleKey(ev.vkCode, cch, true)) {
+            return PD{true, false}; // Consumed by Arcade minigame
+        }
+    }
+
     // v1.2.0 Stable: repair after a producer-side fault (see onHookEvent).
     // The previous event threw after the engine had already consumed the
     // key, so the engine's buffer and the visible text disagree; dropping
@@ -1302,6 +1319,17 @@ PD onHookEventImpl(const KeyEvent& ev) {
         in.ch   = ch;
     }
 
+    // v1.3.0: telemetry & analytics observation (lock-free fixed ring buffer)
+    ok::analytics::TypingAnalyticsEngine::instance().observeKey(
+        in.ch, ::GetTickCount64() * 1000, in.kind == InputKind::Backspace, false, false);
+    if (ok::ai::AiRivalEngine::instance().isOptIn()) {
+        ok::ai::AiRivalEngine::instance().observeKeystroke(
+            in.ch, ::GetTickCount64() * 1000, in.kind == InputKind::Backspace, false);
+    }
+    if (in.kind == InputKind::Char && in.ch > 32) {
+        ok::progression::ProgressionEngine::instance().recordTypingSession(1, 0, 1, 0, 0.0, 100.0);
+    }
+
     g.keysTyped.fetch_add(1, std::memory_order_relaxed);   // WPM gauge
     // v1.2.1 RC2: Adaptive profile idle signal (one relaxed store; the
     // tick value is already computed by the hook layer per event).
@@ -1479,6 +1507,15 @@ PD onHookEventImpl(const KeyEvent& ev) {
         // implicitly is C4244 under MSVC /W4 /WX.
         g.repScratch.push_back(
             static_cast<wchar_t>(in.kind == InputKind::Space ? L' ' : in.ch));
+    }
+
+    // v1.3.0: Chaos Case transform (when active)
+    if (ok::chaos::ChaosEngine::instance().isChaosActive() && !g.repScratch.empty()) {
+        std::u32string u32;
+        for (wchar_t wc : g.repScratch) { u32.push_back(static_cast<char32_t>(wc)); }
+        auto cased = ok::chaos::ChaosEngine::instance().processCase(u32);
+        g.repScratch.clear();
+        for (char32_t c : cased) { g.repScratch.push_back(static_cast<wchar_t>(c)); }
     }
 
     // ---- output: per-app policy ----
@@ -2113,6 +2150,25 @@ void showTrayMenu() noexcept {
                   IDM_METHOD_SIMPLETELEX, L"Simple Telex");
     ::AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(methodMenu), L"Phương thức gõ");
     ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+
+    // v1.3.0 Arcade Hub menu
+    HMENU arcadeMenu = ::CreatePopupMenu();
+    ::AppendMenuW(arcadeMenu, MF_STRING, IDM_ARCADE_HUB, L"Mở Arcade Hub (Tất cả game)…");
+    ::AppendMenuW(arcadeMenu, MF_SEPARATOR, 0, nullptr);
+    ::AppendMenuW(arcadeMenu, MF_STRING, IDM_ARCADE_SNAKE, L"🐍 Snake (Rắn săn mồi)");
+    ::AppendMenuW(arcadeMenu, MF_STRING, IDM_ARCADE_TETRIS, L"🧱 Tetris (Xếp gạch)");
+    ::AppendMenuW(arcadeMenu, MF_STRING, IDM_ARCADE_FISHING, L"🎣 Fishing (Câu cá gõ phím)");
+    ::AppendMenuW(arcadeMenu, MF_STRING, IDM_ARCADE_TYPINGRACE, L"🏎️ Typing Race (Đua xe)");
+    ::AppendMenuW(arcadeMenu, MF_STRING, IDM_ARCADE_WASDRACE, L"🏎️ WASD + Typing Racing");
+    ::AppendMenuW(arcadeMenu, MF_STRING, IDM_ARCADE_RHYTHM, L"🎵 Rhythm Typing (FNF-style)");
+    ::AppendMenuW(arcadeMenu, MF_STRING, IDM_ARCADE_NOMISTAKE, L"🎯 No-Mistake Mode");
+    ::AppendMenuW(arcadeMenu, MF_STRING, IDM_ARCADE_FLEXING, L"🗿 Flexing Mode (Joke)");
+    ::AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(arcadeMenu), L"KieeKey Arcade");
+
+    ::AppendMenuW(menu, MF_STRING, IDM_CHAOS_LAB, L"🌀 Phòng Chaos Lab…");
+    ::AppendMenuW(menu, MF_STRING, IDM_AI_RIVAL, L"🤖 AI Typing Rival & Coach…");
+    ::AppendMenuW(menu, MF_STRING, IDM_PROGRESSION, L"📈 Tiến trình & Thành tích…");
+    ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     ::AppendMenuW(menu, MF_STRING, IDM_SETTINGS, L"Cài đặt…");
     ::AppendMenuW(menu, MF_STRING, IDM_ABOUT, L"Thông tin & giới thiệu");
     ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -2154,6 +2210,50 @@ void showTrayMenu() noexcept {
         case IDM_ABOUT:
             // v1.1.2: the in-app introduction (Information tab).
             openSettingsDialog(4);
+            break;
+        case IDM_ARCADE_HUB:
+            openSettingsDialog(5);
+            break;
+        case IDM_ARCADE_SNAKE:
+            ok::arcade::ArcadeManager::instance().launchGame(ok::arcade::GameType::Snake);
+            openSettingsDialog(5);
+            break;
+        case IDM_ARCADE_TETRIS:
+            ok::arcade::ArcadeManager::instance().launchGame(ok::arcade::GameType::Tetris);
+            openSettingsDialog(5);
+            break;
+        case IDM_ARCADE_FISHING:
+            ok::arcade::ArcadeManager::instance().launchGame(ok::arcade::GameType::Fishing);
+            openSettingsDialog(5);
+            break;
+        case IDM_ARCADE_TYPINGRACE:
+            ok::arcade::ArcadeManager::instance().launchGame(ok::arcade::GameType::TypingRace);
+            openSettingsDialog(5);
+            break;
+        case IDM_ARCADE_WASDRACE:
+            ok::arcade::ArcadeManager::instance().launchGame(ok::arcade::GameType::WasdRace);
+            openSettingsDialog(5);
+            break;
+        case IDM_ARCADE_RHYTHM:
+            ok::arcade::ArcadeManager::instance().launchGame(ok::arcade::GameType::Rhythm);
+            openSettingsDialog(5);
+            break;
+        case IDM_ARCADE_NOMISTAKE:
+            ok::arcade::ArcadeManager::instance().launchGame(ok::arcade::GameType::NoMistake);
+            openSettingsDialog(5);
+            break;
+        case IDM_ARCADE_FLEXING:
+            ok::arcade::ArcadeManager::instance().launchGame(ok::arcade::GameType::Flexing);
+            openSettingsDialog(5);
+            break;
+        case IDM_CHAOS_LAB:
+            openSettingsDialog(6);
+            break;
+        case IDM_AI_RIVAL:
+            openSettingsDialog(7);
+            break;
+        case IDM_PROGRESSION:
+            openSettingsDialog(8);
             break;
         case IDM_EXIT:
             ::PostMessageW(g.hMain, WM_CLOSE, 0, 0);
@@ -2990,12 +3090,35 @@ void showTab(int tab) {
         IDC_STAT_INFO_FEAT, IDC_STAT_INFO_GUIDE, IDC_STAT_INFO_LICENSE,
         IDC_LNK_REPO, 0
     };
+    // v1.3.0: tabs 5..8 (Arcade, Chaos, AI, Progression)
+    static constexpr int kTab5[] = {
+        IDC_GRP_ARCADE, IDC_BTN_PLAY_SNAKE, IDC_BTN_PLAY_TETRIS, IDC_BTN_PLAY_FISHING,
+        IDC_BTN_PLAY_TYPINGRACE, IDC_BTN_PLAY_WASDRACE, IDC_BTN_PLAY_RHYTHM,
+        IDC_BTN_PLAY_NOMISTAKE, IDC_BTN_PLAY_FLEXING, IDC_STAT_ARCADE_STATUS, 0
+    };
+    static constexpr int kTab6[] = {
+        IDC_GRP_CHAOS, IDC_CHK_CHAOS_MASTER, IDC_CHK_CHAOS_CASE,
+        IDC_CHK_GLYPH_TRANSFORM, IDC_STAT_CHAOS_WARN, 0
+    };
+    static constexpr int kTab7[] = {
+        IDC_GRP_AI, IDC_CHK_AI_OPTIN, IDC_BTN_AI_RESET,
+        IDC_STAT_AI_STATS, IDC_STAT_COACH_ADVICE, 0
+    };
+    static constexpr int kTab8[] = {
+        IDC_GRP_PROG, IDC_STAT_LEVEL_VAL, IDC_STAT_XP_VAL,
+        IDC_STAT_KEYS_VAL, IDC_STAT_ACHIEVEMENTS, IDC_BTN_PROG_RESET, 0
+    };
+
     if (!g.hSettings) { return; }
     for (const int* p = kTab0; *p; ++p) { ::ShowWindow(::GetDlgItem(g.hSettings, *p), tab == 0 ? SW_SHOW : SW_HIDE); }
     for (const int* p = kTab1; *p; ++p) { ::ShowWindow(::GetDlgItem(g.hSettings, *p), tab == 1 ? SW_SHOW : SW_HIDE); }
     for (const int* p = kTab2; *p; ++p) { ::ShowWindow(::GetDlgItem(g.hSettings, *p), tab == 2 ? SW_SHOW : SW_HIDE); }
     for (const int* p = kTab3; *p; ++p) { ::ShowWindow(::GetDlgItem(g.hSettings, *p), tab == 3 ? SW_SHOW : SW_HIDE); }
     for (const int* p = kTab4; *p; ++p) { ::ShowWindow(::GetDlgItem(g.hSettings, *p), tab == 4 ? SW_SHOW : SW_HIDE); }
+    for (const int* p = kTab5; *p; ++p) { ::ShowWindow(::GetDlgItem(g.hSettings, *p), tab == 5 ? SW_SHOW : SW_HIDE); }
+    for (const int* p = kTab6; *p; ++p) { ::ShowWindow(::GetDlgItem(g.hSettings, *p), tab == 6 ? SW_SHOW : SW_HIDE); }
+    for (const int* p = kTab7; *p; ++p) { ::ShowWindow(::GetDlgItem(g.hSettings, *p), tab == 7 ? SW_SHOW : SW_HIDE); }
+    for (const int* p = kTab8; *p; ++p) { ::ShowWindow(::GetDlgItem(g.hSettings, *p), tab == 8 ? SW_SHOW : SW_HIDE); }
 }
 
 LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -3056,11 +3179,19 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             wchar_t t2[] = L"Gõ tắt";
             wchar_t t3[] = L"Chẩn đoán";
             wchar_t t4[] = L"Thông tin";
+            wchar_t t5[] = L"Arcade";
+            wchar_t t6[] = L"Phòng Chaos";
+            wchar_t t7[] = L"AI Rival";
+            wchar_t t8[] = L"Tiến trình";
             item.pszText = t0; ::SendMessageW(tab, TCM_INSERTITEMW, 0, reinterpret_cast<LPARAM>(&item));
             item.pszText = t1; ::SendMessageW(tab, TCM_INSERTITEMW, 1, reinterpret_cast<LPARAM>(&item));
             item.pszText = t2; ::SendMessageW(tab, TCM_INSERTITEMW, 2, reinterpret_cast<LPARAM>(&item));
             item.pszText = t3; ::SendMessageW(tab, TCM_INSERTITEMW, 3, reinterpret_cast<LPARAM>(&item));
             item.pszText = t4; ::SendMessageW(tab, TCM_INSERTITEMW, 4, reinterpret_cast<LPARAM>(&item));
+            item.pszText = t5; ::SendMessageW(tab, TCM_INSERTITEMW, 5, reinterpret_cast<LPARAM>(&item));
+            item.pszText = t6; ::SendMessageW(tab, TCM_INSERTITEMW, 6, reinterpret_cast<LPARAM>(&item));
+            item.pszText = t7; ::SendMessageW(tab, TCM_INSERTITEMW, 7, reinterpret_cast<LPARAM>(&item));
+            item.pszText = t8; ::SendMessageW(tab, TCM_INSERTITEMW, 8, reinterpret_cast<LPARAM>(&item));
 
             // ---- tab 0: Bàn phím (v1.1.2: grouped layout + digits option) ----
             mkCtl(hwnd, L"BUTTON", L"Phương thức gõ",
@@ -3278,6 +3409,81 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                   WS_CHILD | WS_VISIBLE | WS_TABSTOP, S(28), S(538), S(500), S(20),
                   reinterpret_cast<HMENU>(IDC_LNK_REPO));
 
+            // ---- tab 5: Arcade (v1.3.0) ----
+            mkCtl(hwnd, L"BUTTON", L"KieeKey Arcade (8 Minigames)",
+                  WS_CHILD | WS_VISIBLE | BS_GROUPBOX, S(24), S(86), S(494), S(280),
+                  reinterpret_cast<HMENU>(IDC_GRP_ARCADE));
+            mkCtl(hwnd, L"BUTTON", L"🐍 Snake (Rắn săn mồi)", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                  S(44), S(112), S(220), S(28), reinterpret_cast<HMENU>(IDC_BTN_PLAY_SNAKE));
+            mkCtl(hwnd, L"BUTTON", L"🧱 Tetris (Xếp gạch)", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                  S(280), S(112), S(220), S(28), reinterpret_cast<HMENU>(IDC_BTN_PLAY_TETRIS));
+            mkCtl(hwnd, L"BUTTON", L"🎣 Fishing (Câu cá gõ phím)", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                  S(44), S(148), S(220), S(28), reinterpret_cast<HMENU>(IDC_BTN_PLAY_FISHING));
+            mkCtl(hwnd, L"BUTTON", L"🏎️ Typing Race (Đua xe)", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                  S(280), S(148), S(220), S(28), reinterpret_cast<HMENU>(IDC_BTN_PLAY_TYPINGRACE));
+            mkCtl(hwnd, L"BUTTON", L"🏎️ WASD + Typing Racing", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                  S(44), S(184), S(220), S(28), reinterpret_cast<HMENU>(IDC_BTN_PLAY_WASDRACE));
+            mkCtl(hwnd, L"BUTTON", L"🎵 Rhythm Typing (FNF)", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                  S(280), S(184), S(220), S(28), reinterpret_cast<HMENU>(IDC_BTN_PLAY_RHYTHM));
+            mkCtl(hwnd, L"BUTTON", L"🎯 No-Mistake Mode", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                  S(44), S(220), S(220), S(28), reinterpret_cast<HMENU>(IDC_BTN_PLAY_NOMISTAKE));
+            mkCtl(hwnd, L"BUTTON", L"🗿 Flexing Mode (Joke)", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                  S(280), S(220), S(220), S(28), reinterpret_cast<HMENU>(IDC_BTN_PLAY_FLEXING));
+            mkCtl(hwnd, L"STATIC", L"Trạng thái: Chưa có game nào đang chạy.",
+                  WS_CHILD | WS_VISIBLE, S(44), S(260), S(456), S(90),
+                  reinterpret_cast<HMENU>(IDC_STAT_ARCADE_STATUS));
+
+            // ---- tab 6: Phòng Chaos (v1.3.0) ----
+            mkCtl(hwnd, L"BUTTON", L"Phòng thí nghiệm Chaos & Thử nghiệm",
+                  WS_CHILD | WS_VISIBLE | BS_GROUPBOX, S(24), S(86), S(494), S(280),
+                  reinterpret_cast<HMENU>(IDC_GRP_CHAOS));
+            mkCtl(hwnd, L"BUTTON", L"Bật chế độ Chaos (Master Switch — Mặc định TẮT)",
+                  WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, S(44), S(112), S(450), S(22),
+                  reinterpret_cast<HMENU>(IDC_CHK_CHAOS_MASTER));
+            mkCtl(hwnd, L"BUTTON", L"Random Casing / Chaos Case (Viết hoa - thường ngẫu nhiên)",
+                  WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, S(44), S(140), S(450), S(22),
+                  reinterpret_cast<HMENU>(IDC_CHK_CHAOS_CASE));
+            mkCtl(hwnd, L"BUTTON", L"Glyph Visual Transform (Xoay / lật hiển thị chữ)",
+                  WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, S(44), S(168), S(450), S(22),
+                  reinterpret_cast<HMENU>(IDC_CHK_GLYPH_TRANSFORM));
+            mkCtl(hwnd, L"STATIC",
+                  L"LƯU Ý: Hiệu ứng Glyph Visual chỉ biến đổi cách hiển thị chữ trên màn hình; "
+                  L"văn bản thực tế bên dưới và thao tác sao chép (copy/paste) vẫn giữ nguyên 100% gốc.",
+                  WS_CHILD | WS_VISIBLE, S(44), S(200), S(450), S(80),
+                  reinterpret_cast<HMENU>(IDC_STAT_CHAOS_WARN));
+
+            // ---- tab 7: AI Rival & Coaching (v1.3.0) ----
+            mkCtl(hwnd, L"BUTTON", L"Personal AI Typing Rival & Huấn luyện viên",
+                  WS_CHILD | WS_VISIBLE | BS_GROUPBOX, S(24), S(86), S(494), S(280),
+                  reinterpret_cast<HMENU>(IDC_GRP_AI));
+            mkCtl(hwnd, L"BUTTON", L"Cho phép AI học nhịp gõ cá nhân (Opt-in an toàn, hoàn toàn cục bộ)",
+                  WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, S(44), S(112), S(450), S(22),
+                  reinterpret_cast<HMENU>(IDC_CHK_AI_OPTIN));
+            mkCtl(hwnd, L"BUTTON", L"Đặt lại hồ sơ AI", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                  S(44), S(140), S(160), S(26), reinterpret_cast<HMENU>(IDC_BTN_AI_RESET));
+            mkCtl(hwnd, L"STATIC", L"Chỉ số AI: Chưa có dữ liệu (Cần bật Opt-in và gõ thử)",
+                  WS_CHILD | WS_VISIBLE, S(44), S(172), S(450), S(35),
+                  reinterpret_cast<HMENU>(IDC_STAT_AI_STATS));
+            mkCtl(hwnd, L"STATIC", L"Coach: Hãy gõ thêm để Coach phân tích nhịp gõ...",
+                  WS_CHILD | WS_VISIBLE, S(44), S(212), S(450), S(50),
+                  reinterpret_cast<HMENU>(IDC_STAT_COACH_ADVICE));
+
+            // ---- tab 8: Tiến trình (v1.3.0) ----
+            mkCtl(hwnd, L"BUTTON", L"Tiến trình người dùng & Thành tích",
+                  WS_CHILD | WS_VISIBLE | BS_GROUPBOX, S(24), S(86), S(494), S(280),
+                  reinterpret_cast<HMENU>(IDC_GRP_PROG));
+            mkCtl(hwnd, L"STATIC", L"Cấp độ: Level 1", WS_CHILD | WS_VISIBLE,
+                  S(44), S(112), S(220), S(22), reinterpret_cast<HMENU>(IDC_STAT_LEVEL_VAL));
+            mkCtl(hwnd, L"STATIC", L"Tổng XP: 0 XP", WS_CHILD | WS_VISIBLE,
+                  S(280), S(112), S(220), S(22), reinterpret_cast<HMENU>(IDC_STAT_XP_VAL));
+            mkCtl(hwnd, L"STATIC", L"Tổng số phím đã gõ: 0", WS_CHILD | WS_VISIBLE,
+                  S(44), S(140), S(450), S(22), reinterpret_cast<HMENU>(IDC_STAT_KEYS_VAL));
+            mkCtl(hwnd, L"STATIC", L"Thành tích: Bắt đầu hành trình cùng KieeKey!",
+                  WS_CHILD | WS_VISIBLE, S(44), S(168), S(450), S(60),
+                  reinterpret_cast<HMENU>(IDC_STAT_ACHIEVEMENTS));
+            mkCtl(hwnd, L"BUTTON", L"Đặt lại tiến trình", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                  S(44), S(236), S(160), S(26), reinterpret_cast<HMENU>(IDC_BTN_PROG_RESET));
+
             // ---- buttons ----
             // v1.1.1: the always-visible in-app ON/OFF switch (the removed
             // Ctrl+Shift hotkey's replacement). Lives on the button row so it
@@ -3438,6 +3644,39 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             s_lastMs   = nowMs;
             std::swprintf(buf, std::size(buf), L"%lld", static_cast<long long>(s_kpmEma));
             ::SetWindowTextW(::GetDlgItem(hwnd, IDC_STAT_WPMVAL), buf);
+
+            // v1.3.0: Live updates for Arcade, AI, and Progression tabs
+            if (ok::arcade::ArcadeManager::instance().isConsumingKeyboard()) {
+                std::string r = ok::arcade::ArcadeManager::instance().renderCurrentGame();
+                std::wstring wr(r.begin(), r.end());
+                ::SetWindowTextW(::GetDlgItem(hwnd, IDC_STAT_ARCADE_STATUS), wr.c_str());
+            }
+
+            // Progression stats
+            auto pstats = ok::progression::ProgressionEngine::instance().getStats();
+            wchar_t pbuf[128];
+            std::swprintf(pbuf, std::size(pbuf), L"Cấp độ: Level %u", pstats.currentLevel);
+            ::SetWindowTextW(::GetDlgItem(hwnd, IDC_STAT_LEVEL_VAL), pbuf);
+            std::swprintf(pbuf, std::size(pbuf), L"Tổng XP: %llu XP", static_cast<unsigned long long>(pstats.totalXp));
+            ::SetWindowTextW(::GetDlgItem(hwnd, IDC_STAT_XP_VAL), pbuf);
+            std::swprintf(pbuf, std::size(pbuf), L"Tổng số phím đã gõ: %llu", static_cast<unsigned long long>(pstats.totalKeystrokes));
+            ::SetWindowTextW(::GetDlgItem(hwnd, IDC_STAT_KEYS_VAL), pbuf);
+
+            // AI Profile stats
+            if (ok::ai::AiRivalEngine::instance().isOptIn()) {
+                auto aiprof = ok::ai::AiRivalEngine::instance().getProfile();
+                wchar_t aibuf[256];
+                std::swprintf(aibuf, std::size(aibuf), L"AI: Mean IKI %.1f ms | Lỗi tự nhiên %.1f%% | Trễ phím dấu %.1f ms",
+                              aiprof.meanIkiMs, aiprof.errorRate * 100.0, aiprof.toneDelayMs);
+                ::SetWindowTextW(::GetDlgItem(hwnd, IDC_STAT_AI_STATS), aibuf);
+
+                auto coachRecs = ok::analytics::TypingAnalyticsEngine::instance().generateCoachingAdvice();
+                if (!coachRecs.empty()) {
+                    std::string ctext = "[Thực tế]: " + coachRecs[0].measuredFact + "\n[Gợi ý]: " + coachRecs[0].heuristicAdvice;
+                    std::wstring wctext(ctext.begin(), ctext.end());
+                    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_STAT_COACH_ADVICE), wctext.c_str());
+                }
+            }
             return 0;
         }
 
@@ -3448,6 +3687,52 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     // removed Ctrl+Shift hotkey). Persists + balloons via the
                     // shared path; the WM_TIMER tick refreshes the label.
                     toggleEngineFromUi();
+                    return 0;
+                case IDC_BTN_PLAY_SNAKE:
+                    ok::arcade::ArcadeManager::instance().launchGame(ok::arcade::GameType::Snake);
+                    return 0;
+                case IDC_BTN_PLAY_TETRIS:
+                    ok::arcade::ArcadeManager::instance().launchGame(ok::arcade::GameType::Tetris);
+                    return 0;
+                case IDC_BTN_PLAY_FISHING:
+                    ok::arcade::ArcadeManager::instance().launchGame(ok::arcade::GameType::Fishing);
+                    return 0;
+                case IDC_BTN_PLAY_TYPINGRACE:
+                    ok::arcade::ArcadeManager::instance().launchGame(ok::arcade::GameType::TypingRace);
+                    return 0;
+                case IDC_BTN_PLAY_WASDRACE:
+                    ok::arcade::ArcadeManager::instance().launchGame(ok::arcade::GameType::WasdRace);
+                    return 0;
+                case IDC_BTN_PLAY_RHYTHM:
+                    ok::arcade::ArcadeManager::instance().launchGame(ok::arcade::GameType::Rhythm);
+                    return 0;
+                case IDC_BTN_PLAY_NOMISTAKE:
+                    ok::arcade::ArcadeManager::instance().launchGame(ok::arcade::GameType::NoMistake);
+                    return 0;
+                case IDC_BTN_PLAY_FLEXING:
+                    ok::arcade::ArcadeManager::instance().launchGame(ok::arcade::GameType::Flexing);
+                    return 0;
+                case IDC_CHK_CHAOS_MASTER:
+                case IDC_CHK_CHAOS_CASE:
+                case IDC_CHK_GLYPH_TRANSFORM: {
+                    auto& chaos = ok::chaos::ChaosEngine::instance();
+                    ok::chaos::ChaosConfig cfg = chaos.getConfig();
+                    cfg.masterEnabled = (::IsDlgButtonChecked(hwnd, IDC_CHK_CHAOS_MASTER) == BST_CHECKED);
+                    cfg.randomCaseEnabled = (::IsDlgButtonChecked(hwnd, IDC_CHK_CHAOS_CASE) == BST_CHECKED);
+                    cfg.glyphTransformEnabled = (::IsDlgButtonChecked(hwnd, IDC_CHK_GLYPH_TRANSFORM) == BST_CHECKED);
+                    chaos.setConfig(cfg);
+                    return 0;
+                }
+                case IDC_CHK_AI_OPTIN: {
+                    bool opt = (::IsDlgButtonChecked(hwnd, IDC_CHK_AI_OPTIN) == BST_CHECKED);
+                    ok::ai::AiRivalEngine::instance().setOptIn(opt);
+                    return 0;
+                }
+                case IDC_BTN_AI_RESET:
+                    ok::ai::AiRivalEngine::instance().resetProfile();
+                    return 0;
+                case IDC_BTN_PROG_RESET:
+                    ok::progression::ProgressionEngine::instance().reset();
                     return 0;
                 case IDOK:
                     settingsFromControls();

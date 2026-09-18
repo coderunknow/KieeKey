@@ -16,7 +16,7 @@ This project may be resumed later if there is a clear reason and enough motivati
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20ARM64-0078D6.svg)
 ![Build](https://img.shields.io/badge/build-CMake%20%3E%3D%203.28-064FAD.svg)
 
-**KieeKey v1.2.2 Stable** is a modern, low-latency Vietnamese input method
+**KieeKey v1.3.0-beta1** is a modern, low-latency Vietnamese input method
 engine (bộ gõ Tiếng Việt) for Windows, with a system-tray application, a TSF
 text-store composer and an optional WinUI 3 Fluent settings UI.
 
@@ -28,6 +28,71 @@ text-store composer and an optional WinUI 3 Fluent settings UI.
 > every source file.
 
 ![KieeKey preview](src/app/KieeKeyApp-preview.png)
+
+---
+
+## What's new in v1.3.0-beta1 — Arcade, Chaos Lab, AI Rival & Progression
+
+**v1.3.0-beta1** delivers the beta release of KieeKey: a practical, zero-regression Vietnamese input method engine expanded with an isolated Arcade Hub, Chaos Playground, Personal AI Typing Rival, Global Progression, and Real-Time Typing Analytics & Coach.
+
+### Key Features & Invariants:
+* **Core IME Stability & Performance Guardrails (100% Retained)**:
+  * Full gate correctness over 2,059,419 events vs reference oracle (0 mismatches, gate rc=0).
+  * 0 ns overhead on hot typing path: Arcade and Chaos features are lazy-initialized and isolated; inactive check is an atomic branch.
+  * Memory/RSS remains rock-solid (+0% baseline increase, 8.47 MB).
+* **KieeKey Arcade Hub**:
+  * 🐍 **Snake**: Classic snake with responsive controls, collision detection, and keyboard stress-testing input injection mode.
+  * 🧱 **Tetris**: Complete 7-tetromino implementation with rotation, line clearing, leveling, and hard drop.
+  * 🎣 **Fishing (Câu cá bằng gõ phím)**: Catch fish by typing prompts! Features pull progress, fish escape timers, rarities (Common to Legendary), equipment upgrades (Rod, Bait, Reel), and optional automation modes.
+  * 🏎️ **Typing Race**: Race against the clock based on character progress, live WPM, and accuracy (explicitly labeled: Game score != official benchmark).
+  * 🏎️ **Typing + WASD Racing**: Multitasking mode navigating 3 lanes to dodge obstacles while typing to refuel and accelerate. Zero interference with core IME outside the game.
+  * 🎵 **Rhythm Typing (FNF-style)**: Beat-synchronized typing with strict timing windows (Perfect, Too Early, Too Late, Miss) and combo streaks.
+  * 🎯 **No-Mistake Mode**: High-tension mode where a single typo triggers a massive configurable penalty (-250 combo, -120,000 score).
+  * 🗿 **Flexing Mode**: Intentional entertainment feature emitting pre-loaded text at ludicrous speeds with prominent disclaimers.
+* **Chaos / Experimental Lab**:
+  * 🌀 **Chaos Case / Random Casing**: Configurable capitalization intensity and granularity (off by default, clear warnings).
+  * 🔄 **Glyph Rotate & Flip Mode**: Visual lookalike rendering transforms while underlying text retains 100% pristine Unicode for copying, pasting, and editing.
+* **Personal AI Typing Rival & Coaching**:
+  * Statistical biometric learner for inter-key intervals, pauses, burst lengths, and Vietnamese accent reaction time.
+  * Modes: User vs AI, and Yesterday You vs Today You ghost replays.
+  * Explicit privacy opt-in, offline local storage, instant profile purge.
+* **Global Progression & Achievements**:
+  * Deterministic XP accumulation and leveling curve without counter overflow.
+  * Lifetime statistics tracking and milestone achievements.
+  * Checksum-verified persistence with graceful corrupt-file recovery.
+* **Real-time Analytics & Coach**:
+  * Fixed-capacity ring buffer capturing typing intervals without memory allocations.
+  * Actionable coaching recommendations strictly separating measured facts from heuristic suggestions once sample size threshold is met.
+* **Pluggable Online/Ghost Abstraction**:
+  * Standardized interfaces for replays, ghosts, and leaderboards; local ghost provider fully operational with zero network traffic.
+
+---
+
+## What's new in v1.3.0-beta1 — Feature-Complete Beta Qualification
+
+**v1.3.0-beta1** qualifies the feature-complete 1.3.0 minor release after extensive soak, fuzzing, and benchmark validation.
+
+* **Core IME Stability & Zero Hot-Path Regression**: Verified with gate correctness (2,059,419 events / 0 errors), 0 ns overhead on hot path when optional modules are inactive.
+* **Complete Arcade Hub**: 8 fully verified minigames (Snake, Tetris, Fishing, Typing Race, WASD Multitasking, Rhythm, No-Mistake, Flexing).
+* **Chaos / Experimental Lab**: Independent visual transforms preserving pristine text semantics.
+* **Personal AI Typing Rival**: Async offline learner and simulation engine with explicit privacy opt-in.
+* **Deterministic Progression**: Deterministic level curves, achievements, and corrupted-file recovery.
+* **Intelligent Coach & Analytics**: Telemetry over fixed ring buffers, fact-vs-heuristic advice.
+* **Pluggable Online/Ghost Abstraction**: Zero unauthorized network traffic.
+
+---
+
+## What's new in v1.3.0-dev1 — Arcade, Chaos Lab, AI Rival & Progression
+
+**KieeKey v1.3.0-dev1** is the first development build of the minor 1.3.0 series, expanding KieeKey into a practical Vietnamese IME with an optional Arcade Hub, Chaos Lab, Personal AI Rival, Progression and Typing Analytics without sacrificing core IME performance.
+
+### Highlights:
+* **Arcade Hub**: 8 playable minigames (Snake, Tetris, Fishing by typing, Typing Race, WASD+Typing Multitasking Racing, Rhythm Typing FNF-style, No-Mistake Mode, and Flexing Mode).
+* **Chaos / Experimental Lab**: Opt-in Random Capitalization (Chaos Case) and Glyph Visual Transform (rotate/flip lookalikes while underlying text remains untouched).
+* **Personal AI Typing Rival**: Local offline model learning user typing dynamics (inter-key intervals, pauses, burst behavior, tone mark reaction time) to simulate personalized rival races.
+* **Global Level & Progression**: Deterministic XP calculation, level milestones, lifetime statistics and achievements with corruption-resilient persistence.
+* **Typing Analytics & Coach**: Zero-allocation telemetry observation on a fixed ring buffer, providing aggregate WPM, IKI distribution, fatigue analysis, and fact-vs-heuristic coaching.
+* **Online/Ghost Abstraction**: Pluggable interfaces for replays, ghosts, and leaderboards operating locally without network overhead.
 
 ---
 

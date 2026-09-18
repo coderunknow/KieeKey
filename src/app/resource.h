@@ -111,25 +111,74 @@
 // v1.1.2 — digits-are-numbers option + modernized dialog chrome + info tab
 #define IDC_CHK_DIGITS            551   // tab 0: "Số 0–9 luôn là chữ số"
 #define IDC_STAT_HEAD_ICON        552   // header: app icon (static w/ icon)
-#define IDC_STAT_HEAD_TITLE       553   // header: "KieeKey v1.1.3" (bold)
+#define IDC_STAT_HEAD_TITLE       553   // header: app title
 #define IDC_STAT_HEAD_STATUS      554   // header: engine status + method line
 #define IDC_GRP_METHOD            555   // tab 0: group box "Phương thức gõ"
 #define IDC_GRP_OPTIONS           556   // tab 0: group box "Tùy chọn gõ"
 #define IDC_GRP_OUTPUT            557   // tab 0: group box "Chế độ xuất"
 #define IDC_STAT_INFO_NAME        558   // tab 4: big app name + version
-#define IDC_STAT_INFO_STATUS      559   // tab 4: v1.1.2-r3 live diagnostics + conflict verdict
+#define IDC_STAT_INFO_STATUS      559   // tab 4: live diagnostics + conflict verdict
 #define IDC_STAT_INFO_ABOUT       560   // tab 4: about paragraph
 #define IDC_STAT_INFO_FEAT        561   // tab 4: feature list
 #define IDC_STAT_INFO_GUIDE       562   // tab 4: quick-start guide
 #define IDC_STAT_INFO_LICENSE     563   // tab 4: origin & license
 #define IDC_LNK_REPO              564   // tab 4: source repository (SysLink)
 #define IDC_STAT_METHOD_HINT      565   // tab 0: input-method explainer line
-#define IDC_STAT_PERF_LAB         566   // v1.2.1 RC2 tab 0: "Hồ sơ hiệu năng:"
-#define IDC_COMBO_PERF            567   // v1.2.1 RC2 tab 0: profile combo
-#define IDC_CHK_PERF_LOWCPU       568   // v1.2.1 RC2 tab 0: hybrid — tiết kiệm CPU
-#define IDC_CHK_PERF_DICT         569   // v1.2.1 RC2 tab 0: hybrid — kiểm tra từ điển
-#define IDC_STAT_PERF_NOTE        570   // v1.2.1 RC2 tab 0: profile explainer
-#define IDC_CHK_NOTIFY            571   // v1.2.1 RC2 tab 0: thông báo thông minh (mute)
+#define IDC_STAT_PERF_LAB         566   // tab 0: "Hồ sơ hiệu năng:"
+#define IDC_COMBO_PERF            567   // tab 0: profile combo
+#define IDC_CHK_PERF_LOWCPU       568   // tab 0: hybrid — tiết kiệm CPU
+#define IDC_CHK_PERF_DICT         569   // tab 0: hybrid — kiểm tra từ điển
+#define IDC_STAT_PERF_NOTE        570   // tab 0: profile explainer
+#define IDC_CHK_NOTIFY            571   // tab 0: thông báo thông minh (mute)
+
+// v1.3.0 — Arcade, Chaos Lab, AI & Progression controls
+#define IDC_GRP_ARCADE            580
+#define IDC_BTN_PLAY_SNAKE        581
+#define IDC_BTN_PLAY_TETRIS       582
+#define IDC_BTN_PLAY_FISHING      583
+#define IDC_BTN_PLAY_TYPINGRACE   584
+#define IDC_BTN_PLAY_WASDRACE     585
+#define IDC_BTN_PLAY_RHYTHM       586
+#define IDC_BTN_PLAY_NOMISTAKE    587
+#define IDC_BTN_PLAY_FLEXING      588
+#define IDC_STAT_ARCADE_STATUS    589
+
+// tab 6: Chaos & Lab
+#define IDC_GRP_CHAOS             590
+#define IDC_CHK_CHAOS_MASTER      591
+#define IDC_CHK_CHAOS_CASE        592
+#define IDC_CHK_GLYPH_TRANSFORM   593
+#define IDC_COMBO_GLYPH_MODE      594
+#define IDC_STAT_CHAOS_WARN       595
+
+// tab 7: AI Rival & Coaching
+#define IDC_GRP_AI                600
+#define IDC_CHK_AI_OPTIN          601
+#define IDC_BTN_AI_RESET          602
+#define IDC_STAT_AI_STATS         603
+#define IDC_STAT_COACH_ADVICE     604
+
+// tab 8: Progression
+#define IDC_GRP_PROG              610
+#define IDC_STAT_LEVEL_VAL        611
+#define IDC_STAT_XP_VAL           612
+#define IDC_STAT_KEYS_VAL         613
+#define IDC_STAT_ACHIEVEMENTS     614
+#define IDC_BTN_PROG_RESET        615
+
+// ---- tray context menu items ----
+#define IDM_ARCADE_HUB            410
+#define IDM_ARCADE_SNAKE          411
+#define IDM_ARCADE_TETRIS         412
+#define IDM_ARCADE_FISHING        413
+#define IDM_ARCADE_TYPINGRACE     414
+#define IDM_ARCADE_WASDRACE       415
+#define IDM_ARCADE_RHYTHM         416
+#define IDM_ARCADE_NOMISTAKE      417
+#define IDM_ARCADE_FLEXING        418
+#define IDM_CHAOS_LAB             419
+#define IDM_AI_RIVAL              420
+#define IDM_PROGRESSION           421
 
 // ---- app messages ----
 #define WM_APP_TRAY               (WM_APP + 1)   // tray icon notification

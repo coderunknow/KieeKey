@@ -1,0 +1,25 @@
+{
+  "benchmark": "KieeKey Extreme Comprehensive Benchmark",
+  "timestamp_utc": "2026-09-18T05:26:42Z",
+  "git": {
+    "commit": "8fb63d2e009cabb19da751a5128d34f9ffdbe571",
+    "commit_short": "8fb63d2e00",
+    "dirty": true
+  },
+  "host": {
+    "os": "Linux 6.1.158+",
+    "arch": "x86_64",
+    "kernel": "Linux 6.1.158+",
+    "cpu_model": "Intel(R) Xeon(R) Processor @ 2.60GHz",
+    "logical_cpus": 2,
+    "memory_total": "4034452 kB"
+  },
+  "toolchain": {
+    "compiler": "g++ (Debian 12.2.0-14+deb12u1) 12.2.0",
+    "cxx_flags_common": "-std=c++2b -O3 -DNDEBUG",
+    "cxx_flags_gate": "-std=c++17 -O2 -DNO_205"
+  },
+  "configuration": {
+    "runs": 1
+  }
+}

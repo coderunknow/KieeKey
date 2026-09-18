@@ -953,4 +953,16 @@ if(WIN32)
     # The web client of the Arcade Hub (tools/arcade_serve serves this folder;
     # KieeKeyApp.exe --arcade opens the native GDI window instead).
     install(DIRECTORY web DESTINATION ${CMAKE_INSTALL_DATADIR}/kieekey)
+    # v1.3.0: the web bridge itself ships with the app, so the player can run
+    # continuously on a machine the user controls (the hosted sandbox preview is
+    # ephemeral by design) without a toolchain:
+    #   arcade_serve --port 8765 --host 0.0.0.0 --web <install>/share/kieekey/web
+    if(TARGET arcade_serve)
+        install(TARGETS arcade_serve RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+        install(PROGRAMS scripts/run_web_bridge.sh DESTINATION ${CMAKE_INSTALL_DATADIR}/kieekey)
+        install(FILES scripts/run_web_bridge.ps1 DESTINATION ${CMAKE_INSTALL_DATADIR}/kieekey)
+    endif()
+    if(TARGET arcade_bench)
+        install(TARGETS arcade_bench RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    endif()
 endif()

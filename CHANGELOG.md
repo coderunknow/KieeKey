@@ -5,6 +5,22 @@ Keep a Changelog; versioning: SemVer.
 
 ## [Unreleased]
 ### Added
+* **The web player can now run as a real service** instead of only in an
+  ephemeral preview: `scripts/run_web_bridge.ps1` (Windows — `-Port/-Bind/-Fps`,
+  `-RestartAlways`, prints the LAN URL, registerable as an at-logon task) and
+  `scripts/run_web_bridge.sh` (Linux/macOS — `PORT/HOST/FPS`, builds with cmake
+  when available and falls back to a direct g++/clang++ build). The
+  per-architecture release artifact now carries `arcade_serve.exe`,
+  `arcade_bench.exe`, the whole `web/` client and both launchers, and the CMake
+  install rules put the bridge next to `KieeKeyApp.exe`, so download-and-run
+  needs no toolchain.
+* `testLiveConfigReachesRunningGame` (arcade suite) and `testConfigApplyNow`
+  (server suite): a config change now has to prove it reaches the run that is
+  already in flight, and `applyNow` has to prove it rebuilt the run.
+* `docs/bench/v122_vs_130/run_ab.sh` — the A/B driver: it refuses to run when
+  the three harnesses are not byte-identical between the two trees, then
+  interleaves rounds and prints the median table quoted in the README.
+
 * **The v1.3.0 features now have their graphical surfaces** (the previous
   submission shipped the engines but rendered the games as text in a settings
   tab):

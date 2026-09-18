@@ -226,6 +226,38 @@ cmake --build --preset x64-release --target arcade_serve
 arcade_serve --port 8765 --host 0.0.0.0 --web web
 ```
 
+#### Running the player continuously (your own machine)
+
+A hosted preview is convenient but **ephemeral** — it dies with the machine that
+serves it. To keep the Arcade Hub player running for real, run the bridge on a
+box you control (PC, laptop, VPS, NAS); the process keeps the C++ engine in
+memory and serves `web/` over the LAN:
+
+```bat
+:: Windows — builds arcade_serve if needed, restarts on crash, prints the LAN URL
+powershell -ExecutionPolicy Bypass -File scripts\run_web_bridge.ps1 -Port 8765 -RestartAlways
+```
+
+```bash
+# Linux/macOS
+PORT=8765 bash scripts/run_web_bridge.sh
+```
+
+Both launchers accept the bind address and tick rate (`HOST`, `FPS`; `-Bind`,
+`-Fps`), and the Windows one can be registered once as an at-logon task so the
+player survives reboots:
+
+```bat
+schtasks /create /tn "KieeKey Arcade Bridge" /sc onlogon /rl highest ^
+  /tr "powershell -WindowStyle Hidden -File \"%CD%\scripts\run_web_bridge.ps1\""
+```
+
+The release artifact for each architecture now ships everything that is needed
+(`arcade_serve.exe`, `arcade_bench.exe`, `web/`, both launcher scripts), so a
+download-and-run needs no toolchain. On Windows prefer the native hub
+(`KieeKeyApp.exe --arcade`) when you only need it locally — the web bridge is
+the option that also works head-less and remotely.
+
 Presets available: `x64-debug`, `x64-release`, `arm64-release` (see
 `CMakePresets.json`). A MinGW-w64 toolchain file is provided at
 `cmake/mingw-w64-x86_64.cmake` for console/engine-only builds. CI builds

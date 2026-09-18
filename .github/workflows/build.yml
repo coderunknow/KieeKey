@@ -224,8 +224,24 @@ jobs:
           Copy-Item "$src/ok_tests.exe"      $dst
           Copy-Item "$src/ok_ring_tests.exe" $dst
           Copy-Item "$src/ok_wrap_tests.exe" $dst
+          # v1.3.0: the Arcade Hub web bridge + its assets ship with the app so
+          # the HTML5 player can run on a machine the user controls (see
+          # scripts/run_web_bridge.ps1) instead of only in an ephemeral sandbox.
+          foreach ($tool in @('arcade_serve.exe', 'arcade_bench.exe')) {
+            $path = Join-Path $src $tool
+            if (Test-Path $path) { Copy-Item $path $dst }
+            else { Write-Host "::warning::$tool was not built — check the arcade target" }
+          }
+          $webSrc = Join-Path "out/${{ matrix.platform }}" "web"
+          if (Test-Path $webSrc) {
+            Copy-Item $webSrc (Join-Path $dst "web") -Recurse
+          } else {
+            Write-Host "::warning::web assets were not copied into the build tree"
+          }
           Copy-Item "LICENSE" $dst
           Copy-Item "README.md" $dst
+          Copy-Item "scripts/run_web_bridge.ps1" $dst
+          Copy-Item "scripts/run_web_bridge.sh"  $dst
           Compress-Archive -Path "$dst/*" -DestinationPath "$dst.zip"
 
       - name: Upload artifact

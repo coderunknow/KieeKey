@@ -24,9 +24,10 @@
 //----------------------------------------------------------------------------
 #include "win32_gdi_stub.hpp"
 
+#include <commctrl.h>   // the stub emulates the common controls too
+
 #include <cstring>
 #include <cwchar>
-#include <map>
 #include <map>
 #include <string>
 #include <vector>

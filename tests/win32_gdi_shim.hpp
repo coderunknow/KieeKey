@@ -222,6 +222,11 @@ struct PAINTSTRUCT {
 #define WM_DESTROY       0x0002
 
 // control styles / notifications
+// NOTE: the trackbar (TRACKBAR_CLASSW/TBS_*/TBM_*) and the mouse-coordinate
+// macros (GET_X_LPARAM/GET_Y_LPARAM) deliberately live in
+// tests/win32_headers/commctrl.h and windowsx.h — the real SDK only exposes
+// them through those headers, and shadowing them here once let a missing
+// #include reach CI (C2065/C3861 on MSVC).
 #define BS_AUTOCHECKBOX  0x00000003L
 #define BS_PUSHBUTTON    0x00000000L
 #define ES_MULTILINE     0x0004L
@@ -230,8 +235,6 @@ struct PAINTSTRUCT {
 #define ES_WANTRETURN    0x1000L
 #define SS_LEFT          0x00000000L
 #define CBS_DROPDOWNLIST 0x0003L
-#define TBS_HORZ         0x0000
-#define TBS_NOTICKS      0x0010L
 #define EN_CHANGE        0x0300
 #define EN_UPDATE        0x0400
 #define BN_CLICKED       0
@@ -245,10 +248,6 @@ struct PAINTSTRUCT {
 #define CBN_SELCHANGE    1
 #define EM_SETSEL        0x00B1
 #define EM_REPLACESEL    0x00C2
-#define TBM_SETRANGE     0x0406
-#define TBM_SETPOS       0x0405
-#define TBM_GETPOS       0x0400
-#define TBM_SETTICFREQ   0x0414
 
 // GDI
 #define TRANSPARENT      1
@@ -308,10 +307,7 @@ static_assert(sizeof(LONG) == 4, "Win32 LONG must be 32-bit");
 #define MAKEWPARAM(l, h) ((WPARAM)(((DWORD)(l)) | (((DWORD)(h)) << 16)))
 #define LOWORD(v) ((WORD)(((ULONG_PTR)(v)) & 0xFFFF))
 #define HIWORD(v) ((WORD)((((ULONG_PTR)(v)) >> 16) & 0xFFFF))
-#define GET_X_LPARAM(v) ((int)(short)LOWORD(v))
-#define GET_Y_LPARAM(v) ((int)(short)HIWORD(v))
 
-#define TRACKBAR_CLASSW L"msctls_trackbar32"
 #define TOOLTIPS_CLASSW L"tooltips_class32"
 
 // ---- functions (signatures follow the Windows SDK) ------------------------

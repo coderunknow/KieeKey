@@ -201,6 +201,7 @@ if(WIN32)
         msimg32    # v1.3.0: GradientFill for the Arcade Hub background
         advapi32   # v1.1.3: OpenProcessToken / GetTokenInformation (elevation probe)
         wtsapi32   # v1.2.0: WTSRegisterSessionNotification (lock/unlock, RDP)
+        comctl32   # v1.3.0: InitCommonControlsEx (Arcade Hub + Chaos Lab sliders)
         ws2_32)    # v1.3.0: the Arcade web bridge (ArcadeServer.cpp) uses Winsock
 
     # TSF composer

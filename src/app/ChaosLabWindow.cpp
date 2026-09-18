@@ -45,6 +45,7 @@ ChaosLabWindow::EmitCallback ChaosLabWindow::emitCallback() noexcept { return nu
 #  define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <commctrl.h>   // TRACKBAR_CLASSW / TBS_* / TBM_* (the chaos sliders)
 
 #include <algorithm>
 #include <string>

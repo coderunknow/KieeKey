@@ -62,10 +62,12 @@ bool launchChaosLab() { return false; }
 #  define NOMINMAX
 #endif
 #include <windows.h>
+#include <windowsx.h>   // GET_X_LPARAM / GET_Y_LPARAM (mouse hit testing)
 
 #if defined(_MSC_VER)
 // GradientFill lives in msimg32; linking it here as well as in CMakeLists keeps
 // the file self-sufficient when it is compiled by hand.
+#  pragma comment(lib, "comctl32.lib")   // v1.3.0: common controls (InitCommonControlsEx)
 #  pragma comment(lib, "msimg32.lib")
 #  pragma comment(lib, "gdi32.lib")
 #  pragma comment(lib, "user32.lib")

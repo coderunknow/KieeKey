@@ -4332,8 +4332,15 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
                     std::string slug;
                     const std::size_t equals = argument.find(L'=');
                     if (equals != std::wstring::npos) {
-                        const std::wstring value = argument.substr(equals + 1);
-                        slug.assign(value.begin(), value.end());
+                        // v1.3.0: utf16ToUtf8() instead of
+                        // `slug.assign(value.begin(), value.end())`. Copying a
+                        // wchar_t range into a narrow string makes the STL
+                        // assign `char = const wchar_t` inside <xutility>, which
+                        // MSVC /W4 reports as C4244 *in the header* — under /WX
+                        // that is C2220 and it points at the STL, not at this
+                        // line. Converting explicitly keeps the diagnostic
+                        // meaningful and the slug correct for non-ASCII input.
+                        slug = utf16ToUtf8(argument.substr(equals + 1));
                     }
                     openArcadeHub(slug.empty() ? nullptr : slug.c_str());
                 } else if (argument == L"--chaos-lab") {
@@ -4342,9 +4349,11 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
                     int tab = 0;
                     const std::size_t equals = argument.find(L'=');
                     if (equals != std::wstring::npos) {
-                        const std::wstring value = argument.substr(equals + 1);
-                        const std::string narrow(value.begin(), value.end());
-                        tab = std::atoi(narrow.c_str());
+                        // std::wcstol reads the wide text directly, so no
+                        // narrowing conversion happens at all (same C4244 class
+                        // as above: the iterator-pair string constructor).
+                        tab = static_cast<int>(
+                            std::wcstol(argument.c_str() + equals + 1, nullptr, 10));
                     }
                     openSettingsDialog(tab);
                 }

@@ -254,6 +254,15 @@ if command -v node >/dev/null 2>&1; then
         printf ' FAILED — %s\n' "$OUT/logs/web_labs.log"
         rc=1
     fi
+    # The renderer runs against frames captured from the C++ engine
+    # (tests/data/web_frames.json, refreshed by tests/capture_web_frames.py).
+    printf '  [check] %-22s' "web renderer (node)"
+    if ( cd "$REPO_ROOT" && node tests/web_render_test.js ) > "$OUT/logs/web_render.log" 2>&1; then
+        printf ' ok\n'
+    else
+        printf ' FAILED — %s\n' "$OUT/logs/web_render.log"
+        rc=1
+    fi
 fi
 
 # --- release manifest matches the tracked tree ------------------------------

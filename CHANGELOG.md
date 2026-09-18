@@ -54,6 +54,12 @@ Keep a Changelog; versioning: SemVer.
   glue (a small DOM/fetch double executes the real `web/labs.js`), so the
   streamed Flexing text, the chaos preview/replay and the "keys belong to the
   text field, not the engine" guard are verified without a browser.
+* `tests/web_render_test.js` + `tests/data/web_frames.json` +
+  `tests/capture_web_frames.py` — the HTML5 renderer is replayed head-lessly
+  against frames captured from the real engine (refresh the fixture with
+  `python3 tests/capture_web_frames.py` while `arcade_serve` runs): every game's
+  commands reach the canvas API, with the right scaling, colours, gradients,
+  text and HUD updates.
 * `tests/win32_gdi_shim.hpp`, `tests/win32_gdi_stub.{hpp,cpp}`,
   `tests/win32_headers/windows.h` and `tests/test_arcade_window.cpp` — a
   recording USER32/GDI32 harness that compiles, links and *executes* the real
@@ -97,6 +103,9 @@ Keep a Changelog; versioning: SemVer.
   reused (`RenderCommand::reset`, `RenderList::scratch`,
   `utf8FromUtf32(text, out)`, `renderListToJson(list, out)`), which the
   allocation audit in `test_arcade` pins at zero for the native pipeline.
+* **The Chaos Lab came up without its sliders**: the lab's trackbar needs the
+  common-controls *bar* class, but the app only registered `ICC_TAB_CLASSES`.
+  `InitCommonControlsEx` now includes `ICC_BAR_CLASSES`.
 * **`src/ui/MainWindow.xaml` shipped stale identity**: the header still said
   "OpenKey" / "KieeKey v1.1.2" and the settings surface had no arcade pages.
   The title is now KieeKey, the version is derived from

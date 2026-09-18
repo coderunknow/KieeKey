@@ -105,10 +105,13 @@ Run everything with `tests/run_all_tests.sh` (native) or `ctest` on Windows:
 
 | suite | covers | result |
 |---|---|---|
-| `ok_arcade_tests` | all 8 games, manager, determinism, no steady-state allocations | 3734 checks, 0 failures |
+| `ok_arcade_tests` | all 8 games, manager, determinism, no steady-state allocations | 3742 checks, 0 failures |
 | `ok_arcade_render_tests` | display list, JSON wire format, injection safety, viewport letterboxing, payload budget | 6/6 |
-| `ok_arcade_server_tests` | HTTP routing, session control, input forwarding, traversal guards, a full simulated race | 6/6 |
-| `ok_arcade_window_tests` | **the real Win32 window procedures**: catalogue painting, hover, click-to-play, keyboard, timer, `Esc`/close, Chaos Lab preview + injection | 5/5 |
+| `ok_arcade_server_tests` | HTTP routing, session control, input forwarding, traversal guards, a full simulated race, the Flexing payload and the Chaos lab | 8/8 |
+| `ok_arcade_window_tests` | **the real Win32 window procedures**: catalogue painting, hover, click-to-play, keyboard, timer, `Esc`/close, Chaos Lab preview + injection, and the Flexing page (prepared text in, engine text typed out) | 5/5 |
+| `tests/web_labs_test.js` | the browser lab glue: engine text into the flexing control, chaos preview/replay, "keys stay in the text field" guard | 27 checks |
+| `tests/web_render_test.js` | the HTML5 renderer replayed over frames captured from the C++ engine (`tests/data/web_frames.json`): every game's commands, colours, gradients, HUD | 62 checks |
+| `demo/arcade_cli --test` | the terminal front-end: all 8 games launch, answer input and produce a display list + wire JSON | 8/8 + chaos |
 | `ok_chaos_tests` | case + glyph transforms, render-only rotations, thread safety | 4/4 |
 | `ok_ai_tests` | opt-in/privacy, learning, racer determinism, ghost round-trip, hostile payloads, concurrency | 6/6 |
 | `ok_progression_tests` | XP, levels, streaks, achievements, persistence/recovery, concurrency | 9/9 |

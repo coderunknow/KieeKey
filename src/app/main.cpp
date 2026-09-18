@@ -4160,7 +4160,10 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
 
     INITCOMMONCONTROLSEX icc{};
     icc.dwSize = sizeof(icc);
-    icc.dwICC  = ICC_TAB_CLASSES;
+    // v1.3.0: the Chaos Lab window uses a trackbar (TRACKBAR_CLASSW), which
+    // lives in the common-controls bar class; without ICC_BAR_CLASSES the
+    // control is not registered and the lab comes up without its sliders.
+    icc.dwICC  = ICC_TAB_CLASSES | ICC_BAR_CLASSES;
     ::InitCommonControlsEx(&icc);
 
     g.hInst = hInst;

@@ -46,6 +46,11 @@ set(KIEEKEY_BUILD_TESTS ON CACHE BOOL "Build the unit-test harness")
 # harnesses. OFF by default — see the note in the Windows test block for why.
 set(KIEEKEY_BUILD_EXTRA_TESTS OFF CACHE BOOL "Build the extended test harnesses on Windows")
 set(KIEEKEY_PROFILE 0 CACHE STRING "Compile in the QPC stage profiler (0=off/default, 1=instrumented)")
+# Low-latency engine profile (PR15 port): when ON, the engine compiles with
+# the grammar-repair pass and the per-key undo snapshot removed (opt-in
+# behavioural trade-off — see TextEngine.hpp). Default OFF = strict build,
+# behavior-identical to the pre-port engine.
+set(KIEEKEY_LOW_LATENCY_PROFILE OFF CACHE BOOL "Build the low-latency engine profile (skips grammar repair + undo snapshot)")
 set_property(CACHE KIEEKEY_BUILD_UI PROPERTY STRINGS none winui3)
 
 #----------------------------------------------------------------------------
@@ -808,6 +813,15 @@ endif()
 # compile into EVERY target (app + benches). Default 0 = zero profiler code.
 #---------------------------------------------------------------------------
 add_compile_definitions(KIEEKEY_PROFILE=${KIEEKEY_PROFILE})
+
+# The profile switch is intentionally GLOBAL (not target-scoped): it changes
+# EngineOptions' default member initializers and the constexpr profile flags
+# in TextEngine.hpp, so every TU in the build must observe the same value —
+# a target-scoped definition would let TUs disagree (ODR violation with
+# silently mixed strict/profile behavior).
+if(KIEEKEY_LOW_LATENCY_PROFILE)
+    add_compile_definitions(KIEEKEY_LOW_LATENCY_PROFILE)
+endif()
 
 #----------------------------------------------------------------------------
 # WinUI 3 front-end (Windows App SDK; optional — requires the SDK installed)

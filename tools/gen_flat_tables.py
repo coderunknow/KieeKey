@@ -93,6 +93,86 @@ def _eval_c(s: str) -> int:
         return v
     return parse_or() & 0xFFFFFFFF
 
+
+def emit_vowel_combine_pair_lut(fout, entries):
+    """Emit the M-6 direct pair verdict table for canHasEndConsonant().
+
+    kVowelCombine rows are [allowEnd, v1, v2, ...].  canHasEndConsonant() only
+    asks the table for two-vowel groups on the hot mark-placement path; rows
+    longer than [flag,v1,v2] are deliberately left to the legacy fallback.
+    """
+    dim = 26 * 4  # A-Z times {plain, ^/tone, horn, both}; both is verified empty-compatible.
+    table = [0] * (dim * dim)  # 0 missing, 1 present+reject, 2 present+allow
+    rows = []
+    for _key, seqs in entries:
+        for row in seqs:
+            if len(row) != 3:
+                continue
+            vals = [eval_expr(x) for x in row]
+            def enc(v):
+                base = v & 0xFFFF
+                if base < 0x41 or base > 0x5A:
+                    raise ValueError(f"bad vowel-combine codepoint 0x{v:x}")
+                flags = (1 if (v & MASKS["kToneMask"]) else 0) | (2 if (v & MASKS["kToneWMask"]) else 0)
+                return (base - 0x41) * 4 + flags
+            idx = enc(vals[1]) * dim + enc(vals[2])
+            verdict = 2 if vals[0] else 1
+            if table[idx] and table[idx] != verdict:
+                raise ValueError(f"conflicting kVowelCombine pair row at {row}")
+            if table[idx] == 0:
+                rows.append((vals[1], vals[2], verdict))
+            table[idx] = verdict
+
+    fout.write("// ---- vowel-combine pair verdict LUT (M-6) ----------------------------\n")
+    fout.write("// Generated from kVowelCombine. Values: 0=missing/false, 1=present+false, 2=present+true.\n")
+    fout.write("constexpr std::size_t kVowelCombinePairAlphabet = 26;\n")
+    fout.write("constexpr std::size_t kVowelCombinePairFlagStates = 4;\n")
+    fout.write("constexpr std::size_t kVowelCombinePairDim = kVowelCombinePairAlphabet * kVowelCombinePairFlagStates;\n")
+    fout.write("constexpr std::size_t kVowelCombinePairLutSize = kVowelCombinePairDim * kVowelCombinePairDim;\n")
+    fout.write(f"constexpr std::size_t kVowelCombinePairLutPopcount = {len(rows)};\n")
+    fout.write("[[nodiscard]] constexpr std::size_t vowelCombinePairComponentIndex(std::uint32_t v) noexcept {\n")
+    fout.write("    const std::uint32_t base = v & kCharMask;\n")
+    fout.write("    if (base < U'A' || base > U'Z') { return kVowelCombinePairDim; }\n")
+    fout.write("    const std::uint32_t flags = ((v & kToneMask) ? 1u : 0u) | ((v & kToneWMask) ? 2u : 0u);\n")
+    fout.write("    return static_cast<std::size_t>(base - U'A') * kVowelCombinePairFlagStates + flags;\n")
+    fout.write("}\n")
+    fout.write("[[nodiscard]] constexpr std::size_t vowelCombinePairIndex(std::uint32_t a, std::uint32_t b) noexcept {\n")
+    fout.write("    const std::size_t ai = vowelCombinePairComponentIndex(a);\n")
+    fout.write("    const std::size_t bi = vowelCombinePairComponentIndex(b);\n")
+    fout.write("    return (ai >= kVowelCombinePairDim || bi >= kVowelCombinePairDim) ? kVowelCombinePairLutSize : (ai * kVowelCombinePairDim + bi);\n")
+    fout.write("}\n")
+    fout.write("constexpr std::array<std::uint8_t, kVowelCombinePairLutSize> kVowelCombinePairLut = {\n    {\n")
+    for off in range(0, len(table), 32):
+        chunk = table[off:off + 32]
+        line = ", ".join(str(v) for v in chunk)
+        if off + 32 < len(table):
+            line += ","
+        fout.write(f"        {line}\n")
+    fout.write("    }\n};\n")
+    fout.write("[[nodiscard]] constexpr bool vowelCombinePairAllowsEnd(std::uint32_t a, std::uint32_t b) noexcept {\n")
+    fout.write("    const std::size_t idx = vowelCombinePairIndex(a, b);\n")
+    fout.write("    return idx < kVowelCombinePairLutSize && kVowelCombinePairLut[idx] == 2;\n")
+    fout.write("}\n")
+    fout.write("[[nodiscard]] constexpr bool verifyVowelCombinePairLut() noexcept {\n")
+    fout.write("    std::size_t seen = 0;\n")
+    fout.write("    for (std::size_t g = 0; g < kVowelCombine.size(); ++g) {\n")
+    fout.write("        const auto& rows = kVowelCombine.entries[g].second;\n")
+    fout.write("        for (std::size_t r = 0; r < rows.size(); ++r) {\n")
+    fout.write("            const auto& row = rows[r];\n")
+    fout.write("            if (row.size() != 3) { continue; }\n")
+    fout.write("            const std::size_t idx = vowelCombinePairIndex(row[1], row[2]);\n")
+    fout.write("            if (idx >= kVowelCombinePairLutSize) { return false; }\n")
+    fout.write("            const std::uint8_t want = row[0] == 1 ? 2u : 1u;\n")
+    fout.write("            if (kVowelCombinePairLut[idx] != want) { return false; }\n")
+    fout.write("            ++seen;\n")
+    fout.write("        }\n")
+    fout.write("    }\n")
+    fout.write("    std::size_t actual = 0;\n")
+    fout.write("    for (std::uint8_t v : kVowelCombinePairLut) { if (v != 0) { ++actual; } }\n")
+    fout.write("    return seen == kVowelCombinePairLutPopcount && actual == kVowelCombinePairLutPopcount;\n")
+    fout.write("}\n")
+    fout.write("static_assert(verifyVowelCombinePairLut(), \"kVowelCombine pair LUT drifted from source verdicts\");\n\n")
+
 # ---------------------------------------------------------------------------
 # tokenizer over an initializer list
 # ---------------------------------------------------------------------------
@@ -465,6 +545,10 @@ def main():
         entries.sort(key=lambda kv: eval_expr(kv[0]))
         emit_flat(fout, name, "std::uint16_t", vtype, entries,
                   f"{name}", f"{name}_Inner")
+        if name == "kVowelCombine":
+            vowel_combine_entries = entries
+
+    emit_vowel_combine_pair_lut(fout, vowel_combine_entries)
 
     fout.write("// ---- plain structural tables ----------------------------------------\n")
     for name in ["kConsonantD", "kConsonantTable", "kEndConsonantTable"]:

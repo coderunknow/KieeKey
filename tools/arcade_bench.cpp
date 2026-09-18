@@ -123,8 +123,8 @@ double micros(Clock::time_point begin, Clock::time_point end) {
 
 std::uint64_t fnv1a(const std::string& data) {
     std::uint64_t hash = 1469598103934665603ull;
-    for (unsigned char byte : data) {
-        hash ^= byte;
+    for (const char raw : data) {
+        hash ^= static_cast<unsigned char>(raw);
         hash *= 1099511628211ull;
     }
     return hash;

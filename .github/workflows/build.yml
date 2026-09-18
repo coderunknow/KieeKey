@@ -77,7 +77,45 @@ jobs:
         run: cmake -S . -B out/${{ matrix.platform }} ${{ matrix.cmake_args }} -DCMAKE_BUILD_TYPE=Release -DKIEEKEY_BUILD_TESTS=ON -DKIEEKEY_BUILD_UI=none
 
       - name: Build
-        run: cmake --build out/${{ matrix.platform }} --config Release --parallel
+        shell: pwsh
+        run: |
+          $log = "build-${{ matrix.platform }}.log"
+          # Tee the compiler output: MSVC is the only toolchain that builds these
+          # sources, so the exact diagnostics have to survive the job even when
+          # the raw log is not reachable (they are surfaced as annotations on
+          # the check run, and the log itself is uploaded below).
+          cmake --build out/${{ matrix.platform }} --config Release --parallel 2>&1 |
+              Tee-Object -FilePath $log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            # Keep the annotations short: the first errors are the ones that
+            # matter (later ones are usually cascades).
+            $patterns = 'error [A-Z]+[0-9]+:', 'error LNK[0-9]+', 'error MSB[0-9]+', 'fatal error'
+            $found = @()
+            foreach ($pattern in $patterns) {
+              $found += Select-String -Path $log -Pattern $pattern
+            }
+            $first = $found | Select-Object -First 40
+            foreach ($match in $first) {
+              $text = ($match.Line -replace "`r", '').Trim()
+              if ($text.Length -gt 900) { $text = $text.Substring(0, 900) }
+              Write-Host "::error::$($match.Filename):$($match.LineNumber): $text"
+            }
+            if ($first.Count -eq 0) {
+              $tail = Get-Content $log -Tail 20 -ErrorAction SilentlyContinue
+              Write-Host "::error::build failed with no parsed error line; tail: $($tail -join ' | ')"
+            }
+            exit $code
+          }
+
+      - name: Upload build log
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-log-${{ matrix.platform }}
+          path: build-${{ matrix.platform }}.log
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Run unit tests
         if: matrix.platform == 'x64'

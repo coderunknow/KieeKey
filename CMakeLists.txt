@@ -193,7 +193,8 @@ if(WIN32)
         user32 gdi32 shell32 ole32 dwmapi psapi version urlmon winmm
         msimg32    # v1.3.0: GradientFill for the Arcade Hub background
         advapi32   # v1.1.3: OpenProcessToken / GetTokenInformation (elevation probe)
-        wtsapi32)  # v1.2.0: WTSRegisterSessionNotification (lock/unlock, RDP)
+        wtsapi32   # v1.2.0: WTSRegisterSessionNotification (lock/unlock, RDP)
+        ws2_32)    # v1.3.0: the Arcade web bridge (ArcadeServer.cpp) uses Winsock
 
     # TSF composer
     add_library(ok_tsf STATIC

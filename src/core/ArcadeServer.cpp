@@ -263,7 +263,7 @@ std::size_t ArcadeServer::pendingResults() const {
 void ArcadeServer::drainRunResults() {
     // Shared with the desktop hub (ArcadeManager::drainRunResultsToProgression):
     // one implementation, so the two front-ends can never credit differently.
-    m_runCounter += m_manager.drainRunResultsToProgression();
+    m_runCounter += static_cast<std::uint32_t>(m_manager.drainRunResultsToProgression());
 }
 
 bool ArcadeServer::startGame(const std::string& slug) {

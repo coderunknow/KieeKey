@@ -643,6 +643,22 @@ if(WIN32 AND KIEEKEY_BUILD_TESTS)
     add_executable(ok_soak_pipeline tests/soak_pipeline.cpp)
     target_link_libraries(ok_soak_pipeline PRIVATE ok_core)
 
+    # v1.3.0 Arcade, Chaos, AI & Progression harnesses
+    add_executable(ok_arcade_tests tests/test_arcade.cpp)
+    target_link_libraries(ok_arcade_tests PRIVATE ok_core)
+    add_executable(ok_chaos_tests tests/test_chaos.cpp)
+    target_link_libraries(ok_chaos_tests PRIVATE ok_core)
+    add_executable(ok_ai_tests tests/test_ai_rival.cpp)
+    target_link_libraries(ok_ai_tests PRIVATE ok_core)
+    add_executable(ok_progression_tests tests/test_progression.cpp)
+    target_link_libraries(ok_progression_tests PRIVATE ok_core)
+    add_executable(ok_analytics_tests tests/test_analytics.cpp)
+    target_link_libraries(ok_analytics_tests PRIVATE ok_core)
+    add_executable(ok_online_tests tests/test_online_ghost.cpp)
+    target_link_libraries(ok_online_tests PRIVATE ok_core)
+    add_executable(ok_soak_arcade tests/test_soak_arcade.cpp)
+    target_link_libraries(ok_soak_arcade PRIVATE ok_core)
+
     add_test(NAME ok_outputitem_tests COMMAND ok_outputitem_tests)
     add_test(NAME ok_hotfix_tests    COMMAND ok_hotfix_tests)
     add_test(NAME ok_diff_ab_tests   COMMAND ok_diff_ab_tests)
@@ -657,6 +673,13 @@ if(WIN32 AND KIEEKEY_BUILD_TESTS)
     add_test(NAME ok_state_tests     COMMAND ok_state_tests)
     add_test(NAME ok_lifecycle_tests COMMAND ok_lifecycle_tests)
     add_test(NAME ok_soak_pipeline   COMMAND ok_soak_pipeline 300000 30000)
+    add_test(NAME ok_arcade_tests      COMMAND ok_arcade_tests)
+    add_test(NAME ok_chaos_tests       COMMAND ok_chaos_tests)
+    add_test(NAME ok_ai_tests          COMMAND ok_ai_tests)
+    add_test(NAME ok_progression_tests COMMAND ok_progression_tests)
+    add_test(NAME ok_analytics_tests   COMMAND ok_analytics_tests)
+    add_test(NAME ok_online_tests      COMMAND ok_online_tests)
+    add_test(NAME ok_soak_arcade       COMMAND ok_soak_arcade 500)
     endif()   # KIEEKEY_BUILD_EXTRA_TESTS
 
     # Same hang protection for the Windows-compiled test suite (these run
@@ -670,6 +693,8 @@ if(WIN32 AND KIEEKEY_BUILD_TESTS)
             ok_stress_tests ok_soak_tests ok_queue_stress_tests
             ok_gate_tests ok_key_tests ok_state_tests ok_lifecycle_tests
             ok_soak_pipeline
+            ok_arcade_tests ok_chaos_tests ok_ai_tests ok_progression_tests
+            ok_analytics_tests ok_online_tests ok_soak_arcade
             PROPERTIES TIMEOUT 300)
     endif()
 

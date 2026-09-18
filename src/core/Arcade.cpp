@@ -1021,7 +1021,6 @@ bool FlexingGame::handleKey(int vk, char32_t ch, bool down) {
         return true;
     }
 
-    size_t emitCount = 1;
     if (m_gran == FlexGranularity::OneWordPerKey) {
         // Emit until next space
         while (m_cursor < m_preloadedText.size()) {

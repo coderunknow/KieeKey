@@ -73,10 +73,81 @@ void printMenu() {
     std::cout << "Choose an option: ";
 }
 
+//---- v1.3.0: non-interactive smoke test -----------------------------------
+// Every game must (a) launch, (b) answer input through the shared
+// ArcadeManager, (c) keep producing a display list for the GUI, and (d) turn
+// that list into wire JSON. The same code path the Win32 window and the web
+// player use, without a window or a socket.
+int selfTestAllGames() {
+    auto& mgr = ArcadeManager::instance();
+    int failures = 0;
+    const GameType games[] = {GameType::Snake,       GameType::Tetris,
+                              GameType::Fishing,     GameType::TypingRace,
+                              GameType::WasdRace,    GameType::Rhythm,
+                              GameType::NoMistake,   GameType::Flexing};
+    const char* slugs[] = {"snake",  "tetris", "fishing",  "typing-race",
+                           "wasd-race", "rhythm", "no-mistake", "flexing"};
+
+    for (std::size_t index = 0; index < std::size(games); ++index) {
+        if (!mgr.launchGame(games[index], static_cast<std::uint32_t>(index) + 1u)) {
+            std::cout << "  [FAIL] " << slugs[index] << ": launch refused\n";
+            ++failures;
+            continue;
+        }
+        const char32_t keys[] = {U'a', U's', U'd', U'f', U'j', U'k', U'l', U' '};
+        for (int step = 0; step < 48; ++step) {
+            (void)mgr.handleKey(0, keys[step % static_cast<int>(std::size(keys))], true);
+            (void)mgr.handleKey(0, keys[step % static_cast<int>(std::size(keys))], false);
+            mgr.update(1.0 / 60.0);
+        }
+
+        RenderList list;
+        buildRenderList(mgr.getFrame(), list);
+        std::string json;
+        renderListToJson(list, json);
+        const std::size_t commands = list.commands.size();
+        const bool alive = mgr.getCurrentGameType() != GameType::None;
+        if (commands == 0 || json.size() < 32) {
+            std::cout << "  [FAIL] " << slugs[index] << ": empty frame (" << commands
+                      << " commands, " << json.size() << " bytes)\n";
+            ++failures;
+        } else {
+            std::cout << "  [ ok ] " << slugs[index] << ": " << commands << " commands, "
+                      << json.size() << " bytes of JSON, title \"" << list.title << "\"\n";
+        }
+        if (!alive) {
+            std::cout << "  [FAIL] " << slugs[index] << ": the run ended by itself\n";
+            ++failures;
+        }
+        (void)mgr.handleKey(0x1B, 0, true);   // Esc: leave the game
+    }
+
+    // The Chaos engine and the Flexing pipeline are part of the same feature
+    // set, so the smoke test covers them too.
+    ChaosEngine& chaos = ChaosEngine::instance();
+    ChaosConfig config = chaos.getConfig();
+    config.masterEnabled = true;
+    config.randomCaseEnabled = true;
+    config.randomCaseIntensity = 1.0f;
+    chaos.setConfig(config);
+    const std::u32string shaped = chaos.processCase(U"nguyen van a", 7);
+    if (shaped == U"nguyen van a") {
+        std::cout << "  [FAIL] chaos: random case changed nothing\n";
+        ++failures;
+    } else {
+        std::cout << "  [ ok ] chaos: " << ok::arcade::utf8FromUtf32(shaped) << "\n";
+    }
+    chaos.setConfig(ChaosConfig{});
+
+    if (failures == 0) {
+        std::cout << "KieeKey Arcade CLI self-test OK (8/8 games + chaos)\n";
+    }
+    return failures;
+}
+
 int main(int argc, char** argv) {
     if (argc > 1 && std::string(argv[1]) == "--test") {
-        std::cout << "KieeKey Arcade CLI self-test OK\n";
-        return 0;
+        return selfTestAllGames();
     }
 
     auto& mgr = ArcadeManager::instance();

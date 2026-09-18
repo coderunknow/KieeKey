@@ -46,6 +46,7 @@ ChaosLabWindow::EmitCallback ChaosLabWindow::emitCallback() noexcept { return nu
 #endif
 #include <windows.h>
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -65,6 +66,14 @@ constexpr int kIdIntensity = 4020;
 constexpr int kIdMode = 4021;
 constexpr int kIdFlexing = 4030;
 constexpr int kIdSendOnce = 4031;
+// Flexing page (the dedicated "gõ thật" surface for Flexing Mode).
+constexpr int kIdFlexInput = 4040;     // type anything here: one key = one step
+constexpr int kIdFlexOutput = 4041;    // what the engine produced (and typed out)
+constexpr int kIdFlexGran = 4042;      // granularity
+constexpr int kIdFlexLoad = 4043;      // load the prepared passage
+constexpr int kIdFlexInject = 4044;    // auto-inject every produced chunk
+constexpr int kIdFlexPrep = 4045;      // the prepared passage itself
+constexpr int kIdFlexSend = 4046;      // type the produced text into the app
 
 std::wstring widen(const std::string& utf8) {
     if (utf8.empty()) {
@@ -107,6 +116,15 @@ struct ChaosLabWindow::Impl {
     HWND flexingBox = nullptr;
     HWND intensity = nullptr;
     HWND mode = nullptr;
+    // Flexing page
+    HWND flexPrep = nullptr;
+    HWND flexGran = nullptr;
+    HWND flexLoad = nullptr;
+    HWND flexOutput = nullptr;
+    HWND flexInput = nullptr;
+    HWND flexInject = nullptr;
+    HWND flexSend = nullptr;
+    std::wstring flexProduced;        // everything the engine produced so far
     bool ignoreNotifications = false;
 };
 
@@ -171,6 +189,107 @@ void applyCheckboxes(ChaosLabWindow::Impl& impl) {
     engine.setConfig(config);
 }
 
+// Appends to a read-only EDIT without stealing the caret position.
+void appendToEdit(HWND edit, const std::wstring& text) {
+    if (edit == nullptr || text.empty()) {
+        return;
+    }
+    const int length = ::GetWindowTextLengthW(edit);
+    ::SendMessageW(edit, EM_SETSEL, static_cast<WPARAM>(length), static_cast<LPARAM>(length));
+    ::SendMessageW(edit, EM_REPLACESEL, FALSE, reinterpret_cast<LPARAM>(text.c_str()));
+}
+
+std::size_t ensureFlexingGame(ChaosLabWindow::Impl& impl) {
+    auto& manager = ok::arcade::ArcadeManager::instance();
+    if (manager.getCurrentGameType() != ok::arcade::GameType::Flexing) {
+        (void)manager.launchGame(ok::arcade::GameType::Flexing);
+    }
+    auto* game = dynamic_cast<ok::arcade::FlexingGame*>(manager.getCurrentGame());
+    if (game == nullptr) {
+        return 0;
+    }
+    if (impl.flexPrep != nullptr) {
+        const std::wstring prepared = controlText(impl.flexPrep);
+        if (!prepared.empty()) {
+            game->setPreloadedText([] (const std::wstring& wide) {
+                std::u32string out;
+                out.reserve(wide.size());
+                for (wchar_t ch : wide) {
+                    out.push_back(static_cast<char32_t>(ch));
+                }
+                return out;
+            }(prepared));
+        }
+    }
+    if (impl.flexGran != nullptr) {
+        const int selection = static_cast<int>(::SendMessageW(impl.flexGran, CB_GETCURSEL, 0, 0));
+        const auto granularity = static_cast<ok::arcade::FlexGranularity>(
+            selection < 0 ? 0 : (selection > 3 ? 3 : selection));
+        game->setGranularity(granularity, 3);
+    }
+    return game->getPreloadedText().size();
+}
+
+// One pump of the flexing game: advance the engine, take whatever text it
+// produced, log it and (when armed) really type it into the focus application.
+void pumpFlexing(ChaosLabWindow::Impl& impl, bool alsoOnTimer) {
+    auto& manager = ok::arcade::ArcadeManager::instance();
+    if (manager.getCurrentGameType() != ok::arcade::GameType::Flexing) {
+        return;
+    }
+    auto* game = dynamic_cast<ok::arcade::FlexingGame*>(manager.getCurrentGame());
+    if (game == nullptr) {
+        return;
+    }
+    if (alsoOnTimer) {
+        manager.update(static_cast<double>(ChaosLabWindow::kTimerIntervalMs) / 1000.0);
+    }
+    std::u32string produced = game->popEmittedOutput();
+    if (produced.empty()) {
+        return;
+    }
+    const std::wstring wide = widen(ok::arcade::utf8FromUtf32(produced));
+    impl.flexProduced += wide;
+    appendToEdit(impl.flexOutput, wide);
+
+}
+
+// Splits text into typing-sized chunks so the injected text looks like a human
+// typing it instead of a single paste.
+std::vector<std::wstring> typingChunks(const std::wstring& text, std::size_t chunkChars) {
+    std::vector<std::wstring> chunks;
+    if (text.empty()) {
+        return chunks;
+    }
+    const std::size_t step = (chunkChars == 0) ? 1 : chunkChars;
+    for (std::size_t offset = 0; offset < text.size();) {
+        const std::size_t end = std::min(offset + step, text.size());
+        chunks.push_back(text.substr(offset, end - offset));
+        offset = end;
+    }
+    return chunks;
+}
+
+// Hands the focus back to the application the user came from and types there.
+// SendInput reaches whatever has the focus, so this must never run while the
+// lab itself is focused.
+std::size_t typeIntoFocusApp(ChaosLabWindow::Impl& impl, const std::wstring& text, bool perChunk) {
+    if (text.empty() || !::IsWindow(impl.target) || ChaosLabWindow::emitCallback() == nullptr) {
+        return 0;
+    }
+    ::SetForegroundWindow(impl.target);
+    ::Sleep(80);   // let the activation settle before typing
+    if (!perChunk) {
+        return ChaosLabWindow::emitCallback()(text);
+    }
+    std::size_t emitted = 0;
+    for (const std::wstring& chunk : typingChunks(text, 6)) {
+        emitted += ChaosLabWindow::emitCallback()(chunk);
+        ::Sleep(60);
+    }
+    return emitted;
+}
+
 } // namespace
 
 namespace {
@@ -214,6 +333,47 @@ LRESULT CALLBACK labWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
                 ::SetFocus(impl->input);
                 return 0;
             }
+            if (control == kIdFlexLoad && notification == BN_CLICKED) {
+                // Reload the prepared passage into the shared FlexingGame.
+                const std::size_t total = ensureFlexingGame(*impl);
+                impl->flexProduced.clear();
+                if (impl->flexOutput != nullptr) {
+                    ::SetWindowTextW(impl->flexOutput, L"");
+                }
+                if (total == 0) {
+                    ::SetWindowTextW(impl->flexOutput,
+                                     L"(chua co van ban chuan bi — hay nhap vao o tren)");
+                }
+                ::SetFocus(impl->flexInput);
+                return 0;
+            }
+            if (control == kIdFlexGran && notification == CBN_SELCHANGE) {
+                (void)ensureFlexingGame(*impl);
+                return 0;
+            }
+            if (control == kIdFlexInput && (notification == EN_CHANGE || notification == EN_UPDATE)) {
+                // One physical character typed in the flexing box = one step of
+                // the game. The text the user sees appearing comes from the
+                // engine, not from what they pressed.
+                auto& manager = ok::arcade::ArcadeManager::instance();
+                if (manager.getCurrentGameType() == ok::arcade::GameType::Flexing) {
+                    (void)manager.handleKey(0, U'x', true);
+                    pumpFlexing(*impl, false);
+                }
+                return 0;
+            }
+            if (control == kIdFlexSend && notification == BN_CLICKED) {
+                // Type everything the engine produced into the application the
+                // user was in before opening the lab ("Flexing gõ thật ra ngoài").
+                const bool perChunk =
+                    ::SendMessageW(impl->flexInject, BM_GETCHECK, 0, 0) == BST_CHECKED;
+                (void)typeIntoFocusApp(*impl, impl->flexProduced, perChunk);
+                if (impl->flexProduced.empty() && impl->flexOutput != nullptr) {
+                    ::SetWindowTextW(impl->flexOutput,
+                                     L"(chua co chu nao — hay go vai phim vao o duoi cung)");
+                }
+                return 0;
+            }
             if (control == kIdSendOnce && notification == BN_CLICKED) {
                 // Type the transformed text into the application the user was
                 // working in before opening the lab. The lab itself must give
@@ -236,6 +396,9 @@ LRESULT CALLBACK labWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
         case WM_TIMER:
             if (impl != nullptr && wParam == static_cast<WPARAM>(ChaosLabWindow::kTimerId)) {
                 refreshPreview(*impl);
+                // The flexing page also pumps the ArcadeManager, so the same
+                // FlexingGame the hub runs is what produces the text here.
+                pumpFlexing(*impl, true);
                 return 0;
             }
             break;
@@ -294,7 +457,7 @@ bool ChaosLabWindow::open(void* owner) {
             return false;
         }
 
-        RECT desired{0, 0, 760, 620};
+        RECT desired{0, 0, 760, 880};
         ::AdjustWindowRectEx(&desired, WS_OVERLAPPEDWINDOW, FALSE, 0);
         m_impl->hwnd = ::CreateWindowExW(
             0, kLabClass, kLabTitle, WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, CW_USEDEFAULT,
@@ -356,6 +519,44 @@ bool ChaosLabWindow::open(void* owner) {
         create(L"STATIC",
                L"P / F1 tạm dừng game · F2 chơi lại · Esc thoát game (khi cửa sổ này đang focus)",
                SS_LEFT, 300, 440, 430, 18, -1);
+
+        //---- Flexing Mode page: type anything, the prepared text appears ----
+        create(L"STATIC", L"🗿 FLEXING MODE — gõ gì cũng được, chữ chuẩn bị trước tự hiện ra:",
+               SS_LEFT, 14, 478, 720, 18, -1);
+        create(L"STATIC", L"Văn bản chuẩn bị trước:", SS_LEFT, 14, 500, 200, 18, -1);
+        m_impl->flexPrep = create(L"EDIT", L"KieeKey Flexing Mode: ban go gi de tao ra dong chu nay!\r\n"
+                                            L"Day la van ban duoc chuan bi truoc, engine C++ go ho ban.",
+                                  WS_BORDER | ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN,
+                                  14, 520, 520, 66, kIdFlexPrep);
+        m_impl->flexLoad = create(L"BUTTON", L"Nạp văn bản", BS_PUSHBUTTON, 546, 520, 90, 26,
+                                  kIdFlexLoad);
+        m_impl->flexSend = create(L"BUTTON", L"Gõ chữ Flexing ra app", BS_PUSHBUTTON, 546, 552,
+                                  90, 26, kIdFlexSend);
+        create(L"STATIC", L"Mỗi phím sinh ra:", SS_LEFT, 646, 502, 92, 18, -1);
+        m_impl->flexGran = create(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL, 646, 520, 92, 200,
+                                  kIdFlexGran);
+        for (const wchar_t* label : {L"1 ký tự", L"1 từ", L"N ký tự", L"Tự chảy"}) {
+            ::SendMessageW(m_impl->flexGran, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label));
+        }
+        ::SendMessageW(m_impl->flexGran, CB_SETCURSEL, 0, 0);
+        m_impl->flexInject = create(L"BUTTON", L"Gõ từng nhịp", BS_AUTOCHECKBOX, 640, 552, 110, 22,
+                                    kIdFlexInject);
+
+        create(L"STATIC", L"Chữ engine đã sinh ra (và đã gõ thật ra ngoài):", SS_LEFT, 14, 594, 720,
+               18, -1);
+        m_impl->flexOutput = create(L"EDIT", L"",
+                                    WS_BORDER | ES_MULTILINE | ES_READONLY | WS_VSCROLL,
+                                    14, 614, 720, 92, kIdFlexOutput);
+
+        create(L"STATIC", L"Gõ phím bất kỳ vào ô này (mỗi ký tự = một nhịp của game):", SS_LEFT, 14,
+               714, 720, 18, -1);
+        m_impl->flexInput = create(L"EDIT", L"",
+                                   WS_BORDER | ES_MULTILINE | ES_AUTOVSCROLL,
+                                   14, 734, 720, 60, kIdFlexInput);
+        create(L"STATIC",
+               L"Mẹo: gõ vài phím vào ô dưới, rồi bấm \"Gõ chữ Flexing ra app\" — chữ sẽ thật sự "
+               L"được gõ vào ứng dụng bạn đang dùng (tick \"Gõ từng nhịp\" để gõ chậm như người thật).",
+               SS_LEFT, 14, 800, 720, 18, -1);
 
         ::SetTimer(m_impl->hwnd, kTimerId, kTimerIntervalMs, nullptr);
     }

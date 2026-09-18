@@ -110,7 +110,9 @@ private:
     // Pushes one SSE frame to every live stream subscriber.
     void serviceStreams();
     [[nodiscard]] bool writeAll(int socketHandle, const std::string& data);
-    [[nodiscard]] std::string buildStateJson();
+    // `consumeFlexEmit=false` (used by the polling /api/status route) reports
+    // the Flexing Mode output without taking it away from the SSE stream.
+    [[nodiscard]] std::string buildStateJson(bool consumeFlexEmit = true);
     [[nodiscard]] bool readStaticFile(const std::string& relativePath, std::string& out,
                                       std::string& contentTypeForFile) const;
     // Drains finished runs into the progression engine (single place where the

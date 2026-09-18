@@ -55,6 +55,8 @@ Everything below is one release; the full history of v1.2.x and v1.1.x lives in
 | **Arcade Hub window** | Win32/GDI window (1180×760, double-buffered, 60 FPS) with a game-catalogue sidebar, click-to-play, live score/WPM footer and a level-up toast | `KieeKeyApp.exe --arcade[=slug]`, the tray menu, or the settings dialog buttons |
 | **Web player** | HTML5 canvas client driving *the same C++ engine* over HTTP + SSE (`tools/arcade_serve`, `web/`) | `arcade_serve --port 8765 --host 0.0.0.0 --web web` then open `http://localhost:8765/` |
 | **Chaos Lab window** | Dedicated test UI: type text, see the exact bytes KieeKey would emit, and (optionally) write them into the application you were working in | `KieeKeyApp.exe --chaos-lab` or the tray menu |
+| **Flexing page** | Its own surface inside the lab: prepared passage in, engine text out (WPM / efficiency / cursor), then really typed into the app you came from — one paste or chunk by chunk | Lab window → 🗿 Flexing Mode |
+| **Web labs** | The same two surfaces in the browser: `POST /api/preload` + `flex.emitted` for the Flexing stage, `GET|POST /api/chaos` + `POST /api/chaos/preview` for the Chaos lab (the transformation runs in C++, never in JavaScript) | Buttons in the side panel of the web player |
 | **Settings surfaces** | WinUI 3 pages (Arcade / Chaos / Progression & AI) and the Win32 settings dialog act as launcher + live telemetry, and carry the run configuration: Rhythm/No-Mistake **fail mode** (Hardcore default, or HP bar) and the **BPM** | `KieeKeyApp.exe --settings=N` |
 
 ### The eight games

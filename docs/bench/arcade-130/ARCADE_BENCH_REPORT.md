@@ -1,6 +1,6 @@
 # KieeKey v1.3.0 — Arcade / Chaos / AI stack benchmark
 
-**Campaign:** `arcade-130` · **Date (UTC):** 2026-09-18T08:56:11Z · **Commit:** `3a7dacc`
+**Campaign:** `arcade-130` · **Date (UTC):** 2026-09-18T09:24:10Z · **Commit:** `508eec8`
 **Host:** Linux 6.1.158+ x86_64 · Intel(R) Xeon(R) Processor @ 2.60GHz · **Compiler:** `g++ (Debian 12.2.0-14+deb12u1) 12.2.0`
 **Parameters:** `--iters=4000`, `--server-iters=2000`
 
@@ -34,19 +34,19 @@ The frame budget is the 16 667 µs of a 60 FPS frame.
 
 | game | title | update p50 | update p99 | display list (mean) | JSON (mean) | frame total (mean) | % of 60 FPS budget | cmds | JSON bytes | digest |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
-| `snake` | Snake | 0.073 | 0.308 | 0.99 | 63.3 | **64.4** | 0.386% | 42 | 1881 | `cdd82d8d313aa88c` |
-| `tetris` | Tetris | 0.052 | 0.211 | 1.42 | 28.3 | **29.8** | 0.179% | 18 | 1289 | `be6abe9c15b595f7` |
-| `fishing` | Fishing | 0.056 | 0.288 | 1.59 | 46.8 | **48.5** | 0.291% | 32 | 1910 | `ac317530d87618f0` |
-| `typing-race` | Typing Race | 0.070 | 0.258 | 1.78 | 46.1 | **47.9** | 0.288% | 30 | 1777 | `b94f13233ee159e5` |
-| `wasd-race` | WASD + Typing Racing | 0.081 | 0.306 | 2.08 | 82.6 | **84.8** | 0.509% | 50 | 3081 | `c757fb9552879a3d` |
-| `rhythm` | Rhythm Typing | 0.053 | 0.215 | 1.49 | 30.9 | **32.4** | 0.195% | 20 | 1467 | `a4ad3adab7ba4917` |
-| `no-mistake` | No-Mistake Mode | 0.052 | 0.187 | 1.59 | 14.8 | **16.5** | 0.099% | 10 | 1074 | `7c820be7274c0f53` |
-| `flexing` | Flexing Mode | 0.052 | 0.201 | 2.61 | 18.1 | **20.7** | 0.124% | 12 | 1398 | `bd01fd0b69b49757` |
+| `snake` | Snake | 0.071 | 0.191 | 0.88 | 53.4 | **54.3** | 0.326% | 42 | 1881 | `cdd82d8d313aa88c` |
+| `tetris` | Tetris | 0.051 | 0.195 | 1.33 | 27.6 | **29.0** | 0.174% | 18 | 1289 | `be6abe9c15b595f7` |
+| `fishing` | Fishing | 0.055 | 0.227 | 1.45 | 41.6 | **43.1** | 0.259% | 32 | 1910 | `ac317530d87618f0` |
+| `typing-race` | Typing Race | 0.069 | 0.237 | 1.67 | 41.1 | **42.8** | 0.257% | 30 | 1777 | `b94f13233ee159e5` |
+| `wasd-race` | WASD + Typing Racing | 0.080 | 0.313 | 2.22 | 80.9 | **83.3** | 0.500% | 50 | 3081 | `c757fb9552879a3d` |
+| `rhythm` | Rhythm Typing | 0.053 | 0.187 | 1.47 | 29.3 | **30.8** | 0.185% | 20 | 1467 | `88bc6c2f0192687f` |
+| `no-mistake` | No-Mistake Mode | 0.052 | 0.176 | 1.52 | 13.9 | **15.5** | 0.093% | 10 | 1074 | `7c820be7274c0f53` |
+| `flexing` | Flexing Mode | 0.052 | 0.185 | 2.47 | 16.6 | **19.2** | 0.115% | 12 | 1398 | `bd01fd0b69b49757` |
 
 **Reading the table**
 
-* The whole pipeline of the heaviest game costs **84.8 µs**
-  — under **0.51 %** of a 60 FPS frame — and the
+* The whole pipeline of the heaviest game costs **83.3 µs**
+  — under **0.50 %** of a 60 FPS frame — and the
   simulation itself never exceeds ~0.2 µs (p99), i.e. the games are not what
   would ever cost a frame.
 * JSON serialization dominates the pipeline, and only the web player pays it
@@ -61,11 +61,11 @@ The frame budget is the 16 667 µs of a 60 FPS frame.
 
 | request | mean | p99 | notes |
 |---|---:|---:|---|
-| `GET /api/state` | 50.42 µs | 99.87 µs | full frame JSON, 1889 bytes |
-| `POST /api/input` | 0.70 µs | 1.86 µs | one keystroke forwarded to the game |
-| `GET /arcade.js` | 37.59 µs | 62.90 µs | static file served from `web/` |
+| `GET /api/state` | 45.44 µs | 89.26 µs | full frame JSON, 1889 bytes |
+| `POST /api/input` | 0.65 µs | 1.76 µs | one keystroke forwarded to the game |
+| `GET /arcade.js` | 42.45 µs | 69.55 µs | static file served from `web/` |
 
-The bridge serves the state endpoint at up to **19834 requests/s on a
+The bridge serves the state endpoint at up to **22006 requests/s on a
 single thread**, i.e. roughly two orders of magnitude more than the 60 Hz the
 player asks for.
 
@@ -98,8 +98,10 @@ in the standard suite (`tests/run_all_tests.sh`, or `ctest` on Windows):
 |---|---|
 | `test_arcade` | 3742 checks, 0 failures (games, manager, determinism, allocations) |
 | `test_arcade_render` | 6/6 (display list, JSON, injection safety, viewport, payload budget) |
-| `test_arcade_server` | 6/6 (routing, sessions, input, traversal guards, full race, isolation) |
-| `test_arcade_window` | 5/5 (the real Win32 window procedures, executed via the GDI recorder) |
+| `test_arcade_server` | 8/8 (routing, sessions, input, traversal guards, full race, isolation, Flexing payload, Chaos lab) |
+| `test_arcade_window` | 5/5 (the real Win32 window procedures, executed via the GDI recorder, incl. the Flexing page) |
+| `tests/web_labs_test.js` | 27 checks, 0 failures (real `web/labs.js` against a DOM/fetch double) |
+| `demo/arcade_cli --test` | 8/8 games + chaos transform (build + run in the suite) |
 | `test_chaos` / `test_ai_rival` / `test_progression` / `test_analytics` / `test_online_ghost` | 4 / 6 / 9 / 6 / ✓ |
 | engine gate | 2 059 419 events vs the clean-room oracle, 0 mismatches |
 | feature isolation | 0.0 % overhead with the arcade/chaos modules idle, bit-identical output digests |

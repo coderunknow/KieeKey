@@ -214,7 +214,7 @@ build soak_pipeline       -std=c++2b -O2 -pthread $INC tests/soak_pipeline.cpp  
 # --- v1.3.0 Arcade, Chaos, AI & Progression additions -----------------------
 build test_arcade         -std=c++2b -O2 $INC tests/test_arcade.cpp src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ArcadeRender.cpp src/core/Progression.cpp || rc=1
 build test_arcade_render  -std=c++2b -O2 $INC tests/test_arcade_render.cpp src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ArcadeRender.cpp src/core/Progression.cpp || rc=1
-build test_arcade_server  -std=c++2b -O2 $INC tests/test_arcade_server.cpp src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ArcadeRender.cpp src/core/ArcadeServer.cpp src/core/Progression.cpp || rc=1
+build test_arcade_server  -std=c++2b -O2 $INC tests/test_arcade_server.cpp src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ArcadeRender.cpp src/core/ArcadeServer.cpp src/core/Progression.cpp src/core/ChaosEngine.cpp || rc=1
 # The Win32 hub/lab windows are executed here through tests/win32_gdi_stub.cpp
 # (a recording USER32/GDI32 layer), so the graphical front-end is covered on a
 # host without the Windows SDK. -D_WIN32 selects the real window implementation.
@@ -228,6 +228,7 @@ build test_ai_rival       -std=c++2b -O2 $INC tests/test_ai_rival.cpp src/core/A
 build test_progression    -std=c++2b -O2 $INC tests/test_progression.cpp src/core/Progression.cpp || rc=1
 build test_analytics      -std=c++2b -O2 $INC tests/test_analytics.cpp src/core/TypingAnalytics.cpp || rc=1
 build test_online_ghost   -std=c++2b -O2 $INC tests/test_online_ghost.cpp src/core/OnlineGhost.cpp || rc=1
+build arcade_cli          -std=c++2b -O2 $INC demo/arcade_cli.cpp src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ArcadeRender.cpp src/core/Progression.cpp src/core/ChaosEngine.cpp src/core/AiRival.cpp src/core/TypingAnalytics.cpp src/core/OnlineGhost.cpp -pthread || rc=1
 build test_soak_arcade    -std=c++2b -O2 $INC tests/test_soak_arcade.cpp src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ChaosEngine.cpp src/core/AiRival.cpp src/core/Progression.cpp src/core/TypingAnalytics.cpp || rc=1
 
 # --- version-identifier consistency (no mixed version strings) --------------
@@ -238,6 +239,19 @@ if command -v python3 >/dev/null 2>&1; then
         printf ' ok\n'
     else
         printf ' FAILED — %s\n' "$OUT/logs/version.log"
+        rc=1
+    fi
+fi
+
+# --- web player (headless): labs.js behaviour without a browser --------------
+# The sandbox has no browser, so tests/web_labs_test.js runs the real client
+# file against a small DOM/fetch double. Skipped (not failed) without Node.
+if command -v node >/dev/null 2>&1; then
+    printf '  [check] %-22s' "web labs (node)"
+    if ( cd "$REPO_ROOT" && node tests/web_labs_test.js ) > "$OUT/logs/web_labs.log" 2>&1; then
+        printf ' ok\n'
+    else
+        printf ' FAILED — %s\n' "$OUT/logs/web_labs.log"
         rc=1
     fi
 fi
@@ -357,6 +371,7 @@ run test_ai_rival            60
 run test_progression         60
 run test_analytics           60
 run test_online_ghost        60
+run arcade_cli               60 --test
 
 dispatch_runs
 

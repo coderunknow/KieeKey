@@ -222,6 +222,7 @@ function setConnection(cls, text) {
 function onState(state) {
   lastFrame = state.frame;
   updateHud(state);
+  if (window.KieeKeyLabs) { window.KieeKeyLabs.onState(state); }
   drawFrame(state.frame);
   framesDrawn++;
   const now = performance.now();
@@ -312,11 +313,25 @@ async function sendInput(vk, ch, down) {
   }
 }
 
+function isNativeLabInput(event) {
+  return !!(window.KieeKeyLabs && window.KieeKeyLabs.isNativeInput(event.target));
+}
+
 window.addEventListener('keydown', (event) => {
   if (event.ctrlKey || event.metaKey || event.altKey) { return; }
+  // Editing the prepared passage / chaos sample is normal text editing: the
+  // keystroke belongs to the textarea, not to the game engine.
+  if (isNativeLabInput(event)) { return; }
   const vk = virtualKeyFor(event);
   if (vk === 0) { return; }
   if (event.key === 'Tab') { return; }
+  if (activeSlug === 'flexing' && document.activeElement === document.getElementById('flexTarget')) {
+    // Flexing Mode: the visible text comes from the engine, never from the OS
+    // repeat of the physical key.
+    event.preventDefault();
+    sendInput(vk, event.key.length === 1 ? event.key : '', true);
+    return;
+  }
   if (GAME_KEYS.has(event.key) || event.key.length === 1) {
     // Stop the browser from scrolling / opening its own find bar while playing.
     event.preventDefault();
@@ -325,6 +340,7 @@ window.addEventListener('keydown', (event) => {
 });
 
 window.addEventListener('keyup', (event) => {
+  if (isNativeLabInput(event)) { return; }
   const vk = virtualKeyFor(event);
   if (vk === 0) { return; }
   sendInput(vk, event.key.length === 1 ? event.key : '', false);

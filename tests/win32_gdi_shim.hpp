@@ -242,6 +242,9 @@ struct PAINTSTRUCT {
 #define CB_ADDSTRING     0x0143
 #define CB_GETCURSEL     0x0147
 #define CB_SETCURSEL     0x014E
+#define CBN_SELCHANGE    1
+#define EM_SETSEL        0x00B1
+#define EM_REPLACESEL    0x00C2
 #define TBM_SETRANGE     0x0406
 #define TBM_SETPOS       0x0405
 #define TBM_GETPOS       0x0400

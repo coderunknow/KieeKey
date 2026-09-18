@@ -22,7 +22,22 @@ Keep a Changelog; versioning: SemVer.
   * `web/` (index.html + arcade.css + arcade.js) and `tools/arcade_serve.cpp` —
     an HTML5 canvas player that drives the same C++ engine over HTTP + SSE;
     `arcade_serve` is a real target on Windows and Linux.
-  * New launchers: tray menu items, settings-dialog buttons, WinUI 3 pages, and
+  * `web/labs.js` + two new HTTP routes — the two "gõ thật" surfaces in the
+    browser: the **Flexing stage** (`POST /api/preload` loads the prepared
+    passage, `flex.emitted` in `/api/state`/`/api/stream` carries the text the
+    engine produced, which really lands in an editable control) and the
+    **Chaos lab** (`GET|POST /api/chaos` for the live knobs,
+    `POST /api/chaos/preview` for the exact bytes the engine would inject next
+    to the render-only display transform). Neither route re-implements the
+    transformation in JavaScript.
+  * **Flexing Mode got its own page** inside the Chaos Lab (the user asked for a
+    dedicated test UI for it): a prepared passage, granularity, live
+    `WPM / generated / keys / efficiency / cursor` readout, and a log of exactly
+    the text the shared `FlexingGame` produced — which the "Gõ chữ Flexing ra
+    app" button then types into the application you came from, as one paste or
+    chunk by chunk. Keypresses in the page step the same `ArcadeManager` game
+    the hub window runs.
+  * **New launchers**: tray menu items, settings-dialog buttons, WinUI 3 pages, and
     the command line (`KieeKeyApp.exe --arcade[=slug] --chaos-lab
     --settings=N`).
   * The Arcade tab of the settings dialog gained the run configuration the
@@ -35,12 +50,27 @@ Keep a Changelog; versioning: SemVer.
   HTTP bridge cost, steady-state allocation audit, determinism digest) with its
   evidence committed under `docs/bench/arcade-130/` (see
   `ARCADE_BENCH_REPORT.md`).
+* `tests/web_labs_test.js` — headless Node suite for the browser-side lab
+  glue (a small DOM/fetch double executes the real `web/labs.js`), so the
+  streamed Flexing text, the chaos preview/replay and the "keys belong to the
+  text field, not the engine" guard are verified without a browser.
 * `tests/win32_gdi_shim.hpp`, `tests/win32_gdi_stub.{hpp,cpp}`,
   `tests/win32_headers/windows.h` and `tests/test_arcade_window.cpp` — a
   recording USER32/GDI32 harness that compiles, links and *executes* the real
   window procedures (messages, GDI call log, control state) on any host, so the
   graphical front-end is covered by `tests/run_all_tests.sh` even where no
   Windows SDK exists.
+
+### Changed
+* The standardized arcade benchmark was re-run on this commit and the evidence
+  under `docs/bench/arcade-130/` refreshed (heaviest game 83.3 µs = 0.50 % of a
+  60 FPS frame, `GET /api/state` 45.4 µs / p99 89.3 µs, 0 allocations per frame
+  on the native path); `tests/run_arcade_bench.sh` now also links
+  `ChaosEngine.cpp`, which the new `/api/chaos` route needs.
+* `demo/arcade_cli --test` is a real smoke test now (launch, input, display
+  list, wire JSON and title for all eight games plus the Chaos transform)
+  instead of printing a fixed banner; `tests/run_all_tests.sh` builds and runs
+  it, so the terminal front-end can no longer rot behind the GUI ones.
 
 ### Fixed
 * **Progression was never awarded for games played in the app**: run results

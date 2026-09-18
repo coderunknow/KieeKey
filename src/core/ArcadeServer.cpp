@@ -11,6 +11,7 @@
 //============================================================================
 #include "ArcadeServer.hpp"
 
+#include "ChaosEngine.hpp"
 #include "Progression.hpp"
 
 #include <algorithm>
@@ -55,6 +56,34 @@ void closeSocket(SocketHandle handle) {
 #else
     ::close(handle);
 #endif
+}
+
+// Escapes a UTF-8 byte string for embedding in a JSON string literal.
+std::string jsonEscape(const std::string& text) {
+    std::string out;
+    out.reserve(text.size() + 8);
+    for (const char raw : text) {
+        const unsigned char c = static_cast<unsigned char>(raw);
+        switch (c) {
+            case '"':  out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
+            case '\b': out += "\\b"; break;
+            case '\f': out += "\\f"; break;
+            default:
+                if (c < 0x20) {
+                    char buf[8];
+                    std::snprintf(buf, sizeof(buf), "\\u%04X", c);
+                    out += buf;
+                } else {
+                    out += raw;   // UTF-8 continuation bytes pass through
+                }
+                break;
+        }
+    }
+    return out;
 }
 
 int lastSocketError() {
@@ -275,7 +304,7 @@ void ArcadeServer::restartGame() {
 //===========================================================================
 // State / API
 //===========================================================================
-std::string ArcadeServer::buildStateJson() {
+std::string ArcadeServer::buildStateJson(bool consumeFlexEmit) {
     std::lock_guard<std::mutex> lock(m_gameMutex);
     const Frame& frame = m_manager.getFrame();
     RenderList list;
@@ -302,6 +331,37 @@ std::string ArcadeServer::buildStateJson() {
     out += std::to_string(static_cast<long long>(m_accumulatedSeconds * 1000.0));
     out += ",\"frame\":";
     out += renderListToJson(list);
+
+    // Flexing Mode is the one game whose whole point is the text it produces:
+    // hand the freshly generated characters to the client so it can type them
+    // into a real editable control ("gõ thật" mode).
+    if (current == GameType::Flexing) {
+        auto* flex = dynamic_cast<FlexingGame*>(m_manager.getCurrentGame());
+        if (flex != nullptr) {
+            std::string emitted;
+            if (consumeFlexEmit) {
+                const std::u32string raw = flex->popEmittedOutput();
+                if (!raw.empty()) {
+                    utf8FromUtf32(raw, emitted);
+                }
+            }
+            out += ",\"flex\":{\"emitted\":\"";
+            out += jsonEscape(emitted);
+            out += "\",\"wpm\":";
+            out += std::to_string(static_cast<long long>(flex->getDisplayedWpm() + 0.5));
+            out += ",\"cursor\":";
+            out += std::to_string(static_cast<long long>(flex->getCursor()));
+            out += ",\"total\":";
+            out += std::to_string(static_cast<long long>(flex->getPreloadedText().size()));
+            out += ",\"generated\":";
+            out += std::to_string(static_cast<long long>(flex->getGeneratedChars()));
+            out += ",\"keys\":";
+            out += std::to_string(static_cast<long long>(flex->getActualKeypresses()));
+            out += ",\"efficiency\":";
+            out += std::to_string(flex->getEfficiencyMultiplier());
+            out += '}';
+        }
+    }
     out += '}';
     return out;
 }
@@ -318,7 +378,10 @@ HttpResponse ArcadeServer::handleRequest(const std::string& method, const std::s
     const bool isGet = (method == "GET" || method == "HEAD");
     const bool isPost = (method == "POST");
     if (isGet && (route == "/api/state" || route == "/api/status")) {
-        response.body = buildStateJson();
+        // /api/status is the polling fallback: it reports the Flexing buffer
+        // without consuming it, so a client that polls and streams at the same
+        // time cannot steal characters from itself.
+        response.body = buildStateJson(route == "/api/state");
         return response;
     }
     if (isGet && route == "/api/catalog") {
@@ -395,6 +458,119 @@ HttpResponse ArcadeServer::handleRequest(const std::string& method, const std::s
                         std::to_string(static_cast<int>(last)) + "}";
         return response;
     }
+    if (isPost && route == "/api/preload") {
+        // Flexing Mode pipeline: the client supplies the text KieeKey will type
+        // on the user's behalf, plus how much of it each keypress produces.
+        std::string text;
+        long long granularity = -1;
+        long long nChars = 0;
+        const bool haveText = jsonFindString(body, "text", text);
+        (void)jsonFindInt(body, "granularity", granularity);
+        (void)jsonFindInt(body, "nChars", nChars);
+        if (!haveText && granularity < 0) {
+            response.status = 400;
+            response.body = jsonError("missing text or granularity");
+            return response;
+        }
+        std::lock_guard<std::mutex> lock(m_gameMutex);
+        auto* flex = dynamic_cast<FlexingGame*>(m_manager.getCurrentGame());
+        if (flex == nullptr) {
+            response.status = 409;
+            response.body = jsonError("flexing mode is not the active game");
+            return response;
+        }
+        if (haveText) {
+            flex->setPreloadedText(utf32FromUtf8(text));
+            flex->reset();
+        }
+        if (granularity >= 0 && granularity <= 3) {
+            flex->setGranularity(static_cast<FlexGranularity>(granularity),
+                                 static_cast<std::uint32_t>(nChars <= 0 ? 3 : nChars));
+        }
+        response.body = std::string("{\"ok\":true,\"total\":") +
+                        std::to_string(static_cast<long long>(flex->getPreloadedText().size())) +
+                        ",\"granularity\":" +
+                        std::to_string(static_cast<int>(flex->getGranularity())) + "}";
+        return response;
+    }
+    if ((isGet || isPost) && (route == "/api/chaos" || route == "/api/chaos/preview")) {
+        // Chaos Mode lab. The transformation itself always runs in the shared
+        // C++ engine (ChaosEngine), never in JavaScript: the browser only shows
+        // what the engine produced, so the lab cannot drift from the real
+        // typing path.
+        auto& chaos = ok::chaos::ChaosEngine::instance();
+        if (isPost && route == "/api/chaos") {
+            ok::chaos::ChaosConfig config = chaos.getConfig();
+            long long value = 0;
+            bool flag = false;
+            if (jsonFindBool(body, "enabled", flag) || jsonFindBool(body, "masterEnabled", flag)) {
+                config.masterEnabled = flag;
+            }
+            if (jsonFindBool(body, "randomCase", flag) || jsonFindBool(body, "randomCaseEnabled", flag)) {
+                config.randomCaseEnabled = flag;
+            }
+            if (jsonFindInt(body, "caseIntensityPercent", value)) {
+                const long long clamped = std::clamp(value, 0LL, 100LL);
+                config.randomCaseIntensity = static_cast<float>(clamped) / 100.0f;
+            }
+            if (jsonFindInt(body, "caseGranularity", value) && value >= 0 && value <= 1) {
+                config.caseGranularity = (value == 0) ? ok::chaos::CaseGranularity::ByChar
+                                                      : ok::chaos::CaseGranularity::ByWord;
+            }
+            if (jsonFindBool(body, "glyph", flag) || jsonFindBool(body, "glyphTransformEnabled", flag)) {
+                config.glyphTransformEnabled = flag;
+            }
+            if (jsonFindInt(body, "glyphMode", value) && value >= 0 && value <= 6) {
+                config.glyphMode = static_cast<ok::chaos::GlyphTransformMode>(value);
+            }
+            if (jsonFindInt(body, "glyphIntensityPercent", value)) {
+                const long long clamped = std::clamp(value, 0LL, 100LL);
+                config.glyphIntensity = static_cast<float>(clamped) / 100.0f;
+            }
+            if (jsonFindBool(body, "rotateRenderOnly", flag)) {
+                config.rotateRenderOnly = flag;
+            }
+            chaos.setConfig(config);
+        }
+
+        const ok::chaos::ChaosConfig now = chaos.getConfig();
+        std::string preview;
+        bool renderOnly = false;
+        if (isPost && route == "/api/chaos/preview") {
+            std::string text;
+            (void)jsonFindString(body, "text", text);
+            const std::u32string source =
+                utf32FromUtf8(text.empty() ? std::string("KieeKey Chaos Mode - go thu that!") : text);
+            const std::u32string injected = chaos.processCase(source, 0xC4A0);
+            const std::u32string display = chaos.getVisualDisplayString(source, 0xC4A0);
+            renderOnly = ok::chaos::ChaosEngine::isRenderOnlyRotation(now.glyphMode);
+            std::string injectedUtf8;
+            std::string displayUtf8;
+            utf8FromUtf32(injected, injectedUtf8);
+            utf8FromUtf32(display, displayUtf8);
+            preview = "{\"injected\":\"" + jsonEscape(injectedUtf8) +
+                      "\",\"display\":\"" + jsonEscape(displayUtf8) + "\"}";
+        }
+        response.body = std::string("{\"ok\":true,\"active\":") +
+                        (chaos.isChaosActive() ? "true" : "false") +
+                        ",\"enabled\":" + (now.masterEnabled ? "true" : "false") +
+                        ",\"randomCase\":" + (now.randomCaseEnabled ? "true" : "false") +
+                        ",\"caseIntensityPercent\":" +
+                        std::to_string(static_cast<int>(now.randomCaseIntensity * 100.0f + 0.5f)) +
+                        ",\"caseGranularity\":" +
+                        std::to_string(static_cast<int>(now.caseGranularity)) +
+                        ",\"glyph\":" + (now.glyphTransformEnabled ? "true" : "false") +
+                        ",\"glyphMode\":" + std::to_string(static_cast<int>(now.glyphMode)) +
+                        ",\"glyphIntensityPercent\":" +
+                        std::to_string(static_cast<int>(now.glyphIntensity * 100.0f + 0.5f)) +
+                        ",\"rotateRenderOnly\":" + (now.rotateRenderOnly ? "true" : "false") +
+                        ",\"renderOnlyMode\":" + (renderOnly ? "true" : "false");
+        if (!preview.empty()) {
+            response.body += ",\"preview\":" + preview;
+        }
+        response.body += '}';
+        return response;
+    }
     if (isPost && route == "/api/config") {
         long long value = 0;
         ArcadeConfig config = m_manager.getConfig();
@@ -445,7 +621,8 @@ HttpResponse ArcadeServer::handleRequest(const std::string& method, const std::s
             route == "/api/state" || route == "/api/status" || route == "/api/catalog" ||
             route == "/api/ping" || route == "/api/start" || route == "/api/stop" ||
             route == "/api/pause" || route == "/api/restart" || route == "/api/input" ||
-            route == "/api/text" || route == "/api/config";
+            route == "/api/text" || route == "/api/config" || route == "/api/preload" ||
+            route == "/api/chaos" || route == "/api/chaos/preview";
         response.status = knownRoute ? 405 : 404;
         response.body = jsonError(knownRoute ? "method not allowed for this route"
                                              : "unknown api route");

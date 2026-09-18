@@ -39,7 +39,133 @@
     <div id="toast" class="toast hidden"></div>
   </section>
 
+
+  <section class="labs">
+    <!-- Flexing Mode stage: the text the engine produces is typed for real -->
+    <div class="lab hidden" id="labFlexing">
+      <header class="lab-head">
+        <span class="lab-icon">🗿</span>
+        <div>
+          <h2>Flexing Mode — sân khấu gõ thật</h2>
+          <p>Bạn gõ phím bất kỳ; chữ hiện ra là <b>văn bản chuẩn bị trước</b> do engine C++ sinh ra và gõ thật vào ô bên phải.</p>
+        </div>
+        <span class="pill" id="flexPill">chưa nạp</span>
+      </header>
+      <div class="lab-grid">
+        <div class="lab-col">
+          <label for="flexSource">Văn bản chuẩn bị trước</label>
+          <textarea id="flexSource" class="lab-input" rows="7" spellcheck="false"></textarea>
+          <div class="row">
+            <label class="inline" for="flexGran">Mỗi phím sinh ra
+              <select id="flexGran">
+                <option value="0" selected>1 ký tự</option>
+                <option value="1">1 từ</option>
+                <option value="2">N ký tự</option>
+                <option value="3">Tự chảy (AutoStream)</option>
+              </select>
+            </label>
+            <label class="inline" for="flexN">N
+              <input id="flexN" type="number" min="1" max="64" value="3">
+            </label>
+            <button class="btn" id="flexPreload">Nạp vào engine</button>
+          </div>
+          <p class="note">Văn bản này được gửi tới <code>POST /api/preload</code> và engine C++ giữ nguyên nó — trình duyệt không tự bịa chữ.</p>
+        </div>
+        <div class="lab-col">
+          <label for="flexTarget">Cửa sổ gõ thật (nhận chữ do engine gõ vào)</label>
+          <textarea id="flexTarget" rows="7" spellcheck="false" placeholder="Bấm vào đây rồi gõ phím bất kỳ…"></textarea>
+          <div class="row chips">
+            <span class="chip">WPM <b id="flexWpm">0</b></span>
+            <span class="chip">Đã sinh <b id="flexGen">0</b></span>
+            <span class="chip">Phím thật <b id="flexKeys">0</b></span>
+            <span class="chip">Hiệu suất <b id="flexEff">x1.00</b></span>
+            <span class="chip">Vị trí <b id="flexCursor">0 / 0</b></span>
+          </div>
+          <div class="row">
+            <button class="btn btn-ghost" id="flexClear">Xoá ô gõ thật</button>
+            <span class="note">Ô này bị chặn nhập tay: mọi chữ xuất hiện đều đến từ engine.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Chaos Mode lab: same transformation the hook applies to real typing -->
+    <div class="lab hidden" id="labChaos">
+      <header class="lab-head">
+        <span class="lab-icon">🌀</span>
+        <div>
+          <h2>Phòng Chaos Mode — thử gõ thật</h2>
+          <p>Bật/tắt từng hiệu ứng rồi xem đúng những ký tự mà KieeKey sẽ gõ vào ứng dụng đang mở.</p>
+        </div>
+        <span class="pill" id="chaosPill">TẮT</span>
+      </header>
+      <div class="lab-grid">
+        <div class="lab-col">
+          <label class="check">
+            <input type="checkbox" id="chaosMaster">
+            <span><b>Master switch</b> — bật Chaos Mode (mặc định TẮT)</span>
+          </label>
+          <label class="check">
+            <input type="checkbox" id="chaosCase">
+            <span><b>Random HOA / thường</b> — đổi kiểu chữ ngẫu nhiên</span>
+          </label>
+          <div class="row">
+            <label class="inline" for="chaosCaseIntensity">Cường độ <output id="chaosCaseOut">50</output>%
+              <input id="chaosCaseIntensity" type="range" min="0" max="100" value="50">
+            </label>
+            <label class="inline" for="chaosCaseGran">Đơn vị
+              <select id="chaosCaseGran">
+                <option value="0" selected>từng ký tự</option>
+                <option value="1">từng từ</option>
+              </select>
+            </label>
+          </div>
+          <label class="check">
+            <input type="checkbox" id="chaosGlyph">
+            <span><b>Lật / xoay ký tự</b> — chữ ngược, chữ soi gương</span>
+          </label>
+          <div class="row">
+            <label class="inline" for="chaosGlyphMode">Kiểu
+              <select id="chaosGlyphMode">
+                <option value="0" selected>Không</option>
+                <option value="1">Xoay 90° (chỉ vẽ, không gõ)</option>
+                <option value="2">Xoay 180° (chữ ngược)</option>
+                <option value="3">Xoay 270° (chỉ vẽ, không gõ)</option>
+                <option value="4">Lật ngang</option>
+                <option value="5">Lật dọc</option>
+                <option value="6">Ngẫu nhiên</option>
+              </select>
+            </label>
+            <label class="inline" for="chaosGlyphIntensity">Cường độ <output id="chaosGlyphOut">100</output>%
+              <input id="chaosGlyphIntensity" type="range" min="0" max="100" value="100">
+            </label>
+          </div>
+          <p class="note" id="chaosHonesty">Xoay 90°/270° không thể gõ ra chữ Unicode tương đương, nên engine chỉ vẽ chúng — văn bản gõ thật giữ nguyên.</p>
+        </div>
+        <div class="lab-col">
+          <label for="chaosSource">Bạn gõ (thử nghiệm)</label>
+          <textarea id="chaosSource" class="lab-input" rows="3" spellcheck="false">Nguyen Van A di hoc o Can Tho</textarea>
+          <label for="chaosInjected">Engine gõ thật vào ứng dụng</label>
+          <textarea id="chaosInjected" rows="3" readonly spellcheck="false"></textarea>
+          <label for="chaosDisplay">Những gì hiện trên màn hình game</label>
+          <textarea id="chaosDisplay" rows="3" readonly spellcheck="false"></textarea>
+          <div class="row">
+            <button class="btn" id="chaosApply">Áp dụng vào engine</button>
+            <button class="btn btn-ghost" id="chaosClear">Xoá ô thử</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <section class="side">
+    <h2>Phòng thí nghiệm</h2>
+    <div class="config">
+      <button class="btn" id="openFlexingLab">🗿 Mở sân khấu Flexing</button>
+      <button class="btn" id="openChaosLab">🌀 Mở phòng Chaos</button>
+      <button class="btn btn-ghost" id="closeLabs">Đóng phòng thí nghiệm</button>
+    </div>
+
     <h2>Chọn game</h2>
     <div id="catalog" class="catalog"></div>
 
@@ -72,6 +198,7 @@
       <li><b>P / F1</b> tạm dừng · <b>F2</b> chơi lại · <b>Esc</b> thoát game</li>
     </ul>
     <p class="note">Mọi phím gửi lên đều đi vào engine C++ thật (ArcadeManager) — engine này cũng chính là engine mà bản Win32 vẽ bằng GDI.</p>
+    <p class="note">Hai phòng thí nghiệm dùng chung engine với bản Win32: Flexing gõ chữ do engine sinh vào ô “cửa sổ gõ thật”, Chaos cho xem đúng chuỗi ký tự sẽ được gõ ra ngoài.</p>
   </section>
 </main>
 
@@ -83,5 +210,6 @@
 </footer>
 
 <script src="arcade.js"></script>
+<script src="labs.js"></script>
 </body>
 </html>

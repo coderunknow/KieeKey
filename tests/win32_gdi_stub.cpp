@@ -345,6 +345,22 @@ LRESULT SendMessageW(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
             return 0;
         case CB_GETCURSEL:
             return window->selection;
+        // Minimal EDIT support: the two lab windows append produced text with
+        // EM_SETSEL + EM_REPLACESEL, the way real edit controls are scripted.
+        case EM_SETSEL:
+            window->selection = static_cast<int>(wParam);
+            return 0;
+        case EM_REPLACESEL: {
+            const auto* text = reinterpret_cast<const wchar_t*>(lParam);
+            const int at = (window->selection >= 0 &&
+                            window->selection <= static_cast<int>(window->title.size()))
+                               ? window->selection
+                               : static_cast<int>(window->title.size());
+            const std::wstring inserted = (text != nullptr) ? text : L"";
+            window->title.insert(static_cast<std::size_t>(at), inserted);
+            window->selection = at + static_cast<int>(inserted.size());
+            return 0;
+        }
         case TBM_SETRANGE:
             window->position = window->position;   // range is not asserted on
             return 0;

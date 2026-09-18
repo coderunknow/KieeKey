@@ -19,8 +19,14 @@
 //                              that the frame, the score and the progression
 //                              records all move
 //  6. Isolation              — two servers own independent sessions
+//  7. Flexing payload        — the text KieeKey types on the user's behalf is
+//                              delivered by /api/state and never invented by
+//                              the browser, plus the /api/preload pipeline
+//  8. Chaos lab              — the web lab's transformation is the one the
+//                              engine really performs (incl. render-only 90°)
 //============================================================================
 #include "ArcadeServer.hpp"
+#include "ChaosEngine.hpp"
 #include "Progression.hpp"
 
 #include <cassert>
@@ -306,6 +312,114 @@ void testSessionIsolation() {
     std::cout << "  [PASS] Session isolation & config validation\n";
 }
 
+//---------------------------------------------------------------------------
+void testFlexingPayload() {
+    ArcadeServer server;
+    assert(server.startGame("flexing"));
+
+    // Nothing is active in another game: the route refuses honestly.
+    ArcadeServer other;
+    assert(other.startGame("snake"));
+    auto refused = other.handleRequest("POST", "/api/preload", "{\"text\":\"abc\"}");
+    assert(refused.status == 409);
+
+    // The client supplies the source text; the server reports how much of it
+    // it will produce (never the other way around).
+    auto preload = server.handleRequest(
+        "POST", "/api/preload",
+        "{\"text\":\"Xin chao, toi la KieeKey!\",\"granularity\":1}");
+    assert(preload.status == 200);
+    assert(contains(bodyOf(preload), "\"ok\":true"));
+    assert(contains(bodyOf(preload), "\"total\":25"));
+    assert(contains(bodyOf(preload), "\"granularity\":1"));
+
+    // Bad bodies are rejected, not silently accepted.
+    assert(server.handleRequest("POST", "/api/preload", "{}").status == 400);
+
+    // First keypress: one word of output must arrive through /api/state.
+    auto key = server.handleRequest("POST", "/api/input", "{\"vk\":88,\"down\":true}");
+    assert(key.status == 200);
+    server.tick(1.0 / 60.0);
+
+    const std::string state = bodyOf(server.handleRequest("GET", "/api/state", ""));
+    assert(contains(state, "\"flex\":{"));
+    assert(contains(state, "\"emitted\":\"Xin \""));
+    assert(contains(state, "\"generated\":4"));
+
+    // ...and only once: the polling route may peek but the buffer is consumed
+    // by the state route the stream uses.
+    const std::string statusPeek = bodyOf(server.handleRequest("GET", "/api/status", ""));
+    assert(contains(statusPeek, "\"emitted\":\"\""));
+    const std::string second = bodyOf(server.handleRequest("GET", "/api/state", ""));
+    assert(contains(second, "\"emitted\":\"\""));
+
+    // A different game carries no Flexing block at all.
+    assert(!contains(bodyOf(other.handleRequest("GET", "/api/state", "")), "\"flex\":"));
+
+    // One char per key: the engine, not the client, decides the granularity.
+    auto perChar = server.handleRequest("POST", "/api/preload",
+                                        "{\"granularity\":0}");
+    assert(contains(bodyOf(perChar), "\"granularity\":0"));
+    (void)server.handleRequest("POST", "/api/input", "{\"vk\":89,\"down\":true}");
+    server.tick(1.0 / 60.0);
+    const std::string charState = bodyOf(server.handleRequest("GET", "/api/state", ""));
+    assert(contains(charState, "\"generated\":5"));
+
+    // Unknown verbs on the new route keep the documented 405 answer.
+    assert(server.handleRequest("PUT", "/api/preload", "{}").status == 405);
+
+    server.stopGame();
+    std::cout << "  [PASS] Flexing Mode payload & preload pipeline\n";
+}
+
+//---------------------------------------------------------------------------
+void testChaosLab() {
+    auto& chaos = ok::chaos::ChaosEngine::instance();
+    chaos.setConfig(ok::chaos::ChaosConfig{});
+
+    ArcadeServer server;
+    const std::string clean = bodyOf(server.handleRequest("GET", "/api/chaos", ""));
+    assert(contains(clean, "\"enabled\":false"));
+    assert(contains(clean, "\"active\":false"));
+
+    // Turning everything on through the API is exactly what the lab does.
+    const std::string enabled = bodyOf(server.handleRequest(
+        "POST", "/api/chaos",
+        "{\"enabled\":true,\"randomCase\":true,\"caseIntensityPercent\":100,"
+        "\"caseGranularity\":1,\"glyph\":true,\"glyphMode\":2,\"glyphIntensityPercent\":100}"));
+    assert(contains(enabled, "\"enabled\":true"));
+    assert(contains(enabled, "\"randomCase\":true"));
+    assert(contains(enabled, "\"glyphMode\":2"));
+    assert(contains(enabled, "\"active\":true"));
+
+    // The preview must be the engine's own output, not a JS lookalike: with the
+    // master switch on, the injected text can no longer equal the input.
+    const std::string preview = bodyOf(server.handleRequest(
+        "POST", "/api/chaos/preview", "{\"text\":\"nguyen van a\"}"));
+    assert(contains(preview, "\"preview\":{"));
+    assert(!contains(preview, "\"injected\":\"nguyen van a\""));
+    assert(contains(preview, "\"display\":\""));
+
+    // Out-of-range values are clamped, unknown fields ignored.
+    const std::string clamped = bodyOf(server.handleRequest(
+        "POST", "/api/chaos", "{\"caseIntensityPercent\":900,\"glyphMode\":99}"));
+    assert(contains(clamped, "\"caseIntensityPercent\":100"));
+    assert(contains(clamped, "\"glyphMode\":2"));   // 99 rejected, 2 kept
+
+    // 90° rotation is honest about being render-only.
+    (void)server.handleRequest("POST", "/api/chaos", "{\"glyphMode\":1}");
+    const std::string rotated = bodyOf(server.handleRequest(
+        "POST", "/api/chaos/preview", "{\"text\":\"abc\"}"));
+    assert(contains(rotated, "\"renderOnlyMode\":true"));
+
+    // The same guard answers 405/404 for the wrong verb/route.
+    assert(server.handleRequest("DELETE", "/api/chaos", "{}").status == 405);
+    assert(server.handleRequest("GET", "/api/chaos/nope", "").status == 404);
+
+    chaos.setConfig(ok::chaos::ChaosConfig{});
+    std::cout << "  [PASS] Chaos lab transformation via the shared engine\n";
+}
+
 int main() {
     std::cout << "=== Running Arcade Server Suite ===\n";
     testRouting();
@@ -314,6 +428,8 @@ int main() {
     testStaticServingAndTraversal();
     testFullSimulatedRun();
     testSessionIsolation();
+    testFlexingPayload();
+    testChaosLab();
     std::cout << "=== ALL ARCADE SERVER TESTS PASSED ===\n";
     return 0;
 }

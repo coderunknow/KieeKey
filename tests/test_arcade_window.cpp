@@ -329,8 +329,86 @@ void testChaosLabPreviewAndInjection() {
     ::SendMessageW(labWindow, WM_COMMAND,
                    MAKEWPARAM(4030, BN_CLICKED), reinterpret_cast<LPARAM>(flexingBox));
     assert(ArcadeManager::instance().getCurrentGameType() == GameType::Flexing);
-    ArcadeManager::instance().stopGame();
 
+    // --- Flexing page: the prepared passage is what appears ---------------
+    HWND flexPrep = okgdi::findControl(labWindow, 4045);
+    HWND flexLoad = okgdi::findControl(labWindow, 4043);
+    HWND flexInput = okgdi::findControl(labWindow, 4040);
+    HWND flexOutput = okgdi::findControl(labWindow, 4041);
+    HWND flexGran = okgdi::findControl(labWindow, 4042);
+    HWND flexSend = okgdi::findControl(labWindow, 4046);
+    HWND flexPerChunk = okgdi::findControl(labWindow, 4044);
+    assert(flexPrep != nullptr && flexLoad != nullptr && flexInput != nullptr);
+    assert(flexOutput != nullptr && flexGran != nullptr && flexSend != nullptr);
+    assert(flexPerChunk != nullptr);
+
+    const std::wstring prepared = L"abcdef ghij";   // 11 characters
+    ::SetWindowTextW(flexPrep, prepared.c_str());
+    ::SendMessageW(labWindow, WM_COMMAND,
+                   MAKEWPARAM(4043, BN_CLICKED), reinterpret_cast<LPARAM>(flexLoad));
+    auto* flexGame = dynamic_cast<ok::arcade::FlexingGame*>(
+        ArcadeManager::instance().getCurrentGame());
+    assert(flexGame != nullptr);
+    assert(flexGame->getPreloadedText().size() == prepared.size());
+    assert(controlText(flexOutput).empty());
+
+    // Each character typed into the flexing box steps the game and the engine
+    // — never the user's own key — decides what lands in the output box.
+    ::SetWindowTextW(flexInput, L"x");
+    for (int step = 0; step < 4; ++step) {
+        ::SendMessageW(labWindow, WM_COMMAND,
+                       MAKEWPARAM(4040, EN_CHANGE), reinterpret_cast<LPARAM>(flexInput));
+    }
+    const std::wstring produced = controlText(flexOutput);
+    assert(produced == L"abcd");            // OneCharPerKey, from the passage
+    assert(flexGame->getCursor() == 4);
+
+    // Granularity is taken from the combo (word mode produces "abcdef " next).
+    ::SendMessageW(flexGran, CB_SETCURSEL, 1, 0);
+    ::SendMessageW(labWindow, WM_COMMAND,
+                   MAKEWPARAM(4042, CBN_SELCHANGE), reinterpret_cast<LPARAM>(flexGran));
+    ::SendMessageW(labWindow, WM_COMMAND,
+                   MAKEWPARAM(4040, EN_CHANGE), reinterpret_cast<LPARAM>(flexInput));
+    assert(controlText(flexOutput) == L"abcdabcdef ");   // one whole word per key
+
+    // The timer pump keeps the game alive without inventing output.
+    ::SendMessageW(labWindow, WM_TIMER, ChaosLabWindow::kTimerId, 0);
+    assert(controlText(flexOutput) == L"abcdabcdef ");
+
+    // "Gõ chữ Flexing ra app": hands the focus back and really types what the
+    // engine produced — the button is an explicit action, the checkbox only
+    // decides whether it goes out as one paste or chunk by chunk.
+    const int beforeFlexSend = emitCount;
+    ::SetForegroundWindow(labWindow);       // the lab has the focus while typing
+    ::SendMessageW(labWindow, WM_COMMAND,
+                   MAKEWPARAM(4046, BN_CLICKED), reinterpret_cast<LPARAM>(flexSend));
+    assert(emitCount == beforeFlexSend + 1);
+    assert(emitted == L"abcdabcdef ");      // the engine's own output, in order
+    assert(::GetForegroundWindow() == fakeTarget);
+
+    // Per-chunk mode types the same text in several steps instead of one paste.
+    emitCount = 0;
+    emitted.clear();
+    ::SendMessageW(flexPerChunk, BM_SETCHECK, BST_CHECKED, 0);
+    ::SetForegroundWindow(labWindow);
+    ::SendMessageW(labWindow, WM_COMMAND,
+                   MAKEWPARAM(4046, BN_CLICKED), reinterpret_cast<LPARAM>(flexSend));
+    assert(emitCount == 2);                 // 11 chars / 6 = two chunks
+    assert(emitted == L"cdef ");            // ...the last of them
+    ::SendMessageW(flexPerChunk, BM_SETCHECK, BST_UNCHECKED, 0);
+
+    // With nothing produced yet the button must not type silence into the app.
+    ::SetWindowTextW(flexPrep, L"mot doan khac");
+    ::SendMessageW(labWindow, WM_COMMAND,
+                   MAKEWPARAM(4043, BN_CLICKED), reinterpret_cast<LPARAM>(flexLoad));
+    assert(controlText(flexOutput).empty());
+    emitCount = 0;
+    ::SendMessageW(labWindow, WM_COMMAND,
+                   MAKEWPARAM(4046, BN_CLICKED), reinterpret_cast<LPARAM>(flexSend));
+    assert(emitCount == 0);
+    assert(controlText(flexOutput).find(L"chua co chu nao") != std::wstring::npos);
+
+    ArcadeManager::instance().stopGame();
     ChaosLabWindow::setEmitCallback(nullptr);
     lab.close();
     assert(!lab.isOpen());

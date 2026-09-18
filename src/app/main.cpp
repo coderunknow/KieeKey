@@ -151,6 +151,8 @@
 #include "Progression.hpp"     // v1.3.0: Global progression & levels
 #include "TypingAnalytics.hpp" // v1.3.0: Analytics & coach
 #include "OnlineGhost.hpp"     // v1.3.0: Online & ghost abstraction
+#include "ArcadeWindow.hpp"    // v1.3.0: graphical Arcade Hub window (Win32 GDI)
+#include "ChaosLabWindow.hpp"  // v1.3.0: Chaos/Flexing lab window (real output)
 
 #include "resource.h"
 
@@ -891,8 +893,35 @@ void sendUnicodeText(const std::wstring& text) noexcept;
 // call sites unchanged; the emitter is owned by the Win32Wrapper so the
 // watchdog sees our injection ticks.
 //===========================================================================
+// v1.3.0: every arcade launcher opens the graphical Arcade Hub window.
+// The games used to be rendered as ASCII into a static control in the settings
+// dialog; the hub is now a real GDI window (src/app/ArcadeWindow.cpp) that
+// paints the same RenderList the HTML5 client consumes.
+void openArcadeHub(const char* slug) {
+    ok::app::ArcadeWindow& hub = ok::app::ArcadeWindow::instance();
+    hub.open(g.hMain, slug != nullptr ? std::string(slug) : std::string());
+    hub.focus();
+}
+
 void emitInline(std::size_t backspace, const std::wstring& text) noexcept {
     g.hook.emitter().sendEdit(backspace, text);
+}
+
+// v1.3.0: the Chaos Lab window types its transformed text through the very same
+// emitter the IME uses, so "chaos mode gõ thật được ngoài" is testable without
+// touching the global chaos switch.
+std::size_t emitForChaosLab(const std::wstring& text) {
+    if (text.empty()) {
+        return 0;
+    }
+    emitInline(0, text);
+    return text.size();
+}
+
+// Opens the Chaos / Flexing lab window (registers the emitter hook first).
+void openChaosLab() {
+    ok::app::ChaosLabWindow::setEmitCallback(&emitForChaosLab);
+    ok::app::ChaosLabWindow::instance().open(g.hMain);
 }
 
 //===========================================================================
@@ -1058,6 +1087,27 @@ bool requestContextResync() noexcept {
 // has queued work that needs a wake (see ModernKeyHook::ProducerDecision).
 using PD = ok::hook::ModernKeyHook::ProducerDecision;
 
+// v1.3.0: does one of KieeKey's own windows own the foreground?
+//
+// KieeKey must never transform input inside its own UI: the Arcade Hub window
+// and the Chaos Lab window both drive their own message loops, and the
+// settings dialog contains real EDIT controls. When one of them is focused the
+// producer steps aside and lets Windows deliver the keystroke normally (the
+// arcade windows feed it to ArcadeManager::handleKey from their WM_KEYDOWN).
+// Two syscall-free handle compares — safe on the hook thread.
+bool ownWindowHasFocus() noexcept {
+    const HWND foreground = ::GetForegroundWindow();
+    if (foreground == nullptr) { return false; }
+    if (foreground == g.hMain || foreground == g.hSettings) { return true; }
+    if (foreground == static_cast<HWND>(ok::app::ArcadeWindow::instance().handle())) {
+        return true;
+    }
+    if (foreground == static_cast<HWND>(ok::app::ChaosLabWindow::instance().handle())) {
+        return true;
+    }
+    return false;
+}
+
 //---------------------------------------------------------------------------
 // v1.2.0 Stable — FAULT ISOLATION for the producer (hook) thread.
 //
@@ -1103,13 +1153,25 @@ PD onHookEventImpl(const KeyEvent& ev) {
     // The hook thread no longer toggles anything.
     if (!g.engineEnabled.load(std::memory_order_relaxed)) { return PD{}; }
 
-    // v1.3.0 Arcade Hub: if Arcade minigame is actively consuming keyboard, handle it here
+    // v1.3.0: never transform input inside our own windows (see
+    // ownWindowHasFocus). Returning {false,false} passes the keystroke through
+    // untouched — no IME rewrite, no suppression — while still skipping the
+    // engine below, so a game window and the IME can never both eat a key.
+    if (ownWindowHasFocus()) { return PD{false, false}; }
+
+    // v1.3.0 Arcade Hub: if Arcade minigame is actively consuming keyboard, handle it here.
+    // Note the interplay with ownWindowHasFocus() above: when the hub window has
+    // the focus the key travels to the window instead, and this path only runs
+    // while the user plays with the focus in another application.
     if (ok::arcade::ArcadeManager::instance().isConsumingKeyboard() &&
         ev.source == EventSource::Keyboard &&
         (ev.action == KeyAction::KeyDown || ev.action == KeyAction::SysKeyDown)) {
         char32_t cch = layoutChar(ev.vkCode, ev.scanCode, ev.modifiers);
         if (cch == 0) { cch = produceChar(ev.vkCode, ev.modifiers.shift, false); }
-        if (ok::arcade::ArcadeManager::instance().handleKey(ev.vkCode, cch, true)) {
+        // InputResult is a scoped enum: compare explicitly (the old build
+        // compared it as a bool, which no longer compiles).
+        if (ok::arcade::ArcadeManager::instance().handleKey(ev.vkCode, cch, true) !=
+            ok::arcade::InputResult::NotConsumed) {
             return PD{true, false}; // Consumed by Arcade minigame
         }
     }
@@ -1326,8 +1388,23 @@ PD onHookEventImpl(const KeyEvent& ev) {
         ok::ai::AiRivalEngine::instance().observeKeystroke(
             in.ch, ::GetTickCount64() * 1000, in.kind == InputKind::Backspace, false);
     }
+    // v1.3.0 (fix): this ran `recordTypingSession()` — which takes the
+    // progression mutex — on the HOOK THREAD, once per keystroke, in a function
+    // otherwise documented as lock-free. The lock-free counters below are folded
+    // in by the settings/status timer through flushStats().
     if (in.kind == InputKind::Char && in.ch > 32) {
-        ok::progression::ProgressionEngine::instance().recordTypingSession(1, 0, 1, 0, 0.0, 100.0);
+        static std::atomic<std::uint64_t> s_lastProgressionTick{0};
+        const std::uint64_t nowTick = ::GetTickCount64();
+        const std::uint64_t previousTick =
+            s_lastProgressionTick.exchange(nowTick, std::memory_order_relaxed);
+        if (previousTick != 0 && nowTick > previousTick && (nowTick - previousTick) < 2000) {
+            // Only gaps < 2 s count as "active typing time" (a pause is not
+            // typing time and must not inflate the WPM denominator).
+            ok::progression::ProgressionEngine::instance().recordActiveTimeMs(nowTick - previousTick);
+        }
+        ok::progression::ProgressionEngine::instance().recordKeystroke(false, 1, 0);
+    } else if (in.kind == InputKind::Backspace) {
+        ok::progression::ProgressionEngine::instance().recordKeystroke(true, 0, 0);
     }
 
     g.keysTyped.fetch_add(1, std::memory_order_relaxed);   // WPM gauge
@@ -1338,6 +1415,10 @@ PD onHookEventImpl(const KeyEvent& ev) {
     // words — a space or navigation key always precedes the next word.
     // v1.2.1 RC2: MaxCorrectness re-checks on EVERY key (two user-mode
     // reads, ~50 ns) so a mid-word layout switch can never mis-decode.
+    if (in.kind == InputKind::Space || in.kind == InputKind::WordBreak) {
+        // One finished word -> one learned word (lock-free, hook thread safe).
+        ok::progression::ProgressionEngine::instance().recordKeystroke(false, 0, 1);
+    }
     if (in.kind == InputKind::Space || in.kind == InputKind::WordBreak ||
         g.layoutRecheckEveryKey.load(std::memory_order_relaxed)) {
         refreshLayoutCache();
@@ -2212,41 +2293,36 @@ void showTrayMenu() noexcept {
             openSettingsDialog(4);
             break;
         case IDM_ARCADE_HUB:
-            openSettingsDialog(5);
+            openArcadeHub(nullptr);
             break;
         case IDM_ARCADE_SNAKE:
-            ok::arcade::ArcadeManager::instance().launchGame(ok::arcade::GameType::Snake);
-            openSettingsDialog(5);
+            openArcadeHub("snake");
             break;
         case IDM_ARCADE_TETRIS:
-            ok::arcade::ArcadeManager::instance().launchGame(ok::arcade::GameType::Tetris);
-            openSettingsDialog(5);
+            openArcadeHub("tetris");
             break;
         case IDM_ARCADE_FISHING:
-            ok::arcade::ArcadeManager::instance().launchGame(ok::arcade::GameType::Fishing);
-            openSettingsDialog(5);
+            openArcadeHub("fishing");
             break;
         case IDM_ARCADE_TYPINGRACE:
-            ok::arcade::ArcadeManager::instance().launchGame(ok::arcade::GameType::TypingRace);
-            openSettingsDialog(5);
+            openArcadeHub("typing-race");
             break;
         case IDM_ARCADE_WASDRACE:
-            ok::arcade::ArcadeManager::instance().launchGame(ok::arcade::GameType::WasdRace);
-            openSettingsDialog(5);
+            openArcadeHub("wasd-race");
             break;
         case IDM_ARCADE_RHYTHM:
-            ok::arcade::ArcadeManager::instance().launchGame(ok::arcade::GameType::Rhythm);
-            openSettingsDialog(5);
+            openArcadeHub("rhythm");
             break;
         case IDM_ARCADE_NOMISTAKE:
-            ok::arcade::ArcadeManager::instance().launchGame(ok::arcade::GameType::NoMistake);
-            openSettingsDialog(5);
+            openArcadeHub("no-mistake");
             break;
         case IDM_ARCADE_FLEXING:
-            ok::arcade::ArcadeManager::instance().launchGame(ok::arcade::GameType::Flexing);
-            openSettingsDialog(5);
+            openArcadeHub("flexing");
             break;
         case IDM_CHAOS_LAB:
+            // The lab is its own window: type text, watch the chaos transform
+            // live, and (optionally) write the result into the focused app.
+            openChaosLab();
             openSettingsDialog(6);
             break;
         case IDM_AI_RIVAL:
@@ -3411,7 +3487,7 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
             // ---- tab 5: Arcade (v1.3.0) ----
             mkCtl(hwnd, L"BUTTON", L"KieeKey Arcade (8 Minigames)",
-                  WS_CHILD | WS_VISIBLE | BS_GROUPBOX, S(24), S(86), S(494), S(280),
+                  WS_CHILD | WS_VISIBLE | BS_GROUPBOX, S(24), S(86), S(494), S(324),
                   reinterpret_cast<HMENU>(IDC_GRP_ARCADE));
             mkCtl(hwnd, L"BUTTON", L"🐍 Snake (Rắn săn mồi)", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
                   S(44), S(112), S(220), S(28), reinterpret_cast<HMENU>(IDC_BTN_PLAY_SNAKE));
@@ -3430,8 +3506,34 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             mkCtl(hwnd, L"BUTTON", L"🗿 Flexing Mode (Joke)", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
                   S(280), S(220), S(220), S(28), reinterpret_cast<HMENU>(IDC_BTN_PLAY_FLEXING));
             mkCtl(hwnd, L"STATIC", L"Trạng thái: Chưa có game nào đang chạy.",
-                  WS_CHILD | WS_VISIBLE, S(44), S(260), S(456), S(90),
+                  WS_CHILD | WS_VISIBLE, S(44), S(256), S(456), S(52),
                   reinterpret_cast<HMENU>(IDC_STAT_ARCADE_STATUS));
+
+            // v1.3.0: the games open in their own graphical window; this tab is
+            // the launcher + the run configuration.
+            mkCtl(hwnd, L"BUTTON", L"🗿 Phòng Chaos / Flexing (test gõ thật)",
+                  WS_CHILD | WS_VISIBLE | WS_TABSTOP, S(44), S(312), S(220), S(28),
+                  reinterpret_cast<HMENU>(IDC_BTN_OPEN_CHAOS_LAB));
+            mkCtl(hwnd, L"STATIC", L"Chế độ Rhythm / No-Mistake:",
+                  WS_CHILD | WS_VISIBLE | SS_LEFT, S(280), S(312), S(160), S(20), nullptr);
+            HWND failMode = mkCtl(hwnd, L"COMBOBOX", L"",
+                  WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL,
+                  S(280), S(330), S(220), S(120), reinterpret_cast<HMENU>(IDC_CMB_FAILMODE));
+            if (failMode != nullptr) {
+                ::SendMessageW(failMode, CB_ADDSTRING, 0,
+                               reinterpret_cast<LPARAM>(L"Hardcore — sai là chết (mặc định)"));
+                ::SendMessageW(failMode, CB_ADDSTRING, 0,
+                               reinterpret_cast<LPARAM>(L"Thanh máu — sai trừ máu"));
+                ::SendMessageW(failMode, CB_SETCURSEL, 0, 0);
+            }
+            mkCtl(hwnd, L"STATIC", L"Nhịp Rhythm (BPM 60-220):",
+                  WS_CHILD | WS_VISIBLE | SS_LEFT, S(280), S(354), S(160), S(20), nullptr);
+            mkCtl(hwnd, L"EDIT", L"112",
+                  WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_NUMBER | WS_BORDER,
+                  S(444), S(352), S(56), S(22), reinterpret_cast<HMENU>(IDC_EDT_RHYTHM_BPM));
+            mkCtl(hwnd, L"BUTTON", L"✔ Áp dụng cấu hình game",
+                  WS_CHILD | WS_VISIBLE | WS_TABSTOP, S(44), S(348), S(220), S(28),
+                  reinterpret_cast<HMENU>(IDC_BTN_APPLY_ARCADE_CFG));
 
             // ---- tab 6: Phòng Chaos (v1.3.0) ----
             mkCtl(hwnd, L"BUTTON", L"Phòng thí nghiệm Chaos & Thử nghiệm",
@@ -3645,12 +3747,38 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             std::swprintf(buf, std::size(buf), L"%lld", static_cast<long long>(s_kpmEma));
             ::SetWindowTextW(::GetDlgItem(hwnd, IDC_STAT_WPMVAL), buf);
 
-            // v1.3.0: Live updates for Arcade, AI, and Progression tabs
-            if (ok::arcade::ArcadeManager::instance().isConsumingKeyboard()) {
-                std::string r = ok::arcade::ArcadeManager::instance().renderCurrentGame();
-                std::wstring wr(r.begin(), r.end());
-                ::SetWindowTextW(::GetDlgItem(hwnd, IDC_STAT_ARCADE_STATUS), wr.c_str());
+            // v1.3.0: Live updates for Arcade, AI, and Progression tabs.
+            // The arcade itself is drawn in its own GDI window; the tab shows a
+            // compact status line so the user knows what is running.
+            {
+                auto& arcade = ok::arcade::ArcadeManager::instance();
+                if (arcade.hasActiveGame()) {
+                    const ok::arcade::Frame& aframe = arcade.getFrame();
+                    const ok::arcade::GameStats& astats = aframe.stats;
+                    const std::string slug = std::string(
+                        ok::arcade::gameSlug(static_cast<int>(arcade.getCurrentGameType())));
+                    wchar_t abuf[320];
+                    std::swprintf(abuf, std::size(abuf),
+                                  L"Đang chơi: %hs | Điểm %lld | WPM %.1f | Chuẩn xác %.1f%%\r\n"
+                                  L"Game chạy trong cửa sổ KieeKey Arcade Hub (nút bên trên).",
+                                  slug.c_str(), static_cast<long long>(astats.score), astats.wpm,
+                                  astats.accuracy);
+                    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_STAT_ARCADE_STATUS), abuf);
+                } else {
+                    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_STAT_ARCADE_STATUS),
+                                     L"Chưa có game nào đang chạy.\r\n"
+                                     L"Nhấn một nút game để mở cửa sổ Arcade Hub.");
+                }
             }
+
+            // v1.3.0: credit every arcade run that finished since the last tick
+            // (XP, records, achievements) — the desktop hub used to drop them,
+            // so "gõ nhiều để lên cấp" only ever worked through the web bridge.
+            ok::arcade::ArcadeManager::instance().drainRunResultsToProgression();
+
+            // Fold the hook thread's lock-free counters into the aggregate
+            // before reading them (this is also where level-ups are applied).
+            ok::progression::ProgressionEngine::instance().flushStats();
 
             // Progression stats
             auto pstats = ok::progression::ProgressionEngine::instance().getStats();
@@ -3689,29 +3817,58 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     toggleEngineFromUi();
                     return 0;
                 case IDC_BTN_PLAY_SNAKE:
-                    ok::arcade::ArcadeManager::instance().launchGame(ok::arcade::GameType::Snake);
+                    openArcadeHub("snake");
                     return 0;
                 case IDC_BTN_PLAY_TETRIS:
-                    ok::arcade::ArcadeManager::instance().launchGame(ok::arcade::GameType::Tetris);
+                    openArcadeHub("tetris");
                     return 0;
                 case IDC_BTN_PLAY_FISHING:
-                    ok::arcade::ArcadeManager::instance().launchGame(ok::arcade::GameType::Fishing);
+                    openArcadeHub("fishing");
                     return 0;
                 case IDC_BTN_PLAY_TYPINGRACE:
-                    ok::arcade::ArcadeManager::instance().launchGame(ok::arcade::GameType::TypingRace);
+                    openArcadeHub("typing-race");
                     return 0;
                 case IDC_BTN_PLAY_WASDRACE:
-                    ok::arcade::ArcadeManager::instance().launchGame(ok::arcade::GameType::WasdRace);
+                    openArcadeHub("wasd-race");
                     return 0;
                 case IDC_BTN_PLAY_RHYTHM:
-                    ok::arcade::ArcadeManager::instance().launchGame(ok::arcade::GameType::Rhythm);
+                    openArcadeHub("rhythm");
                     return 0;
                 case IDC_BTN_PLAY_NOMISTAKE:
-                    ok::arcade::ArcadeManager::instance().launchGame(ok::arcade::GameType::NoMistake);
+                    openArcadeHub("no-mistake");
                     return 0;
                 case IDC_BTN_PLAY_FLEXING:
-                    ok::arcade::ArcadeManager::instance().launchGame(ok::arcade::GameType::Flexing);
+                    openArcadeHub("flexing");
                     return 0;
+                case IDC_BTN_OPEN_CHAOS_LAB:
+                    // Dedicated lab window: type text, see the exact chaos
+                    // output, and (optionally) write it into the focused app.
+                    openChaosLab();
+                    return 0;
+                case IDC_BTN_APPLY_ARCADE_CFG: {
+                    auto cfg = ok::arcade::ArcadeManager::instance().getConfig();
+                    HWND combo = ::GetDlgItem(hwnd, IDC_CMB_FAILMODE);
+                    const int selection = (combo != nullptr)
+                                              ? static_cast<int>(::SendMessageW(combo, CB_GETCURSEL,
+                                                                               0, 0))
+                                              : 0;
+                    const auto mode = (selection == 1) ? ok::arcade::FailMode::HealthBar
+                                                       : ok::arcade::FailMode::Hardcore;
+                    cfg.rhythmFailMode = mode;
+                    cfg.noMistakeFailMode = mode;
+                    wchar_t bpmText[16]{};
+                    ::GetDlgItemTextW(hwnd, IDC_EDT_RHYTHM_BPM, bpmText, 16);
+                    const long bpm = std::wcstol(bpmText, nullptr, 10);
+                    if (bpm >= 60 && bpm <= 220) {
+                        cfg.rhythmBpm = static_cast<double>(bpm);
+                    }
+                    ok::arcade::ArcadeManager::instance().setConfig(cfg);
+                    ::MessageBoxW(hwnd,
+                                  L"Đã áp dụng: chế độ "
+                                  L"Rhythm/No-Mistake và nhịp BPM cho các game tiếp theo.",
+                                  L"KieeKey Arcade", MB_OK | MB_ICONINFORMATION);
+                    return 0;
+                }
                 case IDC_CHK_CHAOS_MASTER:
                 case IDC_CHK_CHAOS_CASE:
                 case IDC_CHK_GLYPH_TRANSFORM: {
@@ -4003,7 +4160,10 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
 
     INITCOMMONCONTROLSEX icc{};
     icc.dwSize = sizeof(icc);
-    icc.dwICC  = ICC_TAB_CLASSES;
+    // v1.3.0: the Chaos Lab window uses a trackbar (TRACKBAR_CLASSW), which
+    // lives in the common-controls bar class; without ICC_BAR_CLASSES the
+    // control is not registered and the lab comes up without its sliders.
+    icc.dwICC  = ICC_TAB_CLASSES | ICC_BAR_CLASSES;
     ::InitCommonControlsEx(&icc);
 
     g.hInst = hInst;
@@ -4154,6 +4314,51 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         } catch (...) {
             ::CloseHandle(g_wakeExitEvent);
             g_wakeExitEvent = nullptr;
+        }
+    }
+
+    // v1.3.0: command-line switches for the graphical surfaces, so the hub can
+    // be opened straight from a shortcut or a script:
+    //   KieeKey.exe --arcade[=slug]   open the Arcade Hub window
+    //   KieeKey.exe --chaos-lab       open the Chaos / Flexing lab window
+    //   KieeKey.exe --settings[=N]    open the settings dialog on tab N
+    {
+        int argumentCount = 0;
+        LPWSTR* arguments = ::CommandLineToArgvW(::GetCommandLineW(), &argumentCount);
+        if (arguments != nullptr) {
+            for (int i = 1; i < argumentCount; ++i) {
+                const std::wstring argument = arguments[i];
+                if (argument.rfind(L"--arcade", 0) == 0) {
+                    std::string slug;
+                    const std::size_t equals = argument.find(L'=');
+                    if (equals != std::wstring::npos) {
+                        // v1.3.0: utf16ToUtf8() instead of
+                        // `slug.assign(value.begin(), value.end())`. Copying a
+                        // wchar_t range into a narrow string makes the STL
+                        // assign `char = const wchar_t` inside <xutility>, which
+                        // MSVC /W4 reports as C4244 *in the header* — under /WX
+                        // that is C2220 and it points at the STL, not at this
+                        // line. Converting explicitly keeps the diagnostic
+                        // meaningful and the slug correct for non-ASCII input.
+                        slug = utf16ToUtf8(argument.substr(equals + 1));
+                    }
+                    openArcadeHub(slug.empty() ? nullptr : slug.c_str());
+                } else if (argument == L"--chaos-lab") {
+                    openChaosLab();
+                } else if (argument.rfind(L"--settings", 0) == 0) {
+                    int tab = 0;
+                    const std::size_t equals = argument.find(L'=');
+                    if (equals != std::wstring::npos) {
+                        // std::wcstol reads the wide text directly, so no
+                        // narrowing conversion happens at all (same C4244 class
+                        // as above: the iterator-pair string constructor).
+                        tab = static_cast<int>(
+                            std::wcstol(argument.c_str() + equals + 1, nullptr, 10));
+                    }
+                    openSettingsDialog(tab);
+                }
+            }
+            ::LocalFree(arguments);
         }
     }
 

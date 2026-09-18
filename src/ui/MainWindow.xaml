@@ -1,9 +1,18 @@
 <!--
-KieeKey v1.1.2 — MainWindow.xaml
+KieeKey v1.3.0 — MainWindow.xaml
 Fluent Design (WinUI 3) settings surface. Replaces the legacy Win32 .rc
 dialog. Uses System Backdrop Mica, native dark/light sync, ToggleSwitch /
 ComboBox / NumberBox controls, and an inline latency telemetry panel fed by
 ModernKeyHook::peakLatencyUs().
+
+v1.3.0 additions:
+  * The header no longer says "OpenKey" / "KieeKey v1.1.2": the product name is
+    KieeKey and the version text is filled from OPENKEY_KIEEKEY_VERSION_STRING
+    at runtime, so it can never go stale again.
+  * Arcade Hub / Chaos Engine / Progression & AI pages. The games themselves
+    run in their own native windows (the GDI Arcade Hub and the web client,
+    both driven by the same `ok::arcade::ArcadeManager`); this surface is the
+    launcher + live telemetry, never a text-mode rendering of a game.
 
 Backdrop notes:
   * Mica requires the window to be on Windows 11 22000+; fall back to
@@ -32,8 +41,8 @@ Backdrop notes:
         <!-- Header -->
         <StackPanel Grid.Row="0" Spacing="4" Orientation="Horizontal"
                     VerticalAlignment="Center">
-            <TextBlock Text="OpenKey" Style="{StaticResource TitleTextBlockStyle}"/>
-            <TextBlock Text="KieeKey v1.1.2"
+            <TextBlock Text="KieeKey" Style="{StaticResource TitleTextBlockStyle}"/>
+            <TextBlock x:Name="VersionText" Text="v1.3.0"
                        Style="{StaticResource CaptionTextBlockStyle}"
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                        VerticalAlignment="Bottom" Margin="8,0,0,4"/>
@@ -124,6 +133,69 @@ Backdrop notes:
                         </Grid>
                         <ToggleSwitch x:Name="HardwareLevel" Header="Hook cấp thấp (WH_KEYBOARD_LL)"
                                       IsOn="True" Toggled="OnHardwareLevelToggled"/>
+                    </StackPanel>
+                </Expander>
+
+                <!-- Arcade Hub -->
+                <Expander Header="Arcade Hub (8 mini-game gõ phím)" IsExpanded="False">
+                    <StackPanel Spacing="12" Margin="0,12,0,0">
+                        <TextBlock TextWrapping="Wrap"
+                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                   Text="Game chạy trong cửa sổ đồ hoạ riêng (Win32 GDI hoặc trình duyệt), dùng chung engine C++ với bộ gõ. Không hiển thị dạng văn bản."/>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button Content="Mở Arcade Hub" Click="OnOpenArcadeHub"/>
+                            <Button Content="Phòng Chaos / Flexing" Click="OnOpenChaosLab"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button Content="🐍 Snake" Tag="snake" Click="OnPlayArcadeGame"/>
+                            <Button Content="🧱 Tetris" Tag="tetris" Click="OnPlayArcadeGame"/>
+                            <Button Content="🎣 Câu cá" Tag="fishing" Click="OnPlayArcadeGame"/>
+                            <Button Content="🏎️ Đua tốc độ" Tag="typing-race" Click="OnPlayArcadeGame"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button Content="🏎️ Đua + né" Tag="wasd-race" Click="OnPlayArcadeGame"/>
+                            <Button Content="🎵 Rhythm" Tag="rhythm" Click="OnPlayArcadeGame"/>
+                            <Button Content="🎯 Không lỗi" Tag="no-mistake" Click="OnPlayArcadeGame"/>
+                            <Button Content="🗿 Flexing" Tag="flexing" Click="OnPlayArcadeGame"/>
+                        </StackPanel>
+                        <TextBlock x:Name="ArcadeStatusText" TextWrapping="Wrap"
+                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                   Text="Chưa có game nào đang chạy."/>
+                    </StackPanel>
+                </Expander>
+
+                <!-- Chaos engine -->
+                <Expander Header="Chaos Engine (hoa/thường ngẫu nhiên, xoay/lật glyph)" IsExpanded="False">
+                    <StackPanel Spacing="12" Margin="0,12,0,0">
+                        <ToggleSwitch x:Name="ChaosMaster" Header="Bật Chaos (mặc định TẮT)"
+                                      Toggled="OnChaosChanged"/>
+                        <CheckBox x:Name="ChaosCase" Content="Đổi hoa/thường ngẫu nhiên"
+                                  Checked="OnChaosChanged" Unchecked="OnChaosChanged"/>
+                        <CheckBox x:Name="ChaosGlyph" Content="Biến đổi glyph khi hiển thị"
+                                  Checked="OnChaosChanged" Unchecked="OnChaosChanged"/>
+                        <CheckBox x:Name="ChaosInject" Content="Cho phép gõ thật ra ứng dụng đang mở"
+                                  Checked="OnChaosChanged" Unchecked="OnChaosChanged"/>
+                        <Button Content="Mở phòng thí nghiệm Chaos (test gõ thật)"
+                                Click="OnOpenChaosLab"/>
+                    </StackPanel>
+                </Expander>
+
+                <!-- Progression & AI -->
+                <Expander Header="Tiến trình, AI và huấn luyện viên" IsExpanded="False">
+                    <StackPanel Spacing="8" Margin="0,12,0,0">
+                        <TextBlock x:Name="LevelText" Text="Cấp độ: —"/>
+                        <TextBlock x:Name="XpText" Text="Tổng XP: —"/>
+                        <TextBlock x:Name="KeysText" Text="Số phím đã gõ: —"/>
+                        <TextBlock x:Name="AchievementsText" TextWrapping="Wrap" Text="Thành tựu: —"/>
+                        <ToggleSwitch x:Name="AiOptIn" Header="Cho phép AI học nhịp gõ của tôi"
+                                      Toggled="OnAiOptInChanged"/>
+                        <TextBlock x:Name="AiStatsText" TextWrapping="Wrap" Text="AI: chưa bật."/>
+                        <TextBlock x:Name="CoachText" TextWrapping="Wrap" Text="Gợi ý: —"/>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button Content="Xoá hồ sơ AI" Click="OnResetAiProfile"/>
+                            <Button Content="Đặt lại tiến trình" Click="OnResetProgression"/>
+                        </StackPanel>
                     </StackPanel>
                 </Expander>
 

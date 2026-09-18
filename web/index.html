@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>KieeKey Arcade Hub</title>
+<link rel="stylesheet" href="arcade.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <span class="logo">⌨️</span>
+    <div>
+      <h1>KieeKey Arcade Hub</h1>
+      <p id="subtitle">Cùng một engine C++ với bản Win32 — vẽ bằng HTML5 Canvas</p>
+    </div>
+  </div>
+  <div class="status">
+    <span id="connection" class="pill pill-warn">đang kết nối…</span>
+    <span id="fps" class="pill">-- fps</span>
+  </div>
+</header>
+
+<main>
+  <section class="hud">
+    <div class="hud-item"><span class="k" id="title">—</span></div>
+    <div class="hud-item"><span class="k">Điểm</span><span class="v" id="score">0</span></div>
+    <div class="hud-item"><span class="k">Kỷ lục</span><span class="v" id="best">0</span></div>
+    <div class="hud-item"><span class="k">Cấp</span><span class="v" id="level">1</span></div>
+    <div class="hud-item"><span class="k">Combo</span><span class="v" id="combo">0</span></div>
+    <div class="hud-item"><span class="k">Mạng</span><span class="v" id="lives">0</span></div>
+    <div class="hud-item"><span class="k">WPM</span><span class="v" id="wpm">0</span></div>
+    <div class="hud-item"><span class="k">Chính xác</span><span class="v" id="acc">100%</span></div>
+  </section>
+
+  <section class="stage">
+    <canvas id="screen" width="1280" height="720" tabindex="0" aria-label="Màn hình game"></canvas>
+    <div id="banner" class="banner hidden"></div>
+    <div id="toast" class="toast hidden"></div>
+  </section>
+
+
+  <section class="labs">
+    <!-- Flexing Mode stage: the text the engine produces is typed for real -->
+    <div class="lab hidden" id="labFlexing">
+      <header class="lab-head">
+        <span class="lab-icon">🗿</span>
+        <div>
+          <h2>Flexing Mode — sân khấu gõ thật</h2>
+          <p>Bạn gõ phím bất kỳ; chữ hiện ra là <b>văn bản chuẩn bị trước</b> do engine C++ sinh ra và gõ thật vào ô bên phải.</p>
+        </div>
+        <span class="pill" id="flexPill">chưa nạp</span>
+      </header>
+      <div class="lab-grid">
+        <div class="lab-col">
+          <label for="flexSource">Văn bản chuẩn bị trước</label>
+          <textarea id="flexSource" class="lab-input" rows="7" spellcheck="false"></textarea>
+          <div class="row">
+            <label class="inline" for="flexGran">Mỗi phím sinh ra
+              <select id="flexGran">
+                <option value="0" selected>1 ký tự</option>
+                <option value="1">1 từ</option>
+                <option value="2">N ký tự</option>
+                <option value="3">Tự chảy (AutoStream)</option>
+              </select>
+            </label>
+            <label class="inline" for="flexN">N
+              <input id="flexN" type="number" min="1" max="64" value="3">
+            </label>
+            <button class="btn" id="flexPreload">Nạp vào engine</button>
+          </div>
+          <p class="note">Văn bản này được gửi tới <code>POST /api/preload</code> và engine C++ giữ nguyên nó — trình duyệt không tự bịa chữ.</p>
+        </div>
+        <div class="lab-col">
+          <label for="flexTarget">Cửa sổ gõ thật (nhận chữ do engine gõ vào)</label>
+          <textarea id="flexTarget" rows="7" spellcheck="false" placeholder="Bấm vào đây rồi gõ phím bất kỳ…"></textarea>
+          <div class="row chips">
+            <span class="chip">WPM <b id="flexWpm">0</b></span>
+            <span class="chip">Đã sinh <b id="flexGen">0</b></span>
+            <span class="chip">Phím thật <b id="flexKeys">0</b></span>
+            <span class="chip">Hiệu suất <b id="flexEff">x1.00</b></span>
+            <span class="chip">Vị trí <b id="flexCursor">0 / 0</b></span>
+          </div>
+          <div class="row">
+            <button class="btn btn-ghost" id="flexClear">Xoá ô gõ thật</button>
+            <span class="note">Ô này bị chặn nhập tay: mọi chữ xuất hiện đều đến từ engine.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Chaos Mode lab: same transformation the hook applies to real typing -->
+    <div class="lab hidden" id="labChaos">
+      <header class="lab-head">
+        <span class="lab-icon">🌀</span>
+        <div>
+          <h2>Phòng Chaos Mode — thử gõ thật</h2>
+          <p>Bật/tắt từng hiệu ứng rồi xem đúng những ký tự mà KieeKey sẽ gõ vào ứng dụng đang mở.</p>
+        </div>
+        <span class="pill" id="chaosPill">TẮT</span>
+      </header>
+      <div class="lab-grid">
+        <div class="lab-col">
+          <label class="check">
+            <input type="checkbox" id="chaosMaster">
+            <span><b>Master switch</b> — bật Chaos Mode (mặc định TẮT)</span>
+          </label>
+          <label class="check">
+            <input type="checkbox" id="chaosCase">
+            <span><b>Random HOA / thường</b> — đổi kiểu chữ ngẫu nhiên</span>
+          </label>
+          <div class="row">
+            <label class="inline" for="chaosCaseIntensity">Cường độ <output id="chaosCaseOut">50</output>%
+              <input id="chaosCaseIntensity" type="range" min="0" max="100" value="50">
+            </label>
+            <label class="inline" for="chaosCaseGran">Đơn vị
+              <select id="chaosCaseGran">
+                <option value="0" selected>từng ký tự</option>
+                <option value="1">từng từ</option>
+              </select>
+            </label>
+          </div>
+          <label class="check">
+            <input type="checkbox" id="chaosGlyph">
+            <span><b>Lật / xoay ký tự</b> — chữ ngược, chữ soi gương</span>
+          </label>
+          <div class="row">
+            <label class="inline" for="chaosGlyphMode">Kiểu
+              <select id="chaosGlyphMode">
+                <option value="0" selected>Không</option>
+                <option value="1">Xoay 90° (chỉ vẽ, không gõ)</option>
+                <option value="2">Xoay 180° (chữ ngược)</option>
+                <option value="3">Xoay 270° (chỉ vẽ, không gõ)</option>
+                <option value="4">Lật ngang</option>
+                <option value="5">Lật dọc</option>
+                <option value="6">Ngẫu nhiên</option>
+              </select>
+            </label>
+            <label class="inline" for="chaosGlyphIntensity">Cường độ <output id="chaosGlyphOut">100</output>%
+              <input id="chaosGlyphIntensity" type="range" min="0" max="100" value="100">
+            </label>
+          </div>
+          <p class="note" id="chaosHonesty">Xoay 90°/270° không thể gõ ra chữ Unicode tương đương, nên engine chỉ vẽ chúng — văn bản gõ thật giữ nguyên.</p>
+        </div>
+        <div class="lab-col">
+          <label for="chaosSource">Bạn gõ (thử nghiệm)</label>
+          <textarea id="chaosSource" class="lab-input" rows="3" spellcheck="false">Nguyen Van A di hoc o Can Tho</textarea>
+          <label for="chaosInjected">Engine gõ thật vào ứng dụng</label>
+          <textarea id="chaosInjected" rows="3" readonly spellcheck="false"></textarea>
+          <label for="chaosDisplay">Những gì hiện trên màn hình game</label>
+          <textarea id="chaosDisplay" rows="3" readonly spellcheck="false"></textarea>
+          <div class="row">
+            <button class="btn" id="chaosApply">Áp dụng vào engine</button>
+            <button class="btn btn-ghost" id="chaosClear">Xoá ô thử</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="side">
+
+    <h2>Tiến trình &amp; AI Rival</h2>
+    <div class="config prog">
+      <div class="prog-level">
+        <span class="chip">Cấp <b id="progLevel">1</b></span>
+        <span class="chip">XP <b id="progXp">0</b></span>
+      </div>
+      <div class="bar"><span id="progBar" style="width:0%"></span></div>
+      <small class="note"><span id="progPercent">0%</span> tới cấp kế tiếp · Kỷ lục đua <b id="progRace">0</b> WPM</small>
+      <div class="row chips">
+        <span class="chip">WPM tốt nhất <b id="progBestWpm">0</b></span>
+        <span class="chip">Phím <b id="progKeys">0</b></span>
+        <span class="chip">Chuỗi ngày <b id="progStreak">0</b></span>
+        <span class="chip">Thành tựu <b id="progAchievements">0</b></span>
+      </div>
+      <button class="btn btn-ghost" id="progRefresh">↻ Cập nhật tiến trình</button>
+    </div>
+
+    <h2>🤖 AI Rival (học từ bạn)</h2>
+    <div class="config prog">
+      <div class="row">
+        <span class="pill" id="rivalPill">TẮT (opt-in)</span>
+        <label class="check inline">
+          <input type="checkbox" id="rivalOptIn">
+          <span>Cho phép học</span>
+        </label>
+      </div>
+      <div class="row chips">
+        <span class="chip">Mẫu <b id="rivalSamples">0</b></span>
+        <span class="chip">Tốc độ học được <b id="rivalWpm">0 WPM</b></span>
+        <span class="chip">Tỉ lệ gõ sai <b id="rivalError">0%</b></span>
+      </div>
+      <small class="note">Đối thủ sẽ về đích sau <b id="rivalFinish">—</b></small>
+      <div class="row">
+        <button class="btn" id="rivalTrain">Huấn luyện từ phím đã gõ</button>
+        <button class="btn btn-ghost" id="rivalReset">Xoá hồ sơ</button>
+      </div>
+      <p class="note">AI Rival chỉ bật khi bạn cho phép; mọi con số ở đây do engine C++ tính, không phải JavaScript.</p>
+    </div>
+
+    <h2>Phòng thí nghiệm</h2>
+    <div class="config">
+      <button class="btn" id="openFlexingLab">🗿 Mở sân khấu Flexing</button>
+      <button class="btn" id="openChaosLab">🌀 Mở phòng Chaos</button>
+      <button class="btn btn-ghost" id="closeLabs">Đóng phòng thí nghiệm</button>
+    </div>
+
+    <h2>Chọn game</h2>
+    <div id="catalog" class="catalog"></div>
+
+    <h2>Cấu hình</h2>
+    <div class="config">
+      <label>Rhythm / No-Mistake
+        <select id="failMode">
+          <option value="0" selected>Hardcore — sai là chết</option>
+          <option value="1">Thanh máu — sai trừ máu</option>
+        </select>
+      </label>
+      <label>Nhịp Rhythm (BPM): <output id="bpmOut">112</output>
+        <input id="bpm" type="range" min="60" max="220" value="112">
+      </label>
+      <label>Pacer đua tốc độ (WPM): <output id="pacerOut">60</output>
+        <input id="pacer" type="range" min="0" max="200" value="60">
+      </label>
+    </div>
+
+    <h2>Điều khiển</h2>
+    <ul class="keys">
+      <li><b>Snake</b>: mũi tên hoặc WASD</li>
+      <li><b>Tetris</b>: ← → di chuyển, ↑ xoay, Space thả nhanh</li>
+      <li><b>Câu cá</b>: gõ đúng chuỗi chữ để kéo cá</li>
+      <li><b>Đua tốc độ</b>: gõ đoạn văn bản</li>
+      <li><b>Đua + né</b>: gõ chữ và WASD để né vật cản</li>
+      <li><b>Rhythm</b>: A S D F / J K L ;</li>
+      <li><b>Không lỗi</b>: gõ liên tục, tuyệt đối không sai</li>
+      <li><b>Flexing</b>: gõ gì cũng được</li>
+      <li><b>P / F1</b> tạm dừng · <b>F2</b> chơi lại · <b>Esc</b> thoát game</li>
+    </ul>
+    <p class="note">Mọi phím gửi lên đều đi vào engine C++ thật (ArcadeManager) — engine này cũng chính là engine mà bản Win32 vẽ bằng GDI.</p>
+    <p class="note">Hai phòng thí nghiệm dùng chung engine với bản Win32: Flexing gõ chữ do engine sinh vào ô “cửa sổ gõ thật”, Chaos cho xem đúng chuỗi ký tự sẽ được gõ ra ngoài.</p>
+  </section>
+</main>
+
+<footer>
+  <span>KieeKey v1.3.0 · Arcade Hub</span>
+  <button id="restart" class="btn">Chơi lại (F2)</button>
+  <button id="pause" class="btn">Tạm dừng (P)</button>
+  <button id="stop" class="btn btn-ghost">Thoát game (Esc)</button>
+</footer>
+
+<script src="arcade.js"></script>
+<script src="labs.js"></script>
+<script src="progress.js"></script>
+</body>
+</html>

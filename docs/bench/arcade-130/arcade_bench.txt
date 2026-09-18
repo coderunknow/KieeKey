@@ -1,0 +1,193 @@
+game	environment
+cpu	Intel(R) Xeon(R) Processor @ 2.60GHz
+compiler	g++ 12.2.0
+build_date	Sep 18 2026 09:23:57
+rss_bytes	1945600
+
+game	parameters
+iterations	4000
+warmup_frames	120
+
+game	snake
+title	Snake
+frames	120
+iterations	4000
+update_mean_us	0.075
+update_p50_us	0.054
+update_p95_us	0.178
+update_p99_us	0.191
+update_max_us	3.235
+build_mean_us	0.876
+build_p99_us	1.237
+json_mean_us	53.388
+json_p99_us	78.809
+frame_total_mean_us	54.339
+frame_budget_pct_of_16667us	0.326
+commands_last	42
+json_bytes_last	1881
+score	0
+digest	cdd82d8d313aa88c
+
+game	tetris
+title	Tetris
+frames	120
+iterations	4000
+update_mean_us	0.078
+update_p50_us	0.054
+update_p95_us	0.169
+update_p99_us	0.195
+update_max_us	13.470
+build_mean_us	1.330
+build_p99_us	1.986
+json_mean_us	27.601
+json_p99_us	51.890
+frame_total_mean_us	29.009
+frame_budget_pct_of_16667us	0.174
+commands_last	18
+json_bytes_last	1289
+score	0
+digest	be6abe9c15b595f7
+
+game	fishing
+title	Fishing
+frames	120
+iterations	4000
+update_mean_us	0.083
+update_p50_us	0.056
+update_p95_us	0.183
+update_p99_us	0.227
+update_max_us	13.380
+build_mean_us	1.448
+build_p99_us	2.197
+json_mean_us	41.604
+json_p99_us	69.550
+frame_total_mean_us	43.134
+frame_budget_pct_of_16667us	0.259
+commands_last	32
+json_bytes_last	1910
+score	0
+digest	ac317530d87618f0
+
+game	typing-race
+title	Typing Race
+frames	120
+iterations	4000
+update_mean_us	0.090
+update_p50_us	0.072
+update_p95_us	0.179
+update_p99_us	0.237
+update_max_us	0.660
+build_mean_us	1.673
+build_p99_us	2.690
+json_mean_us	41.064
+json_p99_us	71.110
+frame_total_mean_us	42.826
+frame_budget_pct_of_16667us	0.257
+commands_last	30
+json_bytes_last	1777
+score	0
+digest	b94f13233ee159e5
+
+game	wasd-race
+title	WASD + Typing Racing
+frames	120
+iterations	4000
+update_mean_us	0.110
+update_p50_us	0.078
+update_p95_us	0.229
+update_p99_us	0.313
+update_max_us	13.096
+build_mean_us	2.218
+build_p99_us	4.683
+json_mean_us	80.938
+json_p99_us	163.845
+frame_total_mean_us	83.266
+frame_budget_pct_of_16667us	0.500
+commands_last	50
+json_bytes_last	3081
+score	0
+digest	c757fb9552879a3d
+
+game	rhythm
+title	Rhythm Typing
+frames	120
+iterations	4000
+update_mean_us	0.072
+update_p50_us	0.055
+update_p95_us	0.162
+update_p99_us	0.187
+update_max_us	1.534
+build_mean_us	1.469
+build_p99_us	2.183
+json_mean_us	29.270
+json_p99_us	48.806
+frame_total_mean_us	30.810
+frame_budget_pct_of_16667us	0.185
+commands_last	20
+json_bytes_last	1467
+score	0
+digest	88bc6c2f0192687f
+
+game	no-mistake
+title	No-Mistake Mode
+frames	120
+iterations	4000
+update_mean_us	0.062
+update_p50_us	0.053
+update_p95_us	0.103
+update_p99_us	0.176
+update_max_us	1.257
+build_mean_us	1.524
+build_p99_us	2.328
+json_mean_us	13.943
+json_p99_us	29.690
+frame_total_mean_us	15.529
+frame_budget_pct_of_16667us	0.093
+commands_last	10
+json_bytes_last	1074
+score	0
+digest	7c820be7274c0f53
+
+game	flexing
+title	Flexing Mode
+frames	120
+iterations	4000
+update_mean_us	0.065
+update_p50_us	0.054
+update_p95_us	0.123
+update_p99_us	0.185
+update_max_us	1.073
+build_mean_us	2.468
+build_p99_us	4.087
+json_mean_us	16.634
+json_p99_us	32.748
+frame_total_mean_us	19.167
+frame_budget_pct_of_16667us	0.115
+commands_last	12
+json_bytes_last	1398
+score	550
+digest	bd01fd0b69b49757
+
+game	http-bridge
+state_mean_us	45.441
+state_p99_us	89.260
+state_bytes	1889
+input_mean_us	0.651
+input_p99_us	1.757
+static_mean_us	42.453
+static_p99_us	69.550
+max_state_rate_hz	22006
+
+game	steady-state-allocations
+game_under_test	tetris
+frames	600
+allocations_logic_total	0
+allocations_logic_per_frame	0.0000
+allocations_json_total	600
+allocations_json_per_frame	1.0000
+allocations_input_per_key	0.0000
+render_commands_capacity	36
+
+game	allocations_total
+new	600
+delete	600

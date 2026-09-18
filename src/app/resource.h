@@ -142,6 +142,10 @@
 #define IDC_BTN_PLAY_NOMISTAKE    587
 #define IDC_BTN_PLAY_FLEXING      588
 #define IDC_STAT_ARCADE_STATUS    589
+#define IDC_CMB_FAILMODE          596   // Rhythm / No-Mistake: Hardcore vs HP
+#define IDC_EDT_RHYTHM_BPM        597
+#define IDC_BTN_OPEN_CHAOS_LAB    598   // dedicated Chaos/Flexing test window
+#define IDC_BTN_APPLY_ARCADE_CFG  599   // apply fail-mode / BPM to ArcadeManager
 
 // tab 6: Chaos & Lab
 #define IDC_GRP_CHAOS             590

@@ -5,12 +5,23 @@
 
 Configuration                         Mean (ns)   p50 (ns)  p90 (ns)  p99 (ns)  Delta vs BL Sink Digest       
 --------------------------------------------------------------------------------------------------------------
-1. Pure IME Baseline (Core only)      58.2        55        69        100       BASELINE    0x521ea99bb909b76c
-2. IME + Inactive Arcade (Standby)    58.6        55        70        108       +0.0%       0x521ea99bb909b76c
-3. IME + Active Chaos Engine          79.4        70        103       168       +27.3%      0xf8d2155f42acdb02
-4. IME + Active AI Telemetry          68.2        63        85        154       +14.5%      0x521ea99bb909b76c
-5. IME + Full v1.3.0 Suite            484.9       467       500       607       +749.1%     0xf8d2155f42acdb02
+1. Pure IME Baseline (Core only)      81.0        69        105       202       BASELINE    0x521ea99bb909b76c
+2. IME + Inactive Arcade (Standby)    75.9        67        93        169       -2.9%       0x521ea99bb909b76c
+3. IME + Active Chaos Engine          99.2        89        123       213       +29.0%      0xf8d2155f42acdb02
+4. IME + Active AI Telemetry          85.8        76        105       188       +10.1%      0x521ea99bb909b76c
+5. IME + Full v1.3.0 Suite            504.2       459       609       784       +565.2%     0xf8d2155f42acdb02
 
 Apples-to-Apples Verification Verdict:
-  [PASS] Inactive Arcade overhead is 0.00% (within <= 5.0% gate budget).
+  [PASS] Inactive Arcade overhead is 2.90% (within <= 5.0% gate budget).
   [PASS] Bit-level execution determinism verified across all workloads.
+
+--- provenance ---------------------------------------------------------------
+Re-measured on 2026-09-18T09:34:14Z at commit 35af240
+with the same command tests/run_extreme_bench.sh runs for step 7:
+  g++ -std=c++2b -O3 -DNDEBUG -Isrc/core tests/bench_v130_isolation.cpp \
+      src/core/TextEngine.cpp src/core/Arcade.cpp src/core/ChaosEngine.cpp \
+      src/core/AiRival.cpp src/core/Progression.cpp src/core/TypingAnalytics.cpp
+  bench_v130_isolation --keys=100000
+The deltas move with host load (this is a shared cloud VM); what the gate needs
+is that standby stays inside the <= 5.0% budget and that the sink digests stay
+bit-identical, both of which hold above.

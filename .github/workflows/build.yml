@@ -77,7 +77,131 @@ jobs:
         run: cmake -S . -B out/${{ matrix.platform }} ${{ matrix.cmake_args }} -DCMAKE_BUILD_TYPE=Release -DKIEEKEY_BUILD_TESTS=ON -DKIEEKEY_BUILD_UI=none
 
       - name: Build
-        run: cmake --build out/${{ matrix.platform }} --config Release --parallel
+        shell: pwsh
+        run: |
+          $log = "build-${{ matrix.platform }}.log"
+          # Tee the compiler output: MSVC is the only toolchain that builds these
+          # sources, so the exact diagnostics have to survive the job even when
+          # the raw log is not reachable (they are surfaced as annotations on
+          # the check run, and the log itself is uploaded below).
+          cmake --build out/${{ matrix.platform }} --config Release --parallel 2>&1 |
+              Tee-Object -FilePath $log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            # /WX turns every level-4 warning into C2220, so the build fails on
+            # the FIRST warning of each translation unit. Emit one annotation per
+            # unique (code + message) so the whole fix list is visible from the
+            # check-run API in a single run instead of one warning per push.
+            $seen = @{}
+            $unique = New-Object System.Collections.Generic.List[string]
+            # Diagnostics raised inside the STL headers (xutility, xstring, …)
+            # name the header, not the offending source. The `note: see
+            # reference to …` lines that follow carry the instantiation site in
+            # OUR tree — without them a C4244 in xutility is unfixable from the
+            # annotation alone. Collect them separately.
+            $notes = @{}
+            $noteList = New-Object System.Collections.Generic.List[string]
+            $notePattern = '^(.+\.(?:cpp|cxx|cc|hpp|hxx|h))\((\d+)(,\d+)?\):\s*note:\s*(.*)$'
+            foreach ($line in (Get-Content $log)) {
+              if ($line -match $notePattern) {
+                $rel = $matches[1]
+                if ($rel.Length -gt 110) { $rel = $rel.Substring($rel.Length - 110) }
+                $nline = $matches[2]
+                $noteText = ($matches[4] -replace '\s*\[[^\[\]]*\.vcxproj\]$', '').Trim()
+                if ($noteText.Length -gt 200) { $noteText = $noteText.Substring(0, 200) }
+                $nkey = "$rel($nline)"
+                if (-not $notes.ContainsKey($nkey)) {
+                  $notes[$nkey] = $true
+                  $noteList.Add("instantiation site: $rel($nline) -- $noteText")
+                }
+              }
+              if ($line -match '^(.*?)\((\d+)(,\d+)?\):\s*(error|warning)\s+([A-Z]+[0-9]+):\s*(.*)$') {
+                $file = $matches[1]
+                $lineno = $matches[2]
+                $code_ = $matches[5]
+                $msg = $matches[6]
+                # strip the trailing " [D:\...\proj.vcxproj]" project tag
+                $msg = ($msg -replace '\s*\[[^\[\]]*\.vcxproj\]$', '').Trim()
+                $key = "$code_|$msg"
+                if (-not $seen.ContainsKey($key)) {
+                  $seen[$key] = $true
+                  $entry = "$code_ $msg  <- $file($lineno)"
+                  if ($entry.Length -gt 880) { $entry = $entry.Substring(0, 880) }
+                  $unique.Add($entry)
+                }
+              }
+            }
+            foreach ($entry in ($noteList | Select-Object -First 20)) {
+              Write-Host "::error::$entry"
+            }
+            if ($unique.Count -eq 0) {
+              $tail = (Get-Content $log -Tail 25 -ErrorAction SilentlyContinue) -join ' | '
+              Write-Host "::error::build failed with no parsed diagnostic; tail: $tail"
+            } else {
+              Write-Host "::error::$($unique.Count) unique diagnostics (first 50 shown)"
+              foreach ($entry in ($unique | Select-Object -First 50)) {
+                Write-Host "::error::$entry"
+              }
+            }
+
+            # /WX stops each translation unit at its first warning, so the list
+            # above is incomplete. Rebuild once with warnings-as-errors disabled
+            # (KIEEKEY_WERROR=OFF) and report the FULL inventory, deduplicated —
+            # one push then tells the whole story instead of one warning per run.
+            Write-Host "::notice::re-running the build with KIEEKEY_WERROR=OFF to list every warning"
+            cmake -S . -B out/diag ${{ matrix.cmake_args }} -DCMAKE_BUILD_TYPE=Release -DKIEEKEY_BUILD_TESTS=ON -DKIEEKEY_BUILD_UI=none -DKIEEKEY_WERROR=OFF | Out-Null
+            $diagLog = "build-${{ matrix.platform }}-diag.log"
+            cmake --build out/diag --config Release --parallel 2>&1 | Tee-Object -FilePath $diagLog | Out-Null
+            $seenDiag = @{}
+            $uniqueDiag = New-Object System.Collections.Generic.List[string]
+            foreach ($line in (Get-Content $diagLog)) {
+              if ($line -match $notePattern) {
+                $rel = $matches[1]
+                if ($rel.Length -gt 110) { $rel = $rel.Substring($rel.Length - 110) }
+                $nline = $matches[2]
+                $noteText = ($matches[4] -replace '\s*\[[^\[\]]*\.vcxproj\]$', '').Trim()
+                if ($noteText.Length -gt 200) { $noteText = $noteText.Substring(0, 200) }
+                $nkey = "$rel($nline)"
+                if (-not $notes.ContainsKey($nkey)) {
+                  $notes[$nkey] = $true
+                  $noteList.Add("instantiation site: $rel($nline) -- $noteText")
+                }
+              }
+              if ($line -match '^(.*?)\((\d+)(,\d+)?\):\s*(error|warning)\s+([A-Z]+[0-9]+):\s*(.*)$') {
+                $file = $matches[1]
+                $lineno = $matches[2]
+                $code_ = $matches[5]
+                $msg = ($matches[6] -replace '\s*\[[^\[\]]*\.vcxproj\]$', '').Trim()
+                $key = "$code_|$msg"
+                if (-not $seenDiag.ContainsKey($key)) {
+                  $seenDiag[$key] = $true
+                  $entry = "$code_ $msg  <- $file($lineno)"
+                  if ($entry.Length -gt 880) { $entry = $entry.Substring(0, 880) }
+                  $uniqueDiag.Add($entry)
+                }
+              }
+            }
+            Write-Host "::error::full warning inventory: $($uniqueDiag.Count) unique (first 50 shown)"
+            foreach ($entry in ($uniqueDiag | Select-Object -First 50)) {
+              Write-Host "::error::$entry"
+            }
+            if ($noteList.Count -gt 0) {
+              Write-Host "::error::$($noteList.Count) instantiation site(s) in the KieeKey tree"
+              foreach ($entry in ($noteList | Select-Object -First 50)) {
+                Write-Host "::error::$entry"
+              }
+            }
+            exit $code
+          }
+
+      - name: Upload build log
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-log-${{ matrix.platform }}
+          path: build-${{ matrix.platform }}*.log
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Run unit tests
         if: matrix.platform == 'x64'
@@ -100,8 +224,24 @@ jobs:
           Copy-Item "$src/ok_tests.exe"      $dst
           Copy-Item "$src/ok_ring_tests.exe" $dst
           Copy-Item "$src/ok_wrap_tests.exe" $dst
+          # v1.3.0: the Arcade Hub web bridge + its assets ship with the app so
+          # the HTML5 player can run on a machine the user controls (see
+          # scripts/run_web_bridge.ps1) instead of only in an ephemeral sandbox.
+          foreach ($tool in @('arcade_serve.exe', 'arcade_bench.exe')) {
+            $path = Join-Path $src $tool
+            if (Test-Path $path) { Copy-Item $path $dst }
+            else { Write-Host "::warning::$tool was not built — check the arcade target" }
+          }
+          $webSrc = Join-Path "out/${{ matrix.platform }}" "web"
+          if (Test-Path $webSrc) {
+            Copy-Item $webSrc (Join-Path $dst "web") -Recurse
+          } else {
+            Write-Host "::warning::web assets were not copied into the build tree"
+          }
           Copy-Item "LICENSE" $dst
           Copy-Item "README.md" $dst
+          Copy-Item "scripts/run_web_bridge.ps1" $dst
+          Copy-Item "scripts/run_web_bridge.sh"  $dst
           Compress-Archive -Path "$dst/*" -DestinationPath "$dst.zip"
 
       - name: Upload artifact

@@ -4,8 +4,248 @@ All notable changes to KieeKey are documented here. Format based on
 Keep a Changelog; versioning: SemVer.
 
 ## [Unreleased]
+### Added
+* **The web player can now run as a real service** instead of only in an
+  ephemeral preview: `scripts/run_web_bridge.ps1` (Windows — `-Port/-Bind/-Fps`,
+  `-RestartAlways`, prints the LAN URL, registerable as an at-logon task) and
+  `scripts/run_web_bridge.sh` (Linux/macOS — `PORT/HOST/FPS`, builds with cmake
+  when available and falls back to a direct g++/clang++ build). The
+  per-architecture release artifact now carries `arcade_serve.exe`,
+  `arcade_bench.exe`, the whole `web/` client and both launchers, and the CMake
+  install rules put the bridge next to `KieeKeyApp.exe`, so download-and-run
+  needs no toolchain.
+* `testLiveConfigReachesRunningGame` (arcade suite) and `testConfigApplyNow`
+  (server suite): a config change now has to prove it reaches the run that is
+  already in flight, and `applyNow` has to prove it rebuilt the run.
+* `docs/bench/v122_vs_130/run_ab.sh` — the A/B driver: it refuses to run when
+  the three harnesses are not byte-identical between the two trees, then
+  interleaves rounds and prints the median table quoted in the README.
+
+* **The v1.3.0 features now have their graphical surfaces** (the previous
+  submission shipped the engines but rendered the games as text in a settings
+  tab):
+  * `src/app/ArcadeWindow.{hpp,cpp}` — the Arcade Hub as a real Win32/Win32 GDI
+    window (1180x760, double-buffered, 16 ms `WM_TIMER`): game-catalogue
+    sidebar with hover/click, keyboard input through
+    `ArcadeManager::handleKey`, FPS + level-up toast, plus a portable stub so
+    the file still compiles in a cross-check build.
+  * `src/app/ChaosLabWindow.{hpp,cpp}` + `src/core/ArcadeHubLaunch.hpp` — a
+    dedicated Chaos Lab window: type text, see exactly what the chaos engine
+    would emit, and write it into the focused application through the IME's own
+    emitter (`ChaosLabWindow::setEmitCallback`). Flexing Mode is reachable from
+    the same window.
+  * `web/` (index.html + arcade.css + arcade.js) and `tools/arcade_serve.cpp` —
+    an HTML5 canvas player that drives the same C++ engine over HTTP + SSE;
+    `arcade_serve` is a real target on Windows and Linux.
+  * `web/progress.js` + `GET|POST /api/progression` and `GET|POST /api/rival` —
+    the progression/AI half of the feature set is now visible and testable in
+    the browser too: level + XP bar + streak + achievements + records straight
+    from `ProgressionEngine`, and the opt-in AI rival with its learned pace and
+    the finish time it would get on the passage being raced right now
+    (`AiRivalEngine::makeRacer`). A level-up while the page is open raises the
+    same toast the desktop hub shows. The panel only displays engine numbers.
+  * `web/labs.js` + two new HTTP routes — the two "gõ thật" surfaces in the
+    browser: the **Flexing stage** (`POST /api/preload` loads the prepared
+    passage, `flex.emitted` in `/api/state`/`/api/stream` carries the text the
+    engine produced, which really lands in an editable control) and the
+    **Chaos lab** (`GET|POST /api/chaos` for the live knobs,
+    `POST /api/chaos/preview` for the exact bytes the engine would inject next
+    to the render-only display transform). Neither route re-implements the
+    transformation in JavaScript.
+  * **Flexing Mode got its own page** inside the Chaos Lab (the user asked for a
+    dedicated test UI for it): a prepared passage, granularity, live
+    `WPM / generated / keys / efficiency / cursor` readout, and a log of exactly
+    the text the shared `FlexingGame` produced — which the "Gõ chữ Flexing ra
+    app" button then types into the application you came from, as one paste or
+    chunk by chunk. Keypresses in the page step the same `ArcadeManager` game
+    the hub window runs.
+  * **New launchers**: tray menu items, settings-dialog buttons, WinUI 3 pages, and
+    the command line (`KieeKeyApp.exe --arcade[=slug] --chaos-lab
+    --settings=N`).
+  * The Arcade tab of the settings dialog gained the run configuration the
+    user asked to be selectable: **Rhythm / No-Mistake fail mode** (Hardcore —
+    one mistake ends the run, the default — or HP bar) and the **Rhythm BPM**,
+    applied through `ArcadeManager::setConfig`, next to a button that opens the
+    Chaos Lab. The web player exposes the same three settings.
+* `tools/arcade_bench.cpp` + `tests/run_arcade_bench.sh` — the standardized
+  arcade benchmark (per-game simulation/display-list/JSON/input percentiles,
+  HTTP bridge cost, steady-state allocation audit, determinism digest) with its
+  evidence committed under `docs/bench/arcade-130/` (see
+  `ARCADE_BENCH_REPORT.md`).
+* `tests/web_labs_test.js` — headless Node suite for the browser-side lab
+  glue (a small DOM/fetch double executes the real `web/labs.js`), so the
+  streamed Flexing text, the chaos preview/replay and the "keys belong to the
+  text field, not the engine" guard are verified without a browser.
+* `tests/web_progress_test.js` — headless suite for the progression/AI panel
+  (level/XP rendering, the level-up toast firing once, the opt-in switch, the
+  learned pace, the live race preview, reset, and visibility-aware polling).
+* `tests/web_render_test.js` + `tests/data/web_frames.json` +
+  `tests/capture_web_frames.py` — the HTML5 renderer is replayed head-lessly
+  against frames captured from the real engine (refresh the fixture with
+  `python3 tests/capture_web_frames.py` while `arcade_serve` runs): every game's
+  commands reach the canvas API, with the right scaling, colours, gradients,
+  text and HUD updates.
+* `tests/win32_gdi_shim.hpp`, `tests/win32_gdi_stub.{hpp,cpp}`,
+  `tests/win32_headers/windows.h` and `tests/test_arcade_window.cpp` — a
+  recording USER32/GDI32 harness that compiles, links and *executes* the real
+  window procedures (messages, GDI call log, control state) on any host, so the
+  graphical front-end is covered by `tests/run_all_tests.sh` even where no
+  Windows SDK exists.
+
+### Changed
+* The feature-isolation benchmark (`docs/bench/extreme-130/`) was re-measured
+  on this commit: standby overhead 1.56 % (gate <= 5 %), sink digests
+  bit-identical, and even all-modules-active costs 473.7 ns per keystroke
+  (p99 644 ns) — the previous campaign's numbers and the noise caveat are both
+  recorded in the report.
+* The standardized arcade benchmark was re-run on this commit and the evidence
+  under `docs/bench/arcade-130/` refreshed (heaviest game 83.3 µs = 0.50 % of a
+  60 FPS frame, `GET /api/state` 45.4 µs / p99 89.3 µs, 0 allocations per frame
+  on the native path); `tests/run_arcade_bench.sh` now also links
+  `ChaosEngine.cpp`, which the new `/api/chaos` route needs.
+* **The HTML5 player now has pixel evidence** (`docs/bench/arcade-130/frames/`):
+  every game frame captured from the real engine is rasterized through the real
+  `web/arcade.js` with a real Canvas2D implementation (`tests/render_web_frames.js`,
+  optional `@napi-rs/canvas`) into per-game PNGs plus a contact sheet. The
+  sandbox has no browser (the Chromium download is blocked and no system browser
+  exists), so this is the honest substitute: it proves colours, geometry, text
+  and per-game composition are real pixels, while page chrome/CSS still needs a
+  real browser. The new `web frames (node)` check in `tests/run_all_tests.sh`
+  regenerates them into the build directory (or reports `skipped` when the
+  optional module is absent, so the gate never depends on it).
+* `demo/arcade_cli --test` is a real smoke test now (launch, input, display
+  list, wire JSON and title for all eight games plus the Chaos transform)
+  instead of printing a fixed banner; `tests/run_all_tests.sh` builds and runs
+  it, so the terminal front-end can no longer rot behind the GUI ones.
+* **Apple-to-apple benchmark against v1.2.2 stable** (`docs/bench/v122_vs_130/`):
+  the shipped IME engine was measured against the last stable tag with
+  byte-identical harnesses (the script refuses to run when the harness blob ids
+  differ), interleaved rounds and medians. Result: no regression — the candidate
+  is equal or faster on every e2e percentile (p50 −5.2 %, p99 −1.5 %, p99.9
+  −8.7 %), identical peak RSS (8.551 MB) and the same SendInput batching
+  invariant (108 batched edits per 100 000 keys), with the three-engine
+  differential output unchanged passage by passage. `run_ab.sh` reproduces it.
+
+* `tests/run_all_tests.sh` builds and runs four new suites
+  (`test_arcade_render`, `test_arcade_server`, `test_arcade_window`,
+  `test_soak_arcade` over the render/Progression objects) — the native gate is
+  now 33 programs.
+* `CMakeLists.txt`: registered the arcade render/server sources, `msimg32`,
+  the two window translation units, the `arcade_serve` + `arcade_bench` tools,
+  the new test targets (including the shim-based window harness with a 120 s
+  timeout) and `install(DIRECTORY web ...)`.
+* `README.md` was de-duplicated: three overlapping `v1.3.0-*` "What's new"
+  sections plus the whole historical changelog chain were collapsed into one
+  current-release section that points at `CHANGELOG.md` as the single source of
+  version history (795 -> ~330 lines).
+
+* `scripts/gen_sha256sums.sh` now hashes the git **index** (staged
+  content) instead of `HEAD`, so the manifest is regenerated *before*
+  the single commit that ships it — the old HEAD-based hashing forced a
+  "commit, regenerate, commit again" dance whose second step was the one
+  everybody forgot. In CI (fresh checkout) the index equals `HEAD`, so
+  `--check` behaves identically.
+* New `scripts/hooks/pre-commit` hook (enable per clone with
+  `git config core.hooksPath scripts/hooks`) auto-regenerates and
+  re-stages `SHA256SUMS.txt` whenever a commit touches tracked files.
+  README "Building" documents the one-step workflow.
+* CI actions bumped off the deprecated Node 20 runtime:
+  `actions/checkout@v7`, `actions/upload-artifact@v7`,
+  `actions/download-artifact@v8`, `softprops/action-gh-release@v3`
+  (clears the Node-20 deprecation annotations on every job).
+
+### Removed
+* Dead `utf8Of` helper in `tests/test_option_matrix.cpp` (unused since
+  the harness switched to `hexDumpText` diagnostics); backslash-continued
+  `//` comments in `tests/diff_engine_ab.cpp` that tripped `-Wcomment`.
+  The g++ build of the test suite is now warning-clean.
 
 ### Fixed
+* **Rhythm lane labels rendered as garbage** (`噌`) in every front-end: the
+  rhythm game built its lane labels from a local (`const char32_t key = U'D';
+  std::u32string_view label(&key, 1)`) and `Frame::addText()` stored that view
+  as-is, so the frame pointed at destroyed stack memory. `addText()` now copies
+  foreign views into the frame arena (`Frame::owns()` keeps interned strings by
+  reference, so the HUD path still allocates nothing per frame);
+  `testFrameOwnsText` pins it by clobbering the stack after `buildFrame()`.
+* **The bridge's JSON reader mangled escaped text**: it only understood `\n`,
+  `\t` and `\r` and silently dropped the backslash for everything else, so
+  `{"text":"v\u0103n"}` — what any client that escapes non-ASCII sends, e.g.
+  Python's `json.dumps` default — arrived as the literal `vu0103n`. The Flexing
+  preload typed mojibake and the typing games received wrong characters. The
+  full escape set is decoded now (`\uXXXX` with surrogate pairs, quotes,
+  backslashes, control characters), unknown escapes stay lenient, and an
+  unterminated string is a 400 instead of a half-parsed value.
+  `testJsonStringEscapes` covers all of it.
+* **Progression was never awarded for games played in the app**: run results
+  were only drained by the HTTP bridge, so "type a lot to level up" did
+  nothing in the desktop build. `ArcadeManager::drainRunResultsToProgression()`
+  is now the single credit path (called from `update()`, the hub frame pump and
+  the settings timer), and the bridge delegates to it — a run is still popped
+  exactly once, so nothing is credited twice.
+* **The IME rewrote keystrokes inside KieeKey's own windows**: the producer now
+  passes input through untouched while the hub, the lab or the settings dialog
+  has the focus (`ownWindowHasFocus()`), so a game window and the IME can no
+  longer both consume a key.
+* **Hook-thread lock**: the keystroke counter called
+  `ProgressionEngine::recordTypingSession()`, which takes the progression mutex,
+  on the hook thread. It now uses the lock-free recorders
+  (`recordKeystroke`/`recordActiveTimeMs`), with words counted on word
+  boundaries and the aggregate merged by `flushStats()` on the UI timer.
+* **Every keystroke reached a game twice in the hub window**: `WM_KEYDOWN` now
+  carries the `ToUnicode`-translated character with the real keyboard state and
+  `WM_CHAR` is swallowed; modifier keys are filtered out.
+* **Per-frame heap traffic in the render path**: `buildRenderList` re-created
+  every command's text buffer and re-converted the four frame strings on every
+  frame (~4 allocations/frame). Command slots and conversion buffers are now
+  reused (`RenderCommand::reset`, `RenderList::scratch`,
+  `utf8FromUtf32(text, out)`, `renderListToJson(list, out)`), which the
+  allocation audit in `test_arcade` pins at zero for the native pipeline.
+* **The Chaos Lab came up without its sliders**: the lab's trackbar needs the
+  common-controls *bar* class, but the app only registered `ICC_TAB_CLASSES`.
+  `InitCommonControlsEx` now includes `ICC_BAR_CLASSES`.
+* **`POST /api/config` was a no-op for the game that was already running**: the
+  config was stored and never pushed to the live game, so the web's fail-mode
+  dropdown, BPM slider and pacer slider all looked broken. `setConfig()` now
+  applies the live-safe subset (fail mode, mistake penalties, race pacer,
+  obstacle spacing, fishing automation) to the running game immediately, and the
+  route reports `restartRequired` for the chart knobs whose setter regenerates a
+  run. A new `applyNow:1` rebuilds the run on request (`restartApplied` says
+  whether it happened), the web sends it when the BPM slider is released, and
+  the manager gained `configNeedsRelaunch()` / `relaunchCurrentGame()`.
+* **`ArcadeManager::makeGame()` read `m_config` without the mutex** while the
+  web bridge could call `setConfig()` concurrently — the config is now an
+  explicit parameter, snapshotted under the lock in `launchGame()`.
+* **MSVC `/W4 /WX` build (all three CI architectures)**: the last blocker was a
+  `C4244 'const wchar_t' → 'char'` reported *inside `<xutility>`* — the v1.3.0
+  command line built a `std::string` from a `wchar_t` iterator pair
+  (`--arcade=<slug>` via `slug.assign(value.begin(), value.end())` and
+  `--settings=<N>` via `std::string narrow(value.begin(), value.end())`), so the
+  STL's own `char = const wchar_t` assignment was the warning. The slug now goes
+  through `utf16ToUtf8()` and the tab index through `std::wcstol`, with no
+  narrowing anywhere. `ChaosLabWindow.cpp`
+  used `TRACKBAR_CLASSW` / `TBS_*` / `TBM_*` without `<commctrl.h>`,
+  `ArcadeWindow.cpp` used `GET_X_LPARAM` / `GET_Y_LPARAM` without
+  `<windowsx.h>`, `main.cpp` needed `comctl32.lib` for `InitCommonControlsEx`,
+  and a double→float narrowing plus an `int64→double` conversion in
+  `Arcade.cpp` tripped C2220. All fixed; the test shims no longer define those
+  macros, so the host build fails the same way MSVC does when an include is
+  missing. `KIEEKEY_WERROR` (default ON) gates `/WX`, and the CI Build step now
+  re-runs the build with `-DKIEEKEY_WERROR=OFF` and publishes the full
+  deduplicated warning inventory **plus the instantiation sites** (diagnostics
+  raised inside `<xutility>` are attributed to the source that instantiates
+  them) as check-run annotations — the sandbox cannot download raw job logs, so
+  the annotations are the only channel that survives.
+* **`src/ui/MainWindow.xaml` shipped stale identity**: the header still said
+  "OpenKey" / "KieeKey v1.1.2" and the settings surface had no arcade pages.
+  The title is now KieeKey, the version is derived from
+  `OPENKEY_KIEEKEY_VERSION_STRING` at runtime, and three new expanders
+  (Arcade Hub launcher, Chaos switches, progression/AI panel) plus handlers
+  were added.
+* `demo/arcade_cli.cpp` now prints the same display list the graphical
+  front-ends paint (title/score/WPM/shape count/wire size + the ASCII fallback)
+  instead of the removed `renderCurrentGame()` text renderer.
+
 * **CI (build/x64)**: the `Verify SHA256SUMS manifest` gate failed on
   `main` because the "Update project status" commit edited `README.md`
   without regenerating `SHA256SUMS.txt` (the same README-without-manifest
@@ -27,28 +267,6 @@ Keep a Changelog; versioning: SemVer.
   TU's own includes) via `/FI` (MSVC) / `-include` (GCC/Clang), on both
   the Linux and Windows test blocks. Product targets, the frozen
   reference engines and the benchmarks keep normal `NDEBUG` semantics.
-
-### Changed
-* `scripts/gen_sha256sums.sh` now hashes the git **index** (staged
-  content) instead of `HEAD`, so the manifest is regenerated *before*
-  the single commit that ships it — the old HEAD-based hashing forced a
-  "commit, regenerate, commit again" dance whose second step was the one
-  everybody forgot. In CI (fresh checkout) the index equals `HEAD`, so
-  `--check` behaves identically.
-* New `scripts/hooks/pre-commit` hook (enable per clone with
-  `git config core.hooksPath scripts/hooks`) auto-regenerates and
-  re-stages `SHA256SUMS.txt` whenever a commit touches tracked files.
-  README "Building" documents the one-step workflow.
-* CI actions bumped off the deprecated Node 20 runtime:
-  `actions/checkout@v7`, `actions/upload-artifact@v7`,
-  `actions/download-artifact@v8`, `softprops/action-gh-release@v3`
-  (clears the Node-20 deprecation annotations on every job).
-
-### Removed
-* Dead `utf8Of` helper in `tests/test_option_matrix.cpp` (unused since
-  the harness switched to `hexDumpText` diagnostics); backslash-continued
-  `//` comments in `tests/diff_engine_ab.cpp` that tripped `-Wcomment`.
-  The g++ build of the test suite is now warning-clean.
 
 ## [1.3.0-beta1] — 2026-09-18
 

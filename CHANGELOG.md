@@ -4,7 +4,6 @@ All notable changes to KieeKey are documented here. Format based on
 Keep a Changelog; versioning: SemVer.
 
 ## [Unreleased]
-
 ### Added
 * **The v1.3.0 features now have their graphical surfaces** (the previous
   submission shipped the engines but rendered the games as text in a settings
@@ -92,6 +91,48 @@ Keep a Changelog; versioning: SemVer.
   list, wire JSON and title for all eight games plus the Chaos transform)
   instead of printing a fixed banner; `tests/run_all_tests.sh` builds and runs
   it, so the terminal front-end can no longer rot behind the GUI ones.
+* **Apple-to-apple benchmark against v1.2.2 stable** (`docs/bench/v122_vs_130/`):
+  the shipped IME engine was measured against the last stable tag with
+  byte-identical harnesses (the script refuses to run when the harness blob ids
+  differ), interleaved rounds and medians. Result: no regression — the candidate
+  is equal or faster on every e2e percentile (p50 −5.2 %, p99 −1.5 %, p99.9
+  −8.7 %), identical peak RSS (8.551 MB) and the same SendInput batching
+  invariant (108 batched edits per 100 000 keys), with the three-engine
+  differential output unchanged passage by passage. `run_ab.sh` reproduces it.
+
+* `tests/run_all_tests.sh` builds and runs four new suites
+  (`test_arcade_render`, `test_arcade_server`, `test_arcade_window`,
+  `test_soak_arcade` over the render/Progression objects) — the native gate is
+  now 33 programs.
+* `CMakeLists.txt`: registered the arcade render/server sources, `msimg32`,
+  the two window translation units, the `arcade_serve` + `arcade_bench` tools,
+  the new test targets (including the shim-based window harness with a 120 s
+  timeout) and `install(DIRECTORY web ...)`.
+* `README.md` was de-duplicated: three overlapping `v1.3.0-*` "What's new"
+  sections plus the whole historical changelog chain were collapsed into one
+  current-release section that points at `CHANGELOG.md` as the single source of
+  version history (795 -> ~330 lines).
+
+* `scripts/gen_sha256sums.sh` now hashes the git **index** (staged
+  content) instead of `HEAD`, so the manifest is regenerated *before*
+  the single commit that ships it — the old HEAD-based hashing forced a
+  "commit, regenerate, commit again" dance whose second step was the one
+  everybody forgot. In CI (fresh checkout) the index equals `HEAD`, so
+  `--check` behaves identically.
+* New `scripts/hooks/pre-commit` hook (enable per clone with
+  `git config core.hooksPath scripts/hooks`) auto-regenerates and
+  re-stages `SHA256SUMS.txt` whenever a commit touches tracked files.
+  README "Building" documents the one-step workflow.
+* CI actions bumped off the deprecated Node 20 runtime:
+  `actions/checkout@v7`, `actions/upload-artifact@v7`,
+  `actions/download-artifact@v8`, `softprops/action-gh-release@v3`
+  (clears the Node-20 deprecation annotations on every job).
+
+### Removed
+* Dead `utf8Of` helper in `tests/test_option_matrix.cpp` (unused since
+  the harness switched to `hexDumpText` diagnostics); backslash-continued
+  `//` comments in `tests/diff_engine_ab.cpp` that tripped `-Wcomment`.
+  The g++ build of the test suite is now warning-clean.
 
 ### Fixed
 * **Progression was never awarded for games played in the app**: run results
@@ -121,6 +162,31 @@ Keep a Changelog; versioning: SemVer.
 * **The Chaos Lab came up without its sliders**: the lab's trackbar needs the
   common-controls *bar* class, but the app only registered `ICC_TAB_CLASSES`.
   `InitCommonControlsEx` now includes `ICC_BAR_CLASSES`.
+* **`POST /api/config` was a no-op for the game that was already running**: the
+  config was stored and never pushed to the live game, so the web's fail-mode
+  dropdown, BPM slider and pacer slider all looked broken. `setConfig()` now
+  applies the live-safe subset (fail mode, mistake penalties, race pacer,
+  obstacle spacing, fishing automation) to the running game immediately, and the
+  route reports `restartRequired` for the chart knobs whose setter regenerates a
+  run. A new `applyNow:1` rebuilds the run on request (`restartApplied` says
+  whether it happened), the web sends it when the BPM slider is released, and
+  the manager gained `configNeedsRelaunch()` / `relaunchCurrentGame()`.
+* **`ArcadeManager::makeGame()` read `m_config` without the mutex** while the
+  web bridge could call `setConfig()` concurrently — the config is now an
+  explicit parameter, snapshotted under the lock in `launchGame()`.
+* **MSVC `/W4 /WX` build (all three CI architectures)**: `ChaosLabWindow.cpp`
+  used `TRACKBAR_CLASSW` / `TBS_*` / `TBM_*` without `<commctrl.h>`,
+  `ArcadeWindow.cpp` used `GET_X_LPARAM` / `GET_Y_LPARAM` without
+  `<windowsx.h>`, `main.cpp` needed `comctl32.lib` for `InitCommonControlsEx`,
+  and a double→float narrowing plus an `int64→double` conversion in
+  `Arcade.cpp` tripped C2220. All fixed; the test shims no longer define those
+  macros, so the host build fails the same way MSVC does when an include is
+  missing. `KIEEKEY_WERROR` (default ON) gates `/WX`, and the CI Build step now
+  re-runs the build with `-DKIEEKEY_WERROR=OFF` and publishes the full
+  deduplicated warning inventory **plus the instantiation sites** (diagnostics
+  raised inside `<xutility>` are attributed to the source that instantiates
+  them) as check-run annotations — the sandbox cannot download raw job logs, so
+  the annotations are the only channel that survives.
 * **`src/ui/MainWindow.xaml` shipped stale identity**: the header still said
   "OpenKey" / "KieeKey v1.1.2" and the settings surface had no arcade pages.
   The title is now KieeKey, the version is derived from
@@ -131,21 +197,6 @@ Keep a Changelog; versioning: SemVer.
   front-ends paint (title/score/WPM/shape count/wire size + the ASCII fallback)
   instead of the removed `renderCurrentGame()` text renderer.
 
-### Changed
-* `tests/run_all_tests.sh` builds and runs four new suites
-  (`test_arcade_render`, `test_arcade_server`, `test_arcade_window`,
-  `test_soak_arcade` over the render/Progression objects) — the native gate is
-  now 33 programs.
-* `CMakeLists.txt`: registered the arcade render/server sources, `msimg32`,
-  the two window translation units, the `arcade_serve` + `arcade_bench` tools,
-  the new test targets (including the shim-based window harness with a 120 s
-  timeout) and `install(DIRECTORY web ...)`.
-* `README.md` was de-duplicated: three overlapping `v1.3.0-*` "What's new"
-  sections plus the whole historical changelog chain were collapsed into one
-  current-release section that points at `CHANGELOG.md` as the single source of
-  version history (795 -> ~330 lines).
-
-### Fixed
 * **CI (build/x64)**: the `Verify SHA256SUMS manifest` gate failed on
   `main` because the "Update project status" commit edited `README.md`
   without regenerating `SHA256SUMS.txt` (the same README-without-manifest
@@ -167,28 +218,6 @@ Keep a Changelog; versioning: SemVer.
   TU's own includes) via `/FI` (MSVC) / `-include` (GCC/Clang), on both
   the Linux and Windows test blocks. Product targets, the frozen
   reference engines and the benchmarks keep normal `NDEBUG` semantics.
-
-### Changed
-* `scripts/gen_sha256sums.sh` now hashes the git **index** (staged
-  content) instead of `HEAD`, so the manifest is regenerated *before*
-  the single commit that ships it — the old HEAD-based hashing forced a
-  "commit, regenerate, commit again" dance whose second step was the one
-  everybody forgot. In CI (fresh checkout) the index equals `HEAD`, so
-  `--check` behaves identically.
-* New `scripts/hooks/pre-commit` hook (enable per clone with
-  `git config core.hooksPath scripts/hooks`) auto-regenerates and
-  re-stages `SHA256SUMS.txt` whenever a commit touches tracked files.
-  README "Building" documents the one-step workflow.
-* CI actions bumped off the deprecated Node 20 runtime:
-  `actions/checkout@v7`, `actions/upload-artifact@v7`,
-  `actions/download-artifact@v8`, `softprops/action-gh-release@v3`
-  (clears the Node-20 deprecation annotations on every job).
-
-### Removed
-* Dead `utf8Of` helper in `tests/test_option_matrix.cpp` (unused since
-  the harness switched to `hexDumpText` diagnostics); backslash-continued
-  `//` comments in `tests/diff_engine_ab.cpp` that tripped `-Wcomment`.
-  The g++ build of the test suite is now warning-clean.
 
 ## [1.3.0-beta1] — 2026-09-18
 

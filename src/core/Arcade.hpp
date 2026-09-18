@@ -960,7 +960,24 @@ public:
     [[nodiscard]] const IArcadeGame* getCurrentGame() const;
 
     //---- configuration ----------------------------------------------------
+    // Stores the config AND pushes the live-safe subset to the running game
+    // (fail mode / penalties / pacer / automation). Chart-building knobs
+    // (rhythm BPM + note count + approach, no-mistake reserve, WASD start
+    // fuel) still take effect on the next launch, because their setters
+    // regenerate or reset the run.
     void setConfig(const ArcadeConfig& config);
+
+    // v1.3.0: true when this config differs from the current one only in knobs
+    // whose setter regenerates/resets a run (rhythm chart, no-mistake reserve,
+    // WASD start fuel). The web bridge answers `restartRequired` with exactly
+    // this instead of silently swallowing the user's slider.
+    [[nodiscard]] bool configNeedsRelaunch(const ArcadeConfig& config) const;
+
+    // Recreates the current RUN with the stored config (launch + start), so the
+    // knobs above become visible without the player leaving the game.
+    // Returns false when no game is running.
+    bool relaunchCurrentGame();
+
     [[nodiscard]] ArcadeConfig getConfig() const;
 
     //---- results -----------------------------------------------------------
@@ -995,7 +1012,10 @@ public:
     ArcadeManager& operator=(const ArcadeManager&) = delete;
 
 private:
-    std::unique_ptr<IArcadeGame> makeGame(GameType type, std::uint32_t seed) const;
+    // The config is an explicit parameter (v1.3.0): makeGame() used to read
+    // m_config without the mutex, racing setConfig() from the web bridge.
+    std::unique_ptr<IArcadeGame> makeGame(GameType type, std::uint32_t seed,
+                                          const ArcadeConfig& config) const;
     // Moves a finished run out of `game` into the result queue, exactly once
     // per run. Called from update(), handleKey(), launchGame() and stopGame(),
     // so a score is credited even when the player never presses another key.

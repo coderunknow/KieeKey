@@ -1,0 +1,35 @@
+== apple-to-apple A/B: v1.2.2 (d332c56) vs 1.3.0-rc1 (HEAD) ==
+harness blob ids identical: bench_three_engines 3f45c6848438b5309c4e1b74ff1d90e5aed6c737, e2e_bench 4cb05c61c2e219a81a365e5afb814b746fd3cf6c, bench_engine 83ca8e7747b346083c53fcd80bc537df636bd28d
+
+--- three-engine differential + latency (median of 3 rounds x 2M keys) ---
+ mean ns  v1.2.2=     183.7  1.3.0-rc1=     184.4  delta= +0.38%
+  p50 ns  v1.2.2=     148.0  1.3.0-rc1=     148.0  delta= +0.00%
+  p90 ns  v1.2.2=     249.0  1.3.0-rc1=     242.0  delta= -2.81%
+  p99 ns  v1.2.2=     542.0  1.3.0-rc1=     558.0  delta= +2.95%
+  max ns  v1.2.2= 3748932.0  1.3.0-rc1= 3713867.0  delta= -0.94%
+keys sampled per run: [2000000]
+
+--- e2e_bench (100k keys, burst model, 3 rounds x 3 runs, medians) ---
+metric               v1.2.2  1.3.0-rc1    delta   unit
+raw_p50              35.818     33.959   -5.19%   us
+raw_p95              97.615     95.762   -1.90%   us
+raw_p99             124.856    123.008   -1.48%   us
+raw_p999            699.355    638.797   -8.66%   us
+burst_p50            33.346     31.836   -4.53%   us
+burst_p95            88.244     87.239   -1.14%   us
+burst_p99            96.953     96.473   -0.50%   us
+wake_p50             48.630     47.466   -2.39%   us
+wake_p99            136.649    134.265   -1.74%   us
+pipe_p50             35.126     33.312   -5.16%   us
+pipe_p99             97.158     96.776   -0.39%   us
+spike_pct             4.213      3.664  -13.03%   %
+throughput        13190.300  13176.600   -0.10%   keys/s
+rss_mb                8.551      8.551   +0.00%   MB
+footprint_mb          6.071      6.071   +0.00%   MB
+sendInputCalls (batched edits per 100k keys): [108] [108] | keys per run: [100000] [100000] | runs per file: 3 3
+
+--- TextEngine microbench (5000 iterations per corpus line, medians) ---
+  xin chao cac ban               v1.2.2=  33  1.3.0-rc1=  35 ns/key  delta=  +6.1%  (noise band at this size: +-10)
+  ban as aw aa ow uw uow         v1.2.2=  36  1.3.0-rc1=  36 ns/key  delta=  +0.0%  (noise band at this size: +-10)
+  toi la nguoi viet nam          v1.2.2=  37  1.3.0-rc1=  29 ns/key  delta= -21.6%  (noise band at this size: +-10)
+  a1 a2 a3 a4 a5 a6 o6 e6 o7 u7  v1.2.2=  50  1.3.0-rc1=  49 ns/key  delta=  -2.0%  (noise band at this size: +-10)

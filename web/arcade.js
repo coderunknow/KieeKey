@@ -419,21 +419,40 @@ async function loadCatalog() {
   }
 }
 
-async function pushConfig() {
+// The bridge answers with what actually happened (v1.3.0):
+//   restartRequired - a chart knob (BPM / note count / approach / reserve /
+//                     start fuel) changed and the run has to be rebuilt;
+//   restartApplied  - applyNow=1 did rebuild it.
+// Live knobs (fail mode, pacer, automation) reach the running game at once and
+// never need a restart.
+async function pushConfig(opts) {
   ui.bpmOut.textContent = ui.bpm.value;
   ui.pacerOut.textContent = ui.pacer.value;
-  await post('api/config', {
+  const result = await post('api/config', {
     rhythmFailMode: parseInt(ui.failMode.value, 10),
     noMistakeFailMode: parseInt(ui.failMode.value, 10),
     rhythmBpm: parseInt(ui.bpm.value, 10),
     typingRacePacerWpm: parseInt(ui.pacer.value, 10),
+    applyNow: (opts && opts.applyNow) ? 1 : 0,
   });
+  if (!result || !result.ok) {
+    return;
+  }
+  if (result.restartApplied) {
+    showToast('Đã áp dụng cấu hình mới — ván chơi được bắt đầu lại');
+  } else if (result.restartRequired) {
+    showToast('Nhịp/khung nhạc sẽ áp dụng từ ván kế tiếp (bấm "Chơi lại" để nghe ngay)');
+  }
 }
 
-for (const el of [ui.failMode, ui.bpm, ui.pacer]) {
-  el.addEventListener('change', pushConfig);
-  el.addEventListener('input', pushConfig);
+// While the slider moves: live push only (no restart on every pixel).
+// On release: one relaunch so the new tempo is audible immediately.
+for (const el of [ui.failMode, ui.pacer]) {
+  el.addEventListener('change', () => pushConfig());
+  el.addEventListener('input', () => pushConfig());
 }
+ui.bpm.addEventListener('input', () => pushConfig());
+ui.bpm.addEventListener('change', () => pushConfig({ applyNow: true }));
 
 document.getElementById('restart').addEventListener('click', () => post('api/restart'));
 document.getElementById('pause').addEventListener('click', () => post('api/pause'));

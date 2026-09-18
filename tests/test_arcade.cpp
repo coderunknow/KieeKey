@@ -1392,6 +1392,85 @@ static void testNoSteadyStateAllocations() {
 }
 
 //===========================================================================
+// v1.3.0: POST /api/config used to be stored and forgotten — a running game
+// never saw the new fail mode, so the web dropdown (and the desktop config row)
+// looked dead. setConfig() now pushes the live-safe subset immediately, and the
+// chart-building knobs are reported as "needs a relaunch" instead of being
+// silently swallowed.
+static void testLiveConfigReachesRunningGame() {
+    g_currentTest = "LiveConfig";
+    auto& hub = ArcadeManager::instance();
+    hub.setSeed(4242u);
+    CHECK(hub.launchGame(GameType::Rhythm));
+
+    auto* rhythm = dynamic_cast<RhythmTypingGame*>(hub.getCurrentGame());
+    CHECK(rhythm != nullptr);
+    if (rhythm == nullptr) {
+        return;
+    }
+    CHECK(rhythm->getFailMode() == FailMode::Hardcore);   // the shipped default
+
+    // Play a little so a silent reset() would be visible below.
+    for (int i = 0; i < 30; ++i) {
+        hub.update(0.05);
+    }
+    const double beforeSongTime = rhythm->getSongTime();
+    const std::size_t beforeNotes = rhythm->getNotes().size();
+    const std::int64_t beforeScore = rhythm->getScore();
+    const double beforeBpm = rhythm->getBpm();
+    CHECK(beforeSongTime > 0.0);
+
+    ArcadeConfig config = hub.getConfig();
+    config.rhythmFailMode = FailMode::HealthBar;
+    config.rhythmBpm = beforeBpm + 20.0;      // chart knob: needs a relaunch
+    config.typingRacePacerWpm = 90.0;         // live knob
+
+    // The chart knob is reported (not swallowed), the live knob lands on the
+    // game object that is running right now ...
+    CHECK(hub.configNeedsRelaunch(config));
+    hub.setConfig(config);
+    CHECK(rhythm->getFailMode() == FailMode::HealthBar);
+
+    // ... without restarting it: clock, chart and score survive the change.
+    CHECK(rhythm->getSongTime() >= beforeSongTime);
+    CHECK(rhythm->getNotes().size() == beforeNotes);
+    CHECK(rhythm->getScore() >= beforeScore);
+    CHECK(rhythm->getBpm() == beforeBpm);
+
+    // The relaunch hook rebuilds the RUN (not the game object) so the
+    // chart-level knobs finally apply — same seed, new tempo, fresh clock.
+    const std::uint32_t seed = rhythm->getSeed();
+    CHECK(hub.relaunchCurrentGame());
+    auto* relaunched = dynamic_cast<RhythmTypingGame*>(hub.getCurrentGame());
+    CHECK(relaunched != nullptr);
+    if (relaunched != nullptr) {
+        CHECK(relaunched->getBpm() == config.rhythmBpm);
+        CHECK(relaunched->getFailMode() == FailMode::HealthBar);
+        CHECK(relaunched->getSeed() == seed);
+        CHECK(relaunched->getSongTime() < beforeSongTime);
+    }
+
+    // A config that only touches live knobs never asks for a relaunch, and the
+    // pacer update reaches a running race immediately.
+    ArcadeConfig liveOnly = hub.getConfig();
+    liveOnly.noMistakeFailMode = FailMode::HealthBar;
+    liveOnly.fishingAutomation = AutomationMode::Automated;
+    liveOnly.typingRacePacerWpm = 123.0;
+    CHECK(!hub.configNeedsRelaunch(liveOnly));
+    hub.setConfig(liveOnly);
+    CHECK(hub.launchGame(GameType::TypingRace, 7u));
+    auto* race = dynamic_cast<TypingRaceGame*>(hub.getCurrentGame());
+    CHECK(race != nullptr && race->getPacerWpm() == 123.0);
+    ArcadeConfig faster = liveOnly;
+    faster.typingRacePacerWpm = 77.0;
+    CHECK(!hub.configNeedsRelaunch(faster));
+    hub.setConfig(faster);
+    CHECK(race != nullptr && race->getPacerWpm() == 77.0);
+
+    hub.stopGame();
+}
+
+//===========================================================================
 // Progression must be credited by the *native* path (ArcadeManager::update),
 // not only by the HTTP bridge: "type a lot to level up" is a user-facing
 // promise, and the desktop hub never talks to the bridge.
@@ -1472,6 +1551,7 @@ int main() {
     RUN(testFrameInvariants);
     RUN(testDeterminism);
     RUN(testNoSteadyStateAllocations);
+    RUN(testLiveConfigReachesRunningGame);
     RUN(testProgressionCreditedNatively);
 
     std::printf("--- %d checks, %d failures ---\n", g_checks, g_failures);

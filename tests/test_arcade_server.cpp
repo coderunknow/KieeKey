@@ -492,6 +492,69 @@ void testProgressionAndRivalRoutes() {
     std::cout << "  [PASS] Progression & AI rival routes\n";
 }
 
+//---------------------------------------------------------------------------
+// v1.3.0: POST /api/config must not silently drop what the user changed.
+//  * fail mode / pacer / automation -> applied to the RUNNING game, no restart;
+//  * chart knobs (bpm, note count, approach, reserve, start fuel) -> reported
+//    as restartRequired, or applied right away when the caller passes
+//    applyNow=1 (which rebuilds the run instead of pretending).
+void testConfigApplyNow() {
+    ArcadeServer server;
+    auto begin = server.handleRequest("POST", "/api/start", "{\"slug\":\"rhythm\"}");
+    assert(begin.status == 200);
+
+    // Live knob: no relaunch needed, and the response says so.
+    auto live = server.handleRequest("POST", "/api/config", "{\"rhythmFailMode\":1}");
+    assert(live.status == 200);
+    assert(contains(bodyOf(live), "\"restartRequired\":false"));
+    assert(contains(bodyOf(live), "\"rhythmFailMode\":1"));
+
+    // Chart knob: reported as requiring a relaunch — the old code answered
+    // ok:true and changed nothing, which is exactly what made the web slider
+    // look broken.
+    auto chart = server.handleRequest("POST", "/api/config", "{\"rhythmBpm\":150}");
+    assert(chart.status == 200);
+    assert(contains(bodyOf(chart), "\"restartRequired\":true"));
+    assert(contains(bodyOf(chart), "\"rhythmBpm\":150"));
+    assert(contains(bodyOf(chart), "rhythmNoteCount"));   // the key list is named
+
+    // applyNow=1: a FURTHER chart change rebuilds the run right away. (The
+    // previous call already stored 150, so re-sending it would be a no-op —
+    // the server only claims a restart when it really restarted.)
+    auto noop = server.handleRequest("POST", "/api/config",
+                                     "{\"rhythmBpm\":150,\"applyNow\":1}");
+    assert(noop.status == 200);
+    assert(contains(bodyOf(noop), "\"restartApplied\":false"));
+
+    auto applied = server.handleRequest("POST", "/api/config",
+                                        "{\"rhythmBpm\":170,\"applyNow\":1}");
+    assert(applied.status == 200);
+    assert(contains(bodyOf(applied), "\"restartApplied\":true"));
+    assert(contains(bodyOf(applied), "\"restartRequired\":false"));
+
+    auto state = server.handleRequest("GET", "/api/state", "");
+    assert(state.status == 200);
+    assert(contains(bodyOf(state), "\"active\":true"));
+    assert(contains(bodyOf(state), "rhythm"));
+    assert(contains(bodyOf(state), "\"frame\":"));
+
+    // The knob survives a restart request (config is sticky, not per-game).
+    auto sticky = server.handleRequest("POST", "/api/config", "{}");
+    assert(sticky.status == 200);
+    assert(contains(bodyOf(sticky), "\"rhythmBpm\":170"));
+    assert(contains(bodyOf(sticky), "\"rhythmFailMode\":1"));
+    assert(contains(bodyOf(sticky), "\"restartRequired\":false"));
+
+    // Out-of-range values are ignored instead of corrupting the config.
+    auto bad = server.handleRequest("POST", "/api/config", "{\"rhythmBpm\":99999}");
+    assert(bad.status == 200);
+    assert(contains(bodyOf(bad), "\"rhythmBpm\":170"));
+    assert(!contains(bodyOf(bad), "99999"));
+
+    (void)server.handleRequest("POST", "/api/stop", "");
+    std::cout << "  [PASS] config route (live knobs + applyNow relaunch)\n";
+}
+
 int main() {
     std::cout << "=== Running Arcade Server Suite ===\n";
     testRouting();
@@ -503,6 +566,7 @@ int main() {
     testFlexingPayload();
     testChaosLab();
     testProgressionAndRivalRoutes();
+    testConfigApplyNow();
     std::cout << "=== ALL ARCADE SERVER TESTS PASSED ===\n";
     return 0;
 }

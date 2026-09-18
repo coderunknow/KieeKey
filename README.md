@@ -106,9 +106,9 @@ Run everything with `tests/run_all_tests.sh` (native) or `ctest` on Windows:
 
 | suite | covers | result |
 |---|---|---|
-| `ok_arcade_tests` | all 8 games, manager, determinism, no steady-state allocations | 3742 checks, 0 failures |
+| `ok_arcade_tests` | all 8 games, manager, live config, determinism, no steady-state allocations | 3774 checks, 0 failures |
 | `ok_arcade_render_tests` | display list, JSON wire format, injection safety, viewport letterboxing, payload budget | 6/6 |
-| `ok_arcade_server_tests` | HTTP routing, session control, input forwarding, traversal guards, a full simulated race, the Flexing payload, the Chaos lab, progression/AI-rival routes | 9/9 |
+| `ok_arcade_server_tests` | HTTP routing, session control, input forwarding, traversal guards, a full simulated race, the Flexing payload, the Chaos lab, progression/AI-rival routes, `POST /api/config` live/applyNow | 10/10 |
 | `ok_arcade_window_tests` | **the real Win32 window procedures**: catalogue painting, hover, click-to-play, keyboard, timer, `Esc`/close, Chaos Lab preview + injection, and the Flexing page (prepared text in, engine text typed out) | 5/5 |
 | `tests/web_labs_test.js` | the browser lab glue: engine text into the flexing control, chaos preview/replay, "keys stay in the text field" guard | 27 checks |
 | `tests/web_progress_test.js` | the progression/AI panel: engine numbers, level-up toast, opt-in switch, learned pace, live race preview, visibility-aware polling | 23 checks |
@@ -130,7 +130,12 @@ claims. Standardised performance numbers for the arcade pipeline live in
 
 **Core IME guarantees are unchanged**: 2,059,419-event gate correctness
 against the clean-room oracle (0 mismatches), 0 ns added latency when the
-optional modules are idle, and unchanged peak RSS.
+optional modules are idle, and unchanged peak RSS. The v1.3.0 line was also
+A/B-measured against the **v1.2.2 stable tag** with byte-identical harnesses —
+see [docs/bench/v122_vs_130/](docs/bench/v122_vs_130/README.md): equal or faster
+on every end-to-end percentile (p50 −5.2 %, p99 −1.5 %), identical peak RSS
+(8.551 MB), the same SendInput batching invariant (108 batched edits per
+100 000 keys), and a byte-identical three-engine differential.
 
 ## Highlights
 

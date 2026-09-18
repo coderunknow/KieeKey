@@ -2587,7 +2587,56 @@ ArcadeManager& ArcadeManager::instance() noexcept {
 ArcadeManager::ArcadeManager() = default;
 ArcadeManager::~ArcadeManager() = default;
 
-std::unique_ptr<IArcadeGame> ArcadeManager::makeGame(GameType type, std::uint32_t seed) const {
+namespace {
+
+// v1.3.0: per-game tuning owned by ArcadeConfig. Applied when a game object is
+// created (full set).
+void applyFullConfigToGame(IArcadeGame& game, const ArcadeConfig& config) {
+    if (auto* rhythm = dynamic_cast<RhythmTypingGame*>(&game)) {
+        rhythm->setFailMode(config.rhythmFailMode);
+        rhythm->setBpm(config.rhythmBpm);
+        rhythm->setNoteCount(config.rhythmNoteCount);
+        rhythm->setApproachSec(config.rhythmApproachSec);
+    } else if (auto* noMistake = dynamic_cast<NoMistakeGame*>(&game)) {
+        noMistake->setFailMode(config.noMistakeFailMode);
+        noMistake->setMistakePenalty(config.noMistakeScorePenalty,
+                                     config.noMistakeComboPenalty);
+        noMistake->setStartReserve(config.noMistakeStartReserve);
+    } else if (auto* race = dynamic_cast<TypingRaceGame*>(&game)) {
+        race->setPacerWpm(config.typingRacePacerWpm);
+    } else if (auto* wasd = dynamic_cast<WasdRaceGame*>(&game)) {
+        wasd->setStartFuel(config.wasdStartFuel);
+        wasd->setObstacleSpacing(config.wasdObstacleSpacingSec);
+    } else if (auto* fishing = dynamic_cast<FishingGame*>(&game)) {
+        fishing->setAutomationMode(config.fishingAutomation);
+    }
+}
+
+// LIVE subset: only the knobs whose setter cannot restart or invalidate the
+// run in progress. RhythmTypingGame::setBpm()/setNoteCount() regenerate the
+// chart and reset() the run, NoMistakeGame::setStartReserve() resets, and
+// WasdRaceGame::setStartFuel() refills the tank — none of those may run just
+// because a slider moved, so they are documented as "next launch" instead.
+void applyLiveConfigToGame(IArcadeGame& game, const ArcadeConfig& config) {
+    if (auto* rhythm = dynamic_cast<RhythmTypingGame*>(&game)) {
+        rhythm->setFailMode(config.rhythmFailMode);
+    } else if (auto* noMistake = dynamic_cast<NoMistakeGame*>(&game)) {
+        noMistake->setFailMode(config.noMistakeFailMode);
+        noMistake->setMistakePenalty(config.noMistakeScorePenalty,
+                                     config.noMistakeComboPenalty);
+    } else if (auto* race = dynamic_cast<TypingRaceGame*>(&game)) {
+        race->setPacerWpm(config.typingRacePacerWpm);
+    } else if (auto* wasd = dynamic_cast<WasdRaceGame*>(&game)) {
+        wasd->setObstacleSpacing(config.wasdObstacleSpacingSec);
+    } else if (auto* fishing = dynamic_cast<FishingGame*>(&game)) {
+        fishing->setAutomationMode(config.fishingAutomation);
+    }
+}
+
+}  // namespace
+
+std::unique_ptr<IArcadeGame> ArcadeManager::makeGame(GameType type, std::uint32_t seed,
+                                                     const ArcadeConfig& config) const {
     std::unique_ptr<IArcadeGame> game;
     switch (type) {
         case GameType::Snake:      game = std::make_unique<SnakeGame>(); break;
@@ -2604,25 +2653,9 @@ std::unique_ptr<IArcadeGame> ArcadeManager::makeGame(GameType type, std::uint32_
     }
 
     if (game) {
-        // Configuration is applied to the concrete classes that support it.
-        if (auto* rhythm = dynamic_cast<RhythmTypingGame*>(game.get())) {
-            rhythm->setFailMode(m_config.rhythmFailMode);
-            rhythm->setBpm(m_config.rhythmBpm);
-            rhythm->setNoteCount(m_config.rhythmNoteCount);
-            rhythm->setApproachSec(m_config.rhythmApproachSec);
-        } else if (auto* noMistake = dynamic_cast<NoMistakeGame*>(game.get())) {
-            noMistake->setFailMode(m_config.noMistakeFailMode);
-            noMistake->setMistakePenalty(m_config.noMistakeScorePenalty,
-                                         m_config.noMistakeComboPenalty);
-            noMistake->setStartReserve(m_config.noMistakeStartReserve);
-        } else if (auto* race = dynamic_cast<TypingRaceGame*>(game.get())) {
-            race->setPacerWpm(m_config.typingRacePacerWpm);
-        } else if (auto* wasd = dynamic_cast<WasdRaceGame*>(game.get())) {
-            wasd->setStartFuel(m_config.wasdStartFuel);
-            wasd->setObstacleSpacing(m_config.wasdObstacleSpacingSec);
-        } else if (auto* fishing = dynamic_cast<FishingGame*>(game.get())) {
-            fishing->setAutomationMode(m_config.fishingAutomation);
-        }
+        // The caller passes the config in: this used to read m_config without
+        // holding m_mutex, i.e. it raced with setConfig().
+        applyFullConfigToGame(*game, config);
         game->setSeed(seed);
         game->start();
     }
@@ -2672,7 +2705,12 @@ bool ArcadeManager::launchGame(GameType type, std::uint32_t seed) {
         collectResultFrom(previous);
     }
 
-    auto game = makeGame(type, seed);
+    ArcadeConfig config;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        config = m_config;
+    }
+    auto game = makeGame(type, seed, config);
     if (!game) {
         return false;
     }
@@ -2851,9 +2889,45 @@ const IArcadeGame* ArcadeManager::getCurrentGame() const {
     return m_game.get();
 }
 
+bool ArcadeManager::configNeedsRelaunch(const ArcadeConfig& config) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return config.rhythmBpm != m_config.rhythmBpm ||
+           config.rhythmNoteCount != m_config.rhythmNoteCount ||
+           config.rhythmApproachSec != m_config.rhythmApproachSec ||
+           config.noMistakeStartReserve != m_config.noMistakeStartReserve ||
+           config.wasdStartFuel != m_config.wasdStartFuel;
+}
+
+bool ArcadeManager::relaunchCurrentGame() {
+    GameType type = GameType::None;
+    std::uint32_t seed = 0;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (!m_game) {
+            return false;
+        }
+        type = m_game->getType();
+        seed = m_seed;
+    }
+    if (type == GameType::None) {
+        return false;
+    }
+    // launchGame() retires the previous run through collectResultFrom(), so a
+    // relaunch can never drop a finished score on the floor.
+    return launchGame(type, seed);
+}
+
 void ArcadeManager::setConfig(const ArcadeConfig& config) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_config = config;
+    // v1.3.0 FIX: the config used to be stored only, so changing the fail mode
+    // (or the pacer / fishing automation) from the web bridge or the desktop
+    // config row did nothing until the game was relaunched — the UI looked
+    // broken. The live-safe subset is pushed to the running game right away;
+    // the chart/run-resetting knobs still apply on the next launch.
+    if (m_game) {
+        applyLiveConfigToGame(*m_game, config);
+    }
 }
 
 ArcadeConfig ArcadeManager::getConfig() const {

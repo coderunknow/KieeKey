@@ -688,12 +688,38 @@ HttpResponse ArcadeServer::handleRequest(const std::string& method, const std::s
             config.typingRacePacerWpm = static_cast<double>(value);
             changed = true;
         }
-        if (changed) {
+        long long applyNow = 0;
+        (void)jsonFindInt(body, "applyNow", applyNow);
+        bool needsRelaunch = false;
+        bool restartApplied = false;
+        {
             std::lock_guard<std::mutex> lock(m_gameMutex);
-            m_manager.setConfig(config);
+            if (changed) {
+                // v1.3.0 FIX: the fail mode / pacer / automation subset reaches
+                // the RUNNING game immediately (see ArcadeManager::setConfig);
+                // the chart-building knobs can only be honoured by recreating
+                // the run, which is what applyNow asks for — otherwise the
+                // response says so instead of pretending the change landed.
+                needsRelaunch = m_manager.configNeedsRelaunch(config);
+                if (applyNow != 0 && needsRelaunch) {
+                    m_manager.setConfig(config);
+                    // Relaunch the RUN so the chart knobs are visible at once.
+                    // With no game running there is nothing to rebuild, and the
+                    // response says that instead of claiming a restart.
+                    restartApplied = m_manager.relaunchCurrentGame();
+                    needsRelaunch = false;
+                } else {
+                    m_manager.setConfig(config);
+                }
+            }
         }
         const ArcadeConfig now = m_manager.getConfig();
-        response.body = std::string("{\"ok\":true,\"config\":{\"rhythmFailMode\":") +
+        response.body = std::string("{\"ok\":true,\"restartApplied\":") +
+                        (restartApplied ? "true" : "false") +
+                        ",\"restartRequired\":" + (needsRelaunch ? "true" : "false") +
+                        ",\"restartRequiredKeys\":\"rhythmBpm,rhythmNoteCount,"
+                        "rhythmApproachSec,noMistakeStartReserve,wasdStartFuel\"" +
+                        ",\"config\":{\"rhythmFailMode\":" +
                         (now.rhythmFailMode == FailMode::Hardcore ? "0" : "1") +
                         ",\"noMistakeFailMode\":" +
                         (now.noMistakeFailMode == FailMode::Hardcore ? "0" : "1") +

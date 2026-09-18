@@ -106,7 +106,28 @@ in the standard suite (`tests/run_all_tests.sh`, or `ctest` on Windows):
 | engine gate | 2 059 419 events vs the clean-room oracle, 0 mismatches |
 | feature isolation | 0.0 % overhead with the arcade/chaos modules idle, bit-identical output digests |
 
-## 6. Notes and limits
+## 6. Client-side evidence (what the numbers above actually look like)
+
+`frames/` holds the *rendered* result, not just timings: every game frame
+captured from the real engine is replayed through the shipped HTML5 renderer
+(`web/arcade.js`) with a real Canvas2D implementation and written as a PNG
+(`snake.png`, `tetris.png`, `fishing.png`, `typing-race.png`, `wasd-race.png`,
+`rhythm.png`, `no-mistake.png`, `flexing.png`) plus `contact-sheet.png` and a
+`manifest.json` describing each image (source frame, command count, title).
+
+```bash
+/tmp/kt/arcade_serve --port 8765 --web web &         # or the CMake target
+python3 tests/capture_web_frames.py                  # auto-play + capture frames
+node    tests/render_web_frames.js                   # frames -> PNGs (Canvas2D)
+```
+
+These images are how the two rendering bugs in this campaign were found (the
+rhythm lane labels were reading a dangling stack view, and the bridge was not
+decoding `\uXXXX` escapes in request bodies) — see `CHANGELOG.md`. They are
+snapshots of a live run, so scores and piece positions differ between captures;
+what they pin is composition, colour, text and layout.
+
+## 7. Notes and limits
 
 * Numbers are from a shared cloud VM (Intel(R) Xeon(R) Processor @ 2.60GHz); treat the *ratios* and
   the allocation counts as the portable results, the absolute microseconds as
@@ -116,4 +137,7 @@ in the standard suite (`tests/run_all_tests.sh`, or `ctest` on Windows):
   web bridge).
 * The native window adds GDI painting on top (double-buffered `BitBlt` of a
   cached display list); its cost is dominated by the number of draw calls and
-  is reported indirectly by the `cmds` column — 9–50 commands per game.
+  is reported indirectly by the `cmds` column — 9–52 commands per game.
+* The PNGs are rasterized with Skia through the Canvas2D API, not by a browser:
+  they prove the renderer's drawing, not page CSS/fonts. A real browser check is
+  still on the list (the Chromium download is blocked in the build sandbox).

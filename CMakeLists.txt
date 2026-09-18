@@ -97,6 +97,32 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 #----------------------------------------------------------------------------
+# Test harnesses must ASSERT in every configuration (incl. Release/NDEBUG).
+#
+# The v1.3.0 harnesses (arcade, chaos, AI rival, progression, analytics,
+# online ghost, soak_arcade) and outputitem verify through plain assert().
+# Under CMAKE_BUILD_TYPE=Release the NDEBUG it brings compiles those
+# asserts to nothing: the binaries print "[PASS]" unconditionally (and
+# g++ flags the only-read-by-asserts locals as set-but-not-used). Tests
+# must test in the configuration CI ships, so every TEST executable
+# force-includes tests/force_asserts.hpp — which #undefs NDEBUG before
+# the TU's own includes — via /FI (MSVC) / -include (GCC, Clang, MinGW).
+# Attached-form flags survive paths with spaces in every generator.
+#
+# Deliberately NOT applied to: product targets (ok_core, ok_tsf, the app —
+# release binaries stay assert-free), the frozen reference engines under
+# tests/reference/ (their behavior is pinned), and the benchmark
+# executables (assertion overhead would pollute the measurements).
+#----------------------------------------------------------------------------
+function(kieekey_test_force_asserts tgt)
+    if(MSVC)
+        target_compile_options(${tgt} PRIVATE "/FI${CMAKE_SOURCE_DIR}/tests/force_asserts.hpp")
+    else()
+        target_compile_options(${tgt} PRIVATE "-include${CMAKE_SOURCE_DIR}/tests/force_asserts.hpp")
+    endif()
+endfunction()
+
+#----------------------------------------------------------------------------
 # Resource compilation (Windows targets only).
 # CMake's RC language is the platform-agnostic front door: on MSVC it runs
 # rc.exe, on MinGW/GCC it runs windres (native or the cross toolchain's
@@ -437,6 +463,22 @@ else()
         add_test(NAME ok_online_tests      COMMAND ok_online_tests)
         add_test(NAME ok_soak_arcade       COMMAND ok_soak_arcade 500)
 
+        # Live asserts in every configuration for every harness above (see
+        # kieekey_test_force_asserts). The frozen RC1 reference object lib
+        # and the manual bench executables stay NDEBUG on purpose.
+        foreach(_k_test_tgt IN ITEMS
+                ok_wrap_tests ok_tests ok_ring_tests
+                ok_outputitem_tests ok_hotfix_tests ok_diff_ab_tests
+                ok_notify_tests ok_stress_rc2 ok_v331_tests
+                ok_stress_tests ok_soak_tests ok_queue_stress_tests
+                ok_gate_tests ok_key_tests ok_state_tests ok_lifecycle_tests
+                ok_soak_pipeline ok_perf_profiles ok_option_matrix
+                ok_arcade_tests ok_chaos_tests ok_ai_tests
+                ok_progression_tests ok_analytics_tests ok_online_tests
+                ok_soak_arcade)
+            kieekey_test_force_asserts(${_k_test_tgt})
+        endforeach()
+
         # Every registered test gets a hard cap. A regression that turns a
         # barrier/wait path into an infinite block must fail the gate in
         # minutes, not hang the job until the runner's own limit kills it.
@@ -595,6 +637,14 @@ if(WIN32 AND KIEEKEY_BUILD_TESTS)
     target_include_directories(ok_wrap_tests PRIVATE src/core tests)
     add_test(NAME ok_wrap_tests COMMAND ok_wrap_tests)
 
+    # Live asserts in every configuration (see kieekey_test_force_asserts)
+    # for the harnesses the x64 CI leg actually runs.
+    foreach(_k_test_tgt IN ITEMS
+            ok_tests ok_ring_tests ok_perf_profiles ok_option_matrix
+            ok_wrap_tests)
+        kieekey_test_force_asserts(${_k_test_tgt})
+    endforeach()
+
     #-----------------------------------------------------------------------
     # v1.2.0 Stable — EXTENDED suites, OPT-IN on Windows.
     #
@@ -693,6 +743,20 @@ if(WIN32 AND KIEEKEY_BUILD_TESTS)
     add_test(NAME ok_analytics_tests   COMMAND ok_analytics_tests)
     add_test(NAME ok_online_tests      COMMAND ok_online_tests)
     add_test(NAME ok_soak_arcade       COMMAND ok_soak_arcade 500)
+
+    # Same live-asserts rule for the opt-in extended harnesses (see
+    # kieekey_test_force_asserts); ok_engine_rc1_ref stays frozen.
+    foreach(_k_test_tgt IN ITEMS
+            ok_outputitem_tests ok_hotfix_tests ok_diff_ab_tests
+            ok_notify_tests ok_stress_rc2 ok_v331_tests
+            ok_stress_tests ok_soak_tests ok_queue_stress_tests
+            ok_gate_tests ok_key_tests ok_state_tests ok_lifecycle_tests
+            ok_soak_pipeline
+            ok_arcade_tests ok_chaos_tests ok_ai_tests
+            ok_progression_tests ok_analytics_tests ok_online_tests
+            ok_soak_arcade)
+        kieekey_test_force_asserts(${_k_test_tgt})
+    endforeach()
     endif()   # KIEEKEY_BUILD_EXTRA_TESTS
 
     # Same hang protection for the Windows-compiled test suite (these run

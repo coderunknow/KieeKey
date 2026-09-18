@@ -49,11 +49,30 @@
 #
 # SHA256SUMS.txt cannot hash itself, so it is the one excluded entry.
 #
+# WHAT IS HASHED — the INDEX, not HEAD (v1.3.0 fix)
+# ------------------------------------------------
+# The script hashes `git show :file` — the STAGED content, i.e. exactly
+# what the next commit will contain. That fixes the two-commit dance that
+# broke CI twice (README edits landed without a manifest bump): hashing
+# HEAD forced "commit, regenerate, commit the manifest again", and the
+# second step was forgotten every time. Now one step suffices:
+#
+#     git add -A
+#     scripts/gen_sha256sums.sh
+#     git add SHA256SUMS.txt
+#     git commit            # manifest and tree are consistent by construction
+#
+# scripts/hooks/pre-commit automates exactly this (see README "Building").
+# In CI (fresh checkout) the index equals HEAD, so --check behaves
+# identically to the old HEAD-based verification.
+#
 # PLATFORM COMPATIBILITY
 # ----------------------
 # This script is designed to produce byte-identical output on both Linux
 # and Windows (Git Bash). It uses:
-# - git show HEAD:file to hash Git-normalized content (not disk files)
+# - git show :file / git show HEAD:file to hash Git-normalized content
+#   (not disk files), piped straight into sha256sum so BINARY files
+#   (icons, executables kept as bench evidence) hash correctly
 # - Explicit Unix line endings (\n) in output
 # - Forward slashes for all paths
 # - LC_ALL=C for deterministic sorting
@@ -78,15 +97,20 @@ fi
 
 generate() {
     # Generate manifest with platform-independent hashing.
-    # Uses git show HEAD:file to hash the Git-normalized content (as stored in repo),
-    # not the file as checked out on disk. This ensures:
+    # Uses `git show :file` (the STAGED content) to hash the Git-normalized
+    # content, not the file as checked out on disk. This ensures:
     # - Consistent hashes across Linux/Windows regardless of autocrlf/eol settings
-    # - Hashes match the canonical repository content
+    # - Hashes match what the next commit will contain (see header: ONE-step
+    #   regeneration before committing; in CI the index == HEAD)
+    #
+    # Content is PIPED into sha256sum (never captured in a shell variable):
+    # bash variables cannot hold NUL bytes, so capturing would silently
+    # corrupt the hashes of the binary files tracked under docs/ and src/app.
     #
     # Path normalization: converts backslashes to forward slashes for Windows compatibility.
     # Line endings: printf with \n ensures Unix line endings even on Windows.
     # Sort order: LC_ALL=C for deterministic byte-order sorting.
-    
+
     git ls-files -z \
         | tr '\0' '\n' \
         | grep -v "^${MANIFEST}$" \
@@ -94,17 +118,30 @@ generate() {
         | while IFS= read -r f; do
               # Skip if file doesn't exist (shouldn't happen with git ls-files, but be safe)
               [ -f "$f" ] || continue
-              
-              # Hash the Git-normalized content (as stored in repository)
-              # This is platform-independent: always hashes the canonical version
-              if ! hash=$(git show "HEAD:$f" 2>/dev/null | sha256sum | cut -d' ' -f1); then
+
+              # Prefer the INDEX blob (:<path>); fall back to HEAD for paths
+              # that are tracked but not staged. git rev-parse -q --verify
+              # resolves the blob without touching content, so a missing
+              # object is detected BEFORE hashing instead of silently
+              # recording the sha256 of empty input.
+              if git rev-parse -q --verify ":$f" >/dev/null 2>&1; then
+                  rev=":$f"
+              elif git rev-parse -q --verify "HEAD:$f" >/dev/null 2>&1; then
+                  rev="HEAD:$f"
+                  echo "[sha256sums] NOTE: $f is tracked but NOT staged — hashed the last-committed version. Run 'git add $f' and regenerate." >&2
+              else
+                  echo "[sha256sums] WARNING: failed to hash $f (neither index nor HEAD)" >&2
+                  continue
+              fi
+
+              if ! hash=$(git show "$rev" 2>/dev/null | sha256sum | cut -d' ' -f1); then
                   echo "[sha256sums] WARNING: failed to hash $f" >&2
                   continue
               fi
-              
+
               # Normalize path separators to forward slashes (Windows git ls-files may use backslashes)
               normalized_path=$(printf '%s' "$f" | tr '\\' '/')
-              
+
               # Output with explicit Unix line ending (\n)
               printf '%s  %s/%s\n' "$hash" "$PREFIX" "$normalized_path"
           done

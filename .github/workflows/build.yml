@@ -88,22 +88,67 @@ jobs:
               Tee-Object -FilePath $log
           $code = $LASTEXITCODE
           if ($code -ne 0) {
-            # Keep the annotations short: the first errors are the ones that
-            # matter (later ones are usually cascades).
-            $patterns = 'error [A-Z]+[0-9]+:', 'error LNK[0-9]+', 'error MSB[0-9]+', 'fatal error'
-            $found = @()
-            foreach ($pattern in $patterns) {
-              $found += Select-String -Path $log -Pattern $pattern
+            # /WX turns every level-4 warning into C2220, so the build fails on
+            # the FIRST warning of each translation unit. Emit one annotation per
+            # unique (code + message) so the whole fix list is visible from the
+            # check-run API in a single run instead of one warning per push.
+            $seen = @{}
+            $unique = New-Object System.Collections.Generic.List[string]
+            foreach ($line in (Get-Content $log)) {
+              if ($line -match '^(.*?)\((\d+)(,\d+)?\):\s*(error|warning)\s+([A-Z]+[0-9]+):\s*(.*)$') {
+                $file = $matches[1]
+                $lineno = $matches[2]
+                $code_ = $matches[5]
+                $msg = $matches[6]
+                # strip the trailing " [D:\...\proj.vcxproj]" project tag
+                $msg = ($msg -replace '\s*\[[^\[\]]*\.vcxproj\]$', '').Trim()
+                $key = "$code_|$msg"
+                if (-not $seen.ContainsKey($key)) {
+                  $seen[$key] = $true
+                  $entry = "$code_ $msg  <- $file($lineno)"
+                  if ($entry.Length -gt 880) { $entry = $entry.Substring(0, 880) }
+                  $unique.Add($entry)
+                }
+              }
             }
-            $first = $found | Select-Object -First 40
-            foreach ($match in $first) {
-              $text = ($match.Line -replace "`r", '').Trim()
-              if ($text.Length -gt 900) { $text = $text.Substring(0, 900) }
-              Write-Host "::error::$($match.Filename):$($match.LineNumber): $text"
+            if ($unique.Count -eq 0) {
+              $tail = (Get-Content $log -Tail 25 -ErrorAction SilentlyContinue) -join ' | '
+              Write-Host "::error::build failed with no parsed diagnostic; tail: $tail"
+            } else {
+              Write-Host "::error::$($unique.Count) unique diagnostics (first 50 shown)"
+              foreach ($entry in ($unique | Select-Object -First 50)) {
+                Write-Host "::error::$entry"
+              }
             }
-            if ($first.Count -eq 0) {
-              $tail = Get-Content $log -Tail 20 -ErrorAction SilentlyContinue
-              Write-Host "::error::build failed with no parsed error line; tail: $($tail -join ' | ')"
+
+            # /WX stops each translation unit at its first warning, so the list
+            # above is incomplete. Rebuild once with warnings-as-errors disabled
+            # (KIEEKEY_WERROR=OFF) and report the FULL inventory, deduplicated —
+            # one push then tells the whole story instead of one warning per run.
+            Write-Host "::notice::re-running the build with KIEEKEY_WERROR=OFF to list every warning"
+            cmake -S . -B out/diag ${{ matrix.cmake_args }} -DCMAKE_BUILD_TYPE=Release -DKIEEKEY_BUILD_TESTS=ON -DKIEEKEY_BUILD_UI=none -DKIEEKEY_WERROR=OFF | Out-Null
+            $diagLog = "build-${{ matrix.platform }}-diag.log"
+            cmake --build out/diag --config Release --parallel 2>&1 | Tee-Object -FilePath $diagLog | Out-Null
+            $seenDiag = @{}
+            $uniqueDiag = New-Object System.Collections.Generic.List[string]
+            foreach ($line in (Get-Content $diagLog)) {
+              if ($line -match '^(.*?)\((\d+)(,\d+)?\):\s*(error|warning)\s+([A-Z]+[0-9]+):\s*(.*)$') {
+                $file = $matches[1]
+                $lineno = $matches[2]
+                $code_ = $matches[5]
+                $msg = ($matches[6] -replace '\s*\[[^\[\]]*\.vcxproj\]$', '').Trim()
+                $key = "$code_|$msg"
+                if (-not $seenDiag.ContainsKey($key)) {
+                  $seenDiag[$key] = $true
+                  $entry = "$code_ $msg  <- $file($lineno)"
+                  if ($entry.Length -gt 880) { $entry = $entry.Substring(0, 880) }
+                  $uniqueDiag.Add($entry)
+                }
+              }
+            }
+            Write-Host "::error::full warning inventory: $($uniqueDiag.Count) unique (first 50 shown)"
+            foreach ($entry in ($uniqueDiag | Select-Object -First 50)) {
+              Write-Host "::error::$entry"
             }
             exit $code
           }
@@ -113,7 +158,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: build-log-${{ matrix.platform }}
-          path: build-${{ matrix.platform }}.log
+          path: build-${{ matrix.platform }}*.log
           if-no-files-found: ignore
           retention-days: 7
 

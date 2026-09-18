@@ -41,7 +41,7 @@ namespace ok::arcade {
 namespace {
 
 constexpr double kMaxFrameStepSec = 0.05;   // 20 FPS floor for physics stepping
-constexpr double kMonoCharWidthFactor = 0.62;  // monospace advance / font size
+constexpr float kMonoCharWidthFactor = 0.62f;  // monospace advance / font size
 
 double clampDt(double dt) noexcept {
     if (!(dt > 0.0)) {   // also filters NaN
@@ -2032,7 +2032,9 @@ void RhythmTypingGame::buildFrame(Frame& frame) const {
         if (dtToHit > m_approachSec || dtToHit < -kLateWindowSec) {
             continue;
         }
-        const float y = kHitLineY - static_cast<float>(dtToHit) * (kPixelsPerSecond / m_approachSec);
+        const float y = kHitLineY -
+                       static_cast<float>(dtToHit) *
+                           (kPixelsPerSecond / static_cast<float>(m_approachSec));
         if (y < 50.0f || y > kHitLineY + 30.0f) {
             continue;
         }
@@ -2300,7 +2302,7 @@ void NoMistakeGame::buildFrame(Frame& frame) const {
                                : static_cast<double>(m_currentIndex) /
                                      static_cast<double>(m_textStream.size());
     frame.stats.hasMeter = true;
-    frame.stats.meter = m_score;
+    frame.stats.meter = static_cast<double>(m_score);
     frame.stats.meterMax = static_cast<double>(m_scorePenalty);
     frame.stats.paused = m_paused;
     frame.stats.gameOver = m_gameOver;

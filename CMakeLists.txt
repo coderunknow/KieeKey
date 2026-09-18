@@ -46,6 +46,10 @@ set(KIEEKEY_BUILD_TESTS ON CACHE BOOL "Build the unit-test harness")
 # harnesses. OFF by default — see the note in the Windows test block for why.
 set(KIEEKEY_BUILD_EXTRA_TESTS OFF CACHE BOOL "Build the extended test harnesses on Windows")
 set(KIEEKEY_PROFILE 0 CACHE STRING "Compile in the QPC stage profiler (0=off/default, 1=instrumented)")
+# Warnings-as-errors. ON by default (release hygiene, and what CI builds); the
+# diagnostic CI build turns it OFF so that a failing build can print the FULL
+# warning inventory in one pass instead of stopping at the first one per file.
+set(KIEEKEY_WERROR ON CACHE BOOL "Treat compiler warnings as errors (/WX on MSVC)")
 # Low-latency engine profile (PR15 port): when ON, the engine compiles with
 # the grammar-repair pass and the per-key undo snapshot removed (opt-in
 # behavioural trade-off — see TextEngine.hpp). Default OFF = strict build,
@@ -70,7 +74,10 @@ if(MSVC)
     # regression nets; a plain `if` there fires C4127 under /W4, so it is
     # disabled too (the alternative, `if constexpr`, is ill-formed for the
     # runtime conditions the same macros also carry).
-    add_compile_options(/W4 /WX /wd4324 /wd4127 /permissive- /Zc:__cplusplus /Zc:preprocessor /utf-8)
+    add_compile_options(/W4 /wd4324 /wd4127 /permissive- /Zc:__cplusplus /Zc:preprocessor /utf-8)
+    if(KIEEKEY_WERROR)
+        add_compile_options(/WX)
+    endif()
     add_compile_definitions(_CRT_SECURE_NO_WARNINGS NOMINMAX WIN32_LEAN_AND_MEAN)
     # /guard:cf (CFG) + ASLR — security baseline for a system hooking process
     add_link_options(/guard:cf /DYNAMICBASE)

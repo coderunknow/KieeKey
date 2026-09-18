@@ -1,11 +1,12 @@
 # Raw benchmark artifacts
 
-Directories are named `<side>[-<version>]`. The **`-122` suffix marks the
-v1.2.2 campaign**; the bare `rc1/`, `rc2/`, `rc3/` trees are the older
-v1.2.1 campaign and must not be overwritten by v1.2.2 runs.
+Directories are named `<side>[-<version>]`. The **`-130` suffix marks the
+v1.3.0 campaign**; the **`-122` suffix marks the v1.2.2 campaign**;
+the bare `rc1/`, `rc2/`, `rc3/` trees are the older v1.2.1 campaign.
 
 | directory | campaign | documented in |
 |---|---|---|
+| `extreme-130/` | v1.3.0 Standardized extreme benchmark (host freeze, 3-engine showdown, 20M throughput floor, micro matrix, E2E pipeline, isolation gate) | this file, below |
 | `stable-122/` | v1.2.2 Stable release campaign (independent-host re-verification + three-way 1.2.1/RC4/Stable) | this file, below |
 | `rc4-122/` | v1.2.2 RC4 stable-qualification campaign | this file, below |
 | `rc1-122/` | v1.2.2 RC1 engine A/B vs v1.2.1 Stable | this file, below |
@@ -14,6 +15,20 @@ v1.2.1 campaign and must not be overwritten by v1.2.2 runs.
 | `rc1/`, `rc2/` | v1.2.1 RC1-vs-RC2 | this file, below |
 | `rc3/` | v1.2.1 RC2-vs-RC3 | this file, below |
 | `stable/` | v1.2.1 RC3-vs-Stable | this file, below |
+
+## v1.3.0 Extreme Benchmark (`extreme-130/`)
+
+`extreme-130/` holds the v1.3.0 standardized extreme benchmark evidence,
+executed via `tests/run_extreme_bench.sh`:
+- `environment.json`: Host toolchain and hardware freeze (CPU, RAM, compiler, commit).
+- `gate_correctness.log`: Clean-room reference oracle pass over 2,059,419 events (0 deviations).
+- `THREE_ENGINE_BENCH_REPORT.md`: Three-engine apples-to-apples showdown against OpenKey 2.0.5 and UniKey 4.x UKEngine over 15 real passages, 53 stress vectors, and 2M-key latency streams.
+- `tput_floor.log`: 20,000,000 keystrokes throughput floor with FNV-1a output digest verification.
+- `perf_run_*.json`: Micro-decision latency across 4 workloads (`vn-compose`, `mixed`, `passthrough`, `delete`).
+- `e2e_run_*.json`: Pipeline burst latency, queue dispatch, and peak RSS memory.
+- `tone_latency.log`: 8 complex diacritic transformation populations.
+- `feature_isolation.txt`: Subsystem isolation benchmark proving 0.0% overhead when arcade/chaos features are in standby and verifying bit-identical output digests.
+- `EXTREME_BENCHMARK_REPORT.md`: Master consolidated report.
 
 ## v1.2.2 Stable (release campaign)
 

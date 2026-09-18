@@ -508,6 +508,19 @@ else()
         target_compile_features(ok_profiles_bench PRIVATE cxx_std_20)
         target_link_libraries(ok_profiles_bench PRIVATE Threads::Threads)
 
+        # v1.3.0 — Subsystem Isolation & Apples-to-Apples benchmark:
+        add_executable(ok_iso_bench
+            tests/bench_v130_isolation.cpp
+            src/core/TextEngine.cpp
+            src/core/Arcade.cpp
+            src/core/ChaosEngine.cpp
+            src/core/AiRival.cpp
+            src/core/Progression.cpp
+            src/core/TypingAnalytics.cpp
+        )
+        target_include_directories(ok_iso_bench PRIVATE src/core tests)
+        target_compile_features(ok_iso_bench PRIVATE cxx_std_23)
+
         message(STATUS "Non-Windows host: building the shim-based test suite and "
                        "benchmarks (16 ctest targets + 4 manual bench executables). "
                        "The Windows product targets (ok_core, ok_tsf, KieeKeyApp.exe) "
@@ -719,6 +732,11 @@ if(WIN32 AND KIEEKEY_BUILD_TESTS)
     add_executable(ok_tone_bench tests/bench_tone_latency.cpp)
     target_link_libraries(ok_tone_bench PRIVATE ok_core)
     target_include_directories(ok_tone_bench PRIVATE src/core tests)
+
+    # v1.3.0 Subsystem isolation benchmark
+    add_executable(ok_iso_bench tests/bench_v130_isolation.cpp)
+    target_link_libraries(ok_iso_bench PRIVATE ok_core)
+    target_include_directories(ok_iso_bench PRIVATE src/core tests)
 endif()
 
 #---------------------------------------------------------------------------

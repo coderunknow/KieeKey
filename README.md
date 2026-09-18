@@ -57,6 +57,7 @@ Everything below is one release; the full history of v1.2.x and v1.1.x lives in
 | **Chaos Lab window** | Dedicated test UI: type text, see the exact bytes KieeKey would emit, and (optionally) write them into the application you were working in | `KieeKeyApp.exe --chaos-lab` or the tray menu |
 | **Flexing page** | Its own surface inside the lab: prepared passage in, engine text out (WPM / efficiency / cursor), then really typed into the app you came from — one paste or chunk by chunk | Lab window → 🗿 Flexing Mode |
 | **Web labs** | The same two surfaces in the browser: `POST /api/preload` + `flex.emitted` for the Flexing stage, `GET|POST /api/chaos` + `POST /api/chaos/preview` for the Chaos lab (the transformation runs in C++, never in JavaScript) | Buttons in the side panel of the web player |
+| **Web progression & AI** | Level, XP bar, streak, achievements and minigame records from `ProgressionEngine`, plus the opt-in AI rival with the pace it learned and the finish time it would get on the passage you are racing — a level-up toasts in the page | Side panel of the web player |
 | **Settings surfaces** | WinUI 3 pages (Arcade / Chaos / Progression & AI) and the Win32 settings dialog act as launcher + live telemetry, and carry the run configuration: Rhythm/No-Mistake **fail mode** (Hardcore default, or HP bar) and the **BPM** | `KieeKeyApp.exe --settings=N` |
 
 ### The eight games
@@ -107,9 +108,10 @@ Run everything with `tests/run_all_tests.sh` (native) or `ctest` on Windows:
 |---|---|---|
 | `ok_arcade_tests` | all 8 games, manager, determinism, no steady-state allocations | 3742 checks, 0 failures |
 | `ok_arcade_render_tests` | display list, JSON wire format, injection safety, viewport letterboxing, payload budget | 6/6 |
-| `ok_arcade_server_tests` | HTTP routing, session control, input forwarding, traversal guards, a full simulated race, the Flexing payload and the Chaos lab | 8/8 |
+| `ok_arcade_server_tests` | HTTP routing, session control, input forwarding, traversal guards, a full simulated race, the Flexing payload, the Chaos lab, progression/AI-rival routes | 9/9 |
 | `ok_arcade_window_tests` | **the real Win32 window procedures**: catalogue painting, hover, click-to-play, keyboard, timer, `Esc`/close, Chaos Lab preview + injection, and the Flexing page (prepared text in, engine text typed out) | 5/5 |
 | `tests/web_labs_test.js` | the browser lab glue: engine text into the flexing control, chaos preview/replay, "keys stay in the text field" guard | 27 checks |
+| `tests/web_progress_test.js` | the progression/AI panel: engine numbers, level-up toast, opt-in switch, learned pace, live race preview, visibility-aware polling | 23 checks |
 | `tests/web_render_test.js` | the HTML5 renderer replayed over frames captured from the C++ engine (`tests/data/web_frames.json`): every game's commands, colours, gradients, HUD | 62 checks |
 | `demo/arcade_cli --test` | the terminal front-end: all 8 games launch, answer input and produce a display list + wire JSON | 8/8 + chaos |
 | `ok_chaos_tests` | case + glyph transforms, render-only rotations, thread safety | 4/4 |

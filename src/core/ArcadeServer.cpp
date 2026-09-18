@@ -11,7 +11,10 @@
 //============================================================================
 #include "ArcadeServer.hpp"
 
+#include "AiRival.hpp"
 #include "ChaosEngine.hpp"
+#include "Progression.hpp"
+#include "TypingAnalytics.hpp"
 #include "Progression.hpp"
 
 #include <algorithm>
@@ -493,6 +496,100 @@ HttpResponse ArcadeServer::handleRequest(const std::string& method, const std::s
                         std::to_string(static_cast<int>(flex->getGranularity())) + "}";
         return response;
     }
+    if ((isGet || isPost) && route == "/api/progression") {
+        // "Type a lot to level up" is part of the feature set, so the web HUD
+        // reads the very same ProgressionEngine the desktop app persists.
+        auto& progress = ok::progression::ProgressionEngine::instance();
+        if (isPost) {
+            bool flag = false;
+            if (jsonFindBool(body, "flush", flag) && flag) {
+                progress.flushStats();
+            }
+        }
+        const ok::progression::ProgressionStats stats = progress.getStats();
+        const std::uint32_t level = ok::progression::ProgressionEngine::calculateLevel(stats.totalXp);
+        const std::uint64_t levelFloor =
+            ok::progression::ProgressionEngine::xpRequiredForLevel(level);
+        const std::uint64_t levelCeil =
+            ok::progression::ProgressionEngine::xpRequiredForLevel(level + 1);
+        const std::uint64_t span = (levelCeil > levelFloor) ? (levelCeil - levelFloor) : 1;
+        const std::uint64_t into = (stats.totalXp > levelFloor) ? (stats.totalXp - levelFloor) : 0;
+        const int intoPercent = static_cast<int>(
+            std::min<std::uint64_t>(100, (into * 100) / (span == 0 ? 1 : span)));
+        response.body =
+            std::string("{\"ok\":true,\"level\":") + std::to_string(level) +
+            ",\"xp\":" + std::to_string(stats.totalXp) +
+            ",\"xpIntoLevel\":" + std::to_string(into) +
+            ",\"xpForLevel\":" + std::to_string(span) +
+            ",\"levelPercent\":" + std::to_string(intoPercent) +
+            ",\"bestWpm\":" + std::to_string(stats.bestWpm) +
+            ",\"bestAccuracy\":" + std::to_string(stats.bestAccuracy) +
+            ",\"totalKeystrokes\":" + std::to_string(stats.totalKeystrokes) +
+            ",\"totalWords\":" + std::to_string(stats.totalWords) +
+            ",\"typingTimeSeconds\":" + std::to_string(stats.typingTimeSeconds) +
+            ",\"streakDays\":" + std::to_string(stats.currentStreakDays) +
+            ",\"achievements\":" + std::to_string(progress.getUnlockedAchievements().size()) +
+            ",\"typingRaceBestWpm\":" + std::to_string(stats.typingRaceBestWpm) +
+            ",\"rhythmHighScore\":" + std::to_string(stats.rhythmHighScore) +
+            ",\"noMistakeMaxCombo\":" + std::to_string(stats.noMistakeMaxCombo) + "}";
+        return response;
+    }
+    if ((isGet || isPost) && route == "/api/rival") {
+        // The AI rival is opt-in; this route is the browser's only way to see
+        // (and train) the learned profile, and it never invents numbers.
+        auto& rival = ok::ai::AiRivalEngine::instance();
+        if (isPost) {
+            bool flag = false;
+            if (jsonFindBool(body, "optIn", flag)) {
+                rival.setOptIn(flag);
+            }
+            if (jsonFindBool(body, "reset", flag) && flag) {
+                rival.resetProfile();
+            }
+            if (jsonFindBool(body, "train", flag) && flag) {
+                rival.trainBatch();
+            }
+        }
+        const ok::ai::AiProfile profile = rival.getProfile();
+        const double meanIki = profile.meanIkiMs > 0.0 ? profile.meanIkiMs : 150.0;
+        // 5 chars per word, standard WPM definition, from the learned IKI.
+        const double profileWpm = (meanIki > 0.0) ? (60000.0 / (meanIki * 5.0)) : 0.0;
+
+        // Race preview against the passage the typing race currently uses, so
+        // "it learns you and then races to beat you" is visible in numbers.
+        std::size_t passageChars = 0;
+        double rivalFinishSec = 0.0;
+        double rivalWpm = 0.0;
+        {
+            std::lock_guard<std::mutex> lock(m_gameMutex);
+            auto* race = dynamic_cast<TypingRaceGame*>(m_manager.getCurrentGame());
+            if (race != nullptr) {
+                const std::u32string passage(race->getPassage());
+                passageChars = passage.size();
+                ok::ai::AiRaceConfig raceConfig;
+                raceConfig.aggression = 1.05;   // 5 % faster than the learned pace
+                ok::ai::AiRacer racer = rival.makeRacer(passage, raceConfig);
+                for (int step = 0; step < 60000 && !racer.isFinished(); ++step) {
+                    racer.update(kTickSeconds);
+                }
+                rivalFinishSec = racer.getFinishTimeSec();
+                rivalWpm = racer.getWpm();
+            }
+        }
+        response.body =
+            std::string("{\"ok\":true,\"optIn\":") + (rival.isOptIn() ? "true" : "false") +
+            ",\"samples\":" + std::to_string(profile.sampleCount) +
+            ",\"pendingObservations\":" + std::to_string(rival.pendingObservationCount()) +
+            ",\"meanIkiMs\":" + std::to_string(meanIki) +
+            ",\"errorRate\":" + std::to_string(profile.errorRate) +
+            ",\"toneDelayMs\":" + std::to_string(profile.toneDelayMs) +
+            ",\"profileWpm\":" + std::to_string(profileWpm) +
+            ",\"ghostSamples\":" + std::to_string(rival.getYesterdayGhost().size()) +
+            ",\"passageChars\":" + std::to_string(passageChars) +
+            ",\"rivalFinishSec\":" + std::to_string(rivalFinishSec) +
+            ",\"rivalWpm\":" + std::to_string(rivalWpm) + "}";
+        return response;
+    }
     if ((isGet || isPost) && (route == "/api/chaos" || route == "/api/chaos/preview")) {
         // Chaos Mode lab. The transformation itself always runs in the shared
         // C++ engine (ChaosEngine), never in JavaScript: the browser only shows
@@ -622,7 +719,8 @@ HttpResponse ArcadeServer::handleRequest(const std::string& method, const std::s
             route == "/api/ping" || route == "/api/start" || route == "/api/stop" ||
             route == "/api/pause" || route == "/api/restart" || route == "/api/input" ||
             route == "/api/text" || route == "/api/config" || route == "/api/preload" ||
-            route == "/api/chaos" || route == "/api/chaos/preview";
+            route == "/api/chaos" || route == "/api/chaos/preview" ||
+            route == "/api/progression" || route == "/api/rival";
         response.status = knownRoute ? 405 : 404;
         response.body = jsonError(knownRoute ? "method not allowed for this route"
                                              : "unknown api route");

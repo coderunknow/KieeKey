@@ -22,6 +22,13 @@ Keep a Changelog; versioning: SemVer.
   * `web/` (index.html + arcade.css + arcade.js) and `tools/arcade_serve.cpp` —
     an HTML5 canvas player that drives the same C++ engine over HTTP + SSE;
     `arcade_serve` is a real target on Windows and Linux.
+  * `web/progress.js` + `GET|POST /api/progression` and `GET|POST /api/rival` —
+    the progression/AI half of the feature set is now visible and testable in
+    the browser too: level + XP bar + streak + achievements + records straight
+    from `ProgressionEngine`, and the opt-in AI rival with its learned pace and
+    the finish time it would get on the passage being raced right now
+    (`AiRivalEngine::makeRacer`). A level-up while the page is open raises the
+    same toast the desktop hub shows. The panel only displays engine numbers.
   * `web/labs.js` + two new HTTP routes — the two "gõ thật" surfaces in the
     browser: the **Flexing stage** (`POST /api/preload` loads the prepared
     passage, `flex.emitted` in `/api/state`/`/api/stream` carries the text the
@@ -54,6 +61,9 @@ Keep a Changelog; versioning: SemVer.
   glue (a small DOM/fetch double executes the real `web/labs.js`), so the
   streamed Flexing text, the chaos preview/replay and the "keys belong to the
   text field, not the engine" guard are verified without a browser.
+* `tests/web_progress_test.js` — headless suite for the progression/AI panel
+  (level/XP rendering, the level-up toast firing once, the opt-in switch, the
+  learned pace, the live race preview, reset, and visibility-aware polling).
 * `tests/web_render_test.js` + `tests/data/web_frames.json` +
   `tests/capture_web_frames.py` — the HTML5 renderer is replayed head-lessly
   against frames captured from the real engine (refresh the fixture with

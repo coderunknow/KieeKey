@@ -159,6 +159,46 @@
   </section>
 
   <section class="side">
+
+    <h2>Tiến trình &amp; AI Rival</h2>
+    <div class="config prog">
+      <div class="prog-level">
+        <span class="chip">Cấp <b id="progLevel">1</b></span>
+        <span class="chip">XP <b id="progXp">0</b></span>
+      </div>
+      <div class="bar"><span id="progBar" style="width:0%"></span></div>
+      <small class="note"><span id="progPercent">0%</span> tới cấp kế tiếp · Kỷ lục đua <b id="progRace">0</b> WPM</small>
+      <div class="row chips">
+        <span class="chip">WPM tốt nhất <b id="progBestWpm">0</b></span>
+        <span class="chip">Phím <b id="progKeys">0</b></span>
+        <span class="chip">Chuỗi ngày <b id="progStreak">0</b></span>
+        <span class="chip">Thành tựu <b id="progAchievements">0</b></span>
+      </div>
+      <button class="btn btn-ghost" id="progRefresh">↻ Cập nhật tiến trình</button>
+    </div>
+
+    <h2>🤖 AI Rival (học từ bạn)</h2>
+    <div class="config prog">
+      <div class="row">
+        <span class="pill" id="rivalPill">TẮT (opt-in)</span>
+        <label class="check inline">
+          <input type="checkbox" id="rivalOptIn">
+          <span>Cho phép học</span>
+        </label>
+      </div>
+      <div class="row chips">
+        <span class="chip">Mẫu <b id="rivalSamples">0</b></span>
+        <span class="chip">Tốc độ học được <b id="rivalWpm">0 WPM</b></span>
+        <span class="chip">Tỉ lệ gõ sai <b id="rivalError">0%</b></span>
+      </div>
+      <small class="note">Đối thủ sẽ về đích sau <b id="rivalFinish">—</b></small>
+      <div class="row">
+        <button class="btn" id="rivalTrain">Huấn luyện từ phím đã gõ</button>
+        <button class="btn btn-ghost" id="rivalReset">Xoá hồ sơ</button>
+      </div>
+      <p class="note">AI Rival chỉ bật khi bạn cho phép; mọi con số ở đây do engine C++ tính, không phải JavaScript.</p>
+    </div>
+
     <h2>Phòng thí nghiệm</h2>
     <div class="config">
       <button class="btn" id="openFlexingLab">🗿 Mở sân khấu Flexing</button>
@@ -211,5 +251,6 @@
 
 <script src="arcade.js"></script>
 <script src="labs.js"></script>
+<script src="progress.js"></script>
 </body>
 </html>

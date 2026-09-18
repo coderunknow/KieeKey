@@ -163,6 +163,71 @@ main {
 .keys b { color: var(--text); }
 .note { font-size: 11px; color: var(--dim); line-height: 1.5; }
 
+.prog { gap: 8px; }
+.prog .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.prog .chips { gap: 6px; }
+.chip {
+  display: inline-flex;
+  gap: 6px;
+  align-items: baseline;
+  font-size: 11px;
+  color: var(--dim);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px 9px;
+  white-space: nowrap;
+}
+.chip b { color: var(--text); font-size: 12px; font-variant-numeric: tabular-nums; }
+.bar {
+  height: 8px;
+  border-radius: 999px;
+  background: #10151f;
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.bar > span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--good));
+  transition: width .25s ease;
+}
+label.check, label.inline { flex-direction: row; align-items: center; gap: 6px; }
+.lab .check { display: flex; flex-direction: row; align-items: flex-start; gap: 8px; color: var(--text); font-size: 12px; }
+.lab .check input { margin-top: 2px; }
+
+.labs { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 14px; }
+.lab {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(30, 38, 53, .75), rgba(16, 20, 28, .9));
+  padding: 14px 16px 16px;
+}
+.lab-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.lab-head .lab-icon { font-size: 26px; }
+.lab-head h2 { font-size: 15px; margin: 0; letter-spacing: .2px; }
+.lab-head p { margin: 3px 0 0; font-size: 12px; color: var(--dim); }
+.lab-head .pill { margin-left: auto; }
+.lab-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
+.lab-col { display: flex; flex-direction: column; gap: 6px; }
+.lab-col label { font-size: 12px; color: var(--dim); }
+.lab-col textarea {
+  width: 100%;
+  resize: vertical;
+  background: #0d1219;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.lab-col textarea:focus { outline: none; border-color: var(--accent); }
+.lab-col .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.lab-col code { font-size: 11px; color: var(--accent); }
+@media (max-width: 900px) { .lab-grid { grid-template-columns: minmax(0, 1fr); } }
+
 footer {
   display: flex;
   gap: 10px;

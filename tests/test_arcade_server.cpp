@@ -24,8 +24,12 @@
 //                              the browser, plus the /api/preload pipeline
 //  8. Chaos lab              — the web lab's transformation is the one the
 //                              engine really performs (incl. render-only 90°)
+//  9. Progression & AI rival — the HUD numbers of the browser (XP/level) and
+//                              the learned rival profile come from the engines,
+//                              and the rival is opt-in
 //============================================================================
 #include "ArcadeServer.hpp"
+#include "AiRival.hpp"
 #include "ChaosEngine.hpp"
 #include "Progression.hpp"
 
@@ -420,6 +424,74 @@ void testChaosLab() {
     std::cout << "  [PASS] Chaos lab transformation via the shared engine\n";
 }
 
+//---------------------------------------------------------------------------
+void testProgressionAndRivalRoutes() {
+    auto& progress = ProgressionEngine::instance();
+    progress.reset();
+
+    ArcadeServer server;
+    const std::string empty = bodyOf(server.handleRequest("GET", "/api/progression", ""));
+    assert(contains(empty, "\"level\":1"));
+    assert(contains(empty, "\"xp\":0"));
+    assert(contains(empty, "\"levelPercent\":0"));
+
+    // Playing a race through the API must move the HUD numbers: this is the
+    // "type a lot and level up" promise, seen from the browser.
+    assert(server.startGame("typing-race"));
+    auto* race = dynamic_cast<TypingRaceGame*>(server.manager().getCurrentGame());
+    assert(race != nullptr);
+    const std::u32string passage(race->getPassage());
+    for (std::size_t i = 0; i < passage.size() && !race->isGameOver(); ++i) {
+        std::string character = utf8FromUtf32(std::u32string(1, passage[i]));
+        if (character == "\"" || character == "\\") { character.insert(character.begin(), '\\'); }
+        (void)server.handleRequest("POST", "/api/text", "{\"text\":\"" + character + "\"}");
+        server.tick(1.0 / 60.0);
+    }
+    const std::string earned = bodyOf(server.handleRequest("GET", "/api/progression", ""));
+    assert(!contains(earned, "\"xp\":0"));
+    assert(contains(earned, "\"bestWpm\":"));
+    assert(contains(earned, "\"typingRaceBestWpm\":"));
+
+    // The rival is off until the user opts in, and its numbers come from the
+    // profile the engine learned (never from the client).
+    auto& rival = ok::ai::AiRivalEngine::instance();
+    rival.setOptIn(false);
+    rival.resetProfile();
+    const std::string off = bodyOf(server.handleRequest("GET", "/api/rival", ""));
+    assert(contains(off, "\"optIn\":false"));
+    assert(contains(off, "\"samples\":0"));
+    assert(contains(off, "\"profileWpm\":"));
+
+    const std::string on = bodyOf(server.handleRequest("POST", "/api/rival", "{\"optIn\":true}"));
+    assert(contains(on, "\"optIn\":true"));
+
+    // With the race still running, the route previews the rival's finish time
+    // on the very passage the player is typing.
+    assert(contains(on, "\"passageChars\":"));
+    assert(contains(on, "\"rivalFinishSec\":"));
+    const double rivalWpm = [&on] {
+        const std::string key = "\"rivalWpm\":";
+        const std::size_t at = on.find(key);
+        return (at == std::string::npos) ? 0.0 : std::stod(on.substr(at + key.size()));
+    }();
+    assert(rivalWpm > 0.0);
+
+    (void)server.handleRequest("POST", "/api/rival", "{\"train\":true}");
+    (void)server.handleRequest("POST", "/api/rival", "{\"reset\":true}");
+    assert(contains(bodyOf(server.handleRequest("GET", "/api/rival", "")), "\"samples\":0"));
+
+    // Verb / route guards stay intact for the new endpoints.
+    assert(server.handleRequest("DELETE", "/api/progression", "{}").status == 405);
+    assert(server.handleRequest("DELETE", "/api/rival", "{}").status == 405);
+    assert(server.handleRequest("GET", "/api/rival/nope", "").status == 404);
+
+    server.stopGame();
+    rival.setOptIn(false);
+    rival.resetProfile();
+    progress.reset();
+    std::cout << "  [PASS] Progression & AI rival routes\n";
+}
+
 int main() {
     std::cout << "=== Running Arcade Server Suite ===\n";
     testRouting();
@@ -430,6 +502,7 @@ int main() {
     testSessionIsolation();
     testFlexingPayload();
     testChaosLab();
+    testProgressionAndRivalRoutes();
     std::cout << "=== ALL ARCADE SERVER TESTS PASSED ===\n";
     return 0;
 }

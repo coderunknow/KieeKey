@@ -223,6 +223,7 @@ function onState(state) {
   lastFrame = state.frame;
   updateHud(state);
   if (window.KieeKeyLabs) { window.KieeKeyLabs.onState(state); }
+  if (window.KieeKeyProgress) { window.KieeKeyProgress.onState(state); }
   drawFrame(state.frame);
   framesDrawn++;
   const now = performance.now();

@@ -214,7 +214,7 @@ build soak_pipeline       -std=c++2b -O2 -pthread $INC tests/soak_pipeline.cpp  
 # --- v1.3.0 Arcade, Chaos, AI & Progression additions -----------------------
 build test_arcade         -std=c++2b -O2 $INC tests/test_arcade.cpp src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ArcadeRender.cpp src/core/Progression.cpp || rc=1
 build test_arcade_render  -std=c++2b -O2 $INC tests/test_arcade_render.cpp src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ArcadeRender.cpp src/core/Progression.cpp || rc=1
-build test_arcade_server  -std=c++2b -O2 $INC tests/test_arcade_server.cpp src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ArcadeRender.cpp src/core/ArcadeServer.cpp src/core/Progression.cpp src/core/ChaosEngine.cpp || rc=1
+build test_arcade_server  -std=c++2b -O2 $INC tests/test_arcade_server.cpp src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ArcadeRender.cpp src/core/ArcadeServer.cpp src/core/Progression.cpp src/core/ChaosEngine.cpp src/core/AiRival.cpp src/core/TypingAnalytics.cpp || rc=1
 # The Win32 hub/lab windows are executed here through tests/win32_gdi_stub.cpp
 # (a recording USER32/GDI32 layer), so the graphical front-end is covered on a
 # host without the Windows SDK. -D_WIN32 selects the real window implementation.
@@ -252,6 +252,13 @@ if command -v node >/dev/null 2>&1; then
         printf ' ok\n'
     else
         printf ' FAILED — %s\n' "$OUT/logs/web_labs.log"
+        rc=1
+    fi
+    printf '  [check] %-22s' "web progress (node)"
+    if ( cd "$REPO_ROOT" && node tests/web_progress_test.js ) > "$OUT/logs/web_progress.log" 2>&1; then
+        printf ' ok\n'
+    else
+        printf ' FAILED — %s\n' "$OUT/logs/web_progress.log"
         rc=1
     fi
     # The renderer runs against frames captured from the C++ engine

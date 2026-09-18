@@ -51,6 +51,8 @@ echo "   output   : $OUT"
     "$REPO_ROOT/src/core/ArcadeServer.cpp" \
     "$REPO_ROOT/src/core/Progression.cpp" \
     "$REPO_ROOT/src/core/ChaosEngine.cpp" \
+    "$REPO_ROOT/src/core/AiRival.cpp" \
+    "$REPO_ROOT/src/core/TypingAnalytics.cpp" \
     -o "$BIN" -pthread || { echo "build FAILED" >&2; exit 1; }
 
 "$BIN" --iters="$ITERS" --server-iters="$SERVER_ITERS" | tee "$OUT/arcade_bench.txt"

@@ -16,7 +16,7 @@ This project may be resumed later if there is a clear reason and enough motivati
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20ARM64-0078D6.svg)
 ![Build](https://img.shields.io/badge/build-CMake%20%3E%3D%203.28-064FAD.svg)
 
-**KieeKey v1.3.0 Stable** is a modern, low-latency Vietnamese input method
+**KieeKey v1.3.0-beta1** is a modern, low-latency Vietnamese input method
 engine (bộ gõ Tiếng Việt) for Windows, with a system-tray application, a TSF
 text-store composer and an optional WinUI 3 Fluent settings UI.
 
@@ -31,9 +31,9 @@ text-store composer and an optional WinUI 3 Fluent settings UI.
 
 ---
 
-## What's new in v1.3.0 Stable — Arcade, Chaos Lab, AI Rival & Progression
+## What's new in v1.3.0-beta1 — Arcade, Chaos Lab, AI Rival & Progression
 
-**v1.3.0 Stable** delivers the next minor release of KieeKey: a practical, zero-regression Vietnamese input method engine expanded with an isolated Arcade Hub, Chaos Playground, Personal AI Typing Rival, Global Progression, and Real-Time Typing Analytics & Coach.
+**v1.3.0-beta1** delivers the beta release of KieeKey: a practical, zero-regression Vietnamese input method engine expanded with an isolated Arcade Hub, Chaos Playground, Personal AI Typing Rival, Global Progression, and Real-Time Typing Analytics & Coach.
 
 ### Key Features & Invariants:
 * **Core IME Stability & Performance Guardrails (100% Retained)**:

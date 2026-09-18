@@ -3,11 +3,11 @@
 All notable changes to KieeKey are documented here. Format based on
 Keep a Changelog; versioning: SemVer.
 
-## [1.3.0-Stable] — 2026-09-17
+## [1.3.0-beta1] — 2026-09-18
 
-### Minor release — KieeKey Arcade, Chaos Playground, AI Rival, Progression & Analytics
+### Beta release — KieeKey Arcade, Chaos Playground, AI Rival, Progression & Analytics
 
-> **Scope:** v1.3.0 Stable is the minor release delivering a rich feature set
+> **Scope:** v1.3.0-beta1 is the pre-release beta delivering a rich feature set
 > (Arcade Hub, Chaos Lab, Personal AI Rival, Global Progression, Analytics & Coach)
 > while strictly preserving core IME performance and stability guardrails.
 > Full gate correctness: 2,059,419 events vs oracle (0 errors, 100% correct).
@@ -43,13 +43,6 @@ Keep a Changelog; versioning: SemVer.
   * `demo/arcade_cli.cpp`: Portable interactive terminal demonstrator.
 * **Test Suite Expansion**:
   * 7 new test targets: `test_arcade`, `test_chaos`, `test_ai_rival`, `test_progression`, `test_analytics`, `test_online_ghost`, `test_soak_arcade`.
-
-## [1.3.0-beta1] — 2026-09-17
-
-### Beta release — Feature-complete qualification campaign
-* Feature completeness verified across all 8 Arcade games, Chaos Lab, AI Rival, Progression, and Analytics.
-* Soak testing verified: 500 game lifecycle cycles and 100,000 keystroke stress runs pass cleanly.
-* Version carriers updated to `1.3.0-beta1`.
 
 ## [1.3.0-dev1] — 2026-09-17
 

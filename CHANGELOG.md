@@ -174,7 +174,14 @@ Keep a Changelog; versioning: SemVer.
 * **`ArcadeManager::makeGame()` read `m_config` without the mutex** while the
   web bridge could call `setConfig()` concurrently — the config is now an
   explicit parameter, snapshotted under the lock in `launchGame()`.
-* **MSVC `/W4 /WX` build (all three CI architectures)**: `ChaosLabWindow.cpp`
+* **MSVC `/W4 /WX` build (all three CI architectures)**: the last blocker was a
+  `C4244 'const wchar_t' → 'char'` reported *inside `<xutility>`* — the v1.3.0
+  command line built a `std::string` from a `wchar_t` iterator pair
+  (`--arcade=<slug>` via `slug.assign(value.begin(), value.end())` and
+  `--settings=<N>` via `std::string narrow(value.begin(), value.end())`), so the
+  STL's own `char = const wchar_t` assignment was the warning. The slug now goes
+  through `utf16ToUtf8()` and the tab index through `std::wcstol`, with no
+  narrowing anywhere. `ChaosLabWindow.cpp`
   used `TRACKBAR_CLASSW` / `TBS_*` / `TBM_*` without `<commctrl.h>`,
   `ArcadeWindow.cpp` used `GET_X_LPARAM` / `GET_Y_LPARAM` without
   `<windowsx.h>`, `main.cpp` needed `comctl32.lib` for `InitCommonControlsEx`,

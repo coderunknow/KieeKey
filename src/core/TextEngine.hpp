@@ -399,8 +399,13 @@ public:
         // The code table (and the two masks the leading match reads) are options:
         // a memo keyed on the word alone would be stale across a switch, so drop
         // both caches here. Once per configuration change, never on the hot path.
+        // NOTE: leadMemoJ_ must reset WITH the key. Unlike the emit memo (whose
+        // kEmitMemoFlip makes the zero key unmatchable), (0,0,0,0) is a plausible
+        // lead key, and matchLeadingConsonant answers 0 for it — a stale nonzero
+        // J paired with a cleared key would be a wrong hit, not a miss.
         emitMemoKey_.fill(0);
         leadMemoKey_.fill(0);
+        leadMemoJ_ = 0;
     }
     [[nodiscard]] const EngineOptions& options() const noexcept { return opts_; }
     void tempOffSpellChecking() noexcept;   // toggles while a Ctrl combo is held

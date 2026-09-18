@@ -42,7 +42,7 @@
 //
 // Build (see tests/run_all_tests.sh):
 //   g++ -std=c++2b -O2 -Isrc/core -Itests -c tests/diff_engine_ab.cpp
-//   g++ -std=c++2b -O2 -Dok=ok_rc1 -Itests/reference/kieekey-1.2.1-rc1 \
+//   g++ -std=c++2b -O2 -Dok=ok_rc1 -Itests/reference/kieekey-1.2.1-rc1
 //       -c tests/reference/kieekey-1.2.1-rc1/TextEngine.cpp -o rc1.o
 //   link with the live TextEngine object.
 //

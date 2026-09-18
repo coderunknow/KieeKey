@@ -697,6 +697,29 @@ additionally produce downloadable release artifacts — prebuilt binaries are
 WinUI 3 front-end is not built in CI (it needs the Windows App SDK NuGet
 package restored locally).
 
+### Keeping CI green: the `SHA256SUMS.txt` manifest
+
+CI verifies `SHA256SUMS.txt` against the tree on every push — a commit that
+changes any tracked file without regenerating the manifest fails the
+`Verify SHA256SUMS manifest` step (this is exactly how the two CI breakages
+after README-only edits happened). The manifest hashes the **staged** (index)
+content, so regenerating is a single pre-commit step, not a second commit:
+
+```bash
+git add -A                        # stage everything you changed
+scripts/gen_sha256sums.sh         # regenerate against the staged tree
+git add SHA256SUMS.txt
+git commit                        # manifest + tree are consistent
+```
+
+To make it impossible to forget, enable the bundled pre-commit hook once
+per clone — it regenerates and re-stages the manifest automatically
+whenever a commit touches tracked files:
+
+```bash
+git config core.hooksPath scripts/hooks
+```
+
 ## Repository layout
 
 ```
@@ -713,7 +736,7 @@ KieeKey/
 ├── tools/                      flat-table generators
 ├── imebench_kit/               3-way benchmark harness (results regenerated locally)
 ├── demo/                       interactive console demo
-├── scripts/                    engine probe programs
+├── scripts/                    engine probes + SHA256SUMS tooling & hooks
 └── bin/                        build-output placeholder (see bin/README.txt)
 ```
 

@@ -32,6 +32,15 @@
 #
 # Tagged pushes (v*) additionally produce a GitHub Release with the
 # per-platform artifact zips attached.
+#
+# v1.3.0 maintenance: all actions bumped off the Node 20 runtime
+# (checkout v7, upload-artifact v7, download-artifact v8,
+# action-gh-release v3 — clears the Node-20 deprecation annotations),
+# and the release job now REPACKS each downloaded artifact into a
+# per-platform zip before publishing. download-artifact (v4+) extracts
+# artifacts on download, so the previous `files: artifacts/**/*.zip`
+# glob matched NOTHING — a tagged release would have been created with
+# zero binaries attached.
 #----------------------------------------------------------------------------
 name: build
 
@@ -60,7 +69,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
 
@@ -96,7 +105,7 @@ jobs:
           Compress-Archive -Path "$dst/*" -DestinationPath "$dst.zip"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: KieeKey-${{ matrix.platform }}
           path: KieeKey-${{ matrix.platform }}.zip
@@ -115,12 +124,27 @@ jobs:
       contents: write
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
 
+      # download-artifact (v4+) EXTRACTS each artifact into
+      # artifacts/<name>/... — there are no .zip files on disk afterwards.
+      # Repack each artifact directory into <name>.zip so the release
+      # actually attaches the per-platform binaries (the old
+      # `files: artifacts/**/*.zip` glob matched nothing).
+      - name: Repack per-platform release zips
+        shell: bash
+        run: |
+          shopt -s nullglob
+          for d in artifacts/*/; do
+            name=$(basename "$d")
+            (cd "$d" && zip -r "../${name}.zip" .)
+          done
+          ls -la artifacts/
+
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
-          files: artifacts/**/*.zip
+          files: artifacts/*.zip
           generate_release_notes: true

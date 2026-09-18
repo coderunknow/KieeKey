@@ -176,23 +176,6 @@ std::vector<JsonRow> g_json;
         }                                                                   \
     } while (0)
 
-std::string utf8Of(const std::wstring& w) {
-    std::string s;
-    for (wchar_t wc : w) {
-        const std::uint32_t u = static_cast<std::uint32_t>(wc);
-        if (u < 0x80) s.push_back(static_cast<char>(u));
-        else if (u < 0x800) {
-            s.push_back(static_cast<char>(0xC0 | (u >> 6)));
-            s.push_back(static_cast<char>(0x80 | (u & 0x3F)));
-        } else {
-            s.push_back(static_cast<char>(0xE0 | (u >> 12)));
-            s.push_back(static_cast<char>(0x80 | ((u >> 6) & 0x3F)));
-            s.push_back(static_cast<char>(0x80 | (u & 0x3F)));
-        }
-    }
-    return s;
-}
-
 std::string hexDumpText(const std::wstring& w) {
     std::string o;
     char buf[16];

@@ -3,6 +3,53 @@
 All notable changes to KieeKey are documented here. Format based on
 Keep a Changelog; versioning: SemVer.
 
+## [Unreleased]
+
+### Fixed
+* **CI (build/x64)**: the `Verify SHA256SUMS manifest` gate failed on
+  `main` because the "Update project status" commit edited `README.md`
+  without regenerating `SHA256SUMS.txt` (the same README-without-manifest
+  mistake that broke CI 8 days earlier). Manifest regenerated; the tooling
+  below makes the failure class impossible to reintroduce.
+* **Release job would have shipped empty releases**: `download-artifact`
+  (v4+) *extracts* artifacts on download, so the release job's
+  `files: artifacts/**/*.zip` glob matched nothing — a tagged push would
+  have created a GitHub Release with **zero binaries attached**. The job
+  now repacks each downloaded artifact directory into a per-platform zip
+  before publishing.
+* **v1.3.0 test harnesses were assert-vacuous in Release builds**: the
+  arcade / chaos / AI-rival / progression / analytics / online-ghost /
+  soak-arcade suites (and `test_outputitem`) verify through plain
+  `assert()`, which `NDEBUG` compiles to nothing under
+  `CMAKE_BUILD_TYPE=Release` — the binaries printed `[PASS]`
+  unconditionally and never checked anything. Every test target now
+  force-includes `tests/force_asserts.hpp` (`#undef NDEBUG` before the
+  TU's own includes) via `/FI` (MSVC) / `-include` (GCC/Clang), on both
+  the Linux and Windows test blocks. Product targets, the frozen
+  reference engines and the benchmarks keep normal `NDEBUG` semantics.
+
+### Changed
+* `scripts/gen_sha256sums.sh` now hashes the git **index** (staged
+  content) instead of `HEAD`, so the manifest is regenerated *before*
+  the single commit that ships it — the old HEAD-based hashing forced a
+  "commit, regenerate, commit again" dance whose second step was the one
+  everybody forgot. In CI (fresh checkout) the index equals `HEAD`, so
+  `--check` behaves identically.
+* New `scripts/hooks/pre-commit` hook (enable per clone with
+  `git config core.hooksPath scripts/hooks`) auto-regenerates and
+  re-stages `SHA256SUMS.txt` whenever a commit touches tracked files.
+  README "Building" documents the one-step workflow.
+* CI actions bumped off the deprecated Node 20 runtime:
+  `actions/checkout@v7`, `actions/upload-artifact@v7`,
+  `actions/download-artifact@v8`, `softprops/action-gh-release@v3`
+  (clears the Node-20 deprecation annotations on every job).
+
+### Removed
+* Dead `utf8Of` helper in `tests/test_option_matrix.cpp` (unused since
+  the harness switched to `hexDumpText` diagnostics); backslash-continued
+  `//` comments in `tests/diff_engine_ab.cpp` that tripped `-Wcomment`.
+  The g++ build of the test suite is now warning-clean.
+
 ## [1.3.0-beta1] — 2026-09-18
 
 ### Beta release — KieeKey Arcade, Chaos Playground, AI Rival, Progression & Analytics

@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+#============================================================================
+# KieeKey - A modified version based on OpenKey
+#
+# Original work:
+#   OpenKey - Vietnamese input method engine
+#   Copyright (C) 2019 Tuyen Mai - https://github.com/tuyenvm/OpenKey
+#   Licensed under the GNU General Public License version 3.
+#
+# Modified work:
+#   KieeKey - refactored and completed logic
+#   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
+#   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <https://www.gnu.org/licenses/>.
+#
+# File: scripts/hooks/pre-commit
+# SPDX-License-Identifier: GPL-3.0-or-later
+#============================================================================
+#
+# Auto-regenerate SHA256SUMS.txt against the STAGED tree, so a commit can
+# never again leave the release manifest stale. This is the exact failure
+# that broke the build/x64 CI job twice (README-only commits landed
+# without a manifest bump and the "Verify SHA256SUMS manifest" gate
+# failed on the next push).
+#
+# Enable once per clone (git does not clone hooks):
+#
+#     git config core.hooksPath scripts/hooks
+#
+# What it does when anything other than SHA256SUMS.txt itself is staged:
+#   1. regenerate the manifest from the INDEX (= the exact tree that is
+#      about to be committed — see scripts/gen_sha256sums.sh),
+#   2. `git add SHA256SUMS.txt` so the fix rides along in THIS commit.
+#
+# No-op when: nothing is staged, only the manifest is staged, bash or the
+# generator script is unavailable, or the tree is not a git checkout.
+#
+set -euo pipefail
+
+# Locate the repo root of the commit being made (hooks run at repo root,
+# but be robust about worktrees / subdirectory commits).
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+[ -n "${REPO_ROOT}" ] || exit 0
+cd "${REPO_ROOT}"
+
+command -v bash >/dev/null 2>&1 || exit 0
+[ -f scripts/gen_sha256sums.sh ] || exit 0
+
+# The set of paths this commit will change (index vs HEAD). On an unborn
+# branch (no HEAD yet) fall back to the full index listing.
+if git rev-parse -q --verify HEAD >/dev/null 2>&1; then
+    staged=$(git diff --cached --name-only)
+else
+    staged=$(git ls-files)
+fi
+
+# Drop the manifest itself from the list: a manifest-only commit needs no
+# regeneration (the manifest never hashes itself).
+touchy=$(printf '%s\n' "${staged}" | grep -v '^SHA256SUMS\.txt$' | grep -q . && echo yes || echo no)
+
+if [ "${touchy}" = "yes" ]; then
+    bash scripts/gen_sha256sums.sh
+    git add SHA256SUMS.txt
+    echo "[pre-commit] SHA256SUMS.txt regenerated against the staged tree and re-staged."
+fi
+
+exit 0

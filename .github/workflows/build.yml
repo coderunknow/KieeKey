@@ -94,7 +94,25 @@ jobs:
             # check-run API in a single run instead of one warning per push.
             $seen = @{}
             $unique = New-Object System.Collections.Generic.List[string]
+            # Diagnostics raised inside the STL headers (xutility, xstring, …)
+            # name the header, not the offending source. The `note: see
+            # reference to …` lines that follow carry the instantiation site in
+            # OUR tree — without them a C4244 in xutility is unfixable from the
+            # annotation alone. Collect them separately.
+            $notes = @{}
+            $noteList = New-Object System.Collections.Generic.List[string]
             foreach ($line in (Get-Content $log)) {
+              if ($line -match '^(.*?KieeKey\\KieeKey\\(.*?))\((\d+)(,\d+)?\):\s*note:\s*(.*)$') {
+                $rel = $matches[2]
+                $nline = $matches[3]
+                $noteText = ($matches[5] -replace '\s*\[[^\[\]]*\.vcxproj\]$', '').Trim()
+                if ($noteText.Length -gt 220) { $noteText = $noteText.Substring(0, 220) }
+                $nkey = "$rel($nline)"
+                if (-not $notes.ContainsKey($nkey)) {
+                  $notes[$nkey] = $true
+                  $noteList.Add("instantiation site: $rel($nline) -- $noteText")
+                }
+              }
               if ($line -match '^(.*?)\((\d+)(,\d+)?\):\s*(error|warning)\s+([A-Z]+[0-9]+):\s*(.*)$') {
                 $file = $matches[1]
                 $lineno = $matches[2]
@@ -110,6 +128,9 @@ jobs:
                   $unique.Add($entry)
                 }
               }
+            }
+            foreach ($entry in ($noteList | Select-Object -First 20)) {
+              Write-Host "::error::$entry"
             }
             if ($unique.Count -eq 0) {
               $tail = (Get-Content $log -Tail 25 -ErrorAction SilentlyContinue) -join ' | '
@@ -132,6 +153,17 @@ jobs:
             $seenDiag = @{}
             $uniqueDiag = New-Object System.Collections.Generic.List[string]
             foreach ($line in (Get-Content $diagLog)) {
+              if ($line -match '^(.*?KieeKey\\KieeKey\\(.*?))\((\d+)(,\d+)?\):\s*note:\s*(.*)$') {
+                $rel = $matches[2]
+                $nline = $matches[3]
+                $noteText = ($matches[5] -replace '\s*\[[^\[\]]*\.vcxproj\]$', '').Trim()
+                if ($noteText.Length -gt 220) { $noteText = $noteText.Substring(0, 220) }
+                $nkey = "$rel($nline)"
+                if (-not $notes.ContainsKey($nkey)) {
+                  $notes[$nkey] = $true
+                  $noteList.Add("instantiation site: $rel($nline) -- $noteText")
+                }
+              }
               if ($line -match '^(.*?)\((\d+)(,\d+)?\):\s*(error|warning)\s+([A-Z]+[0-9]+):\s*(.*)$') {
                 $file = $matches[1]
                 $lineno = $matches[2]
@@ -149,6 +181,12 @@ jobs:
             Write-Host "::error::full warning inventory: $($uniqueDiag.Count) unique (first 50 shown)"
             foreach ($entry in ($uniqueDiag | Select-Object -First 50)) {
               Write-Host "::error::$entry"
+            }
+            if ($noteList.Count -gt 0) {
+              Write-Host "::error::$($noteList.Count) instantiation site(s) in the KieeKey tree"
+              foreach ($entry in ($noteList | Select-Object -First 50)) {
+                Write-Host "::error::$entry"
+              }
             }
             exit $code
           }

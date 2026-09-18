@@ -375,6 +375,8 @@ BOOL    Ellipse(HDC, int, int, int, int);
 BOOL    Polygon(HDC, const POINT*, int);
 BOOL    MoveToEx(HDC, int, int, POINT*);
 BOOL    LineTo(HDC, int, int);
+#define ETO_CLIPPED 0x0004
+BOOL    ExtTextOutW(HDC, int, int, UINT, const RECT*, LPCWSTR, UINT, const int*);
 BOOL    TextOutW(HDC, int, int, LPCWSTR, int);
 BOOL    GetTextExtentPoint32W(HDC, LPCWSTR, int, SIZE*);
 BOOL    GetTextMetricsW(HDC, TEXTMETRICW*);

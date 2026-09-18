@@ -882,6 +882,17 @@ add_compile_definitions(KIEEKEY_PROFILE=${KIEEKEY_PROFILE})
 # in TextEngine.hpp, so every TU in the build must observe the same value —
 # a target-scoped definition would let TUs disagree (ODR violation with
 # silently mixed strict/profile behavior).
+if(KIEEKEY_BUILD_TESTS)
+    find_package(Threads REQUIRED)
+    add_executable(ok_live_effects_tests tests/test_live_effects.cpp
+        src/core/TextEngine.cpp src/core/ChaosEngine.cpp)
+    target_include_directories(ok_live_effects_tests PRIVATE src/core)
+    target_link_libraries(ok_live_effects_tests PRIVATE Threads::Threads)
+    kieekey_test_force_asserts(ok_live_effects_tests)
+    add_test(NAME ok_live_effects_tests COMMAND ok_live_effects_tests)
+    set_tests_properties(ok_live_effects_tests PROPERTIES TIMEOUT 120)
+endif()
+
 if(KIEEKEY_LOW_LATENCY_PROFILE)
     add_compile_definitions(KIEEKEY_LOW_LATENCY_PROFILE)
 endif()

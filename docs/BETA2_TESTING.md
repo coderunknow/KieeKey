@@ -5,7 +5,7 @@ Merge is intentionally left to the maintainer after testing the Windows binary.
 
 ## Build identity and installation
 
-- UI version: **1.3.0-beta2**; Windows file/manifest version: **1.3.0.2**.
+- UI version: **1.3.0-beta2**; Windows file/manifest version: **1.3.0.3**.
 - Use `KieeKey-x64.zip` from the PR's **build → x64** artifact. Extract it and
   run `KieeKeyApp.exe`. The CI build uses the Win32 UI and a static runtime.
 - Exit the stable/beta1 process first. Do not test with UniKey/OpenKey or another
@@ -54,9 +54,32 @@ Use the same options for stable and beta2 comparisons.
 
 ### Chaos / Flexing safety
 
-**Intentional beta2 safety change:** Chaos does not transform ordinary IME
-replacement deltas. Use Lab preview and its explicit send buttons. Games only
-receive input on their focused surface; background native games do not advance.
+**Revised beta2 (file build 3):** Lab and live output are separate opt-ins.
+Live effects: tray → **Hiệu ứng gõ bên ngoài** → **Phòng Chaos** → **Hiệu ứng
+gõ trực tiếp**. Turn on its checkbox, select random casing/glyph/intensity,
+then return to an external editor. Requires IME ON and Unicode; excluded apps
+still bypass. Defaults OFF, session-only, with **Ctrl+Alt+F12** emergency off.
+Do not enable while entering passwords or sensitive text. Windows password-field
+detection is not implemented; this is not a privacy filter.
+
+- [ ] With Lab closed, test plain letters, `tieengs vieetj`, VNI tones, repeated
+  Backspace and English restore at 25/50/100% intensity. Case choices should not
+  flicker when the engine replaces a vowel to add a tone.
+- [ ] Enable per-glyph upside-down/mirror/random and confirm text changes immediately.
+  Not all Vietnamese glyphs have lookalikes; unsupported glyphs stay unchanged.
+  This preserves character order; it does not reverse sentences or rotate a whole
+  document. 90°/270° geometric rotation is not supported in external plain text.
+- [ ] Ctrl+Alt+F12 stops effects without disabling Vietnamese input. Turning the
+  IME OFF also stops live effects. Reopening settings reflects the live switch.
+- [ ] Switch apps, click/move the caret and use shortcuts. A context boundary
+  starts a new composition: styled Unicode is not reverse-replayed into the
+  engine. Editing an old styled word therefore starts afresh, rather than
+  promising reversible transformations of arbitrary document contents.
+- [ ] All four passage games remain readable as colored runs change on each key;
+  test 100/125/150/200% scale and a long passage near its end.
+- [ ] Wrong keys visibly highlight the current slot; Typing Race Backspace works;
+  No-Mistake navigation keys do not count as mistakes; Fishing restarts with F2.
+- [ ] Pause/finish messages have an opaque panel, not text over the Hub title.
 
 - [ ] Open Lab from an external editor via the tray. Type Vietnamese and emoji;
   the preview preserves valid Unicode. Adjust intensity: the real slider works.
@@ -100,8 +123,8 @@ The optional canvas pixel render is skipped if `@napi-rs/canvas` is unavailable.
 The UI shim is not Windows and cannot verify real focus delivery, TSF, UIPI,
 keyboard drivers, display scaling or third-party editors.
 
-The new source-contract gate rejects game/Chaos dependencies in the global
-producer and missing tab ownership for optional settings controls. It fails on
+The source-contract gate rejects game/Lab singleton dependencies in the global
+producer (only the explicit bounded LiveEffects adapter is allowed) and missing tab ownership for optional settings controls. It fails on
 the pre-fix beta1 sources; it is a structural guard, not an OS input simulation.
 
 Linux CMake now also builds/registers the Arcade renderer/server/window tests;
@@ -116,3 +139,17 @@ Record: exact binary version/PR commit, Windows/app version, Telex/VNI and optio
 output mode, keyboard layout, active optional features, raw keys, expected text,
 actual text, and whether the same sequence fails on stable v1.2.2. Prefer a short
 screen recording using disposable text (no passwords or private documents).
+
+## Follow-up regression evidence
+
+- `test_live_effects`: all four live glyph modes × four intensities, Telex/VNI
+  per-stroke reference comparisons, Backspace/restore, a 25,000-event mixed
+  campaign, surrogate preservation and concurrent atomic config publication.
+- `test_arcade_window`: real window procedures against the recording shim,
+  including 4 passage games × 4 DPIs × 90 evolving frames (1,440 frames), asserting
+  clipped cell bounds and consistent font/grid scale. The recorder's handle-tag
+  collision was fixed so it actually tracks selected font metrics correctly.
+- `web_render_test`: explicit cell placement/width, including supplementary
+  Unicode, plus refreshed engine-generated fixtures in `tests/data/web_frames.json`.
+- Web Canvas2D screenshots in `docs/bench/beta2-followup/` are rasterized by the
+  actual `web/arcade.js` from C++ frames. They are NOT native Windows screenshots.

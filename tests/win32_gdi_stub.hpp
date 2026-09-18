@@ -29,6 +29,7 @@ void setDpi(int dpi);
 struct DrawCall {
     std::string kind;      // "rect" | "roundrect" | "ellipse" | "line" | "polygon" | "text" |
                            // "gradient" | "bitblt"
+    int fontHeight = 0;
     int a = 0;             // x / x1 / left
     int b = 0;             // y / y1 / top
     int c = 0;             // w / x2

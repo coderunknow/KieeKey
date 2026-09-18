@@ -76,15 +76,26 @@ struct PassageStyle {
     Color caret = palette::kWarn;
     Color upcoming = palette::kTextDim;
     float size = 26;
+    float width = 700;
 };
 
 float addStyledLine(Frame& frame, float x, float y, std::u32string_view text,
                     std::size_t caretIndex, std::size_t errorIndex, std::size_t begin,
                     const PassageStyle& style) {
-    if (begin >= text.size()) {
-        begin = text.size();
-    }
     const float advance = style.size * kMonoCharWidthFactor;
+    const auto slots = std::max<std::size_t>(1, static_cast<std::size_t>(style.width / advance));
+    // Keep the caret and upcoming letters visible without drawing a whole
+    // passage across the HUD/sidebar. The renderer uses this exact cell width.
+    caretIndex = std::min(caretIndex, text.size());
+    begin = caretIndex >= slots ? caretIndex - slots / 3 : 0;
+    const std::size_t end = std::min(text.size(), begin + slots);
+    const float caretX = x + static_cast<float>(caretIndex - begin) * advance;
+    if (caretIndex < text.size()) {
+        frame.addRect(caretX, y - style.size * 0.65f, advance, style.size * 1.3f,
+                      rgba(0x33, 0x65, 0x85), 3);
+        frame.addLine(caretX, y + style.size * 0.7f, caretX + advance,
+                      y + style.size * 0.7f, style.caret, 2);
+    }
     float cursorX = x;
     std::size_t runStart = begin;
     Color runColor = (begin == caretIndex) ? style.caret
@@ -95,12 +106,12 @@ float addStyledLine(Frame& frame, float x, float y, std::u32string_view text,
             return;
         }
         frame.addText(cursorX, y, style.size, color, TextAlign::Left,
-                      text.substr(runStart, endExclusive - runStart), false, true);
+                      text.substr(runStart, endExclusive - runStart), false, true, advance);
         cursorX += advance * static_cast<float>(endExclusive - runStart);
         runStart = endExclusive;
     };
 
-    for (std::size_t i = begin; i < text.size(); ++i) {
+    for (std::size_t i = begin; i < end; ++i) {
         Color color;
         if (i < caretIndex) {
             color = (i == errorIndex) ? style.wrong : style.typed;
@@ -114,17 +125,8 @@ float addStyledLine(Frame& frame, float x, float y, std::u32string_view text,
             runColor = color;
         }
     }
-    flush(text.size(), runColor);
+    flush(end, runColor);
     return cursorX - x;
-}
-
-// Compute the horizontal scroll offset that keeps the caret inside `windowW`.
-float caretScroll(std::size_t caret, float advance, float windowW) noexcept {
-    const float caretX = static_cast<float>(caret) * advance;
-    if (caretX <= windowW) {
-        return 0.0f;
-    }
-    return caretX - windowW * 0.75f;
 }
 
 const char* directionGlyph(Direction d) noexcept {
@@ -372,7 +374,7 @@ void SnakeGame::buildFrame(Frame& frame) const {
     frame.stats.level = 1 + static_cast<uint32_t>(m_score / 500);
     frame.stats.status = frame.internNumber(U"Tốc độ: ", static_cast<int64_t>(
         std::lround((1.0 / m_tickInterval) * 10.0)), U" ô/s");
-    frame.stats.hint = U"WASD / mũi tên · P tạm dừng · R chơi lại · Esc thoát";
+    frame.stats.hint = U"WASD / mũi tên · F1 tạm dừng · F2 chơi lại · Esc thoát";
     frame.stats.paused = m_paused;
     frame.stats.gameOver = m_gameOver;
     if (m_gameOver) {
@@ -867,6 +869,8 @@ void FishingGame::start() {
 }
 
 void FishingGame::reset() {
+    m_feedback = 0;
+    m_feedbackTime = 0;
     m_score = 0;
     m_catches = 0;
     m_escapes = 0;
@@ -949,6 +953,8 @@ void FishingGame::hookNewFish() {
 }
 
 void FishingGame::onCatchSuccess() {
+    m_feedback = 2;
+    m_feedbackTime = 1.0;
     ++m_catches;
     const std::int64_t basePts =
         (m_currentRarity == FishRarity::Legendary) ? 5000 :
@@ -965,6 +971,8 @@ void FishingGame::onCatchSuccess() {
 }
 
 void FishingGame::onFishEscape() {
+    m_feedback = -2;
+    m_feedbackTime = 1.0;
     ++m_escapes;
     hookNewFish();
 }
@@ -975,6 +983,7 @@ void FishingGame::update(double dt) {
     }
     const double step = clampDt(dt);
     m_runTimeSec += step;
+    m_feedbackTime = std::max(0.0, m_feedbackTime - step);
 
     m_escapeTimer -= step;
     if (m_escapeTimer <= 0.0) {
@@ -1020,6 +1029,7 @@ InputResult FishingGame::handleKey(const InputEvent& ev) {
         m_paused = !m_paused;
         return InputResult::Consumed;
     }
+    if (isRestartKey(ev)) { reset(); return InputResult::Consumed; }
     if (m_paused || m_gameOver) {
         return InputResult::Consumed;
     }
@@ -1033,6 +1043,8 @@ InputResult FishingGame::handleKey(const InputEvent& ev) {
         typed = static_cast<char32_t>(typed - U'A' + U'a');   // case-insensitive
     }
     if (typed != 0 && typed == m_prompt[m_promptIndex]) {
+        m_feedback = 1;
+        m_feedbackTime = 0.4;
         ++m_promptIndex;
         const double pullDelta = 8.0 + static_cast<double>(m_reelLevel - 1) * 2.0;
         m_pullProgress += pullDelta;
@@ -1051,6 +1063,8 @@ InputResult FishingGame::handleKey(const InputEvent& ev) {
     }
 
     if (typed != 0) {
+        m_feedback = -1;
+        m_feedbackTime = 0.5;
         m_pullProgress = std::max(0.0, m_pullProgress - 5.0);   // mistyped key
     }
     return InputResult::Consumed;
@@ -1136,12 +1150,18 @@ void FishingGame::buildFrame(Frame& frame) const {
     // Prompt line with per-character state
     PassageStyle style{};
     style.size = 30.0f;
-    style.caret = palette::kAccent;
+    style.caret = (m_feedbackTime > 0 && m_feedback < 0) ? palette::kBad : palette::kAccent;
+    frame.addRect(138, 480, 724, 52, palette::kPanelAlt, 10);
     addStyledLine(frame, 150, 505, m_prompt, m_promptIndex, m_prompt.size(), 0, style);
 
-    frame.addText(150, 565, 22, palette::kTextDim, TextAlign::Left,
+    frame.addText(150, 544, 16, m_feedback < 0 ? palette::kBad : palette::kGood, TextAlign::Left,
+                  m_feedbackTime <= 0 ? U"Gõ ô được đánh dấu · chậm lại nếu dây quá căng" :
+                  m_feedback == 2 ? U"BẮT ĐƯỢC CÁ! Tiếp tục câu con tiếp theo" :
+                  m_feedback == -2 ? U"Cá đã thoát — thử lại với câu mồi mới" :
+                  m_feedback < 0 ? U"Sai ký tự — gõ lại ô đang sáng" : U"Chính xác! + lực kéo");
+    frame.addText(150, 580, 20, palette::kTextDim, TextAlign::Left,
                   frame.intern(m_displayFish));
-    frame.addText(850, 565, 22, fishColor, TextAlign::Right,
+    frame.addText(850, 580, 20, fishColor, TextAlign::Right,
                   frame.internAscii(rarityName(m_currentRarity), U"[", U"]"));
 
     frame.stats.title = U"🎣 Câu cá";
@@ -1149,7 +1169,7 @@ void FishingGame::buildFrame(Frame& frame) const {
     frame.stats.highScore = m_highScore;
     frame.stats.level = 1 + m_catches / 5;
     frame.stats.status = frame.internDouble(U"Thoát sau ", m_escapeTimer, 1, U"s");
-    frame.stats.hint = U"Gõ đúng câu mồi · P tạm dừng · Esc thoát";
+    frame.stats.hint = U"Gõ đúng câu mồi · F1 tạm dừng · F2 chơi lại · Esc thoát";
     frame.stats.hasMeter = true;
     frame.stats.meter = m_lineTension;
     frame.stats.meterMax = 100.0;
@@ -1201,6 +1221,7 @@ void TypingRaceGame::start() {
 }
 
 void TypingRaceGame::reset() {
+    m_lastMistake = false;
     m_charIndex = 0;
     m_totalKeys = 0;
     m_correctKeys = 0;
@@ -1230,7 +1251,7 @@ void TypingRaceGame::update(double dt) {
     m_elapsedSec += step;
     if (m_elapsedSec > 0.0) {
         const double minutes = m_elapsedSec / 60.0;
-        m_liveWpm = (static_cast<double>(m_correctKeys) / 5.0) / minutes;
+        m_liveWpm = (static_cast<double>(m_charIndex) / 5.0) / minutes;
     }
     if (m_totalKeys > 0) {
         m_accuracy = (static_cast<double>(m_correctKeys) / static_cast<double>(m_totalKeys)) * 100.0;
@@ -1250,11 +1271,12 @@ void TypingRaceGame::finish() {
     }
     m_finished = true;
     m_resultPending = true;
+    m_accuracy = m_totalKeys > 0 ? 100.0 * static_cast<double>(m_correctKeys) / static_cast<double>(m_totalKeys) : 100.0;
     // Recompute the final WPM from the *actual* finish time: the old code read
     // the value cached by the previous update() tick, so finishing inside one
     // tick (or on the very first frame) scored literally 0.
     if (m_elapsedSec > 0.0001) {
-        m_liveWpm = (static_cast<double>(m_correctKeys) / 5.0) / (m_elapsedSec / 60.0);
+        m_liveWpm = (static_cast<double>(m_charIndex) / 5.0) / (m_elapsedSec / 60.0);
     } else {
         m_liveWpm = 0.0;
     }
@@ -1289,25 +1311,26 @@ InputResult TypingRaceGame::handleKey(const InputEvent& ev) {
         return InputResult::Consumed;
     }
 
-    if (ev.ch == U'\0') {
-        return InputResult::Consumed;
-    }
-    if (ev.ch == U'\b') {   // forgiving backspace: step back one character
+    if (ev.vk == 0x08 || ev.ch == U'\b') {   // forgiving backspace: step back one character
         if (m_charIndex > 0) {
             --m_charIndex;
         }
+        m_lastMistake = false;
         return InputResult::Consumed;
     }
+    if (ev.ch == U'\0') { return InputResult::Consumed; }
 
     ++m_totalKeys;
     if (m_charIndex < m_passage.size()) {
         if (ev.ch == m_passage[m_charIndex]) {
+            m_lastMistake = false;
             ++m_charIndex;
             ++m_correctKeys;
             if (m_charIndex == m_passage.size()) {
                 finish();
             }
         } else {
+            m_lastMistake = true;
             ++m_errorKeys;
         }
     }
@@ -1368,25 +1391,29 @@ void TypingRaceGame::buildFrame(Frame& frame) const {
 
     // Live stats panel
     frame.addRect(80, 268, 840, 60, palette::kPanel, 12);
-    frame.addText(100, 282, 22, palette::kText, TextAlign::Left,
+    frame.addText(100, 298, 20, palette::kText, TextAlign::Left,
                   frame.internDouble(U"WPM: ", m_liveWpm, 0), true);
-    frame.addText(320, 282, 22, palette::kText, TextAlign::Left,
+    frame.addText(275, 298, 20, palette::kText, TextAlign::Left,
                   frame.internDouble(U"Chính xác: ", m_accuracy, 0, U"%"));
-    frame.addText(620, 282, 22, palette::kText, TextAlign::Left,
+    frame.addText(520, 298, 18, palette::kText, TextAlign::Left,
                   frame.internDouble(U"Thời gian: ", m_elapsedSec, 1, U"s"));
-    frame.addText(880, 282, 22, palette::kTextDim, TextAlign::Right,
+    frame.addText(900, 298, 18, palette::kTextDim, TextAlign::Right,
                   frame.internNumber(U"Lỗi: ", static_cast<std::int64_t>(m_errorKeys)));
 
     // Passage with per-character state
-    const float advance = 30.0f * kMonoCharWidthFactor;
-    const float scroll = caretScroll(m_charIndex, advance, kTrackW);
     PassageStyle style{};
     style.size = 30.0f;
-    style.caret = palette::kAccent2;
+    style.caret = m_lastMistake ? palette::kBad : palette::kAccent2;
     frame.addRect(kTrackX, 372, kTrackW, 60, palette::kPanelAlt, 10);
-    addStyledLine(frame, kTrackX + 12 - scroll, 384, m_passage, m_charIndex,
+    style.width = kTrackW - 24;
+    addStyledLine(frame, kTrackX + 12, 402, m_passage, m_charIndex,
                   m_passage.size(), 0, style);
 
+    frame.addText(92, 456, 20, m_lastMistake ? palette::kBad : palette::kTextDim,
+                  TextAlign::Left, m_lastMistake ? U"Sai ký tự — gõ lại ô đỏ, không bị mất tiến độ" :
+                  U"Gõ ô đang sáng · Backspace lùi một ký tự · Space cho khoảng trắng");
+    frame.addText(92, 495, 18, palette::kAccent, TextAlign::Left,
+                  frame.internNumber(U"Tiến độ: ", static_cast<std::int64_t>(m_charIndex), U" ký tự"));
     frame.stats.title = U"🏎️ Đua xe theo tốc độ gõ";
     frame.stats.score = m_score;
     frame.stats.highScore = m_highScore;
@@ -1395,7 +1422,7 @@ void TypingRaceGame::buildFrame(Frame& frame) const {
     frame.stats.progress = progress;
     frame.stats.status = frame.internNumber(
         U"Đã gõ: ", static_cast<std::int64_t>(m_charIndex), U" ký tự");
-    frame.stats.hint = U"Gõ đúng đoạn văn để xe chạy · P tạm dừng · Esc thoát";
+    frame.stats.hint = U"Gõ đúng đoạn văn để xe chạy · F1 tạm dừng · F2 chơi lại · Esc thoát";
     frame.stats.finished = m_finished;
     frame.stats.gameOver = m_finished;
     frame.stats.paused = m_paused;
@@ -1679,7 +1706,8 @@ void WasdRaceGame::buildFrame(Frame& frame) const {
     style.size = 28.0f;
     style.caret = palette::kAccent2;
     frame.addRect(60, 570, 780, 56, palette::kPanelAlt, 10);
-    addStyledLine(frame, 76, 582, m_passage, m_textIndex, m_passage.size(), 0, style);
+    style.width = frame.worldW - 152;
+    addStyledLine(frame, 76, 596, m_passage, m_textIndex, m_passage.size(), 0, style);
 
     frame.stats.title = U"🛣️ Đua xe + gõ phím";
     frame.stats.score = m_score;
@@ -2079,7 +2107,7 @@ void RhythmTypingGame::buildFrame(Frame& frame) const {
     frame.stats.combo = m_combo;
     frame.stats.maxCombo = m_maxCombo;
     frame.stats.status = frame.internDouble(U"BPM ", m_bpm, 0);
-    frame.stats.hint = U"D / F / J / K đúng nhịp · P tạm dừng · R chơi lại · Esc thoát";
+    frame.stats.hint = U"D / F / J / K đúng nhịp · F1 tạm dừng · F2 chơi lại · Esc thoát";
     frame.stats.hasMeter = (m_failMode == FailMode::HealthBar);
     frame.stats.meter = m_health;
     frame.stats.meterMax = 100.0;
@@ -2180,6 +2208,10 @@ InputResult NoMistakeGame::handleKey(const InputEvent& ev) {
         return InputResult::Consumed;
     }
 
+    // Navigation/modifier/control events have no printable character. They
+    // are not typing mistakes (Backspace cannot rewind this strict game).
+    if (ev.ch < U' ') { return InputResult::Consumed; }
+
     const char32_t target = m_textStream[m_currentIndex];
     if (ev.ch == target) {
         ++m_currentIndex;
@@ -2263,14 +2295,15 @@ void NoMistakeGame::buildFrame(Frame& frame) const {
     // Life reserve bar (score)
     const double reserveFrac = (m_startReserve > 0)
                                    ? std::clamp(static_cast<double>(m_score) /
-                                                    static_cast<double>(m_scorePenalty),
+                                                    static_cast<double>(std::max<std::int64_t>(1, m_startReserve)),
                                                 0.0, 1.0)
                                    : 1.0;
     frame.addRect(80, 90, 800, 26, palette::kPanel, 13);
     frame.addRect(80, 90, 800.0f * static_cast<float>(reserveFrac), 26,
                   (reserveFrac < 0.25) ? palette::kBad : palette::kAccent, 13);
     frame.addText(80, 62, 18, palette::kTextDim, TextAlign::Left,
-                  U"Quỹ điểm (một lỗi = trừ toàn bộ mức phạt)");
+                  m_failMode == FailMode::Hardcore ? U"Hardcore: một lỗi kết thúc lượt chơi" :
+                  U"Dự trữ: mỗi lỗi trừ điểm, gõ đúng để hồi phục");
     frame.addText(880, 62, 18, palette::kText, TextAlign::Right,
                   frame.internNumber(U"", m_score));
 
@@ -2279,7 +2312,8 @@ void NoMistakeGame::buildFrame(Frame& frame) const {
     style.size = 34.0f;
     style.caret = palette::kAccent2;
     frame.addRect(60, 180, 840, 70, palette::kPanel, 12);
-    addStyledLine(frame, 80, 194, m_textStream, m_currentIndex, m_textStream.size(), 0, style);
+    style.width = 800;
+    addStyledLine(frame, 80, 215, m_textStream, m_currentIndex, m_textStream.size(), 0, style);
 
     frame.addText(80, 290, 22, palette::kText, TextAlign::Left,
                   frame.internNumber(U"Combo: ", static_cast<std::int64_t>(m_combo)), true);
@@ -2296,20 +2330,20 @@ void NoMistakeGame::buildFrame(Frame& frame) const {
     frame.stats.maxCombo = m_maxCombo;
     frame.stats.status = frame.internNumber(U"Ký tự: ",
                                             static_cast<std::int64_t>(m_currentIndex));
-    frame.stats.hint = U"Gõ đúng từng ký tự · P tạm dừng · R chơi lại · Esc thoát";
+    frame.stats.hint = U"Gõ đúng từng ký tự · F1 tạm dừng · F2 chơi lại · Esc thoát";
     frame.stats.progress = m_textStream.empty()
                                ? 0.0
                                : static_cast<double>(m_currentIndex) /
                                      static_cast<double>(m_textStream.size());
     frame.stats.hasMeter = true;
     frame.stats.meter = static_cast<double>(m_score);
-    frame.stats.meterMax = static_cast<double>(m_scorePenalty);
+    frame.stats.meterMax = static_cast<double>(std::max<std::int64_t>(1, m_startReserve));
     frame.stats.paused = m_paused;
     frame.stats.gameOver = m_gameOver;
     frame.stats.finished = m_finished;
     if (m_gameOver) {
         frame.stats.banner = m_finished ? U"HOÀN HẢO — không một lỗi nào!"
-                                        : U"SAI MỘT KÝ TỰ — màn chơi kết thúc";
+                                        : (m_failMode == FailMode::Hardcore ? U"SAI MỘT KÝ TỰ — màn chơi kết thúc" : U"HẾT DỰ TRỮ — F2 để thử lại");
     } else if (m_paused) {
         frame.stats.banner = U"TẠM DỪNG";
     }
@@ -2553,7 +2587,7 @@ void FlexingGame::buildFrame(Frame& frame) const {
     frame.stats.score = static_cast<std::int64_t>(m_displayedWpm);
     frame.stats.hasHighScore = false;
     frame.stats.status = frame.internDouble(U"WPM hiển thị ", m_displayedWpm, 0);
-    frame.stats.hint = U"Gõ phím bất kỳ · P tạm dừng · R chơi lại · Esc thoát";
+    frame.stats.hint = U"Gõ phím bất kỳ · F1 tạm dừng · F2 chơi lại · Esc thoát";
     frame.stats.progress = m_preloadedText.empty()
                                ? 0.0
                                : static_cast<double>(m_cursor) /

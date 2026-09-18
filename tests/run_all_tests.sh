@@ -223,6 +223,7 @@ build test_arcade_window  -std=c++2b -O2 $INC -Isrc/app -D_WIN32 -Itests/win32_h
                           src/app/ArcadeWindow.cpp src/app/ChaosLabWindow.cpp \
                           src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ArcadeRender.cpp \
                           src/core/ChaosEngine.cpp src/core/Progression.cpp -pthread || rc=1
+build test_live_effects   -std=c++2b -O2 -pthread $INC tests/test_live_effects.cpp $ENGINE23 src/core/ChaosEngine.cpp || rc=1
 build test_chaos          -std=c++2b -O2 $INC tests/test_chaos.cpp src/core/ChaosEngine.cpp || rc=1
 build test_ai_rival       -std=c++2b -O2 $INC tests/test_ai_rival.cpp src/core/AiRival.cpp || rc=1
 build test_progression    -std=c++2b -O2 $INC tests/test_progression.cpp src/core/Progression.cpp || rc=1
@@ -406,6 +407,7 @@ run test_arcade              120
 run test_arcade_render        60
 run test_arcade_server        60
 run test_arcade_window        60
+run test_live_effects        120
 run test_chaos               60
 run test_ai_rival            60
 run test_progression         60

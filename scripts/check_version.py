@@ -64,7 +64,7 @@ import pathlib
 # and the UI shows the 3-part form plus the channel.
 DEFAULT_EXPECT = "1.3.0"
 CHANNEL = "beta2"
-BUILD_REVISION = 2
+BUILD_REVISION = 3
 
 
 def _fail(msg: str) -> None:

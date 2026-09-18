@@ -1169,6 +1169,50 @@ static void testFlexing() {
 //===========================================================================
 // 11. Hub manager
 //===========================================================================
+static void testTypingFeedbackAndEditing() {
+    g_currentTest = "TypingFeedbackAndEditing";
+    TypingRaceGame race;
+    race.setPassage(U"abc"); race.start();
+    race.handleKey({0, U'a', true});
+    race.handleKey({0, U'x', true});
+    Frame frame;
+    race.buildFrame(frame);
+    bool redCaret = false;
+    for (const auto& t : frame.texts) {
+        if (t.advance > 0 && t.color == palette::kBad && t.text == U"b") { redCaret = true; }
+    }
+    CHECK(redCaret);
+    // Native/browser control keys often have no produced character.
+    race.handleKey({0x08, 0, true});
+    CHECK(race.getCharIndex() == 0);
+    race.handleKey({0, U'a', true});
+    race.update(0.1);
+    CHECK_NEAR(race.getLiveWpm(), 12.0 / race.getElapsedSec(), 0.001); // net progress, not retyped-key inflation
+    race.handleKey({0, U'b', true}); race.handleKey({0, U'c', true});
+    CHECK(race.isGameOver());
+    CHECK_NEAR(race.getAccuracy(), 80.0, 0.001); // includes final stroke, not previous timer tick
+    race.handleKey({0x71, 0, true});
+    CHECK(race.getCharIndex() == 0 && !race.isGameOver());
+    FishingGame fishing; fishing.start();
+    fishing.handleKey({0, U'#', true});
+    frame.clear(); fishing.buildFrame(frame);
+    bool hint = false;
+    for (const auto& t : frame.texts) {
+        if (t.text.find(U"Sai ký tự") != std::u32string_view::npos) { hint = true; }
+    }
+    CHECK(hint);
+    fishing.handleKey({0x71, 0, true});
+    CHECK(fishing.getPromptIndex() == 0 && fishing.getCatches() == 0);
+    NoMistakeGame strict; strict.start();
+    strict.handleKey({0x25, 0, true});
+    strict.handleKey({0x08, U'\b', true});
+    CHECK(!strict.isGameOver());
+    strict.setFailMode(FailMode::HealthBar);
+    strict.setStartReserve(10000);
+    frame.clear(); strict.buildFrame(frame);
+    CHECK(frame.stats.meterMax == 10000);
+}
+
 static void testManager() {
     g_currentTest = "Manager";
     auto& hub = ArcadeManager::instance();
@@ -1624,6 +1668,7 @@ int main() {
     RUN(testTetris);
     RUN(testFishing);
     RUN(testTypingRace);
+    RUN(testTypingFeedbackAndEditing);
     RUN(testWasdRace);
     RUN(testRhythm);
     RUN(testNoMistake);

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 coderunknow
-"""Architecture gate: optional game/Chaos code must not run in the IME hook.
+"""Architecture gate: game/Lab singletons must not run in the IME hook.
+The explicit LiveEffects adapter is allowed: bounded one-to-one mapping,
+separate opt-in, atomic configuration and deterministic rewrite tests.
 
 This is intentionally a source-level dependency check, not a substitute for
 Windows input testing. Core game tests cannot catch routing errors in main.cpp.
@@ -38,6 +40,12 @@ def check(root):
             problems.append(f"{forbidden} reached from the global IME producer")
     if not re.search(r'if\s*\(ev.source\s*==\s*EventSource::Keyboard\s*&&\s*ownWindowHasFocus\(\)\)', producer):
         problems.append('own-window bypass must be limited to keyboard events; keep foreground bookkeeping')
+    # Both literal and consumed engine output must reach the visual adapter;
+    # reintroducing a replacement-only transform corrupts random-case continuity.
+    if 'g.liveEffects.rewrite(0, g.repScratch)' not in producer or 'g.liveEffects.rewrite(bs, g.repScratch)' not in producer:
+        problems.append('live output adapter must cover literal insertion and engine rewrites')
+    if producer.rfind('g.liveEffects.rewrite(bs, g.repScratch)') > producer.find('if (!suppress)'):
+        problems.append('live output must precede pass-through decision')
     ownership = function_body(source, r'bool ownWindowHasFocus\(\) noexcept')
     if 'GetWindowThreadProcessId' not in ownership or 'GetCurrentProcessId' not in ownership:
         problems.append('own-window detection must use process ownership, not racing UI HWND fields')
@@ -69,4 +77,4 @@ if __name__ == '__main__':
         print(f'[input isolation] FAIL: {error}', file=sys.stderr)
     if errors:
         sys.exit(1)
-    print('[input isolation] OK — no game/Chaos dependencies in the global producer')
+    print('[input isolation] OK — game/Lab isolation + explicit live-output routes')

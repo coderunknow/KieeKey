@@ -133,7 +133,7 @@ std::map<std::uintptr_t, COLORREF>& handleColors() {
 
 std::uintptr_t nextHandle(std::uintptr_t tag) {
     static std::uintptr_t counter = 1;
-    return tag | (++counter << 12);
+    return tag | (++counter << 16);
 }
 
 struct DcState {
@@ -639,9 +639,10 @@ BOOL LineTo(HDC dc, int x, int y) {
     return TRUE;
 }
 
-BOOL TextOutW(HDC, int x, int y, LPCWSTR text, int count) {
+BOOL TextOutW(HDC dc, int x, int y, LPCWSTR text, int count) {
     okgdi::DrawCall call;
     call.kind = "text";
+    call.fontHeight = static_cast<int>(okgdi::handleColors()[reinterpret_cast<std::uintptr_t>(okgdi::dcStates()[dc].font)]);
     call.a = x;
     call.b = y;
     call.d = count;
@@ -653,6 +654,15 @@ BOOL TextOutW(HDC, int x, int y, LPCWSTR text, int count) {
     return TRUE;
 }
 
+BOOL ExtTextOutW(HDC dc, int x, int y, UINT options, const RECT* rect, LPCWSTR text, UINT count, const int*) {
+    const auto result = TextOutW(dc, x, y, text, static_cast<int>(count));
+    auto& call = okgdi::log().back();
+    call.kind = "celltext";
+    call.c = rect != nullptr ? rect->right - rect->left : 0;
+    if (options != ETO_CLIPPED) { call.c = -1; }
+    return result;
+}
+
 BOOL GetTextExtentPoint32W(HDC, LPCWSTR text, int count, SIZE* out) {
     if (out == nullptr) { return FALSE; }
     // Deterministic 7 px per character: enough for the alignment maths.
@@ -662,10 +672,11 @@ BOOL GetTextExtentPoint32W(HDC, LPCWSTR text, int count, SIZE* out) {
     return TRUE;
 }
 
-BOOL GetTextMetricsW(HDC, TEXTMETRICW* out) {
+BOOL GetTextMetricsW(HDC dc, TEXTMETRICW* out) {
     if (out == nullptr) { return FALSE; }
     *out = TEXTMETRICW{};
-    out->tmHeight = 16;
+    out->tmHeight = static_cast<int>(okgdi::handleColors()[reinterpret_cast<std::uintptr_t>(okgdi::dcStates()[dc].font)]);
+    if (out->tmHeight == 0) { out->tmHeight = 16; }
     out->tmAscent = 12;
     out->tmDescent = 4;
     return TRUE;

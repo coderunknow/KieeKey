@@ -509,6 +509,47 @@ void testHubDpiAndShortcuts() {
     okgdi::setDpi(96);
 }
 
+void testPassageCellsNeverOverlap() {
+    auto& hub = ok::app::ArcadeWindow::instance();
+    auto& manager = ArcadeManager::instance();
+    for (int dpi : {96, 120, 144, 192}) {
+        okgdi::setDpi(dpi);
+        for (const char* slug : {"typing-race", "fishing", "no-mistake", "wasd-race"}) {
+            assert(hub.open(nullptr, slug));
+            HWND hwnd = static_cast<HWND>(hub.handle());
+            for (int step = 0; step < 90; ++step) {
+                const auto& frame = manager.getFrame();
+                char32_t next = 0;
+                for (const auto& line : frame.texts) {
+                    if (line.advance > 0 && !line.text.empty() &&
+                        (line.color == palette::kAccent || line.color == palette::kAccent2)) {
+                        next = line.text.front(); break;
+                    }
+                }
+                paint(hwnd);
+                int right = -1;
+                std::size_t cells = 0;
+                for (const auto& call : okgdi::log()) {
+                    if (call.kind != "celltext") { continue; }
+                    ++cells;
+                    assert(call.c > 0); // explicitly clipped cell, never natural-width run
+                    assert(call.a >= right);
+                    right = call.a + call.c;
+                    // Font and cell share ONE viewport scale; DPI must not be
+                    // multiplied into text a second time at 125/150/200%.
+                    assert(call.fontHeight <= call.c * 2 + 2);
+                    assert(right <= ok::app::ArcadeWindow::kDefaultWidth);
+                }
+                assert(cells > 0 && cells < 70);
+                if (next != 0) { manager.handleKey(0, next, true); }
+            }
+            hub.close();
+        }
+    }
+    okgdi::setDpi(96);
+    std::cout << "  [PASS] live passage cells: 4 games x 4 DPIs x 90 frames, no overlap\n";
+}
+
 int main() {
     std::cout << "=== Running Arcade Hub UI (Win32 GDI) Suite ===\n";
     testHubSidebarShowsTheWholeCatalog();
@@ -518,6 +559,7 @@ int main() {
     testChaosLabPreviewAndInjection();
     testUnicodeLabText();
     testHubDpiAndShortcuts();
+    testPassageCellsNeverOverlap();
     okgdi::destroyAllWindows();
     std::cout << "=== ALL ARCADE WINDOW UI TESTS PASSED ===\n";
     return 0;

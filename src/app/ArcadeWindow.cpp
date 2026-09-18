@@ -146,7 +146,7 @@ public:
     }
 
     HFONT fontFor(int px, bool bold, bool mono) {
-        const int size = px < 8 ? 8 : (px > 200 ? 200 : px);
+        const int size = px < 1 ? 1 : (px > 200 ? 200 : px);
         const std::uint64_t key = (static_cast<std::uint64_t>(size) << 2) | (bold ? 2u : 0u) |
                                   (mono ? 1u : 0u);
         auto it = m_fonts.find(key);
@@ -270,7 +270,7 @@ void fillRectColor(HDC dc, GdiCache& cache, int x, int y, int w, int h, Color co
 // The world is letterboxed inside that rectangle, exactly like the canvas
 // client letterboxes it inside its own element.
 void drawRenderList(HDC dc, GdiCache& cache, const RenderList& list, int originX, int originY,
-                    int width, int height, double dpiScale) {
+                    int width, int height) {
     const Viewport view = computeViewport(list.worldW, list.worldH, static_cast<float>(width),
                                           static_cast<float>(height));
     const auto toX = [&](float x) {
@@ -281,7 +281,7 @@ void drawRenderList(HDC dc, GdiCache& cache, const RenderList& list, int originX
     };
     const auto toSize = [&](float units) { return static_cast<int>(std::lround(units * view.scale)); };
     const auto toPx = [&](float units, int minimum) {
-        const int px = static_cast<int>(std::lround(units * view.scale * dpiScale));
+        const int px = static_cast<int>(std::lround(units * view.scale));
         return px < minimum ? minimum : px;
     };
 
@@ -391,7 +391,7 @@ void drawRenderList(HDC dc, GdiCache& cache, const RenderList& list, int originX
                     break;
                 }
                 HGDIOBJ oldFont =
-                    ::SelectObject(dc, cache.fontFor(toPx(cmd.size, 8), cmd.bold, cmd.mono));
+                    ::SelectObject(dc, cache.fontFor(toPx(cmd.size, 1), cmd.bold, cmd.mono));
                 ::SetTextColor(dc, toColorRef(cmd.fill));
                 int x = toX(cmd.x);
                 const int y = toY(cmd.y);
@@ -407,8 +407,27 @@ void drawRenderList(HDC dc, GdiCache& cache, const RenderList& list, int originX
                 TEXTMETRICW metrics{};
                 ::GetTextMetricsW(dc, &metrics);
                 ::SetTextAlign(dc, TA_LEFT | TA_NOUPDATECP);
-                ::TextOutW(dc, x, y - metrics.tmHeight / 2, wide.c_str(),
-                           static_cast<int>(wide.size()));
+                if (cmd.advance > 0) {
+                    // Each colored run shares the exact same grid. Native font
+                    // metrics (or fallback fonts) must not move later runs.
+                    std::size_t cell = 0;
+                    for (std::size_t offset = 0; offset < wide.size(); ++cell) {
+                        const float cellX = cmd.x + static_cast<float>(cell) * cmd.advance;
+                        const int left = toX(cellX);
+                        const int right = toX(cellX + cmd.advance);
+                        RECT clip{left, y - metrics.tmHeight / 2, right,
+                                  y + metrics.tmHeight - metrics.tmHeight / 2};
+                        const bool pair = wide[offset] >= 0xD800 && wide[offset] <= 0xDBFF &&
+                            offset + 1 < wide.size() && wide[offset + 1] >= 0xDC00 && wide[offset + 1] <= 0xDFFF;
+                        const UINT units = pair ? 2u : 1u;
+                        ::ExtTextOutW(dc, left, clip.top, ETO_CLIPPED, &clip,
+                                      wide.data() + offset, units, nullptr);
+                        offset += units;
+                    }
+                } else {
+                    ::TextOutW(dc, x, y - metrics.tmHeight / 2, wide.c_str(),
+                               static_cast<int>(wide.size()));
+                }
                 ::SelectObject(dc, oldFont);
                 break;
             }
@@ -908,8 +927,7 @@ void ArcadeWindow::paintNow(NativeWindowHandle handle) {
             ::DeleteObject(clip);
         }
     }
-    drawRenderList(impl->memoryDc, impl->cache, impl->list, gameX, gameY, gameW, gameH,
-                   impl->dpiScale);
+    drawRenderList(impl->memoryDc, impl->cache, impl->list, gameX, gameY, gameW, gameH);
     ::SelectClipRgn(impl->memoryDc, nullptr);
     drawChrome(impl->memoryDc, impl->cache, impl->list, width, height, impl->dpiScale,
                impl->hoverIndex, static_cast<int>(manager.getCurrentGameType()));
@@ -934,15 +952,26 @@ void ArcadeWindow::paintNow(NativeWindowHandle handle) {
                    static_cast<int>(::wcslen(text)));
         ::SelectObject(impl->memoryDc, oldFont);
     }
-    if (!impl->toast.empty() && now < impl->toastUntil) {
-        ::SetTextColor(impl->memoryDc, RGB(0x51, 0xE8, 0x8A));
-        HGDIOBJ oldFont = ::SelectObject(impl->memoryDc, impl->cache.fontFor(20, true, false));
-        ::TextOutW(impl->memoryDc, 20, 12, impl->toast.c_str(),
-                   static_cast<int>(impl->toast.size()));
+    // Results/pause and toast share one opaque panel, never draw over the
+    // sidebar title (the old welcome toast literally covered "ARCADE HUB").
+    const std::wstring banner = !impl->list.banner.empty() ? utf8ToWide(impl->list.banner) :
+        (now < impl->toastUntil ? impl->toast : std::wstring{});
+    if (!banner.empty() && gameW > 48 && gameH > 80) {
+        const int panelX = gameX + 16;
+        const int panelY = !impl->list.banner.empty() ? gameH / 2 - 36 : gameH - 52;
+        const int panelW = gameW - 32;
+        fillRectColor(impl->memoryDc, impl->cache, panelX, panelY, panelW, 44, kSidebarBg);
+        HRGN clip = ::CreateRectRgn(panelX, panelY, panelX + panelW, panelY + 44);
+        ::SelectClipRgn(impl->memoryDc, clip);
+        HGDIOBJ oldFont = ::SelectObject(impl->memoryDc, impl->cache.fontFor(16, true, false));
+        ::SetTextColor(impl->memoryDc, toColorRef(kAccent));
+        ::TextOutW(impl->memoryDc, panelX + 10, panelY + 12, banner.c_str(),
+                   static_cast<int>(banner.size()));
         ::SelectObject(impl->memoryDc, oldFont);
-    } else if (!impl->toast.empty()) {
-        impl->toast.clear();
+        ::SelectClipRgn(impl->memoryDc, nullptr);
+        if (clip != nullptr) { ::DeleteObject(clip); }
     }
+    if (now >= impl->toastUntil) { impl->toast.clear(); }
 
     ::BitBlt(dc, 0, 0, width, height, impl->memoryDc, 0, 0, SRCCOPY);
     ::EndPaint(hwnd, &ps);

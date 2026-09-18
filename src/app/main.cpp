@@ -146,6 +146,7 @@
 #include "win32_wrapper.hpp"   // v3.3.1: pipeline (OutputRing 1024, batched
                                // SendInput emitter, self-healing hook wrapper)
 #include "Arcade.hpp"          // v1.3.0: Arcade hub & minigames
+#include "LiveEffects.hpp"
 #include "ChaosEngine.hpp"     // v1.3.0: Chaos case & glyph transforms
 #include "AiRival.hpp"         // v1.3.0: Personal AI rival
 #include "Progression.hpp"     // v1.3.0: Global progression & levels
@@ -208,6 +209,7 @@ struct AppState {
     HICON     hIconOn    = nullptr;
     HICON     hIconOff   = nullptr;
 
+    ok::effects::LiveEffects liveEffects;
     ok::wrap::Win32Wrapper hook;   // v3.3.1: hook + rings + batched emitter +
                                    // self-healing watchdog (same surface as
                                    // ModernKeyHook — drop-in)
@@ -1076,6 +1078,9 @@ void drainPendingEditsForLifecycle() noexcept {
 // TSF output path (the inline/SendInput path has no document access). Returns
 // true iff a Resync item was actually queued (the consumer must be woken).
 bool requestContextResync() noexcept {
+    // Visual Unicode is not a reversible representation of the source word.
+    // Never replay it into the Vietnamese engine while live effects are on.
+    if (g.liveEffects.enabled()) { return false; }
     if (!g.fgUseTsf_.load(std::memory_order_relaxed)) { return false; }
     OutputItem it;
     it.kind = OutputItem::Kind::Resync;
@@ -1133,6 +1138,15 @@ PD onHookEvent(const KeyEvent& ev) noexcept {
 }
 
 PD onHookEventImpl(const KeyEvent& ev) {
+    if (g.liveEffects.sync()) { g.engineResyncPending.store(true, std::memory_order_release); }
+    // A dedicated emergency switch; no game sees it and IME remains enabled.
+    if (ev.source == EventSource::Keyboard && ev.action == KeyAction::KeyDown &&
+        ev.vkCode == VK_F12 && ev.modifiers.ctrl && ev.modifiers.alt &&
+        !ev.modifiers.win && g.liveEffects.enabled()) {
+        g.liveEffects.disable();
+        g.engineResyncPending.store(true, std::memory_order_release);
+        return PD{true, false};
+    }
     // v1.1.1: the global Ctrl+Shift toggle hotkey was REMOVED. It was the
     // root cause of the recurring "the IME suddenly turns off for no reason"
     // reports: bare Ctrl+Shift is also Windows' language-switch chord and a
@@ -1148,6 +1162,7 @@ PD onHookEventImpl(const KeyEvent& ev) {
     // system-wide hook. Background Arcade/Flexing must not eat another app's
     // keys or mutate a game concurrently with the UI timer.
     if (ev.source == EventSource::Keyboard && ownWindowHasFocus()) {
+        g.liveEffects.reset();
         g.engineResyncPending.store(true, std::memory_order_release);
         return PD{};
     }
@@ -1159,6 +1174,7 @@ PD onHookEventImpl(const KeyEvent& ev) {
     if (g.engineResyncPending.exchange(false, std::memory_order_acq_rel)) {
         std::lock_guard<std::mutex> lk(g.engineMtx);
         g.engine.startNewSession();
+        g.liveEffects.reset();
     }
 
     // ---- v3.3.1: F9 (bare — no modifiers) switches the tone style --------
@@ -1183,6 +1199,9 @@ PD onHookEventImpl(const KeyEvent& ev) {
                 const EngineResult& r = g.engine.lastResult();
                 g.engine.replacementUtf16(r, g.repScratch);
                 bs = r.backspaceCount;
+                if (g.liveEffects.enabled() && g.options.codeTable == CodeTable::Unicode) {
+                    g.liveEffects.rewrite(bs, g.repScratch);
+                }
             }
         }
         if (converted) {
@@ -1214,6 +1233,11 @@ PD onHookEventImpl(const KeyEvent& ev) {
 
     // ---- bookkeeping / environment events ----
     if (ev.source == EventSource::ForegroundChanged) {
+        if (g.liveEffects.enabled()) {
+            std::lock_guard<std::mutex> lk(g.engineMtx);
+            g.engine.startNewSession();
+            g.liveEffects.reset();
+        }
         // v1.1.3: refreshNow() is KEPT deliberately (correctness before
         // micro-optimization). The monitor's own WinEvent pump publishes the
         // new snapshot on ITS thread, but WinEvent delivery across two pump
@@ -1278,6 +1302,10 @@ PD onHookEventImpl(const KeyEvent& ev) {
         in.kind = InputKind::MouseDown;
         std::lock_guard<std::mutex> lk(g.engineMtx);
         static_cast<void>(g.engine.process(in));   // implicit word break
+        if (g.liveEffects.enabled()) {
+            g.engine.startNewSession();
+            g.liveEffects.reset();
+        }
         // The caret jumped (user clicked into text). Re-sync the engine to
         // the visible word before the caret so retyping composes onto it
         // instead of raw-passing ("chugsn" -> select/delete "gsn" -> click ->
@@ -1315,6 +1343,15 @@ PD onHookEventImpl(const KeyEvent& ev) {
     //      context re-sync so the next keystroke composes onto the visible
     //      word. (WordBreak keys like Tab/Enter are already fed to the
     //      engine; plain Backspace is fed too.)
+    if (g.liveEffects.enabled() &&
+        (isCaretEditVk(ev.vkCode, ev.modifiers.ctrl) || ev.modifiers.win ||
+         (ev.modifiers.ctrl != ev.modifiers.alt))) {
+        waitPendingEditsDrained();
+        std::lock_guard<std::mutex> lk(g.engineMtx);
+        g.engine.startNewSession();
+        g.liveEffects.reset();
+        return PD{};   // shortcuts/navigation stay native; no styled context replay
+    }
     bool consumerWork = false;
     if (isCaretEditVk(ev.vkCode, ev.modifiers.ctrl)) {
         consumerWork = requestContextResync();
@@ -1404,6 +1441,7 @@ PD onHookEventImpl(const KeyEvent& ev) {
     //      process() returns a const ref to engine-internal state; everything
     //      we need is read (or copied into the scratch) under the lock.
     bool     suppress = false;
+    bool     liveOutput = false;
     bool     reissueTyped = false;
     std::size_t bs    = 0;
 #if KIEEKEY_PROFILE
@@ -1421,6 +1459,7 @@ PD onHookEventImpl(const KeyEvent& ev) {
             waitPendingEditsDrained();
             return PD{false, false};   // disabled mid-stroke — pass through
         }
+        liveOutput = g.liveEffects.enabled() && g.options.codeTable == CodeTable::Unicode;
         const EngineResult& r = g.engine.process(in);
         // v1.1.2-r3 NUMBER-SAFETY GUARD (defense in depth, the LAST layer
         // before output). The engine promise is: with digitsAreLiteral ON, a
@@ -1530,6 +1569,35 @@ PD onHookEventImpl(const KeyEvent& ev) {
             bs = r.backspaceCount;
         }
     }
+    if (reissueTyped) {
+        // Char: in.ch is the case-adjusted char the user actually typed
+        // (layoutChar already applied Shift/Caps). Space: re-issue L' '.
+        // This re-types the key exactly as the legacy hook's
+        // SendKeyCode(_keycode|CAPS_MASK) would.
+        // static_cast: wchar_t is 16-bit on MSVC/MinGW; pushing a char32_t
+        // implicitly is C4244 under MSVC /W4 /WX.
+        g.repScratch.push_back(
+            static_cast<wchar_t>(in.kind == InputKind::Space ? L' ' : in.ch));
+    }
+
+    if (liveOutput) {
+        if (suppress) {
+            g.liveEffects.rewrite(bs, g.repScratch);
+        } else if (in.kind == InputKind::Char || in.kind == InputKind::Space) {
+            const char32_t typed = in.kind == InputKind::Space ? U' ' : in.ch;
+            // layoutChar currently produces one BMP unit. Unknown/supplementary
+            // events keep the native delivery rather than truncating them.
+            if (typed >= 0x20 && typed <= 0xFFFF) {
+                g.repScratch.assign(1, static_cast<wchar_t>(typed));
+                suppress = g.liveEffects.rewrite(0, g.repScratch);
+                if (!suppress) { g.repScratch.clear(); }
+            }
+        } else if (in.kind == InputKind::Backspace) {
+            g.liveEffects.backspace();
+        } else {
+            g.liveEffects.reset();
+        }
+    }
 #if KIEEKEY_PROFILE
     if (profOn) {
         profRec.seq = g_profileSeq.fetch_add(1, std::memory_order_relaxed);
@@ -1555,21 +1623,6 @@ PD onHookEventImpl(const KeyEvent& ev) {
 #endif
         return PD{false, consumerWork};
     }
-    if (reissueTyped) {
-        // Char: in.ch is the case-adjusted char the user actually typed
-        // (layoutChar already applied Shift/Caps). Space: re-issue L' '.
-        // This re-types the key exactly as the legacy hook's
-        // SendKeyCode(_keycode|CAPS_MASK) would.
-        // static_cast: wchar_t is 16-bit on MSVC/MinGW; pushing a char32_t
-        // implicitly is C4244 under MSVC /W4 /WX.
-        g.repScratch.push_back(
-            static_cast<wchar_t>(in.kind == InputKind::Space ? L' ' : in.ch));
-    }
-
-    // Chaos is an explicit Lab preview/injection operation. Transforming only
-    // IME replacement deltas changed accents but not pass-through letters and
-    // desynchronized the engine from the document. Never decorate these edits.
-
     // ---- output: per-app policy ----
     // D3 note: a long macro expansion does not fit the ring item's fixed
     // text buffer (2*kMaxBuff+1 wchar_t). Instead of truncating it, such an
@@ -1845,6 +1898,7 @@ void onConsumerEvent(const KeyEvent& /*ev*/) noexcept {
                 g.composer.onForegroundChanged();
             }
         } else if (it.kind == OutputItem::Kind::Resync) {
+            if (g.liveEffects.enabled()) { continue; }
             // The user clicked / moved the caret / edited text outside the
             // engine. Read the raw word before the caret and re-sync the
             // engine so the next keystroke composes onto the visible text.
@@ -2217,6 +2271,7 @@ void showTrayMenu() noexcept {
     ::AppendMenuW(arcadeMenu, MF_STRING, IDM_ARCADE_FLEXING, L"🗿 Flexing Mode (Joke)");
     ::AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(arcadeMenu), L"KieeKey Arcade");
 
+    ::AppendMenuW(menu, MF_STRING, IDM_LIVE_EFFECTS, L"Hiệu ứng gõ bên ngoài (hoa/thường, lật chữ)…");
     ::AppendMenuW(menu, MF_STRING, IDM_CHAOS_LAB, L"🌀 Phòng Chaos Lab…");
     ::AppendMenuW(menu, MF_STRING, IDM_AI_RIVAL, L"🤖 AI Typing Rival & Coach…");
     ::AppendMenuW(menu, MF_STRING, IDM_PROGRESSION, L"📈 Tiến trình & Thành tích…");
@@ -2289,6 +2344,9 @@ void showTrayMenu() noexcept {
             break;
         case IDM_ARCADE_FLEXING:
             openArcadeHub("flexing");
+            break;
+        case IDM_LIVE_EFFECTS:
+            openSettingsDialog(6);
             break;
         case IDM_CHAOS_LAB:
             // The lab is its own window: type text, watch the chaos transform
@@ -3095,6 +3153,13 @@ void settingsToControls() {
     ::CheckDlgButton(g.hSettings, IDC_CHK_GLYPH_TRANSFORM, chaos.glyphTransformEnabled ? BST_CHECKED : BST_UNCHECKED);
     ::CheckDlgButton(g.hSettings, IDC_CHK_AI_OPTIN,
                      ok::ai::AiRivalEngine::instance().isOptIn() ? BST_CHECKED : BST_UNCHECKED);
+    const auto live = g.liveEffects.config();
+    ::CheckDlgButton(g.hSettings, IDC_CHK_LIVE, live.enabled ? BST_CHECKED : BST_UNCHECKED);
+    ::CheckDlgButton(g.hSettings, IDC_CHK_LIVE_CASE, live.randomCase ? BST_CHECKED : BST_UNCHECKED);
+    ::SendMessageW(::GetDlgItem(g.hSettings, IDC_CMB_LIVE_GLYPH), CB_SETCURSEL,
+                   static_cast<WPARAM>(live.glyph), 0);
+    ::SendMessageW(::GetDlgItem(g.hSettings, IDC_CMB_LIVE_INTENSITY), CB_SETCURSEL,
+                   live.intensity == 100 ? 2 : (live.intensity == 25 ? 0 : 1), 0);
     const auto arcade = ok::arcade::ArcadeManager::instance().getConfig();
     ::SendMessageW(::GetDlgItem(g.hSettings, IDC_CMB_FAILMODE), CB_SETCURSEL,
                    arcade.rhythmFailMode == ok::arcade::FailMode::HealthBar ? 1 : 0, 0);
@@ -3158,7 +3223,10 @@ void showTab(int tab) {
     };
     static constexpr int kTab6[] = {
         IDC_GRP_CHAOS, IDC_CHK_CHAOS_MASTER, IDC_CHK_CHAOS_CASE,
-        IDC_CHK_GLYPH_TRANSFORM, IDC_STAT_CHAOS_WARN, 0
+        IDC_CHK_GLYPH_TRANSFORM, IDC_STAT_CHAOS_WARN,
+        IDC_GRP_LIVE, IDC_CHK_LIVE, IDC_CHK_LIVE_CASE, IDC_CMB_LIVE_GLYPH,
+        IDC_STAT_LIVE_GLYPH, IDC_CMB_LIVE_INTENSITY, IDC_STAT_LIVE_INTENSITY,
+        IDC_STAT_LIVE_HINT, 0
     };
     static constexpr int kTab7[] = {
         IDC_GRP_AI, IDC_CHK_AI_OPTIN, IDC_BTN_AI_RESET,
@@ -3200,7 +3268,7 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             // Resize the frame so the client area matches the scaled layout
             // (the fixed creation size below is only a placeholder).
             {
-                RECT rc{0, 0, S(560), S(608)};
+                RECT rc{0, 0, S(560), S(622)};
                 ::AdjustWindowRect(&rc, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU |
                                         WS_MINIMIZEBOX, FALSE);
                 ::SetWindowPos(hwnd, nullptr, 0, 0, rc.right - rc.left,
@@ -3231,7 +3299,7 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
             // Tab control (5 tabs — v1.1.2 adds “Thông tin”)
             HWND tab = mkCtl(hwnd, WC_TABCONTROLW, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                             S(12), S(66), S(536), S(492), reinterpret_cast<HMENU>(IDC_TAB));
+                             S(12), S(66), S(536), S(506), reinterpret_cast<HMENU>(IDC_TAB));
             TCITEMW item{};
             item.mask = TCIF_TEXT;
             wchar_t t0[] = L"Bàn phím";
@@ -3255,29 +3323,29 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
             // ---- tab 0: Bàn phím (v1.1.2: grouped layout + digits option) ----
             mkCtl(hwnd, L"BUTTON", L"Phương thức gõ",
-                  WS_CHILD | WS_VISIBLE | BS_GROUPBOX, S(24), S(86), S(494), S(76),
+                  WS_CHILD | WS_VISIBLE | BS_GROUPBOX, S(24), S(100), S(494), S(76),
                   reinterpret_cast<HMENU>(IDC_GRP_METHOD));
             mkCtl(hwnd, L"BUTTON", L"Telex", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
-                  S(44), S(108), S(74), S(20), reinterpret_cast<HMENU>(IDC_RADIO_TELEX));
+                  S(44), S(122), S(74), S(20), reinterpret_cast<HMENU>(IDC_RADIO_TELEX));
             mkCtl(hwnd, L"BUTTON", L"VNI", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
-                  S(128), S(108), S(58), S(20), reinterpret_cast<HMENU>(IDC_RADIO_VNI));
+                  S(128), S(122), S(58), S(20), reinterpret_cast<HMENU>(IDC_RADIO_VNI));
             mkCtl(hwnd, L"BUTTON", L"Simple Telex", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
-                  S(196), S(108), S(112), S(20), reinterpret_cast<HMENU>(IDC_RADIO_SIMPLETELEX));
+                  S(196), S(122), S(112), S(20), reinterpret_cast<HMENU>(IDC_RADIO_SIMPLETELEX));
             mkCtl(hwnd, L"STATIC",
                   L"Telex & Simple Telex gõ dấu bằng chữ (as → á). VNI gõ dấu bằng số "
                   L"(a1 → á) — chỉ khi tùy chọn chữ số bên dưới đang TẮT.",
-                  WS_CHILD | WS_VISIBLE, S(44), S(132), S(460), S(26),
+                  WS_CHILD | WS_VISIBLE, S(44), S(146), S(460), S(26),
                   reinterpret_cast<HMENU>(IDC_STAT_METHOD_HINT));
-            mkCtl(hwnd, L"STATIC", L"Bảng mã:", WS_CHILD | WS_VISIBLE, S(28), S(172), S(90), S(18),
+            mkCtl(hwnd, L"STATIC", L"Bảng mã:", WS_CHILD | WS_VISIBLE, S(28), S(186), S(90), S(18),
                   reinterpret_cast<HMENU>(IDC_STAT_CODETABLE));
             HWND combo = mkCtl(hwnd, WC_COMBOBOXW, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP |
-                               CBS_DROPDOWNLIST, S(128), S(168), S(210), S(200), reinterpret_cast<HMENU>(IDC_COMBO_CODETABLE));
+                               CBS_DROPDOWNLIST, S(128), S(182), S(210), S(200), reinterpret_cast<HMENU>(IDC_COMBO_CODETABLE));
             for (const wchar_t* s : {L"Unicode", L"TCVN3 (ABC)", L"VNI Windows",
                                      L"Unicode tổ hợp", L"CP 1258"}) {
                 ::SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(s));
             }
             mkCtl(hwnd, L"BUTTON", L"Tùy chọn gõ",
-                  WS_CHILD | WS_VISIBLE | BS_GROUPBOX, S(24), S(196), S(494), S(180),
+                  WS_CHILD | WS_VISIBLE | BS_GROUPBOX, S(24), S(210), S(494), S(180),
                   reinterpret_cast<HMENU>(IDC_GRP_OPTIONS));
             const wchar_t* kOpts[] = {
                 L"Số 0–9 luôn là chữ số — không dùng số để gõ dấu tiếng Việt (VNI)",
@@ -3303,120 +3371,120 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
             // Chế độ xuất — v1.1.2: grouped, unchanged semantics.
             mkCtl(hwnd, L"BUTTON", L"Chế độ xuất & hiệu năng",
-                  WS_CHILD | WS_VISIBLE | BS_GROUPBOX, S(24), S(386), S(494), S(176),
+                  WS_CHILD | WS_VISIBLE | BS_GROUPBOX, S(24), S(400), S(494), S(176),
                   reinterpret_cast<HMENU>(IDC_GRP_OUTPUT));
             mkCtl(hwnd, L"BUTTON", L"Auto", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
-                  S(44), S(408), S(66), S(20), reinterpret_cast<HMENU>(IDC_RADIO_OUT_AUTO));
+                  S(44), S(422), S(66), S(20), reinterpret_cast<HMENU>(IDC_RADIO_OUT_AUTO));
             mkCtl(hwnd, L"BUTTON", L"Luôn TSF (chống nháy)", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
-                  S(118), S(408), S(180), S(20), reinterpret_cast<HMENU>(IDC_RADIO_OUT_TSF));
+                  S(118), S(422), S(180), S(20), reinterpret_cast<HMENU>(IDC_RADIO_OUT_TSF));
             mkCtl(hwnd, L"BUTTON", L"Luôn SendInput (nhanh nhất)", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
-                  S(44), S(432), S(240), S(20), reinterpret_cast<HMENU>(IDC_RADIO_OUT_SEND));
+                  S(44), S(446), S(240), S(20), reinterpret_cast<HMENU>(IDC_RADIO_OUT_SEND));
             mkCtl(hwnd, L"STATIC",
                   L"Auto: TSF cho trình duyệt & Office (không nháy chữ), SendInput trực tiếp "
                   L"cho các ứng dụng khác. Khuyến nghị: giữ Auto và chọn hồ sơ hiệu năng bên dưới.",
-                  WS_CHILD | WS_VISIBLE, S(44), S(454), S(460), S(28),
+                  WS_CHILD | WS_VISIBLE, S(44), S(468), S(460), S(28),
                   reinterpret_cast<HMENU>(IDC_STAT_OUT_NOTE));
             // v1.2.1 RC2 — Performance preference profile (inside the output group).
             mkCtl(hwnd, L"STATIC", L"Hồ sơ hiệu năng:", WS_CHILD | WS_VISIBLE,
-                  S(44), S(488), S(110), S(18), reinterpret_cast<HMENU>(IDC_STAT_PERF_LAB));
+                  S(44), S(502), S(110), S(18), reinterpret_cast<HMENU>(IDC_STAT_PERF_LAB));
             HWND perfCombo = mkCtl(hwnd, WC_COMBOBOXW, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP |
-                                   CBS_DROPDOWNLIST, S(158), S(484), S(180), S(160),
+                                   CBS_DROPDOWNLIST, S(158), S(498), S(180), S(160),
                                    reinterpret_cast<HMENU>(IDC_COMBO_PERF));
             for (const wchar_t* s : {L"Cân bằng (mặc định)", L"Nhanh nhất", L"Ít nháy chữ nhất",
                                      L"Chính xác tối đa", L"Tự động thích ứng"}) {
                 ::SendMessageW(perfCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(s));
             }
             mkCtl(hwnd, L"BUTTON", L"Tiết kiệm CPU", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-                  S(346), S(485), S(80), S(20), reinterpret_cast<HMENU>(IDC_CHK_PERF_LOWCPU));
+                  S(346), S(499), S(80), S(20), reinterpret_cast<HMENU>(IDC_CHK_PERF_LOWCPU));
             mkCtl(hwnd, L"BUTTON", L"Từ điển", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-                  S(430), S(485), S(80), S(20), reinterpret_cast<HMENU>(IDC_CHK_PERF_DICT));
+                  S(430), S(499), S(80), S(20), reinterpret_cast<HMENU>(IDC_CHK_PERF_DICT));
             mkCtl(hwnd, L"STATIC",
                   L"Nhanh nhất: SendInput, xử lý nóng. Ít nháy: TSF gộp lệnh. Chính xác: mọi lưới an toàn. "
                   L"Tự động: điều chỉnh theo máy. Có thể kết hợp thêm hai ô bên phải.",
-                  WS_CHILD | WS_VISIBLE, S(44), S(508), S(460), S(28),
+                  WS_CHILD | WS_VISIBLE, S(44), S(522), S(460), S(28),
                   reinterpret_cast<HMENU>(IDC_STAT_PERF_NOTE));
             mkCtl(hwnd, L"BUTTON", L"Thông báo thông minh (gợi ý khi Telex nhanh sửa nhầm, TSF chậm…)",
-                  WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, S(44), S(538), S(460), S(20),
+                  WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, S(44), S(552), S(460), S(20),
                   reinterpret_cast<HMENU>(IDC_CHK_NOTIFY));
 
             // ---- tab 1: Ứng dụng ----
             mkCtl(hwnd, L"STATIC", L"Tự động tắt bộ gõ khi cửa sổ đang chạy là:",
-                  WS_CHILD | WS_VISIBLE, S(28), S(96), S(470), S(18),
+                  WS_CHILD | WS_VISIBLE, S(28), S(110), S(470), S(18),
                   reinterpret_cast<HMENU>(IDC_STAT_APPS_TITLE));
             mkCtl(hwnd, L"BUTTON", L"IDE / Editor (VS Code, Visual Studio, CLion…)",
-                  WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, S(28), S(126), S(480), S(20),
+                  WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, S(28), S(140), S(480), S(20),
                   reinterpret_cast<HMENU>(IDC_CHK_EXCLUDE_IDE));
             mkCtl(hwnd, L"BUTTON", L"Trò chơi toàn màn hình (DirectX / Vulkan / OpenGL)",
-                  WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, S(28), S(152), S(480), S(20),
+                  WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, S(28), S(166), S(480), S(20),
                   reinterpret_cast<HMENU>(IDC_CHK_EXCLUDE_GAME));
             mkCtl(hwnd, L"BUTTON", L"Windows Shell (Explorer, Terminal, CMD)",
-                  WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, S(28), S(178), S(480), S(20),
+                  WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, S(28), S(192), S(480), S(20),
                   reinterpret_cast<HMENU>(IDC_CHK_EXCLUDE_SHELL));
             mkCtl(hwnd, L"STATIC",
                   L"Lưu ý: tắt loại trừ Shell để gõ tên file tiếng Việt trong "
                   L"Explorer. Việc phát hiện cửa sổ là theo sự kiện (WinEvent), "
                   L"không tốn CPU khi rảnh. Khi bộ gõ tự tắt, trạng thái hiện ngay "
                   L"trên dòng đầu cửa sổ và tooltip khay hệ thống.",
-                  WS_CHILD | WS_VISIBLE, S(28), S(210), S(480), S(64),
+                  WS_CHILD | WS_VISIBLE, S(28), S(224), S(480), S(64),
                   reinterpret_cast<HMENU>(IDC_STAT_APPS_NOTE));
 
             // ---- tab 2: Gõ tắt (v1.1.0 — the macro feature is now real) ----
             mkCtl(hwnd, L"STATIC",
                   L"Mỗi dòng một từ gọn:  từgọn=kết quả   (VD: cn=chào, hcm=Hồ Chí Minh). "
                   L"Dòng # là ghi chú. Gõ từ gọn rồi nhấn Space để mở rộng.",
-                  WS_CHILD | WS_VISIBLE, S(28), S(96), S(480), S(40),
+                  WS_CHILD | WS_VISIBLE, S(28), S(110), S(480), S(40),
                   reinterpret_cast<HMENU>(IDC_STAT_MACRO_HINT));
             mkCtl(hwnd, L"EDIT", L"",
                   WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | WS_BORDER |
                   ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN,
-                  S(28), S(142), S(480), S(396),
+                  S(28), S(156), S(480), S(396),
                   reinterpret_cast<HMENU>(IDC_EDIT_MACRO));
 
             // ---- tab 3: Chẩn đoán ----
             mkCtl(hwnd, L"STATIC", L"Độ trễ đỉnh hook → xử lý (µs):", WS_CHILD | WS_VISIBLE,
-                  S(28), S(96), S(230), S(18), reinterpret_cast<HMENU>(IDC_STAT_LATLAB));
-            mkCtl(hwnd, L"STATIC", L"—", WS_CHILD | WS_VISIBLE, S(270), S(96), S(230), S(18),
+                  S(28), S(110), S(230), S(18), reinterpret_cast<HMENU>(IDC_STAT_LATLAB));
+            mkCtl(hwnd, L"STATIC", L"—", WS_CHILD | WS_VISIBLE, S(270), S(110), S(230), S(18),
                   reinterpret_cast<HMENU>(IDC_STAT_LATVAL));
             mkCtl(hwnd, L"STATIC", L"Độ trễ trung bình (µs):", WS_CHILD | WS_VISIBLE,
-                  S(28), S(122), S(230), S(18), reinterpret_cast<HMENU>(IDC_STAT_AVGLAB));
-            mkCtl(hwnd, L"STATIC", L"—", WS_CHILD | WS_VISIBLE, S(270), S(122), S(230), S(18),
+                  S(28), S(136), S(230), S(18), reinterpret_cast<HMENU>(IDC_STAT_AVGLAB));
+            mkCtl(hwnd, L"STATIC", L"—", WS_CHILD | WS_VISIBLE, S(270), S(136), S(230), S(18),
                   reinterpret_cast<HMENU>(IDC_STAT_AVGVAL));
             mkCtl(hwnd, L"STATIC", L"Sự kiện bàn phím đã xử lý:", WS_CHILD | WS_VISIBLE,
-                  S(28), S(148), S(230), S(18), reinterpret_cast<HMENU>(IDC_STAT_PUSHLAB));
-            mkCtl(hwnd, L"STATIC", L"0", WS_CHILD | WS_VISIBLE, S(270), S(148), S(230), S(18),
+                  S(28), S(162), S(230), S(18), reinterpret_cast<HMENU>(IDC_STAT_PUSHLAB));
+            mkCtl(hwnd, L"STATIC", L"0", WS_CHILD | WS_VISIBLE, S(270), S(162), S(230), S(18),
                   reinterpret_cast<HMENU>(IDC_STAT_PUSHV));
             mkCtl(hwnd, L"STATIC", L"Sự kiện bị bỏ (hàng đợi đầy):", WS_CHILD | WS_VISIBLE,
-                  S(28), S(174), S(230), S(18), reinterpret_cast<HMENU>(IDC_STAT_DROPLAB));
-            mkCtl(hwnd, L"STATIC", L"0", WS_CHILD | WS_VISIBLE, S(270), S(174), S(230), S(18),
+                  S(28), S(188), S(230), S(18), reinterpret_cast<HMENU>(IDC_STAT_DROPLAB));
+            mkCtl(hwnd, L"STATIC", L"0", WS_CHILD | WS_VISIBLE, S(270), S(188), S(230), S(18),
                   reinterpret_cast<HMENU>(IDC_STAT_DROPV));
             mkCtl(hwnd, L"STATIC", L"Tốc độ gõ (ký tự/phút, ≈ WPM × 5):", WS_CHILD | WS_VISIBLE,
-                  S(28), S(200), S(240), S(18), reinterpret_cast<HMENU>(IDC_STAT_WPMLAB));
-            mkCtl(hwnd, L"STATIC", L"—", WS_CHILD | WS_VISIBLE, S(270), S(200), S(230), S(18),
+                  S(28), S(214), S(240), S(18), reinterpret_cast<HMENU>(IDC_STAT_WPMLAB));
+            mkCtl(hwnd, L"STATIC", L"—", WS_CHILD | WS_VISIBLE, S(270), S(214), S(230), S(18),
                   reinterpret_cast<HMENU>(IDC_STAT_WPMVAL));
             // v1.1.0 telemetry: barrier timeouts, self-healing reinstalls, TSF
             // slow commits, and the live per-app state.
             mkCtl(hwnd, L"STATIC", L"Chờ hàng đợi quá hạn (barrier):", WS_CHILD | WS_VISIBLE,
-                  S(28), S(226), S(230), S(18), reinterpret_cast<HMENU>(IDC_STAT_BARRIERLAB));
-            mkCtl(hwnd, L"STATIC", L"0", WS_CHILD | WS_VISIBLE, S(270), S(226), S(230), S(18),
+                  S(28), S(240), S(230), S(18), reinterpret_cast<HMENU>(IDC_STAT_BARRIERLAB));
+            mkCtl(hwnd, L"STATIC", L"0", WS_CHILD | WS_VISIBLE, S(270), S(240), S(230), S(18),
                   reinterpret_cast<HMENU>(IDC_STAT_BARRIERV));
             mkCtl(hwnd, L"STATIC", L"Lần tự phục hồi hook:", WS_CHILD | WS_VISIBLE,
-                  S(28), S(252), S(230), S(18), reinterpret_cast<HMENU>(IDC_STAT_REINSTLAB));
-            mkCtl(hwnd, L"STATIC", L"0", WS_CHILD | WS_VISIBLE, S(270), S(252), S(230), S(18),
+                  S(28), S(266), S(230), S(18), reinterpret_cast<HMENU>(IDC_STAT_REINSTLAB));
+            mkCtl(hwnd, L"STATIC", L"0", WS_CHILD | WS_VISIBLE, S(270), S(266), S(230), S(18),
                   reinterpret_cast<HMENU>(IDC_STAT_REINSTV));
             mkCtl(hwnd, L"STATIC", L"Commit TSF chậm (đã hạ cấp):", WS_CHILD | WS_VISIBLE,
-                  S(28), S(278), S(230), S(18), reinterpret_cast<HMENU>(IDC_STAT_TSFLAB));
-            mkCtl(hwnd, L"STATIC", L"0", WS_CHILD | WS_VISIBLE, S(270), S(278), S(230), S(18),
+                  S(28), S(292), S(230), S(18), reinterpret_cast<HMENU>(IDC_STAT_TSFLAB));
+            mkCtl(hwnd, L"STATIC", L"0", WS_CHILD | WS_VISIBLE, S(270), S(292), S(230), S(18),
                   reinterpret_cast<HMENU>(IDC_STAT_TSFV));
             mkCtl(hwnd, L"STATIC", L"Ứng dụng hiện tại:", WS_CHILD | WS_VISIBLE,
-                  S(28), S(304), S(230), S(18), reinterpret_cast<HMENU>(IDC_STAT_APPLAB));
-            mkCtl(hwnd, L"STATIC", L"—", WS_CHILD | WS_VISIBLE, S(270), S(304), S(230), S(18),
+                  S(28), S(318), S(230), S(18), reinterpret_cast<HMENU>(IDC_STAT_APPLAB));
+            mkCtl(hwnd, L"STATIC", L"—", WS_CHILD | WS_VISIBLE, S(270), S(318), S(230), S(18),
                   reinterpret_cast<HMENU>(IDC_STAT_APPV));
             mkCtl(hwnd, L"STATIC",
                   L"Kiến trúc: hàng đợi lock-free SPSC; hook thread không bao giờ bị chặn; "
                   L"quyết định bộ gõ chạy ngay trên hook thread; xuất qua TSF hoặc SendInput "
                   L"trực tiếp (không Backspace giả, không clipboard). Đỉnh độ trễ tính từ "
                   L"lúc mở hộp thoại.",
-                  WS_CHILD | WS_VISIBLE, S(28), S(338), S(480), S(90),
+                  WS_CHILD | WS_VISIBLE, S(28), S(352), S(480), S(90),
                   reinterpret_cast<HMENU>(IDC_STAT_DESC));
 
             // ---- tab 4: Thông tin (v1.1.2 — in-app introduction) ----
@@ -3426,12 +3494,12 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             // answer, refreshed every timer tick).
             {
                 HWND n = mkCtl(hwnd, L"STATIC", kAppTitle,
-                               WS_CHILD | WS_VISIBLE, S(28), S(96), S(400), S(34),
+                               WS_CHILD | WS_VISIBLE, S(28), S(110), S(400), S(34),
                                reinterpret_cast<HMENU>(IDC_STAT_INFO_NAME));
                 ::SendMessageW(n, WM_SETFONT, reinterpret_cast<WPARAM>(uiFontTitle()), TRUE);
             }
             mkCtl(hwnd, L"STATIC", L"",
-                  WS_CHILD | WS_VISIBLE, S(28), S(134), S(500), S(64),
+                  WS_CHILD | WS_VISIBLE, S(28), S(148), S(500), S(64),
                   reinterpret_cast<HMENU>(IDC_STAT_INFO_STATUS));
             mkCtl(hwnd, L"STATIC",
                   L"Bộ gõ tiếng Việt hiện đại cho Windows — nhanh, chính xác, "
@@ -3440,7 +3508,7 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                   L"gõ hiện đại hoá từ OpenKey: quyết định gõ chạy ngay trên "
                   L"hook thread, xuất chữ trực tiếp qua TSF/SendInput — không "
                   L"clipboard, không chữ nháy. Bật/tắt ngay trong ứng dụng.",
-                  WS_CHILD | WS_VISIBLE, S(28), S(206), S(500), S(88),
+                  WS_CHILD | WS_VISIBLE, S(28), S(220), S(500), S(88),
                   reinterpret_cast<HMENU>(IDC_STAT_INFO_ABOUT));
             mkCtl(hwnd, L"STATIC",
                   L"Tính năng chính:\n"
@@ -3450,59 +3518,59 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                   L"• Tự tắt trong IDE và game toàn màn hình để không vướng thao tác\n"
                   L"• Chống nháy chữ qua TSF cho trình duyệt & Office; SendInput siêu nhanh\n"
                   L"• F9 chuyển kiểu đặt dấu cho từ đang gõ (oà ↔ òa) — giữ nguyên từ đã gõ",
-                  WS_CHILD | WS_VISIBLE, S(28), S(302), S(500), S(112),
+                  WS_CHILD | WS_VISIBLE, S(28), S(316), S(500), S(112),
                   reinterpret_cast<HMENU>(IDC_STAT_INFO_FEAT));
             mkCtl(hwnd, L"STATIC",
                   L"Hướng dẫn nhanh:\n"
                   L"• Bật/tắt: nhấp trái (hoặc phải) biểu tượng khay, hoặc nút lớn phía dưới\n"
                   L"• Đổi phương thức gõ: trình đơn khay → Phương thức gõ, hoặc tab Bàn phím\n"
                   L"• Mọi thay đổi được lưu ngay — thoát và mở lại luôn giữ nguyên cấu hình",
-                  WS_CHILD | WS_VISIBLE, S(28), S(422), S(500), S(72),
+                  WS_CHILD | WS_VISIBLE, S(28), S(436), S(500), S(72),
                   reinterpret_cast<HMENU>(IDC_STAT_INFO_GUIDE));
             mkCtl(hwnd, L"STATIC",
                   L"Nguồn gốc & bản quyền: KieeKey phát triển từ OpenKey © 2019 Tuyen Mai, "
                   L"phát hành theo GNU GPL v3. Phần hiện đại hoá © 2026 coderunknow.",
-                  WS_CHILD | WS_VISIBLE, S(28), S(502), S(500), S(32),
+                  WS_CHILD | WS_VISIBLE, S(28), S(516), S(500), S(32),
                   reinterpret_cast<HMENU>(IDC_STAT_INFO_LICENSE));
             mkCtl(hwnd, WC_LINK,
                   L"<A HREF=\"https://github.com/coderunknow/KieeKey\">Mã nguồn · tài liệu · cập nhật: github.com/coderunknow/KieeKey</A>",
-                  WS_CHILD | WS_VISIBLE | WS_TABSTOP, S(28), S(538), S(500), S(20),
+                  WS_CHILD | WS_VISIBLE | WS_TABSTOP, S(28), S(552), S(500), S(20),
                   reinterpret_cast<HMENU>(IDC_LNK_REPO));
 
             // ---- tab 5: Arcade (v1.3.0) ----
             mkCtl(hwnd, L"BUTTON", L"KieeKey Arcade (8 Minigames)",
-                  WS_CHILD | WS_VISIBLE | BS_GROUPBOX, S(24), S(86), S(494), S(324),
+                  WS_CHILD | WS_VISIBLE | BS_GROUPBOX, S(24), S(100), S(494), S(324),
                   reinterpret_cast<HMENU>(IDC_GRP_ARCADE));
             mkCtl(hwnd, L"BUTTON", L"🐍 Snake (Rắn săn mồi)", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                  S(44), S(112), S(220), S(28), reinterpret_cast<HMENU>(IDC_BTN_PLAY_SNAKE));
+                  S(44), S(126), S(220), S(28), reinterpret_cast<HMENU>(IDC_BTN_PLAY_SNAKE));
             mkCtl(hwnd, L"BUTTON", L"🧱 Tetris (Xếp gạch)", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                  S(280), S(112), S(220), S(28), reinterpret_cast<HMENU>(IDC_BTN_PLAY_TETRIS));
+                  S(280), S(126), S(220), S(28), reinterpret_cast<HMENU>(IDC_BTN_PLAY_TETRIS));
             mkCtl(hwnd, L"BUTTON", L"🎣 Fishing (Câu cá gõ phím)", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                  S(44), S(148), S(220), S(28), reinterpret_cast<HMENU>(IDC_BTN_PLAY_FISHING));
+                  S(44), S(162), S(220), S(28), reinterpret_cast<HMENU>(IDC_BTN_PLAY_FISHING));
             mkCtl(hwnd, L"BUTTON", L"🏎️ Typing Race (Đua xe)", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                  S(280), S(148), S(220), S(28), reinterpret_cast<HMENU>(IDC_BTN_PLAY_TYPINGRACE));
+                  S(280), S(162), S(220), S(28), reinterpret_cast<HMENU>(IDC_BTN_PLAY_TYPINGRACE));
             mkCtl(hwnd, L"BUTTON", L"🏎️ WASD + Typing Racing", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                  S(44), S(184), S(220), S(28), reinterpret_cast<HMENU>(IDC_BTN_PLAY_WASDRACE));
+                  S(44), S(198), S(220), S(28), reinterpret_cast<HMENU>(IDC_BTN_PLAY_WASDRACE));
             mkCtl(hwnd, L"BUTTON", L"🎵 Rhythm Typing (FNF)", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                  S(280), S(184), S(220), S(28), reinterpret_cast<HMENU>(IDC_BTN_PLAY_RHYTHM));
+                  S(280), S(198), S(220), S(28), reinterpret_cast<HMENU>(IDC_BTN_PLAY_RHYTHM));
             mkCtl(hwnd, L"BUTTON", L"🎯 No-Mistake Mode", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                  S(44), S(220), S(220), S(28), reinterpret_cast<HMENU>(IDC_BTN_PLAY_NOMISTAKE));
+                  S(44), S(234), S(220), S(28), reinterpret_cast<HMENU>(IDC_BTN_PLAY_NOMISTAKE));
             mkCtl(hwnd, L"BUTTON", L"🗿 Flexing Mode (Joke)", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                  S(280), S(220), S(220), S(28), reinterpret_cast<HMENU>(IDC_BTN_PLAY_FLEXING));
+                  S(280), S(234), S(220), S(28), reinterpret_cast<HMENU>(IDC_BTN_PLAY_FLEXING));
             mkCtl(hwnd, L"STATIC", L"Trạng thái: Chưa có game nào đang chạy.",
-                  WS_CHILD | WS_VISIBLE, S(44), S(256), S(456), S(52),
+                  WS_CHILD | WS_VISIBLE, S(44), S(270), S(456), S(52),
                   reinterpret_cast<HMENU>(IDC_STAT_ARCADE_STATUS));
 
             // v1.3.0: the games open in their own graphical window; this tab is
             // the launcher + the run configuration.
             mkCtl(hwnd, L"BUTTON", L"🗿 Phòng Chaos / Flexing (test gõ thật)",
-                  WS_CHILD | WS_VISIBLE | WS_TABSTOP, S(44), S(312), S(220), S(28),
+                  WS_CHILD | WS_VISIBLE | WS_TABSTOP, S(44), S(326), S(220), S(28),
                   reinterpret_cast<HMENU>(IDC_BTN_OPEN_CHAOS_LAB));
             mkCtl(hwnd, L"STATIC", L"Chế độ Rhythm / No-Mistake:",
-                  WS_CHILD | WS_VISIBLE | SS_LEFT, S(280), S(312), S(220), S(20), reinterpret_cast<HMENU>(IDC_STAT_FAILMODE));
+                  WS_CHILD | WS_VISIBLE | SS_LEFT, S(280), S(326), S(220), S(20), reinterpret_cast<HMENU>(IDC_STAT_FAILMODE));
             HWND failMode = mkCtl(hwnd, L"COMBOBOX", L"",
                   WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL,
-                  S(280), S(330), S(220), S(120), reinterpret_cast<HMENU>(IDC_CMB_FAILMODE));
+                  S(280), S(344), S(220), S(120), reinterpret_cast<HMENU>(IDC_CMB_FAILMODE));
             if (failMode != nullptr) {
                 ::SendMessageW(failMode, CB_ADDSTRING, 0,
                                reinterpret_cast<LPARAM>(L"Hardcore — sai là chết (mặc định)"));
@@ -3511,64 +3579,97 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 ::SendMessageW(failMode, CB_SETCURSEL, 0, 0);
             }
             mkCtl(hwnd, L"STATIC", L"Nhịp Rhythm (BPM 60-220):",
-                  WS_CHILD | WS_VISIBLE | SS_LEFT, S(280), S(354), S(160), S(20), reinterpret_cast<HMENU>(IDC_STAT_RHYTHM_BPM));
+                  WS_CHILD | WS_VISIBLE | SS_LEFT, S(280), S(368), S(160), S(20), reinterpret_cast<HMENU>(IDC_STAT_RHYTHM_BPM));
             mkCtl(hwnd, L"EDIT", L"112",
                   WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_NUMBER | WS_BORDER,
-                  S(444), S(352), S(56), S(22), reinterpret_cast<HMENU>(IDC_EDT_RHYTHM_BPM));
+                  S(444), S(366), S(56), S(22), reinterpret_cast<HMENU>(IDC_EDT_RHYTHM_BPM));
             mkCtl(hwnd, L"BUTTON", L"✔ Áp dụng cấu hình game",
-                  WS_CHILD | WS_VISIBLE | WS_TABSTOP, S(44), S(348), S(220), S(28),
+                  WS_CHILD | WS_VISIBLE | WS_TABSTOP, S(44), S(362), S(220), S(28),
                   reinterpret_cast<HMENU>(IDC_BTN_APPLY_ARCADE_CFG));
 
             // ---- tab 6: Phòng Chaos (v1.3.0) ----
             mkCtl(hwnd, L"BUTTON", L"Phòng thí nghiệm Chaos & Thử nghiệm",
-                  WS_CHILD | WS_VISIBLE | BS_GROUPBOX, S(24), S(86), S(494), S(280),
+                  WS_CHILD | WS_VISIBLE | BS_GROUPBOX, S(24), S(100), S(494), S(196),
                   reinterpret_cast<HMENU>(IDC_GRP_CHAOS));
             mkCtl(hwnd, L"BUTTON", L"Bật Chaos trong Lab (không đổi chữ khi gõ bình thường)",
-                  WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, S(44), S(112), S(450), S(22),
+                  WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, S(44), S(126), S(450), S(22),
                   reinterpret_cast<HMENU>(IDC_CHK_CHAOS_MASTER));
             mkCtl(hwnd, L"BUTTON", L"Random Casing / Chaos Case (Viết hoa - thường ngẫu nhiên)",
-                  WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, S(44), S(140), S(450), S(22),
+                  WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, S(44), S(154), S(450), S(22),
                   reinterpret_cast<HMENU>(IDC_CHK_CHAOS_CASE));
             mkCtl(hwnd, L"BUTTON", L"Glyph Visual Transform (Xoay / lật hiển thị chữ)",
-                  WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, S(44), S(168), S(450), S(22),
+                  WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, S(44), S(182), S(450), S(22),
                   reinterpret_cast<HMENU>(IDC_CHK_GLYPH_TRANSFORM));
             mkCtl(hwnd, L"STATIC",
-                  L"Chaos chỉ áp dụng trong Lab. Mở Lab để xem trước và chủ động gửi kết quả "
-                  L"ra ứng dụng khác. Không biến đổi chữ đang gõ bằng IME. Xoay 90/270 độ chỉ là hiển thị.",
-                  WS_CHILD | WS_VISIBLE, S(44), S(200), S(450), S(80),
+                  L"Các tùy chọn ở trên chỉ dành cho Lab. Để đổi chữ khi gõ trong ứng dụng khác, "
+                  L"dùng nhóm Hiệu ứng gõ trực tiếp ở dưới. Hai chế độ độc lập.",
+                  WS_CHILD | WS_VISIBLE, S(44), S(214), S(450), S(72),
                   reinterpret_cast<HMENU>(IDC_STAT_CHAOS_WARN));
+
+            mkCtl(hwnd, L"BUTTON", L"Hiệu ứng gõ trực tiếp — ứng dụng bên ngoài",
+                  WS_CHILD | WS_VISIBLE | BS_GROUPBOX, S(24), S(304), S(494), S(245),
+                  reinterpret_cast<HMENU>(IDC_GRP_LIVE));
+            mkCtl(hwnd, L"BUTTON", L"Bật khi gõ bên ngoài (tắt nhanh: Ctrl+Alt+F12)",
+                  WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
+                  S(44), S(328), S(450), S(24), reinterpret_cast<HMENU>(IDC_CHK_LIVE));
+            mkCtl(hwnd, L"BUTTON", L"Random casing — đổi hoa/thường theo từng ký tự",
+                  WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
+                  S(44), S(358), S(450), S(24), reinterpret_cast<HMENU>(IDC_CHK_LIVE_CASE));
+            mkCtl(hwnd, L"STATIC", L"Glyph Unicode:", WS_CHILD | WS_VISIBLE,
+                  S(44), S(394), S(125), S(22), reinterpret_cast<HMENU>(IDC_STAT_LIVE_GLYPH));
+            HWND liveGlyph = mkCtl(hwnd, L"COMBOBOX", L"",
+                  WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST,
+                  S(176), S(390), S(318), S(160), reinterpret_cast<HMENU>(IDC_CMB_LIVE_GLYPH));
+            for (const wchar_t* mode : {L"Không đổi glyph", L"Lật ngược từng chữ (giống xoay 180°)",
+                                       L"Lật ngang từng chữ", L"Lật ngẫu nhiên"}) {
+                ::SendMessageW(liveGlyph, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(mode));
+            }
+            mkCtl(hwnd, L"STATIC", L"Cường độ:", WS_CHILD | WS_VISIBLE,
+                  S(44), S(430), S(125), S(22), reinterpret_cast<HMENU>(IDC_STAT_LIVE_INTENSITY));
+            HWND liveIntensity = mkCtl(hwnd, L"COMBOBOX", L"",
+                  WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST,
+                  S(176), S(426), S(318), S(140), reinterpret_cast<HMENU>(IDC_CMB_LIVE_INTENSITY));
+            for (const wchar_t* level : {L"25%", L"50%", L"100%"}) {
+                ::SendMessageW(liveIntensity, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(level));
+            }
+            mkCtl(hwnd, L"STATIC",
+                  L"Cần bộ gõ BẬT + Unicode; không tác động app bị loại trừ. Đổi chữ thật khi "
+                  L"Lab đóng. Không dùng khi nhập mật khẩu. Glyph không có bản lật giữ nguyên; "
+                  L"không xoay hình học 90°/270°. Mặc định TẮT, không lưu qua lần chạy.",
+                  WS_CHILD | WS_VISIBLE, S(44), S(464), S(450), S(72),
+                  reinterpret_cast<HMENU>(IDC_STAT_LIVE_HINT));
 
             // ---- tab 7: AI Rival & Coaching (v1.3.0) ----
             mkCtl(hwnd, L"BUTTON", L"Personal AI Typing Rival & Huấn luyện viên",
-                  WS_CHILD | WS_VISIBLE | BS_GROUPBOX, S(24), S(86), S(494), S(280),
+                  WS_CHILD | WS_VISIBLE | BS_GROUPBOX, S(24), S(100), S(494), S(280),
                   reinterpret_cast<HMENU>(IDC_GRP_AI));
             mkCtl(hwnd, L"BUTTON", L"Cho phép AI học nhịp gõ cá nhân (Opt-in an toàn, hoàn toàn cục bộ)",
-                  WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, S(44), S(112), S(450), S(22),
+                  WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, S(44), S(126), S(450), S(22),
                   reinterpret_cast<HMENU>(IDC_CHK_AI_OPTIN));
             mkCtl(hwnd, L"BUTTON", L"Đặt lại hồ sơ AI", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                  S(44), S(140), S(160), S(26), reinterpret_cast<HMENU>(IDC_BTN_AI_RESET));
+                  S(44), S(154), S(160), S(26), reinterpret_cast<HMENU>(IDC_BTN_AI_RESET));
             mkCtl(hwnd, L"STATIC", L"Chỉ số AI: Chưa có dữ liệu (Cần bật Opt-in và gõ thử)",
-                  WS_CHILD | WS_VISIBLE, S(44), S(172), S(450), S(35),
+                  WS_CHILD | WS_VISIBLE, S(44), S(186), S(450), S(35),
                   reinterpret_cast<HMENU>(IDC_STAT_AI_STATS));
             mkCtl(hwnd, L"STATIC", L"Coach: Hãy gõ thêm để Coach phân tích nhịp gõ...",
-                  WS_CHILD | WS_VISIBLE, S(44), S(212), S(450), S(50),
+                  WS_CHILD | WS_VISIBLE, S(44), S(226), S(450), S(50),
                   reinterpret_cast<HMENU>(IDC_STAT_COACH_ADVICE));
 
             // ---- tab 8: Tiến trình (v1.3.0) ----
             mkCtl(hwnd, L"BUTTON", L"Tiến trình người dùng & Thành tích",
-                  WS_CHILD | WS_VISIBLE | BS_GROUPBOX, S(24), S(86), S(494), S(280),
+                  WS_CHILD | WS_VISIBLE | BS_GROUPBOX, S(24), S(100), S(494), S(280),
                   reinterpret_cast<HMENU>(IDC_GRP_PROG));
             mkCtl(hwnd, L"STATIC", L"Cấp độ: Level 1", WS_CHILD | WS_VISIBLE,
-                  S(44), S(112), S(220), S(22), reinterpret_cast<HMENU>(IDC_STAT_LEVEL_VAL));
+                  S(44), S(126), S(220), S(22), reinterpret_cast<HMENU>(IDC_STAT_LEVEL_VAL));
             mkCtl(hwnd, L"STATIC", L"Tổng XP: 0 XP", WS_CHILD | WS_VISIBLE,
-                  S(280), S(112), S(220), S(22), reinterpret_cast<HMENU>(IDC_STAT_XP_VAL));
+                  S(280), S(126), S(220), S(22), reinterpret_cast<HMENU>(IDC_STAT_XP_VAL));
             mkCtl(hwnd, L"STATIC", L"Tổng số phím đã gõ: 0", WS_CHILD | WS_VISIBLE,
-                  S(44), S(140), S(450), S(22), reinterpret_cast<HMENU>(IDC_STAT_KEYS_VAL));
+                  S(44), S(154), S(450), S(22), reinterpret_cast<HMENU>(IDC_STAT_KEYS_VAL));
             mkCtl(hwnd, L"STATIC", L"Thành tích: Bắt đầu hành trình cùng KieeKey!",
-                  WS_CHILD | WS_VISIBLE, S(44), S(168), S(450), S(60),
+                  WS_CHILD | WS_VISIBLE, S(44), S(182), S(450), S(60),
                   reinterpret_cast<HMENU>(IDC_STAT_ACHIEVEMENTS));
             mkCtl(hwnd, L"BUTTON", L"Đặt lại tiến trình", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                  S(44), S(236), S(160), S(26), reinterpret_cast<HMENU>(IDC_BTN_PROG_RESET));
+                  S(44), S(250), S(160), S(26), reinterpret_cast<HMENU>(IDC_BTN_PROG_RESET));
 
             // ---- buttons ----
             // v1.1.1: the always-visible in-app ON/OFF switch (the removed
@@ -3578,16 +3679,16 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             {
                 HWND tg = mkCtl(hwnd, L"BUTTON", L"",
                           WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-                          S(12), S(566), S(240), S(30),
+                          S(12), S(580), S(240), S(30),
                           reinterpret_cast<HMENU>(IDC_BTN_TOGGLE));
                 ::SendMessageW(tg, WM_SETFONT, reinterpret_cast<WPARAM>(uiFontBold()), TRUE);
             }
             mkCtl(hwnd, L"BUTTON", L"OK", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
-                  S(300), S(566), S(76), S(30), reinterpret_cast<HMENU>(IDOK));
+                  S(300), S(580), S(76), S(30), reinterpret_cast<HMENU>(IDOK));
             mkCtl(hwnd, L"BUTTON", L"Hủy", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                  S(384), S(566), S(76), S(30), reinterpret_cast<HMENU>(IDCANCEL));
+                  S(384), S(580), S(76), S(30), reinterpret_cast<HMENU>(IDCANCEL));
             mkCtl(hwnd, L"BUTTON", L"Áp dụng", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                  S(468), S(566), S(80), S(30), reinterpret_cast<HMENU>(IDC_BTN_APPLY));
+                  S(468), S(580), S(80), S(30), reinterpret_cast<HMENU>(IDC_BTN_APPLY));
 
             settingsToControls();
             // v1.1.0: the latency peak now reads "since the dialog opened"
@@ -3731,6 +3832,8 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             std::swprintf(buf, std::size(buf), L"%lld", static_cast<long long>(s_kpmEma));
             ::SetWindowTextW(::GetDlgItem(hwnd, IDC_STAT_WPMVAL), buf);
 
+            ::CheckDlgButton(hwnd, IDC_CHK_LIVE,
+                             g.liveEffects.enabled() ? BST_CHECKED : BST_UNCHECKED);
             // v1.3.0: Live updates for Arcade, AI, and Progression tabs.
             // The arcade itself is drawn in its own GDI window; the tab shows a
             // compact status line so the user knows what is running.
@@ -3855,6 +3958,23 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                                   L"Đã áp dụng: chế độ "
                                   L"Rhythm/No-Mistake và nhịp BPM cho các game tiếp theo.",
                                   L"KieeKey Arcade", MB_OK | MB_ICONINFORMATION);
+                    return 0;
+                }
+                case IDC_CHK_LIVE:
+                case IDC_CHK_LIVE_CASE:
+                case IDC_CMB_LIVE_GLYPH:
+                case IDC_CMB_LIVE_INTENSITY: {
+                    const auto notification = HIWORD(wParam);
+                    if (notification != BN_CLICKED && notification != CBN_SELCHANGE) { return 0; }
+                    ok::effects::Config config;
+                    config.enabled = ::IsDlgButtonChecked(hwnd, IDC_CHK_LIVE) == BST_CHECKED;
+                    config.randomCase = ::IsDlgButtonChecked(hwnd, IDC_CHK_LIVE_CASE) == BST_CHECKED;
+                    const auto mode = ::SendMessageW(::GetDlgItem(hwnd, IDC_CMB_LIVE_GLYPH), CB_GETCURSEL, 0, 0);
+                    config.glyph = static_cast<ok::effects::Glyph>(std::clamp<LRESULT>(mode, 0, 3));
+                    const auto intensity = ::SendMessageW(::GetDlgItem(hwnd, IDC_CMB_LIVE_INTENSITY), CB_GETCURSEL, 0, 0);
+                    config.intensity = intensity == 2 ? 100u : (intensity == 0 ? 25u : 50u);
+                    g.liveEffects.configure(config);
+                    g.engineResyncPending.store(true, std::memory_order_release);
                     return 0;
                 }
                 case IDC_CHK_CHAOS_MASTER:

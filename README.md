@@ -37,10 +37,20 @@ text-store composer and an optional WinUI 3 Fluent settings UI.
 ## What's new in v1.3.0-beta2 — Input isolation & reliability
 
 Beta2 is a stabilization release. Arcade no longer captures keys from other
-applications; Chaos transforms are confined to explicit Lab preview/injection,
-not partial IME replacement edits. Normal Vietnamese typing stays independent
-of these optional features. Flexing input, reload, timing and native UI controls
-have regression coverage. See [CHANGELOG.md](CHANGELOG.md) and the
+applications. The revised candidate (Windows file version **1.3.0.3**) adds
+explicit, default-off **live external typing effects**: tray → **Hiệu ứng gõ
+bên ngoài**, or Settings → **Phòng Chaos**. Random casing and Unicode flipped
+glyphs apply to both literal characters and Vietnamese tone rewrites. Disable
+instantly with **Ctrl+Alt+F12**; the IME must be ON, using Unicode, and app
+exclusions still apply. This is separate from the Lab. Unsupported glyphs stay
+unchanged; arbitrary 90°/270° rotations are not plain-text output.
+
+Typing passages now use explicit clipped character cells, a scrolling caret
+window and one viewport scale (no double-DPI font scaling). Typing Race has
+correct Backspace/net-WPM and mistake feedback; Fishing has catch/escape/error
+feedback and F2 restart; No-Mistake ignores nonprinting controls and shows an
+accurate reserve meter. Native pause/result panels no longer overlap the Hub
+title. Regression tests cover these paths, not a claim of all-editor support. See [CHANGELOG.md](CHANGELOG.md) and the
 [Windows smoke-test checklist](docs/BETA2_TESTING.md).
 
 The beta2 PR is held for manual Windows x64 testing before merge. Automated

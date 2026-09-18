@@ -6,6 +6,28 @@ Keep a Changelog; versioning: SemVer.
 ## [Unreleased]
 
 ## [1.3.0-beta2] — 2026-09-18
+### Follow-up after Windows feedback (file build 1.3.0.3)
+* Fix passage text overlap: explicit clipped character-cell advances across
+  colored runs in native/web renderers, one viewport scale (no second DPI
+  multiplier), bounded scrolling caret windows for all four passage games.
+  Add font-aware tests over 1,440 evolving native-shim frames at four DPIs.
+* Separate tab content from native tab headers; move the welcome/level-up toast
+  off the Hub title into an opaque panel and display native pause/finish banners.
+* Typing-game polish: immediate correct/wrong/catch/escape feedback, working
+  native/browser Backspace and net WPM in Typing Race, final-stroke accuracy,
+  Fishing F2 restart, correct No-Mistake reserve meter and nonprinting-key guard.
+* **Live external effects restored as a distinct opt-in channel**, not the old
+  partial-delta decoration: tray/settings controls for per-key random casing,
+  upside-down/mirrored/random Unicode lookalikes and intensity. Both literal
+  inserts and engine replacements use a deterministic position-aware mapper;
+  Vietnamese engine state remains original. Unicode only, IME ON, exclusions
+  respected, session-only/default OFF. Ctrl+Alt+F12 disables effects immediately.
+* Context changes reset composition rather than replaying styled text into the
+  engine. Unsupported glyphs pass unchanged; whole-document and geometric
+  90°/270° rotations are not claimed. See the updated Windows acceptance guide.
+* Dedicated live-output tests run in native CI and the standard x64 CTest job.
+  Web fixtures/screenshots are regenerated from the updated engine/renderer.
+
 ### Stabilization fixes
 * **Lost external keystrokes:** remove Arcade dispatch from the global keyboard
   producer. Games receive input only in their own UI; Alt-Tab no longer feeds
@@ -40,8 +62,8 @@ Keep a Changelog; versioning: SemVer.
   regression suite to CI alongside Windows builds; introduce a source-contract
   gate for hook isolation and settings-tab ownership.
 
-### Intentional safety change
-* Chaos transforms now run only in explicit Lab preview/injection, **not on
+### Initial candidate safety change (superseded above by explicit live channel)
+* The initial beta2 candidate ran Chaos transforms only in explicit Lab preview/injection, **not on
   ordinary IME replacement deltas**. Transforming accented replacements while
   passing plain letters unchanged desynchronized text from engine state.
 * No new end-user feature scope. Version is **1.3.0-beta2**, PE/manifest

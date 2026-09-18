@@ -186,6 +186,7 @@
 #define IDM_CHAOS_LAB             419
 #define IDM_AI_RIVAL              420
 #define IDM_PROGRESSION           421
+#define IDM_LIVE_EFFECTS          422
 
 // ---- app messages ----
 #define WM_APP_TRAY               (WM_APP + 1)   // tray icon notification
@@ -195,3 +196,13 @@
 #define WM_APP_RESTORE            (WM_APP + 4)   // 2nd-instance wake: restore tray icon
 #define WM_APP_FGPROBE            (WM_APP + 5)   // probe foreground responsiveness (UI thread)
 #define WM_APP_NOTIFY_POLL        (WM_APP + 6)   // v1.2.1 RC2: notification center poll / adaptive tick
+
+// Explicit live output channel (independent of Lab configuration).
+#define IDC_GRP_LIVE              620
+#define IDC_CHK_LIVE              621
+#define IDC_CHK_LIVE_CASE         622
+#define IDC_CMB_LIVE_GLYPH        623
+#define IDC_STAT_LIVE_GLYPH       624
+#define IDC_CMB_LIVE_INTENSITY    625
+#define IDC_STAT_LIVE_INTENSITY   626
+#define IDC_STAT_LIVE_HINT        627

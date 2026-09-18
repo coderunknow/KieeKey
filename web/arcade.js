@@ -160,7 +160,7 @@ function drawFrame(frame) {
         break;
       }
       case KIND.TEXT: {
-        const [, x, y, size, color, align, bold, mono, text] = cmd;
+        const [, x, y, size, color, align, bold, mono, text, advance = 0] = cmd;
         if (!text) { break; }
         const weight = bold ? '700' : '400';
         const family = mono
@@ -169,7 +169,12 @@ function drawFrame(frame) {
         ctx.font = `${weight} ${size}px ${family}`;
         ctx.textAlign = align === 1 ? 'center' : (align === 2 ? 'right' : 'left');
         ctx.fillStyle = cssColor(color);
-        ctx.fillText(text, x, y);
+        if (advance > 0) {
+          // Explicit cells, not a browser-dependent monospace width estimate.
+          Array.from(text).forEach((ch, i) => ctx.fillText(ch, x + i * advance, y, advance));
+        } else {
+          ctx.fillText(text, x, y);
+        }
         break;
       }
       default:

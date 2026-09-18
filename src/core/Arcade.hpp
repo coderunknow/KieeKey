@@ -492,6 +492,8 @@ private:
 
     std::u32string m_prompt;
     std::size_t m_promptIndex = 0;
+    int m_feedback = 0;
+    double m_feedbackTime = 0;
     FishRarity m_currentRarity = FishRarity::Common;
     // Reserved once in the constructor: hookNewFish()/renderer reuse the same
     // buffers, so a fishing session allocates nothing between catches.
@@ -567,6 +569,7 @@ private:
 
     std::u32string m_passage;
     std::size_t m_charIndex = 0;
+    bool m_lastMistake = false;
     std::uint32_t m_totalKeys = 0;
     std::uint32_t m_correctKeys = 0;
     std::uint32_t m_errorKeys = 0;

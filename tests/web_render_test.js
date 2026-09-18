@@ -146,6 +146,20 @@ function testColorHelpers() {
 }
 
 //---------------------------------------------------------------------------
+function testExplicitPassageCells() {
+  calls.length = 0;
+  api.drawFrame({ w: 1000, h: 620, bg: '#000000FF', bg2: '#000000FF', cmds: [
+    [4, 40, 100, 30, '#FFFFFFFF', 0, false, true, 'á😀b', 18.6],
+    [4, 95.8, 100, 30, '#22C55EFF', 0, false, true, 'c', 18.6],
+  ] });
+  const glyphs = calls.filter(c => c.kind === 'fillText');
+  assert(glyphs.length === 4, 'one cell per Unicode code point, including supplementary text');
+  for (let i = 0; i < glyphs.length; i++) {
+    assert(Math.abs(glyphs[i].arg[1] - (40 + i * 18.6)) < 0.01, 'adjacent runs share explicit cell grid');
+    assert(glyphs[i].arg[3] === 18.6, 'font fallback cannot exceed cell width');
+  }
+}
+
 function testKeyMapping() {
   assert(api.virtualKeyFor({ key: 'ArrowLeft' }) === 0x25, 'arrow keys map to VK codes');
   assert(api.virtualKeyFor({ key: ' ' }) === 0x20, 'space maps to VK_SPACE');
@@ -194,15 +208,15 @@ function testEveryGameDraws() {
     const shapeCalls = drawCalls.filter((c) => ['fillRect', 'arc', 'fill', 'stroke', 'fillText']
       .includes(c.kind)).length;
     assert(shapeCalls > 0, slug + ': something is actually painted');
-    // Text commands must produce fillText with the frame's own strings.
-    const texts = frame.cmds.filter((c) => c[0] === 4).map((c) => c[9]);
-    const drawnTexts = drawCalls.filter((c) => c.kind === 'fillText').map((c) => c.arg[0]);
-    for (const text of texts) {
-      if (!text) { continue; }
-      if (!drawnTexts.includes(text)) {
-        drawnAll = false;
-        console.error('    missing text in ' + slug + ': ' + JSON.stringify(text));
-      }
+    // Wire text is index 8; index 9 is the new optional cell advance.
+    // Compare the entire ordered draw stream, not membership (or undefined
+    // fields, which used to let this assertion pass without checking text).
+    const texts = frame.cmds.filter(c => c[0] === 4).flatMap(c =>
+      c[9] > 0 ? Array.from(c[8]) : [c[8]]);
+    const drawnTexts = drawCalls.filter(c => c.kind === 'fillText').map(c => c.arg[0]);
+    if (JSON.stringify(texts) !== JSON.stringify(drawnTexts)) {
+      drawnAll = false;
+      console.error('    text stream mismatch in ' + slug);
     }
   }
   assert(drawnAll, 'every TEXT command of every game reaches fillText');
@@ -274,6 +288,7 @@ console.log('=== Running Web Render (headless canvas) Suite ===');
 console.log('    fixtures captured from the C++ engine: ' + fixtures.captured_at);
 testColorHelpers();
 testKeyMapping();
+testExplicitPassageCells();
 testEveryGameDraws();
 testGradientAndBackground();
 testHudAndBanner();

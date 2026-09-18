@@ -103,6 +103,16 @@ Keep a Changelog; versioning: SemVer.
   60 FPS frame, `GET /api/state` 45.4 µs / p99 89.3 µs, 0 allocations per frame
   on the native path); `tests/run_arcade_bench.sh` now also links
   `ChaosEngine.cpp`, which the new `/api/chaos` route needs.
+* **The HTML5 player now has pixel evidence** (`docs/bench/arcade-130/frames/`):
+  every game frame captured from the real engine is rasterized through the real
+  `web/arcade.js` with a real Canvas2D implementation (`tests/render_web_frames.js`,
+  optional `@napi-rs/canvas`) into per-game PNGs plus a contact sheet. The
+  sandbox has no browser (the Chromium download is blocked and no system browser
+  exists), so this is the honest substitute: it proves colours, geometry, text
+  and per-game composition are real pixels, while page chrome/CSS still needs a
+  real browser. The new `web frames (node)` check in `tests/run_all_tests.sh`
+  regenerates them into the build directory (or reports `skipped` when the
+  optional module is absent, so the gate never depends on it).
 * `demo/arcade_cli --test` is a real smoke test now (launch, input, display
   list, wire JSON and title for all eight games plus the Chaos transform)
   instead of printing a fixed banner; `tests/run_all_tests.sh` builds and runs
@@ -151,6 +161,22 @@ Keep a Changelog; versioning: SemVer.
   The g++ build of the test suite is now warning-clean.
 
 ### Fixed
+* **Rhythm lane labels rendered as garbage** (`噌`) in every front-end: the
+  rhythm game built its lane labels from a local (`const char32_t key = U'D';
+  std::u32string_view label(&key, 1)`) and `Frame::addText()` stored that view
+  as-is, so the frame pointed at destroyed stack memory. `addText()` now copies
+  foreign views into the frame arena (`Frame::owns()` keeps interned strings by
+  reference, so the HUD path still allocates nothing per frame);
+  `testFrameOwnsText` pins it by clobbering the stack after `buildFrame()`.
+* **The bridge's JSON reader mangled escaped text**: it only understood `\n`,
+  `\t` and `\r` and silently dropped the backslash for everything else, so
+  `{"text":"v\u0103n"}` — what any client that escapes non-ASCII sends, e.g.
+  Python's `json.dumps` default — arrived as the literal `vu0103n`. The Flexing
+  preload typed mojibake and the typing games received wrong characters. The
+  full escape set is decoded now (`\uXXXX` with surrogate pairs, quotes,
+  backslashes, control characters), unknown escapes stay lenient, and an
+  unterminated string is a 400 instead of a half-parsed value.
+  `testJsonStringEscapes` covers all of it.
 * **Progression was never awarded for games played in the app**: run results
   were only drained by the HTTP bridge, so "type a lot to level up" did
   nothing in the desktop build. `ArcadeManager::drainRunResultsToProgression()`

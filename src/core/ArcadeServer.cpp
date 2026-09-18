@@ -15,7 +15,6 @@
 #include "ChaosEngine.hpp"
 #include "Progression.hpp"
 #include "TypingAnalytics.hpp"
-#include "Progression.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -110,6 +109,116 @@ bool socketLibraryInit() {
 }
 
 //---- tiny JSON reading helpers (the request bodies are ours, not arbitrary) --
+//----------------------------------------------------------------------------
+// JSON string decoding (v1.3.0 fix).
+//
+// The old parser only knew \n, \t and \r and simply dropped the backslash for
+// everything else. Two consequences, both user-visible:
+//   * `{"text":"v\u0103n"}` (what any client that escapes non-ASCII sends, e.g.
+//     Python's json.dumps default) arrived as the literal 6 characters
+//     "vu0103n" — the Flexing preload typed mojibake and the typing games saw
+//     the wrong characters;
+//   * an escaped quote (`{"text":"say \"hi\""}`) ended the string early.
+// This decodes the full JSON escape set, including \uXXXX with UTF-16
+// surrogate pairs, into UTF-8.
+//----------------------------------------------------------------------------
+void appendUtf8(std::string& out, std::uint32_t cp) {
+    if (cp <= 0x7F) {
+        out += static_cast<char>(cp);
+    } else if (cp <= 0x7FF) {
+        out += static_cast<char>(0xC0 | (cp >> 6));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    } else if (cp <= 0xFFFF) {
+        out += static_cast<char>(0xE0 | (cp >> 12));
+        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    } else {
+        out += static_cast<char>(0xF0 | (cp >> 18));
+        out += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    }
+}
+
+bool readHex4(const std::string& s, std::size_t pos, std::uint32_t& value) {
+    if (pos + 4 > s.size()) {
+        return false;
+    }
+    value = 0;
+    for (std::size_t i = 0; i < 4; ++i) {
+        const char c = s[pos + i];
+        std::uint32_t digit = 0;
+        if (c >= '0' && c <= '9') {
+            digit = static_cast<std::uint32_t>(c - '0');
+        } else if (c >= 'a' && c <= 'f') {
+            digit = static_cast<std::uint32_t>(c - 'a' + 10);
+        } else if (c >= 'A' && c <= 'F') {
+            digit = static_cast<std::uint32_t>(c - 'A' + 10);
+        } else {
+            return false;
+        }
+        value = (value << 4) | digit;
+    }
+    return true;
+}
+
+// `pos` points at the first character AFTER the opening quote; it is advanced
+// past the closing quote when one is found. Returns false on malformed input.
+bool jsonDecodeString(const std::string& json, std::size_t& pos, std::string& out) {
+    std::string value;
+    while (pos < json.size()) {
+        const char c = json[pos];
+        if (c == '"') {
+            ++pos;
+            out = std::move(value);
+            return true;
+        }
+        if (c != '\\') {
+            value += c;
+            ++pos;
+            continue;
+        }
+        ++pos;                                  // consume the backslash
+        if (pos >= json.size()) {
+            break;
+        }
+        const char esc = json[pos++];
+        switch (esc) {
+            case 'n': value += '\n'; continue;
+            case 't': value += '\t'; continue;
+            case 'r': value += '\r'; continue;
+            case 'b': value += '\b'; continue;
+            case 'f': value += '\f'; continue;
+            case '/': value += '/';  continue;
+            case '"': value += '"';  continue;
+            case '\\': value += '\\'; continue;
+            case 'u': {
+                std::uint32_t cp = 0;
+                if (!readHex4(json, pos, cp)) {
+                    return false;
+                }
+                pos += 4;
+                if (cp >= 0xD800 && cp <= 0xDBFF && pos + 6 <= json.size() &&
+                    json[pos] == '\\' && json[pos + 1] == 'u') {
+                    std::uint32_t low = 0;
+                    if (readHex4(json, pos + 2, low) && low >= 0xDC00 && low <= 0xDFFF) {
+                        cp = 0x10000 + ((cp - 0xD800) << 10) + (low - 0xDC00);
+                        pos += 6;
+                    }
+                }
+                appendUtf8(value, cp);
+                continue;
+            }
+            default:
+                // Unknown escape: keep the character itself (lenient, matches
+                // the previous behaviour for anything not covered above).
+                value += esc;
+                continue;
+        }
+    }
+    return false;                                // unterminated string
+}
+
 bool jsonFindRaw(const std::string& json, const std::string& key, std::string& out) {
     const std::string needle = "\"" + key + "\"";
     std::size_t pos = json.find(needle);
@@ -130,23 +239,7 @@ bool jsonFindRaw(const std::string& json, const std::string& key, std::string& o
     }
     if (json[pos] == '"') {
         ++pos;
-        std::string value;
-        while (pos < json.size() && json[pos] != '"') {
-            if (json[pos] == '\\' && pos + 1 < json.size()) {
-                ++pos;
-                switch (json[pos]) {
-                    case 'n': value += '\n'; break;
-                    case 't': value += '\t'; break;
-                    case 'r': value += '\r'; break;
-                    default: value += json[pos]; break;
-                }
-            } else {
-                value += json[pos];
-            }
-            ++pos;
-        }
-        out = value;
-        return true;
+        return jsonDecodeString(json, pos, out);
     }
     const std::size_t end = json.find_first_of(",}\n\r", pos);
     out = json.substr(pos, (end == std::string::npos) ? std::string::npos : end - pos);

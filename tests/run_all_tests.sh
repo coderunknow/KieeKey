@@ -270,6 +270,22 @@ if command -v node >/dev/null 2>&1; then
         printf ' FAILED — %s\n' "$OUT/logs/web_render.log"
         rc=1
     fi
+    # Pixel evidence for the HTML5 player: the frames above are rasterized
+    # through the real web/arcade.js with a real Canvas2D implementation
+    # (@napi-rs/canvas — the optional dependency is absent in most checkouts,
+    # in which case the script exits 0 with a SKIPPED notice rather than
+    # failing the gate; docs/bench/arcade-130/frames/ holds the committed PNGs).
+    printf '  [check] %-22s' "web frames (node)"
+    if ( cd "$REPO_ROOT" && node tests/render_web_frames.js "$OUT/web-frames" ) > "$OUT/logs/web_frames.log" 2>&1; then
+        if grep -q 'SKIPPED' "$OUT/logs/web_frames.log"; then
+            printf ' skipped (no canvas module)\n'
+        else
+            printf ' ok\n'
+        fi
+    else
+        printf ' FAILED — %s\n' "$OUT/logs/web_frames.log"
+        rc=1
+    fi
 fi
 
 # --- release manifest matches the tracked tree ------------------------------

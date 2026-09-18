@@ -1,6 +1,13 @@
 {
- "note": "Captured from the real C++ engine through the HTTP bridge (tools/arcade_serve) — replay fixtures for tests/web_render_test.js.",
- "captured_at": "2026-09-18T09:28:52Z",
+ "note": "Captured from the real C++ engine through the HTTP bridge (tools/arcade_serve): each game is auto-played for a few seconds through /api/input + /api/text — the typing players type the passage the engine just drew, the rhythm player hits the lane nearest the hit line — and the richest frame is kept. Replay material for tests/web_render_test.js and tests/render_web_frames.js.",
+ "captured_at": "2026-09-18T14:14:05Z",
+ "capture": {
+  "driver": "tests/capture_web_frames.py",
+  "seconds_per_game": 4.0,
+  "sample_interval": 0.08,
+  "seed": 20260918,
+  "selection": "frame with the most draw commands during the window"
+ },
  "games": {
   "snake": {
    "slug": "snake",
@@ -45,7 +52,7 @@
      ],
      [
       0,
-      462,
+      402,
       302,
       26,
       26,
@@ -56,7 +63,7 @@
      ],
      [
       0,
-      432,
+      372,
       302,
       26,
       26,
@@ -67,7 +74,7 @@
      ],
      [
       0,
-      402,
+      342,
       302,
       26,
       26,
@@ -78,8 +85,8 @@
      ],
      [
       1,
-      355,
-      495,
+      175,
+      345,
       9.6,
       "#FF5F8FFF",
       "#00000000",
@@ -438,7 +445,12 @@
     "finished": false,
     "hasBest": true
    },
-   "cmds": 42
+   "cmds": 42,
+   "played": {
+    "score": 0,
+    "elapsed": 3925,
+    "gameOver": false
+   }
   },
   "tetris": {
    "slug": "tetris",
@@ -448,7 +460,7 @@
     "bg": "#10141CFF",
     "bg2": "#141B26FF",
     "stats": {
-     "score": 0,
+     "score": 219,
      "best": 0,
      "level": 1,
      "combo": 0,
@@ -483,19 +495,448 @@
      ],
      [
       0,
+      251,
+      165,
+      24,
+      24,
+      3,
+      "#51E88AFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      251,
+      191,
+      24,
+      24,
+      3,
+      "#51E88AFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      277,
+      191,
+      24,
+      24,
+      3,
+      "#51E88AFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      277,
+      217,
+      24,
+      24,
+      3,
+      "#51E88AFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      277,
+      243,
+      24,
+      24,
+      3,
+      "#FF5A5AFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      251,
+      269,
+      24,
+      24,
+      3,
+      "#FF5A5AFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      277,
+      269,
+      24,
+      24,
+      3,
+      "#FF5A5AFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      173,
+      295,
+      24,
+      24,
+      3,
+      "#FF9A3DFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      251,
+      295,
+      24,
+      24,
+      3,
+      "#FF5A5AFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      277,
+      295,
+      24,
+      24,
+      3,
+      "#4CC2FFFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      173,
+      321,
+      24,
+      24,
+      3,
+      "#FF9A3DFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      277,
+      321,
+      24,
+      24,
+      3,
+      "#4CC2FFFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      173,
+      347,
+      24,
+      24,
+      3,
+      "#FF9A3DFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      199,
+      347,
+      24,
+      24,
+      3,
+      "#FF9A3DFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      251,
+      347,
+      24,
+      24,
+      3,
+      "#FF9A3DFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      277,
+      347,
+      24,
+      24,
+      3,
+      "#4CC2FFFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      199,
+      373,
+      24,
+      24,
+      3,
+      "#FF5A5AFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      251,
+      373,
+      24,
+      24,
+      3,
+      "#FF9A3DFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      277,
+      373,
+      24,
+      24,
+      3,
+      "#4CC2FFFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      173,
+      399,
+      24,
+      24,
+      3,
+      "#FF5A5AFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      199,
+      399,
+      24,
+      24,
+      3,
+      "#FF5A5AFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      251,
+      399,
+      24,
+      24,
+      3,
+      "#FF9A3DFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      277,
+      399,
+      24,
+      24,
+      3,
+      "#FF9A3DFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      173,
+      425,
+      24,
+      24,
+      3,
+      "#FF5A5AFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      251,
+      425,
+      24,
+      24,
+      3,
+      "#C17CFFFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      173,
+      451,
+      24,
+      24,
+      3,
+      "#51E88AFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      251,
+      451,
+      24,
+      24,
+      3,
+      "#C17CFFFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      277,
+      451,
+      24,
+      24,
+      3,
+      "#C17CFFFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      173,
+      477,
+      24,
+      24,
+      3,
+      "#51E88AFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      199,
+      477,
+      24,
+      24,
+      3,
+      "#51E88AFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      251,
+      477,
+      24,
+      24,
+      3,
+      "#C17CFFFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      199,
+      503,
+      24,
+      24,
+      3,
+      "#51E88AFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      251,
+      503,
+      24,
+      24,
+      3,
+      "#5A8AFFFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      277,
+      503,
+      24,
+      24,
+      3,
+      "#5A8AFFFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      173,
+      529,
+      24,
+      24,
+      3,
+      "#FFD14AFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      199,
+      529,
+      24,
+      24,
+      3,
+      "#FFD14AFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      251,
+      529,
+      24,
+      24,
+      3,
+      "#5A8AFFFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      173,
+      555,
+      24,
+      24,
+      3,
+      "#FFD14AFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
       199,
       555,
       24,
       24,
       3,
+      "#FFD14AFF",
       "#00000000",
-      "#9AA7B888",
-      1.5
+      0
      ],
      [
       0,
-      225,
+      251,
       555,
+      24,
+      24,
+      3,
+      "#5A8AFFFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      251,
+      87,
       24,
       24,
       3,
@@ -506,7 +947,7 @@
      [
       0,
       251,
-      555,
+      113,
       24,
       24,
       3,
@@ -517,7 +958,7 @@
      [
       0,
       277,
-      555,
+      113,
       24,
       24,
       3,
@@ -527,45 +968,56 @@
      ],
      [
       0,
-      199,
-      61,
+      251,
+      139,
       24,
       24,
       3,
-      "#4CC2FFFF",
       "#00000000",
-      0
+      "#9AA7B888",
+      1.5
      ],
      [
       0,
-      225,
-      61,
+      251,
+      87,
       24,
       24,
       3,
-      "#4CC2FFFF",
+      "#C17CFFFF",
       "#00000000",
       0
      ],
      [
       0,
       251,
-      61,
+      113,
       24,
       24,
       3,
-      "#4CC2FFFF",
+      "#C17CFFFF",
       "#00000000",
       0
      ],
      [
       0,
       277,
-      61,
+      113,
       24,
       24,
       3,
-      "#4CC2FFFF",
+      "#C17CFFFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      251,
+      139,
+      24,
+      24,
+      3,
+      "#C17CFFFF",
       "#00000000",
       0
      ],
@@ -587,18 +1039,18 @@
       22,
       22,
       3,
-      "#FF5A5AFF",
+      "#5A8AFFFF",
       "#00000000",
       0
      ],
      [
       0,
-      484,
-      115,
+      460,
+      139,
       22,
       22,
       3,
-      "#FF5A5AFF",
+      "#5A8AFFFF",
       "#00000000",
       0
      ],
@@ -609,7 +1061,7 @@
       22,
       22,
       3,
-      "#FF5A5AFF",
+      "#5A8AFFFF",
       "#00000000",
       0
      ],
@@ -620,7 +1072,7 @@
       22,
       22,
       3,
-      "#FF5A5AFF",
+      "#5A8AFFFF",
       "#00000000",
       0
      ],
@@ -666,12 +1118,12 @@
       0,
       true,
       false,
-      "Điểm: 0"
+      "Điểm: 219"
      ]
     ]
    },
    "stats": {
-    "score": 0,
+    "score": 219,
     "best": 0,
     "level": 1,
     "combo": 0,
@@ -688,7 +1140,12 @@
     "finished": false,
     "hasBest": true
    },
-   "cmds": 18
+   "cmds": 58,
+   "played": {
+    "score": 219,
+    "elapsed": 3439,
+    "gameOver": false
+   }
   },
   "fishing": {
    "slug": "fishing",
@@ -698,16 +1155,16 @@
     "bg": "#0A1C2EFF",
     "bg2": "#072B46FF",
     "stats": {
-     "score": 0,
-     "best": 0,
-     "level": 1,
+     "score": 1200,
+     "best": 1200,
+     "level": 2,
      "combo": 0,
      "maxCombo": 0,
      "lives": 0,
      "wpm": 0,
      "acc": 100,
-     "progress": 0.1929,
-     "meter": 25.0617,
+     "progress": 0.2083,
+     "meter": 51.5123,
      "meterMax": 100,
      "hasMeter": true,
      "paused": false,
@@ -716,7 +1173,7 @@
      "hasBest": true
     },
     "title": "🎣 Câu cá",
-    "status": "Thoát sau 12.6s",
+    "status": "Thoát sau 16.8s",
     "banner": "",
     "hint": "Gõ đúng câu mồi · P tạm dừng · Esc thoát",
     "cmds": [
@@ -757,7 +1214,7 @@
       0,
       150,
       400,
-      135.06,
+      145.78,
       26,
       13,
       "#4CC2FFFF",
@@ -779,7 +1236,7 @@
       0,
       150,
       450,
-      175.43,
+      360.59,
       16,
       8,
       "#51E88AFF",
@@ -916,15 +1373,15 @@
       1,
       520,
       330,
-      26,
-      "#9AA7B8FF",
+      37.44,
+      "#4CC2FFFF",
       "#00000000",
       0
      ],
      [
       1,
-      533,
-      323.5,
+      538.72,
+      320.64,
       3.5,
       "#101010FF",
       "#00000000",
@@ -943,21 +1400,21 @@
       2,
       470,
       120,
-      494,
+      482.56,
       330,
-      "#D9C7A8FF",
-      2.5
+      "#FFD14AFF",
+      3.03
      ],
      [
       3,
       3,
-      494,
+      482.56,
       330,
-      465.4,
-      309.2,
-      465.4,
-      350.8,
-      "#9AA7B8FF",
+      441.38,
+      300.05,
+      441.38,
+      359.95,
+      "#4CC2FFFF",
       "#00000000",
       0
      ],
@@ -981,7 +1438,7 @@
       2,
       false,
       false,
-      "19%"
+      "21%"
      ],
      [
       4,
@@ -999,22 +1456,33 @@
       150,
       505,
       30,
+      "#51E88AFF",
+      0,
+      false,
+      true,
+      "ca h"
+     ],
+     [
+      4,
+      224.4,
+      505,
+      30,
       "#4CC2FFFF",
       0,
       false,
       true,
-      "c"
+      "o"
      ],
      [
       4,
-      168.6,
+      243,
       505,
       30,
       "#9AA7B8FF",
       0,
       false,
       true,
-      "a ro dong boi loi tung tang"
+      "i boi nguoc dong suoi lanh"
      ],
      [
       4,
@@ -1025,32 +1493,32 @@
       0,
       false,
       false,
-      "Cá Rô Đồng"
+      "Cá Hồi Sa Pa"
      ],
      [
       4,
       850,
       565,
       22,
-      "#9AA7B8FF",
+      "#4CC2FFFF",
       2,
       false,
       false,
-      "[Common]"
+      "[Rare]"
      ]
     ]
    },
    "stats": {
-    "score": 0,
-    "best": 0,
-    "level": 1,
+    "score": 1200,
+    "best": 1200,
+    "level": 2,
     "combo": 0,
     "maxCombo": 0,
     "lives": 0,
     "wpm": 0,
     "acc": 100,
-    "progress": 0.1929,
-    "meter": 25.0617,
+    "progress": 0.2083,
+    "meter": 51.5123,
     "meterMax": 100,
     "hasMeter": true,
     "paused": false,
@@ -1058,7 +1526,12 @@
     "finished": false,
     "hasBest": true
    },
-   "cmds": 32
+   "cmds": 33,
+   "played": {
+    "score": 1200,
+    "elapsed": 3944,
+    "gameOver": false
+   }
   },
   "typing-race": {
    "slug": "typing-race",
@@ -1074,9 +1547,9 @@
      "combo": 0,
      "maxCombo": 0,
      "lives": 0,
-     "wpm": 0,
+     "wpm": 587.8,
      "acc": 100,
-     "progress": 0,
+     "progress": 0.9412,
      "meter": 0,
      "meterMax": 1,
      "hasMeter": false,
@@ -1086,7 +1559,7 @@
      "hasBest": true
     },
     "title": "🏎️ Đua xe theo tốc độ gõ",
-    "status": "Đã gõ: 0 ký tự",
+    "status": "Đã gõ: 64 ký tự",
     "banner": "",
     "hint": "Gõ đúng đoạn văn để xe chạy · P tạm dừng · Esc thoát",
     "cmds": [
@@ -1103,7 +1576,7 @@
      ],
      [
       0,
-      57.79,
+      111.65,
       156,
       88,
       34,
@@ -1114,7 +1587,7 @@
      ],
      [
       0,
-      71.79,
+      125.65,
       162,
       60,
       14,
@@ -1125,7 +1598,7 @@
      ],
      [
       0,
-      30,
+      820.59,
       198,
       100,
       38,
@@ -1136,7 +1609,7 @@
      ],
      [
       0,
-      48,
+      838.59,
       206,
       64,
       16,
@@ -1169,7 +1642,7 @@
      ],
      [
       1,
-      75.79,
+      129.65,
       190,
       7,
       "#20242CFF",
@@ -1178,7 +1651,7 @@
      ],
      [
       1,
-      127.79,
+      181.65,
       190,
       7,
       "#20242CFF",
@@ -1187,7 +1660,7 @@
      ],
      [
       1,
-      50,
+      840.59,
       238,
       8,
       "#181C24FF",
@@ -1196,7 +1669,7 @@
      ],
      [
       1,
-      110,
+      900.59,
       238,
       8,
       "#181C24FF",
@@ -1320,7 +1793,7 @@
       0,
       true,
       false,
-      "WPM: 0"
+      "WPM: 588"
      ],
      [
       4,
@@ -1342,7 +1815,7 @@
       0,
       false,
       false,
-      "Thời gian: 0.4s"
+      "Thời gian: 1.2s"
      ],
      [
       4,
@@ -1357,25 +1830,36 @@
      ],
      [
       4,
-      92,
+      -468.4,
+      384,
+      30,
+      "#51E88AFF",
+      0,
+      false,
+      true,
+      "KieeKey la bo go tieng Viet hien dai toi uu do tre va toc do go "
+     ],
+     [
+      4,
+      722,
       384,
       30,
       "#FF8A3DFF",
       0,
       false,
       true,
-      "K"
+      "p"
      ],
      [
       4,
-      110.6,
+      740.6,
       384,
       30,
       "#9AA7B8FF",
       0,
       false,
       true,
-      "ieeKey la bo go tieng Viet hien dai toi uu do tre va toc do go phim"
+      "him"
      ]
     ]
    },
@@ -1386,9 +1870,9 @@
     "combo": 0,
     "maxCombo": 0,
     "lives": 0,
-    "wpm": 0,
+    "wpm": 587.8,
     "acc": 100,
-    "progress": 0,
+    "progress": 0.9412,
     "meter": 0,
     "meterMax": 1,
     "hasMeter": false,
@@ -1397,7 +1881,12 @@
     "finished": false,
     "hasBest": true
    },
-   "cmds": 29
+   "cmds": 30,
+   "played": {
+    "score": 0,
+    "elapsed": 1224,
+    "gameOver": false
+   }
   },
   "wasd-race": {
    "slug": "wasd-race",
@@ -1407,7 +1896,7 @@
     "bg": "#10141CFF",
     "bg2": "#1A2230FF",
     "stats": {
-     "score": 0,
+     "score": 20,
      "best": 0,
      "level": 1,
      "combo": 0,
@@ -1416,7 +1905,7 @@
      "wpm": 0,
      "acc": 100,
      "progress": 0,
-     "meter": 98.8833,
+     "meter": 89.0795,
      "meterMax": 100,
      "hasMeter": true,
      "paused": false,
@@ -1425,7 +1914,7 @@
      "hasBest": true
     },
     "title": "🛣️ Đua xe + gõ phím",
-    "status": "Quãng đường 7 m",
+    "status": "Quãng đường 66 m",
     "banner": "",
     "hint": "A/D đổi làn · W tăng tốc · S phanh · Gõ để nạp nhiên liệu · Esc thoát",
     "cmds": [
@@ -1706,6 +2195,28 @@
      ],
      [
       0,
+      294.53,
+      140.9,
+      44.28,
+      29.95,
+      6,
+      "#D04A4AFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      302.34,
+      146.11,
+      28.65,
+      13.02,
+      4,
+      "#301212FF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
       412,
       420,
       76,
@@ -1741,7 +2252,7 @@
       0,
       690,
       90,
-      66.4,
+      50.11,
       26,
       13,
       "#FF8A3DFF",
@@ -1763,7 +2274,7 @@
       0,
       690,
       160,
-      168.1,
+      151.44,
       26,
       13,
       "#51E88AFF",
@@ -1790,7 +2301,7 @@
       0,
       false,
       false,
-      "Tốc độ 59 km/h"
+      "Tốc độ 44 km/h"
      ],
      [
       4,
@@ -1801,7 +2312,7 @@
       0,
       false,
       false,
-      "Nhiên liệu 99%"
+      "Nhiên liệu 89%"
      ],
      [
       4,
@@ -1830,7 +2341,7 @@
       76,
       582,
       28,
-      "#FF8A3DFF",
+      "#51E88AFF",
       0,
       false,
       true,
@@ -1841,16 +2352,27 @@
       93.36,
       582,
       28,
+      "#FF8A3DFF",
+      0,
+      false,
+      true,
+      "a"
+     ],
+     [
+      4,
+      110.72,
+      582,
+      28,
       "#9AA7B8FF",
       0,
       false,
       true,
-      "ai xe vuot chuong ngai vat toc do cao"
+      "i xe vuot chuong ngai vat toc do cao"
      ]
     ]
    },
    "stats": {
-    "score": 0,
+    "score": 20,
     "best": 0,
     "level": 1,
     "combo": 0,
@@ -1859,7 +2381,7 @@
     "wpm": 0,
     "acc": 100,
     "progress": 0,
-    "meter": 98.8833,
+    "meter": 89.0795,
     "meterMax": 100,
     "hasMeter": true,
     "paused": false,
@@ -1867,7 +2389,12 @@
     "finished": false,
     "hasBest": true
    },
-   "cmds": 38
+   "cmds": 41,
+   "played": {
+    "score": 20,
+    "elapsed": 3946,
+    "gameOver": false
+   }
   },
   "rhythm": {
    "slug": "rhythm",
@@ -1886,17 +2413,17 @@
      "wpm": 0,
      "acc": 100,
      "progress": 0,
-     "meter": 100,
+     "meter": 0,
      "meterMax": 100,
-     "hasMeter": false,
+     "hasMeter": true,
      "paused": false,
-     "gameOver": false,
+     "gameOver": true,
      "finished": false,
      "hasBest": true
     },
     "title": "🎵 Gõ theo nhịp (FNF-style)",
     "status": "BPM 112",
-    "banner": "",
+    "banner": "THUA! Hết thanh máu",
     "hint": "D / F / J / K đúng nhịp · P tạm dừng · R chơi lại · Esc thoát",
     "cmds": [
      [
@@ -2000,19 +2527,19 @@
      ],
      [
       0,
-      466,
-      357.64,
+      246,
+      354.42,
       78,
       32,
       8,
-      "#FFD14AFF",
+      "#6C9CFFFF",
       "#00000000",
       0
      ],
      [
       0,
       356,
-      307.04,
+      303.82,
       78,
       32,
       8,
@@ -2022,12 +2549,23 @@
      ],
      [
       0,
-      246,
-      205.85,
-      78,
-      32,
-      8,
-      "#6C9CFFFF",
+      300,
+      172,
+      300,
+      18,
+      9,
+      "#1B212EFF",
+      "#00000000",
+      0
+     ],
+     [
+      0,
+      300,
+      172,
+      0,
+      18,
+      9,
+      "#FF5A5AFF",
       "#00000000",
       0
      ],
@@ -2040,7 +2578,7 @@
       1,
       true,
       false,
-      "嗙"
+      "D"
      ],
      [
       4,
@@ -2051,7 +2589,7 @@
       1,
       true,
       false,
-      "嗙"
+      "F"
      ],
      [
       4,
@@ -2062,7 +2600,7 @@
       1,
       true,
       false,
-      "嗙"
+      "J"
      ],
      [
       4,
@@ -2073,18 +2611,18 @@
       1,
       true,
       false,
-      "嗙"
+      "K"
      ],
      [
       4,
       450,
       90,
       30,
-      "#9AA7B8FF",
+      "#FF5A5AFF",
       1,
       true,
       false,
-      "PERFECT!"
+      "MISS!"
      ],
      [
       4,
@@ -2096,17 +2634,6 @@
       true,
       false,
       "Combo x0"
-     ],
-     [
-      4,
-      450,
-      172,
-      18,
-      "#FFD14AFF",
-      1,
-      false,
-      false,
-      "CHẾ ĐỘ HARDCORE: lệch nhịp là chết ngay"
      ]
     ]
    },
@@ -2120,15 +2647,20 @@
     "wpm": 0,
     "acc": 100,
     "progress": 0,
-    "meter": 100,
+    "meter": 0,
     "meterMax": 100,
-    "hasMeter": false,
+    "hasMeter": true,
     "paused": false,
-    "gameOver": false,
+    "gameOver": true,
     "finished": false,
     "hasBest": true
    },
-   "cmds": 19
+   "cmds": 19,
+   "played": {
+    "score": 0,
+    "elapsed": 3946,
+    "gameOver": true
+   }
   },
   "no-mistake": {
    "slug": "no-mistake",
@@ -2138,7 +2670,7 @@
     "bg": "#14101AFF",
     "bg2": "#2C1422FF",
     "stats": {
-     "score": 0,
+     "score": 10000,
      "best": 0,
      "level": 1,
      "combo": 0,
@@ -2147,17 +2679,17 @@
      "wpm": 0,
      "acc": 100,
      "progress": 0,
-     "meter": 0,
+     "meter": 10000,
      "meterMax": 120000,
      "hasMeter": true,
      "paused": false,
-     "gameOver": true,
+     "gameOver": false,
      "finished": false,
      "hasBest": true
     },
     "title": "🎯 Không được sai",
     "status": "Ký tự: 0",
-    "banner": "SAI MỘT KÝ TỰ — màn chơi kết thúc",
+    "banner": "",
     "hint": "Gõ đúng từng ký tự · P tạm dừng · R chơi lại · Esc thoát",
     "cmds": [
      [
@@ -2175,7 +2707,7 @@
       0,
       80,
       90,
-      0,
+      66.67,
       26,
       13,
       "#FF5A5AFF",
@@ -2213,7 +2745,7 @@
       2,
       false,
       false,
-      "0"
+      "10000"
      ],
      [
       4,
@@ -2268,12 +2800,12 @@
       0,
       false,
       false,
-      "Lỗi: 1"
+      "Lỗi: 0"
      ]
     ]
    },
    "stats": {
-    "score": 0,
+    "score": 10000,
     "best": 0,
     "level": 1,
     "combo": 0,
@@ -2282,15 +2814,20 @@
     "wpm": 0,
     "acc": 100,
     "progress": 0,
-    "meter": 0,
+    "meter": 10000,
     "meterMax": 120000,
     "hasMeter": true,
     "paused": false,
-    "gameOver": true,
+    "gameOver": false,
     "finished": false,
     "hasBest": true
    },
-   "cmds": 10
+   "cmds": 10,
+   "played": {
+    "score": 10000,
+    "elapsed": 3929,
+    "gameOver": false
+   }
   },
   "flexing": {
    "slug": "flexing",
@@ -2300,7 +2837,7 @@
     "bg": "#181208FF",
     "bg2": "#382208FF",
     "stats": {
-     "score": 33,
+     "score": 146,
      "best": 0,
      "level": 1,
      "combo": 0,
@@ -2308,7 +2845,7 @@
      "lives": 0,
      "wpm": 0,
      "acc": 100,
-     "progress": 0.0045,
+     "progress": 0.4118,
      "meter": 0,
      "meterMax": 1,
      "hasMeter": false,
@@ -2318,7 +2855,7 @@
      "hasBest": false
     },
     "title": "🗿 Flexing Mode",
-    "status": "WPM hiển thị 34",
+    "status": "WPM hiển thị 147",
     "banner": "",
     "hint": "Gõ phím bất kỳ · P tạm dừng · R chơi lại · Esc thoát",
     "cmds": [
@@ -2335,7 +2872,7 @@
      ],
      [
       0,
-      96,
+      864,
       150,
       3,
       28,
@@ -2375,7 +2912,18 @@
       0,
       false,
       true,
-      "KieeKey la bo go tieng Viet hien dai co c"
+      "Flexing Mode: văn bản này được chuẩn bị trước và engine tự gõ nó ra cho bạ"
+     ],
+     [
+      4,
+      80,
+      184,
+      26,
+      "#ECF1F8FF",
+      0,
+      false,
+      true,
+      " — không cần g"
      ],
      [
       4,
@@ -2386,7 +2934,7 @@
       0,
       true,
       false,
-      "WPM hiển thị: 34"
+      "WPM hiển thị: 147"
      ],
      [
       4,
@@ -2397,7 +2945,7 @@
       0,
       false,
       false,
-      "Phím thật: 1"
+      "Phím thật: 49"
      ],
      [
       4,
@@ -2408,7 +2956,7 @@
       0,
       false,
       false,
-      "Ký tự hiện: 1"
+      "Ký tự hiện: 49"
      ],
      [
       4,
@@ -2424,7 +2972,7 @@
     ]
    },
    "stats": {
-    "score": 33,
+    "score": 146,
     "best": 0,
     "level": 1,
     "combo": 0,
@@ -2432,7 +2980,7 @@
     "lives": 0,
     "wpm": 0,
     "acc": 100,
-    "progress": 0.0045,
+    "progress": 0.4118,
     "meter": 0,
     "meterMax": 1,
     "hasMeter": false,
@@ -2441,7 +2989,12 @@
     "finished": false,
     "hasBest": false
    },
-   "cmds": 9
+   "cmds": 10,
+   "played": {
+    "score": 146,
+    "elapsed": 3944,
+    "gameOver": false
+   }
   }
  }
 }

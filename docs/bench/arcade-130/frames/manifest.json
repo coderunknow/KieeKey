@@ -1,0 +1,68 @@
+{
+  "renderer": "web/arcade.js",
+  "rasterizer": "Canvas2D via @napi-rs/canvas",
+  "source": "tests/data/web_frames.json (arcade_serve, real engine)",
+  "note": "Captured from the real C++ engine through the HTTP bridge (tools/arcade_serve): each game is auto-played for a few seconds through /api/input + /api/text — the typing players type the passage the engine just drew, the rhythm player hits the lane nearest the hit line — and the richest frame is kept. Replay material for tests/web_render_test.js and tests/render_web_frames.js.",
+  "canvas": {
+    "width": 1280,
+    "height": 720
+  },
+  "games": [
+    {
+      "slug": "snake",
+      "file": "docs/bench/arcade-130/frames/snake.png",
+      "bytes": 9233,
+      "cmds": 42,
+      "title": "🐍 Snake"
+    },
+    {
+      "slug": "tetris",
+      "file": "docs/bench/arcade-130/frames/tetris.png",
+      "bytes": 28185,
+      "cmds": 58,
+      "title": "🧱 Tetris"
+    },
+    {
+      "slug": "fishing",
+      "file": "docs/bench/arcade-130/frames/fishing.png",
+      "bytes": 43672,
+      "cmds": 33,
+      "title": "🎣 Câu cá"
+    },
+    {
+      "slug": "typing-race",
+      "file": "docs/bench/arcade-130/frames/typing-race.png",
+      "bytes": 36828,
+      "cmds": 30,
+      "title": "🏎️ Đua xe theo tốc độ gõ"
+    },
+    {
+      "slug": "wasd-race",
+      "file": "docs/bench/arcade-130/frames/wasd-race.png",
+      "bytes": 27683,
+      "cmds": 41,
+      "title": "🛣️ Đua xe + gõ phím"
+    },
+    {
+      "slug": "rhythm",
+      "file": "docs/bench/arcade-130/frames/rhythm.png",
+      "bytes": 18731,
+      "cmds": 19,
+      "title": "🎵 Gõ theo nhịp (FNF-style)"
+    },
+    {
+      "slug": "no-mistake",
+      "file": "docs/bench/arcade-130/frames/no-mistake.png",
+      "bytes": 41938,
+      "cmds": 10,
+      "title": "🎯 Không được sai"
+    },
+    {
+      "slug": "flexing",
+      "file": "docs/bench/arcade-130/frames/flexing.png",
+      "bytes": 60427,
+      "cmds": 10,
+      "title": "🗿 Flexing Mode"
+    }
+  ]
+}

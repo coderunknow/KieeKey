@@ -1392,6 +1392,64 @@ static void testNoSteadyStateAllocations() {
 }
 
 //===========================================================================
+// v1.3.0 FIX: Frame::addText() stored the caller's std::u32string_view as-is,
+// so a game that built a label from a local
+//     const char32_t key = U'D';
+//     const std::u32string_view label(&key, 1);
+// left the frame pointing at destroyed stack memory — the rhythm lane labels
+// rendered as unrelated characters ("噌"), and any front-end reading the frame
+// after the game returned saw garbage. addText() now copies foreign views into
+// the frame arena (interned views stay by reference).
+static void testFrameOwnsText() {
+    g_currentTest = "FrameTextOwnership";
+    Frame frame;
+
+    // Build the frame inside a scope, exactly like ArcadeManager::getFrame()
+    // does, then read the text AFTER those locals are gone.
+    {
+        RhythmTypingGame rhythm;
+        rhythm.setSeed(1234u);
+        rhythm.setNoteCount(16);
+        rhythm.start();
+        for (int i = 0; i < 20; ++i) {
+            rhythm.update(1.0 / 60.0);
+        }
+        rhythm.buildFrame(frame);
+    }
+
+    // Clobber the stack the game's locals used to live on: with the old
+    // behaviour this is what the lane labels would read back.
+    volatile std::uint32_t clobber[512];
+    for (std::size_t i = 0; i < std::size(clobber); ++i) {
+        clobber[i] = 0x564C564Cu;             // the garbage char seen in the wild
+    }
+    (void)clobber;
+
+    CHECK(frame.texts.size() > 0);
+    bool sawLane = false;
+    for (const TextShape& t : frame.texts) {
+        CHECK(t.text.data() != nullptr || t.text.empty());
+        for (char32_t c : t.text) {
+            // Every label in this game is ASCII or Vietnamese; the old bug left
+            // CJK codepoints (0x564C etc.) in the buffer.
+            CHECK_MSG(c < 0x2000 || c >= 0x1EA0,
+                      "frame text must not contain stack garbage");
+        }
+        if (t.text == U"D" || t.text == U"F" || t.text == U"J" || t.text == U"K") {
+            sawLane = true;
+        }
+    }
+    CHECK_MSG(sawLane, "the four rhythm lane labels survive the buildFrame() scope");
+
+    // The same frame re-read after another game wrote its own text: interned
+    // strings must still be the ones that were added.
+    const std::u32string firstText(frame.texts.front().text);
+    frame.clear();
+    CHECK(frame.texts.empty());
+    CHECK(frame.droppedShapes == 0);
+}
+
+//===========================================================================
 // v1.3.0: POST /api/config used to be stored and forgotten — a running game
 // never saw the new fail mode, so the web dropdown (and the desktop config row)
 // looked dead. setConfig() now pushes the live-safe subset immediately, and the
@@ -1551,6 +1609,7 @@ int main() {
     RUN(testFrameInvariants);
     RUN(testDeterminism);
     RUN(testNoSteadyStateAllocations);
+    RUN(testFrameOwnsText);
     RUN(testLiveConfigReachesRunningGame);
     RUN(testProgressionCreditedNatively);
 

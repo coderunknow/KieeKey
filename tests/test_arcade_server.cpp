@@ -555,6 +555,64 @@ void testConfigApplyNow() {
     std::cout << "  [PASS] config route (live knobs + applyNow relaunch)\n";
 }
 
+//---------------------------------------------------------------------------
+// v1.3.0 FIX: the bridge's JSON reader only understood \n, \t and \r and
+// dropped the backslash for everything else, so \uXXXX escapes arrived as
+// literal "u0103" text (Python's json.dumps escapes non-ASCII by default) and
+// an escaped quote terminated the string early. Both are user-visible: the
+// Flexing preload typed mojibake and typing games received the wrong
+// characters.
+void testJsonStringEscapes() {
+    ArcadeServer server;
+    (void)server.handleRequest("POST", "/api/start", "{\"slug\":\"flexing\"}");
+
+    // "v\u0103n b\u1ea3n" == "văn bản" == 7 characters.
+    auto escaped = server.handleRequest(
+        "POST", "/api/preload",
+        "{\"text\":\"v\\u0103n b\\u1ea3n\",\"granularity\":0}");
+    assert(escaped.status == 200);
+    assert(contains(bodyOf(escaped), "\"total\":7"));
+
+    // Raw UTF-8 must give the same count (and keep working).
+    auto raw = server.handleRequest(
+        "POST", "/api/preload",
+        "{\"text\":\"v\xc4\x83n b\xe1\xba\xa3n\",\"granularity\":0}");
+    assert(raw.status == 200);
+    assert(contains(bodyOf(raw), "\"total\":7"));
+
+    // A surrogate pair is one character: U+1F5FF (the Flexing emoji).
+    auto pair = server.handleRequest(
+        "POST", "/api/preload",
+        "{\"text\":\"\\ud83d\\udfff\",\"granularity\":0}");
+    assert(pair.status == 200);
+    assert(contains(bodyOf(pair), "\"total\":1"));
+
+    // Escaped quote / backslash / newline must not break the string or the
+    // parse: 3 characters here (a, ", b) and the newline form keeps the
+    // 1-character count of the second call.
+    auto quote = server.handleRequest(
+        "POST", "/api/preload",
+        "{\"text\":\"a\\\"b\",\"granularity\":0}");
+    assert(quote.status == 200);
+    assert(contains(bodyOf(quote), "\"total\":3"));
+
+    auto slash = server.handleRequest(
+        "POST", "/api/preload",
+        "{\"text\":\"a\\\\b\",\"granularity\":0}");
+    assert(slash.status == 200);
+    assert(contains(bodyOf(slash), "\"total\":3"));
+
+    // A string with no closing quote is rejected instead of being accepted
+    // with a half-parsed value (the decoder refuses to guess).
+    auto broken = server.handleRequest(
+        "POST", "/api/preload", "{\"text\":\"unterminated");
+    assert(broken.status == 400);
+    assert(contains(bodyOf(broken), "\"ok\":false"));
+
+    (void)server.handleRequest("POST", "/api/stop", "");
+    std::cout << "  [PASS] JSON string escapes (\\uXXXX, quotes, surrogates)\n";
+}
+
 int main() {
     std::cout << "=== Running Arcade Server Suite ===\n";
     testRouting();
@@ -567,6 +625,7 @@ int main() {
     testChaosLab();
     testProgressionAndRivalRoutes();
     testConfigApplyNow();
+    testJsonStringEscapes();
     std::cout << "=== ALL ARCADE SERVER TESTS PASSED ===\n";
     return 0;
 }

@@ -126,7 +126,9 @@ bool Frame::addText(float x, float y, float size, Color color, TextAlign align,
     t.align = align;
     t.bold = bold;
     t.mono = mono;
-    t.text = text;
+    // Own the string: a view into the caller's stack frame (or into a
+    // temporary) must not outlive this call — see the note in the header.
+    t.text = owns(text) ? text : intern(text);
     texts.push_back(t);
     return true;
 }

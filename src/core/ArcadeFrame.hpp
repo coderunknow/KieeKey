@@ -210,8 +210,25 @@ public:
     bool addCircle(float cx, float cy, float r, Color fill);
     bool addLine(float x1, float y1, float x2, float y2, Color color, float width = 1);
     bool addPoly(const PolyShape& p);
+    // NOTE (v1.3.0 fix): this COPIES the string into the frame arena when the
+    // view does not already point into it. It used to store the view as-is,
+    // which silently dangled whenever a game passed a local (`const char32_t
+    // key = U'D'; std::u32string_view label(&key, 1);`) — the rhythm lane
+    // labels rendered as garbage characters from reused stack memory. Strings
+    // already interned by this frame (intern/internNumber/internAscii) are kept
+    // by reference, so the HUD path still allocates nothing per frame.
     bool addText(float x, float y, float size, Color color, TextAlign align,
                  std::u32string_view text, bool bold = false, bool mono = false);
+
+    // True when `s` points into this frame's arena (i.e. it outlives the
+    // current statement, so addText can keep the view instead of copying).
+    [[nodiscard]] bool owns(std::u32string_view s) const noexcept {
+        if (s.empty()) {
+            return true;
+        }
+        const char32_t* base = m_arena.data();
+        return s.data() >= base && s.data() + s.size() <= base + m_arena.size();
+    }
 
     //---- text helpers -------------------------------------------------------
     // "Intern" a string into the frame-owned arena and return a view that

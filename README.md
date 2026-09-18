@@ -106,13 +106,14 @@ Run everything with `tests/run_all_tests.sh` (native) or `ctest` on Windows:
 
 | suite | covers | result |
 |---|---|---|
-| `ok_arcade_tests` | all 8 games, manager, live config, determinism, no steady-state allocations | 3774 checks, 0 failures |
+| `ok_arcade_tests` | all 8 games, manager, live config, frame text ownership, determinism, no steady-state allocations | 3844 checks, 0 failures |
 | `ok_arcade_render_tests` | display list, JSON wire format, injection safety, viewport letterboxing, payload budget | 6/6 |
-| `ok_arcade_server_tests` | HTTP routing, session control, input forwarding, traversal guards, a full simulated race, the Flexing payload, the Chaos lab, progression/AI-rival routes, `POST /api/config` live/applyNow | 10/10 |
+| `ok_arcade_server_tests` | HTTP routing, session control, input forwarding, traversal guards, a full simulated race, the Flexing payload, the Chaos lab, progression/AI-rival routes, JSON string escapes, `POST /api/config` live/applyNow | 12/12 |
 | `ok_arcade_window_tests` | **the real Win32 window procedures**: catalogue painting, hover, click-to-play, keyboard, timer, `Esc`/close, Chaos Lab preview + injection, and the Flexing page (prepared text in, engine text typed out) | 5/5 |
 | `tests/web_labs_test.js` | the browser lab glue: engine text into the flexing control, chaos preview/replay, "keys stay in the text field" guard | 27 checks |
 | `tests/web_progress_test.js` | the progression/AI panel: engine numbers, level-up toast, opt-in switch, learned pace, live race preview, visibility-aware polling | 23 checks |
 | `tests/web_render_test.js` | the HTML5 renderer replayed over frames captured from the C++ engine (`tests/data/web_frames.json`): every game's commands, colours, gradients, HUD | 62 checks |
+| `tests/render_web_frames.js` | the same fixtures rasterized with real Canvas2D into **pixel evidence** (`docs/bench/arcade-130/frames/*.png` + a contact sheet); needs the optional `@napi-rs/canvas`, otherwise it reports `skipped` | 8 games |
 | `demo/arcade_cli --test` | the terminal front-end: all 8 games launch, answer input and produce a display list + wire JSON | 8/8 + chaos |
 | `ok_chaos_tests` | case + glyph transforms, render-only rotations, thread safety | 4/4 |
 | `ok_ai_tests` | opt-in/privacy, learning, racer determinism, ghost round-trip, hostile payloads, concurrency | 6/6 |

@@ -41,7 +41,12 @@ executed via `tests/run_extreme_bench.sh`:
 - `perf_run_*.json`: Micro-decision latency across 4 workloads (`vn-compose`, `mixed`, `passthrough`, `delete`).
 - `e2e_run_*.json`: Pipeline burst latency, queue dispatch, and peak RSS memory.
 - `tone_latency.log`: 8 complex diacritic transformation populations.
-- `feature_isolation.txt`: Subsystem isolation benchmark proving 0.0% overhead when arcade/chaos features are in standby and verifying bit-identical output digests.
+- `feature_isolation.txt`: Subsystem isolation benchmark proving the standby
+  overhead gate (<= 5 % when arcade/chaos features are inactive; 0.0 % in the
+  original run, 1.56 % when re-measured at `35af240` on the shared VM) and
+  verifying bit-identical output digests. Only the deliberately
+  behaviour-changing configurations (active chaos, full suite) differ, and even
+  all-features-active costs 473.7 ns per keystroke.
 - `EXTREME_BENCHMARK_REPORT.md`: Master consolidated report.
 
 ## v1.2.2 Stable (release campaign)

@@ -68,6 +68,11 @@ Keep a Changelog; versioning: SemVer.
   Windows SDK exists.
 
 ### Changed
+* The feature-isolation benchmark (`docs/bench/extreme-130/`) was re-measured
+  on this commit: standby overhead 1.56 % (gate <= 5 %), sink digests
+  bit-identical, and even all-modules-active costs 473.7 ns per keystroke
+  (p99 644 ns) — the previous campaign's numbers and the noise caveat are both
+  recorded in the report.
 * The standardized arcade benchmark was re-run on this commit and the evidence
   under `docs/bench/arcade-130/` refreshed (heaviest game 83.3 µs = 0.50 % of a
   60 FPS frame, `GET /api/state` 45.4 µs / p99 89.3 µs, 0 allocations per frame

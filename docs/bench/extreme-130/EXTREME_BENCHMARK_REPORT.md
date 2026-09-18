@@ -60,7 +60,10 @@ Measured per-keystroke decision time on the core IME engine (`T1-decision` layer
 
 ## 6. v1.3.0 Feature Isolation & Non-Regression Invariant
 
-Apples-to-apples comparison on identical 500,000 keystroke streams measuring the exact runtime overhead of v1.3.0 modules:
+Apples-to-apples comparison on identical deterministic keystroke streams measuring the
+exact runtime overhead of v1.3.0 modules. Re-measured at the current commit
+(2026-09-18, `35af240`, `--keys=100000`) — the numbers move slightly with host
+load, so the gate is the budget, not the third digit:
 
 ```
 ========================================================================
@@ -70,21 +73,32 @@ Apples-to-apples comparison on identical 500,000 keystroke streams measuring the
 
 Configuration                         Mean (ns)   p50 (ns)  p90 (ns)  p99 (ns)  Delta vs BL Sink Digest       
 --------------------------------------------------------------------------------------------------------------
-1. Pure IME Baseline (Core only)      58.2        55        69        100       BASELINE    0x521ea99bb909b76c
-2. IME + Inactive Arcade (Standby)    58.6        55        70        108       +0.0%       0x521ea99bb909b76c
-3. IME + Active Chaos Engine          79.4        70        103       168       +27.3%      0xf8d2155f42acdb02
-4. IME + Active AI Telemetry          68.2        63        85        154       +14.5%      0x521ea99bb909b76c
-5. IME + Full v1.3.0 Suite            484.9       467       500       607       +749.1%     0xf8d2155f42acdb02
+1. Pure IME Baseline (Core only)      72.7        64        87        122       BASELINE    0x521ea99bb909b76c
+2. IME + Inactive Arcade (Standby)    72.8        65        86        123       +1.6%       0x521ea99bb909b76c
+3. IME + Active Chaos Engine          90.2        84        107       142       +31.2%      0xf8d2155f42acdb02
+4. IME + Active AI Telemetry          81.2        74        97        123       +15.6%      0x521ea99bb909b76c
+5. IME + Full v1.3.0 Suite            473.7       455       491       644       +610.9%     0xf8d2155f42acdb02
 
 Apples-to-Apples Verification Verdict:
-  [PASS] Inactive Arcade overhead is 0.00% (within <= 5.0% gate budget).
+  [PASS] Inactive Arcade overhead is 1.56% (within <= 5.0% gate budget).
   [PASS] Bit-level execution determinism verified across all workloads.
 ```
 
 ### Isolation Invariants Proven:
-1. **Zero Standby Overhead:** When Arcade minigames are inactive, keyboard hook overhead is **+0.0%** (54 ns vs 54 ns baseline).
-2. **Bit-Level Correctness:** The IME output sink digest is byte-for-byte identical (`0x9b6a85b99bf77830`) between Pure Baseline, Arcade Standby, and AI Telemetry modes.
-3. **Asynchronous Non-Blocking Telemetry:** AI telemetry adds minimal latency while keeping the typing thread completely decoupled from analysis.
+1. **No Standby Overhead:** when the Arcade games are inactive, keyboard hook
+   overhead stays inside the gate budget (1.56 % in this run, 0.0 % in the
+   original campaign run — same code path, host-load noise) and the per-key cost
+   stays at ~73 ns.
+2. **Bit-Level Correctness:** the IME output sink digest is byte-for-byte
+   identical (`0x521ea99bb909b76c`) between Pure Baseline, Arcade Standby and AI
+   Telemetry modes. Only the *deliberately* behaviour-changing configurations
+   (active chaos transformation, full suite) produce a different digest, which is
+   the point of the digest.
+3. **Asynchronous Non-Blocking Telemetry:** AI telemetry adds ~16 % (81 ns vs
+   73 ns) while keeping the typing thread decoupled from analysis.
+4. **Worst case is still cheap:** with every v1.3.0 module active at once the
+   per-keystroke cost is **473.7 ns** (p99 644 ns) — three orders of magnitude
+   below the 1 ms the hook path is allowed to spend.
 
 ---
 
@@ -95,7 +109,7 @@ Apples-to-Apples Verification Verdict:
 | **Correctness Oracle Deviations** | `0` | **`0`** | **PASS** |
 | **Micro-decision Latency (vn-compose p50)** | $\le 50\text{ ns}$ | **`40 ns`** | **PASS** |
 | **Mixed Workload Latency (p50)** | $\le 60\text{ ns}$ | **`49 ns`** | **PASS** |
-| **Inactive Arcade Overhead** | $\le 5.0\%$ | **`+0.0%`** | **PASS** |
+| **Inactive Arcade Overhead** | $\le 5.0\%$ | **`+1.6%`** (re-measured; 0.0 % in the original run) | **PASS** |
 | **Peak Process RSS Increase** | $\le 10.0\%$ | **`0.0%` (8.47 MB)** | **PASS** |
 | **Busy Polling in Idle State** | None | **`0 CPU wakeups`** | **PASS** |
 

@@ -27,6 +27,7 @@
 // Release as well as Debug (it never relies on assert() being enabled).
 //----------------------------------------------------------------------------
 #include "Arcade.hpp"
+#include "Progression.hpp"
 #include "ArcadeRender.hpp"
 
 #include <algorithm>
@@ -1391,6 +1392,64 @@ static void testNoSteadyStateAllocations() {
 }
 
 //===========================================================================
+// Progression must be credited by the *native* path (ArcadeManager::update),
+// not only by the HTTP bridge: "type a lot to level up" is a user-facing
+// promise, and the desktop hub never talks to the bridge.
+static void testProgressionCreditedNatively() {
+    g_currentTest = "NativeProgressionCredit";
+    auto& hub = ArcadeManager::instance();
+    auto& progress = ok::progression::ProgressionEngine::instance();
+
+    hub.stopGame();
+    for (RunResult drain; hub.pollRunResult(drain);) {
+    }
+    progress.reset();
+    const auto before = progress.getStats();
+    CHECK(before.totalXp == 0);
+    CHECK(before.typingRaceBestWpm == 0.0);
+
+    // Play a real typing race to the finish line through the manager only.
+    hub.setConfig(ArcadeConfig{});
+    hub.launchGame(GameType::TypingRace, 99);
+    auto* race = dynamic_cast<TypingRaceGame*>(hub.getCurrentGame());
+    CHECK(race != nullptr);
+    if (race != nullptr) {
+        const std::u32string passage(race->getPassage());
+        for (std::size_t i = 0; i < passage.size() && !race->isGameOver(); ++i) {
+            hub.handleKey(0, passage[i], true);
+            hub.update(0.06);            // ~ the measured typing speed of the run
+        }
+        CHECK(race->isGameOver());
+    }
+
+    // update() drains the finished run into the progression engine by itself.
+    hub.update(1.0 / 60.0);
+    const auto after = progress.getStats();
+    CHECK_MSG(after.totalXp > 0, "the native update() path must credit XP");
+    CHECK(after.typingRaceBestWpm > 0.0);
+    CHECK(after.typingRaceBestWpm >= before.typingRaceBestWpm);
+
+    // A run is credited exactly once: draining again must not double the XP.
+    const auto snapshot = progress.getStats();
+    CHECK(hub.drainRunResultsToProgression() == 0);
+    CHECK(hub.pendingRunResultCount() == 0);
+    CHECK(progress.getStats().totalXp == snapshot.totalXp);
+
+    // Flexing Mode stays a joke: it never adds XP (documented exclusion).
+    const std::uint64_t xpBefore = progress.getStats().totalXp;
+    hub.launchGame(GameType::Flexing, 7);
+    for (int i = 0; i < 40; ++i) {
+        hub.handleKey(0, U'x', true);
+        hub.update(1.0 / 60.0);
+    }
+    hub.stopGame();
+    hub.update(1.0 / 60.0);
+    CHECK(progress.getStats().totalXp == xpBefore);
+
+    hub.stopGame();
+    progress.reset();
+}
+
 int main() {
     std::printf("=== KieeKey Arcade Hub test suite (v1.3.0) ===\n");
     std::setvbuf(stdout, nullptr, _IONBF, 0);   // keep progress visible if a test hangs
@@ -1413,6 +1472,7 @@ int main() {
     RUN(testFrameInvariants);
     RUN(testDeterminism);
     RUN(testNoSteadyStateAllocations);
+    RUN(testProgressionCreditedNatively);
 
     std::printf("--- %d checks, %d failures ---\n", g_checks, g_failures);
     if (g_failures == 0) {

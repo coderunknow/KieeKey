@@ -46,11 +46,11 @@ NativeWindowHandle ArcadeWindow::handle() const noexcept { return nullptr; }
 void ArcadeWindow::focus() {}
 int ArcadeWindow::hoverIndexForTest() const noexcept { return -1; }
 void ArcadeWindow::setHoverIndex(int) noexcept {}
+double ArcadeWindow::dpiScale() const noexcept { return 1.0; }
 void ArcadeWindow::pump(double) {}
 void ArcadeWindow::paintNow(NativeWindowHandle) {}
 
 bool launchArcadeHub(const char*) { return false; }
-bool launchChaosLab() { return false; }
 } // namespace ok::app
 
 #else  // _WIN32
@@ -608,8 +608,12 @@ LRESULT CALLBACK arcadeWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
             }
             break;
         case WM_KEYDOWN:
-        case WM_SYSKEYDOWN:
             if (self != nullptr) {
+                BYTE state[256]{};
+                if (::GetKeyboardState(state) &&
+                    ((state[VK_CONTROL] | state[VK_MENU] | state[VK_LWIN] | state[VK_RWIN]) & 0x80)) {
+                    break;   // shortcuts belong to Windows, not the game
+                }
                 const int vk = static_cast<int>(wParam);
                 // Modifiers are not game input (the IME hook path drops them
                 // too) — Shift/Ctrl/Alt/Win must never reach a game.
@@ -628,7 +632,6 @@ LRESULT CALLBACK arcadeWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
             }
             return 0;
         case WM_CHAR:
-        case WM_SYSCHAR:
             // Already delivered together with its WM_KEYDOWN (see above).
             return 0;
         case WM_KEYUP:
@@ -647,7 +650,7 @@ LRESULT CALLBACK arcadeWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
                 RECT client{};
                 ::GetClientRect(hwnd, &client);
                 const int hover = hitTestCatalog(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam),
-                                                 client.right, client.bottom, 1.0);
+                                                 client.right, client.bottom, self->dpiScale());
                 if (hover != self->hoverIndexForTest()) {
                     self->setHoverIndex(hover);
                     ::InvalidateRect(hwnd, nullptr, FALSE);
@@ -661,7 +664,7 @@ LRESULT CALLBACK arcadeWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
             RECT client{};
             ::GetClientRect(hwnd, &client);
             const int index = hitTestCatalog(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam),
-                                             client.right, client.bottom, 1.0);
+                                             client.right, client.bottom, self->dpiScale());
             if (index >= 0) {
                 const auto& catalog = gameCatalog();
                 if (static_cast<std::size_t>(index) < catalog.size()) {
@@ -799,6 +802,10 @@ int ArcadeWindow::hoverIndexForTest() const noexcept {
     return (m_impl != nullptr) ? m_impl->hoverIndex : -1;
 }
 
+double ArcadeWindow::dpiScale() const noexcept {
+    return m_impl != nullptr ? m_impl->dpiScale : 1.0;
+}
+
 void ArcadeWindow::setHoverIndex(int index) noexcept {
     if (m_impl != nullptr) {
         m_impl->hoverIndex = index;
@@ -822,6 +829,9 @@ void ArcadeWindow::pump(double dtSeconds) {
         dt = std::chrono::duration<double>(now - m_impl->lastTick).count();
     }
     m_impl->lastTick = now;
+    // Only the focused surface advances the shared game. This also prevents
+    // the Hub and Lab timers from driving Flexing twice per frame.
+    if (::GetForegroundWindow() != m_impl->hwnd) { return; }
     if (dt < 0.0) {
         dt = 0.0;
     }

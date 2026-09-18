@@ -1121,6 +1121,7 @@ static void testFlexing() {
     fast.setGranularity(FlexGranularity::AutoStream);
     fast.start();
     fast.update(0.0);
+    CHECK(fast.getCursor() == 0);
     CHECK_MSG(std::isfinite(fast.getDisplayedWpm()), "WPM must never be inf/NaN");
 
     // Auto-stream finishes the text on its own and reports the run.
@@ -1130,6 +1131,28 @@ static void testFlexing() {
     RunResult res;
     CHECK(fast.pollRunResult(res));
     CHECK(res.type == GameType::Flexing);
+
+    // A completed run can load and play a new passage without reopening UI.
+    fast.setPreloadedText(U"new");
+    CHECK(!fast.isGameOver());
+    CHECK(fast.getGeneratedChars() == 0);
+    CHECK(fast.getDisplayedWpm() == 0.0);
+    fast.setGranularity(FlexGranularity::OneCharPerKey);
+    keyDown(fast, U'x');
+    CHECK(fast.popEmittedOutput() == U"n");
+
+    // AutoStream is 15 characters/second, independent of display frequency.
+    for (int hz : {30, 60, 144}) {
+        FlexingGame stream;
+        stream.setPreloadedText(std::u32string(100, U'x'));
+        stream.setGranularity(FlexGranularity::AutoStream);
+        stream.start();
+        for (int tick = 0; tick < hz * 2; ++tick) { stream.update(1.0 / hz); }
+        CHECK(stream.getCursor() == 30);
+        stream.pause();
+        stream.update(0.1);
+        CHECK(stream.getCursor() == 30);
+    }
 
     // Efficiency multiplier = generated characters per real key press.
     FlexingGame eff;

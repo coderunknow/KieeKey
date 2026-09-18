@@ -77,3 +77,6 @@ coverage/
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# Local Python build/test tools
+.venv/

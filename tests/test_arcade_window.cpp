@@ -39,6 +39,8 @@
 #include "ArcadeWindow.hpp"
 #include "ChaosEngine.hpp"
 #include "ChaosLabWindow.hpp"
+#include "UnicodeText.hpp"
+#include <commctrl.h>
 #include "Progression.hpp"
 
 #include <cassert>
@@ -321,6 +323,32 @@ void testChaosLabPreviewAndInjection() {
     assert(emitted == previewText);         // exactly the previewed text
     assert(::GetForegroundWindow() == fakeTarget);   // focus handed back to the app
 
+    // Reopening an already-focused lab must retain the external destination.
+    ::SetForegroundWindow(labWindow);
+    assert(lab.open(nullptr));
+    const int beforeReopen = emitCount;
+    ::SendMessageW(labWindow, WM_COMMAND, MAKEWPARAM(4031, BN_CLICKED), 0);
+    assert(emitCount == beforeReopen + 1);
+    assert(::GetForegroundWindow() == fakeTarget);
+
+    // Windows can deny foreground activation. Never type into the lab then.
+    ::SetForegroundWindow(labWindow);
+    okgdi::denyForegroundChange(true);
+    const int beforeDenied = emitCount;
+    ::SendMessageW(labWindow, WM_COMMAND, MAKEWPARAM(4031, BN_CLICKED), 0);
+    assert(emitCount == beforeDenied);
+    okgdi::denyForegroundChange(false);
+
+    // Controls reflect the engine on reopen; real trackbars use WM_HSCROLL,
+    // not WM_COMMAND. Changing intensity must not turn master/case OFF.
+    HWND slider = okgdi::findControl(labWindow, 4020);
+    assert(::SendMessageW(okgdi::findControl(labWindow, 4010), BM_GETCHECK, 0, 0) == BST_CHECKED);
+    ::SendMessageW(slider, TBM_SETPOS, TRUE, 25);
+    ::SendMessageW(labWindow, WM_HSCROLL, 0, reinterpret_cast<LPARAM>(slider));
+    assert(chaos.getConfig().masterEnabled);
+    assert(chaos.getConfig().randomCaseEnabled);
+    assert(chaos.getConfig().randomCaseIntensity == 0.25f);
+
     // --- the lab can drive Flexing Mode ------------------------------------
     ArcadeManager::instance().stopGame();
     HWND flexingBox = okgdi::findControl(labWindow, 4030);
@@ -359,21 +387,25 @@ void testChaosLabPreviewAndInjection() {
         ::SendMessageW(labWindow, WM_COMMAND,
                        MAKEWPARAM(4040, EN_CHANGE), reinterpret_cast<LPARAM>(flexInput));
     }
+    // A real edit sends EN_UPDATE before EN_CHANGE. The update notification
+    // must not produce a second character.
+    ::SendMessageW(labWindow, WM_COMMAND,
+                   MAKEWPARAM(4040, EN_UPDATE), reinterpret_cast<LPARAM>(flexInput));
     const std::wstring produced = controlText(flexOutput);
     assert(produced == L"abcd");            // OneCharPerKey, from the passage
     assert(flexGame->getCursor() == 4);
 
-    // Granularity is taken from the combo (word mode produces "abcdef " next).
+    // Granularity changes preserve the cursor (word mode produces "ef " next).
     ::SendMessageW(flexGran, CB_SETCURSEL, 1, 0);
     ::SendMessageW(labWindow, WM_COMMAND,
                    MAKEWPARAM(4042, CBN_SELCHANGE), reinterpret_cast<LPARAM>(flexGran));
     ::SendMessageW(labWindow, WM_COMMAND,
                    MAKEWPARAM(4040, EN_CHANGE), reinterpret_cast<LPARAM>(flexInput));
-    assert(controlText(flexOutput) == L"abcdabcdef ");   // one whole word per key
+    assert(controlText(flexOutput) == L"abcdef ");   // one whole word per key
 
     // The timer pump keeps the game alive without inventing output.
     ::SendMessageW(labWindow, WM_TIMER, ChaosLabWindow::kTimerId, 0);
-    assert(controlText(flexOutput) == L"abcdabcdef ");
+    assert(controlText(flexOutput) == L"abcdef ");
 
     // "Gõ chữ Flexing ra app": hands the focus back and really types what the
     // engine produced — the button is an explicit action, the checkbox only
@@ -383,7 +415,7 @@ void testChaosLabPreviewAndInjection() {
     ::SendMessageW(labWindow, WM_COMMAND,
                    MAKEWPARAM(4046, BN_CLICKED), reinterpret_cast<LPARAM>(flexSend));
     assert(emitCount == beforeFlexSend + 1);
-    assert(emitted == L"abcdabcdef ");      // the engine's own output, in order
+    assert(emitted == L"abcdef ");      // the engine's own output, in order
     assert(::GetForegroundWindow() == fakeTarget);
 
     // Per-chunk mode types the same text in several steps instead of one paste.
@@ -393,8 +425,26 @@ void testChaosLabPreviewAndInjection() {
     ::SetForegroundWindow(labWindow);
     ::SendMessageW(labWindow, WM_COMMAND,
                    MAKEWPARAM(4046, BN_CLICKED), reinterpret_cast<LPARAM>(flexSend));
-    assert(emitCount == 2);                 // 11 chars / 6 = two chunks
-    assert(emitted == L"cdef ");            // ...the last of them
+    assert(emitCount == 0);                 // UI stays responsive: queued, no Sleep
+    ::SendMessageW(labWindow, WM_TIMER, 0xC041, 0);
+    ::SendMessageW(labWindow, WM_TIMER, 0xC041, 0);
+    assert(emitCount == 2);                 // 7 chars / 6 = two chunks
+    assert(emitted == L" ");            // ...the last of them
+    ::SendMessageW(flexPerChunk, BM_SETCHECK, BST_UNCHECKED, 0);
+
+    // Focus lost between chunks cancels all remaining text.
+    emitCount = 0;
+    ::SendMessageW(flexPerChunk, BM_SETCHECK, BST_CHECKED, 0);
+    ::SetForegroundWindow(labWindow);
+    ::SendMessageW(labWindow, WM_COMMAND, MAKEWPARAM(4046, BN_CLICKED), 0);
+    ::SendMessageW(labWindow, WM_TIMER, 0xC041, 0);
+    assert(emitCount == 1);
+    ::SetForegroundWindow(labWindow);
+    ::SendMessageW(labWindow, WM_TIMER, 0xC041, 0);
+    assert(emitCount == 1);
+    ::SetForegroundWindow(fakeTarget);
+    ::SendMessageW(labWindow, WM_TIMER, 0xC041, 0);
+    assert(emitCount == 1);   // no automatic resumption after cancellation
     ::SendMessageW(flexPerChunk, BM_SETCHECK, BST_UNCHECKED, 0);
 
     // With nothing produced yet the button must not type silence into the app.
@@ -408,14 +458,57 @@ void testChaosLabPreviewAndInjection() {
     assert(emitCount == 0);
     assert(controlText(flexOutput).find(L"chua co chu nao") != std::wstring::npos);
 
-    ArcadeManager::instance().stopGame();
+    // Empty reload clears a previous passage; closing stops lab-owned Flexing.
+    ::SetWindowTextW(flexPrep, L"");
+    ::SendMessageW(labWindow, WM_COMMAND, MAKEWPARAM(4043, BN_CLICKED), 0);
+    assert(flexGame->getPreloadedText().empty());
     ChaosLabWindow::setEmitCallback(nullptr);
     lab.close();
     assert(!lab.isOpen());
+    assert(!ArcadeManager::instance().hasActiveGame());
     std::cout << "  [PASS] Chaos Lab preview & injection\n";
 }
 
 //---------------------------------------------------------------------------
+void testUnicodeLabText() {
+    using ok::app::codePointsFromWide;
+    const std::wstring pair{static_cast<wchar_t>(0xD83D), static_cast<wchar_t>(0xDE00)};
+    assert(codePointsFromWide(L"Việt " + pair) == U"Việt 😀");
+    assert(codePointsFromWide(std::wstring(1, static_cast<wchar_t>(0xD83D))) == U"�");
+    assert(codePointsFromWide(std::wstring(1, static_cast<wchar_t>(0xDE00))) == U"�");
+    assert(codePointsFromWide(L"Việt 😀") == U"Việt 😀");
+}
+
+void testHubDpiAndShortcuts() {
+    auto& hub = ok::app::ArcadeWindow::instance();
+    auto& manager = ArcadeManager::instance();
+    for (int dpi : {120, 144, 192}) {
+        okgdi::setDpi(dpi);
+        assert(hub.open(nullptr, "snake"));
+        HWND hwnd = static_cast<HWND>(hub.handle());
+        const int y = rowCentreY(2) * dpi / 96;
+        ::SendMessageW(hwnd, WM_MOUSEMOVE, 0, MAKELPARAM(100, y));
+        assert(hub.hoverIndexForTest() == 2);
+        ::SendMessageW(hwnd, WM_LBUTTONDOWN, 0, MAKELPARAM(100, y));
+        assert(manager.getCurrentGameType() == GameType::Fishing);
+        // Alt+F4 must go to DefWindowProc, never the game input path.
+        const auto before = manager.getCurrentGame()->isPaused();
+        ::SendMessageW(hwnd, WM_SYSKEYDOWN, 0x70, 0); // Alt+F1
+        assert(manager.getCurrentGame()->isPaused() == before);
+        BYTE keys[256]{};
+        keys[VK_CONTROL] = 0x80;
+        okgdi::setKeyboardState(keys);
+        ::SendMessageW(hwnd, WM_KEYDOWN, 0x70, 0); // Ctrl+F1 is not pause
+        assert(manager.getCurrentGame()->isPaused() == before);
+        keys[VK_CONTROL] = 0;
+        okgdi::setKeyboardState(keys);
+        ::SendMessageW(hwnd, WM_KEYDOWN, 0x70, 0); // bare F1 is pause
+        assert(manager.getCurrentGame()->isPaused() != before);
+        hub.close();
+    }
+    okgdi::setDpi(96);
+}
+
 int main() {
     std::cout << "=== Running Arcade Hub UI (Win32 GDI) Suite ===\n";
     testHubSidebarShowsTheWholeCatalog();
@@ -423,6 +516,8 @@ int main() {
     testHubKeyboardDrivesTheGame();
     testHubTimerEscAndClose();
     testChaosLabPreviewAndInjection();
+    testUnicodeLabText();
+    testHubDpiAndShortcuts();
     okgdi::destroyAllWindows();
     std::cout << "=== ALL ARCADE WINDOW UI TESTS PASSED ===\n";
     return 0;

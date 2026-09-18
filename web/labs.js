@@ -56,6 +56,7 @@
 
   let flexTextLoaded = false;
   let lastEmitted = '';
+  let lastSlug = '';
 
   //--------------------------------------------------------------------------
   // Transport
@@ -85,12 +86,12 @@
     if (el) { el.classList.toggle('hidden', !visible); }
   }
 
-  function openFlexingLab() {
+  function openFlexingLab(loadDefaults = true) {
     show(flex.panel, true);
     if (!flexTextLoaded) {
       flex.source.value = DEFAULT_FLEX_TEXT;
       flexTextLoaded = true;
-      void preload();
+      if (loadDefaults) { void preload(); }
     }
     if (flex.target) { flex.target.focus(); }
   }
@@ -222,9 +223,13 @@
     isNativeInput: (target) =>
       !!(target && target.closest && target.closest('.lab-input')),
     onState: (state) => {
+      const slug = state && state.slug;
+      // Open once on a game transition, BEFORE consuming the first frame.
+      // Streaming frames must never steal focus from an editor or reopen a
+      // dismissed panel. Do not overwrite an already-running server passage.
+      if (slug === 'flexing' && lastSlug !== 'flexing') { openFlexingLab(false); }
+      lastSlug = slug || '';
       applyFlexState(state);
-      // A Flexing run started from the catalog opens its stage by itself.
-      if (state && state.slug === 'flexing') { openFlexingLab(); }
     },
     openFlexingLab,
     openChaosLab,
@@ -234,7 +239,7 @@
   const openFlex = $('openFlexingLab');
   const openChaos = $('openChaosLab');
   const closeBtn = $('closeLabs');
-  if (openFlex) { openFlex.addEventListener('click', openFlexingLab); }
+  if (openFlex) { openFlex.addEventListener('click', () => openFlexingLab()); }
   if (openChaos) { openChaos.addEventListener('click', openChaosLab); }
   if (closeBtn) { closeBtn.addEventListener('click', closeLabs); }
 

@@ -233,6 +233,14 @@ build test_soak_arcade    -std=c++2b -O2 $INC tests/test_soak_arcade.cpp src/cor
 
 # --- version-identifier consistency (no mixed version strings) --------------
 if command -v python3 >/dev/null 2>&1; then
+    printf '  [check] %-22s' "input isolation"
+    if ( cd "$REPO_ROOT" && python3 scripts/check_input_isolation.py --repo=. ) \
+            > "$OUT/logs/input-isolation.log" 2>&1; then
+        printf ' ok\n'
+    else
+        printf ' FAILED — %s\n' "$OUT/logs/input-isolation.log"
+        rc=1
+    fi
     printf '  [check] %-22s' "version consistency"
     if ( cd "$REPO_ROOT" && python3 scripts/check_version.py --repo=. ) \
             > "$OUT/logs/version.log" 2>&1; then

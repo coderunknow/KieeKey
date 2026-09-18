@@ -33,6 +33,10 @@
 #include <vector>
 
 namespace okgdi {
+static bool g_denyForeground = false;
+static int g_dpi = 96;
+void denyForegroundChange(bool deny) { g_denyForeground = deny; }
+void setDpi(int dpi) { g_dpi = dpi; }
 
 std::vector<DrawCall>& log() {
     static std::vector<DrawCall> calls;
@@ -397,7 +401,15 @@ LONG_PTR SetWindowLongPtrW(HWND hwnd, int index, LONG_PTR value) {
 
 HWND GetForegroundWindow(void) { return okgdi::g_foreground; }
 
+DWORD GetCurrentProcessId(void) { return 1; }
+DWORD GetWindowThreadProcessId(HWND hwnd, DWORD* processId) {
+    const auto* window = okgdi::findWindow(hwnd);
+    *processId = window == nullptr ? 0 : (window->windowClass == L"TestTargetApp" ? 2 : 1);
+    return *processId;
+}
+
 BOOL SetForegroundWindow(HWND hwnd) {
+    if (okgdi::g_denyForeground) { return FALSE; }
     okgdi::g_foreground = hwnd;
     return TRUE;
 }
@@ -536,7 +548,7 @@ HFONT CreateFontIndirectW(const LOGFONTW* lf) {
 }
 
 int GetDeviceCaps(HDC, int index) {
-    return (index == LOGPIXELSX) ? 96 : 0;
+    return (index == LOGPIXELSX) ? okgdi::g_dpi : 0;
 }
 
 BOOL BitBlt(HDC, int x, int y, int width, int height, HDC, int, int, DWORD) {

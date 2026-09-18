@@ -156,7 +156,6 @@ MainWindow::MainWindow() {
             ChaosMaster().IsOn(chaos.masterEnabled);
             ChaosCase().IsChecked(chaos.randomCaseEnabled);
             ChaosGlyph().IsChecked(chaos.glyphTransformEnabled);
-            ChaosInject().IsChecked(false);
             AiOptIn().IsOn(ok::ai::AiRivalEngine::instance().isOptIn());
         }
     }
@@ -563,9 +562,7 @@ void MainWindow::OnChaosChanged(IInspectable const&, RoutedEventArgs const&) {
     if (m_uiInitializing) {
         return;
     }
-    // v1.3.0: the same ChaosEngine the IME output path reads. The checkbox
-    // "gõ thật ra ứng dụng đang mở" is intentionally informational: injection
-    // happens in the hook path, the lab window is where it is exercised.
+    // Chaos is confined to explicit Lab preview/injection, not IME edits.
     auto& engine = ok::chaos::ChaosEngine::instance();
     ok::chaos::ChaosConfig config = engine.getConfig();
     config.masterEnabled = ChaosMaster().IsOn();
@@ -624,13 +621,12 @@ void MainWindow::refreshProgressPanel() {
     if (!unlocked.empty()) {
         achievements += L" — mới nhất: ";
         const char* title = unlocked.back().title;
-        for (const char* p = title; p != nullptr && *p != '\0'; ++p) {
-            achievements += static_cast<wchar_t>(static_cast<unsigned char>(*p));
-        }
+        if (title != nullptr) { achievements += winrt::to_hstring(title).c_str(); }
     }
     AchievementsText().Text(winrt::hstring(achievements));
 
     if (ok::ai::AiRivalEngine::instance().isOptIn()) {
+        ok::ai::AiRivalEngine::instance().trainBatch();
         const auto profile = ok::ai::AiRivalEngine::instance().getProfile();
         std::swprintf(buffer, std::size(buffer),
                       L"AI: nhịp gõ trung bình %.1f ms (≈%.0f WPM) · lỗi tự nhiên %.1f%% · mẫu %llu",
@@ -644,9 +640,7 @@ void MainWindow::refreshProgressPanel() {
     const auto advice = ok::analytics::TypingAnalyticsEngine::instance().generateCoachingAdvice();
     if (!advice.empty()) {
         std::wstring text = L"Gợi ý: ";
-        for (char ch : advice.front().heuristicAdvice) {
-            text += static_cast<wchar_t>(static_cast<unsigned char>(ch));
-        }
+        text += winrt::to_hstring(advice.front().heuristicAdvice).c_str();
         CoachText().Text(winrt::hstring(text));
     } else {
         CoachText().Text(L"Gợi ý: cần thêm dữ liệu gõ để phân tích.");

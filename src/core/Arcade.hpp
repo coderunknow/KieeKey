@@ -915,6 +915,7 @@ private:
     std::uint64_t m_generatedChars = 0;
     double m_elapsedSec = 0.0;
     double m_displayedWpm = 0.0;
+    double m_streamCredit = 0.0;
     bool m_active = false;
     bool m_paused = false;
     bool m_completed = false;

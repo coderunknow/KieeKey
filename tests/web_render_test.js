@@ -98,6 +98,8 @@ elements.screen.getContext = () => theContext;
 const theContext = makeContext();
 
 let streamOpened = false;
+const keyHandlers = {};
+const requests = [];
 const sandbox = {
   console,
   performance: { now: () => 0 },
@@ -113,10 +115,10 @@ const sandbox = {
     addEventListener: () => {},
   },
   window: {
-    addEventListener: () => {},
+    addEventListener: (type, handler) => { keyHandlers[type] = handler; },
     KieeKeyLabs: undefined,
   },
-  fetch: async () => ({ ok: true, status: 200, json: async () => ({ ok: true, games: [] }) }),
+  fetch: async (url) => { requests.push(url); return { ok: true, status: 200, json: async () => ({ ok: true, games: [] }) }; },
   EventSource: function EventSource() { streamOpened = true; },
 };
 sandbox.globalThis = sandbox;
@@ -151,6 +153,19 @@ function testKeyMapping() {
   assert(api.virtualKeyFor({ key: 'A' }) === 65, 'shifted letters map to the same VK');
   assert(api.virtualKeyFor({ key: 'F2' }) === 0x71, 'F2 maps to VK_F2');
   assert(api.virtualKeyFor({ key: 'Shift' }) === 0, 'modifiers are not forwarded');
+  requests.length = 0;
+  let prevented = false;
+  const event = { key: 'a', target: elements.bpm, preventDefault: () => { prevented = true; } };
+  keyHandlers.keydown(event);
+  keyHandlers.keyup(event);
+  assert(!prevented && !requests.includes('api/input'), 'settings controls never send game keys');
+  event.target = elements.screen;
+  event.isComposing = true;
+  keyHandlers.keydown(event);
+  assert(!requests.includes('api/input'), 'IME composition is not forwarded as a physical game key');
+  event.isComposing = false;
+  keyHandlers.keydown(event);
+  assert(prevented && requests.includes('api/input'), 'focused canvas receives game keys');
   section('Keyboard mapping (browser -> VK)');
 }
 

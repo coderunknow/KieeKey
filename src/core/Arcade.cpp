@@ -2349,11 +2349,11 @@ FlexingGame::FlexingGame() {
 
 void FlexingGame::setPreloadedText(std::u32string_view text) {
     m_preloadedText.assign(text.begin(), text.end());
-    m_cursor = 0;
-    m_emittedBuffer.clear();
+    reset();   // loading a new passage must also clear completed/paused/stats
 }
 
 void FlexingGame::setGranularity(FlexGranularity gran, std::uint32_t nChars) noexcept {
+    if (m_gran != gran) { m_streamCredit = 0.0; }
     m_gran = gran;
     m_nChars = (nChars == 0) ? 1 : std::min(nChars, 64u);
 }
@@ -2374,6 +2374,7 @@ void FlexingGame::reset() {
     m_generatedChars = 0;
     m_elapsedSec = 0.0;
     m_displayedWpm = 0.0;
+    m_streamCredit = 0.0;
     m_paused = false;
     m_completed = false;
     m_resultPending = false;
@@ -2404,10 +2405,12 @@ void FlexingGame::update(double dt) {
     m_elapsedSec += step;
 
     if (m_gran == FlexGranularity::AutoStream && m_cursor < m_preloadedText.size()) {
-        std::size_t count = static_cast<std::size_t>(15.0 * step);
-        if (count == 0) {
-            count = 1;
-        }
+        // Carry fractional characters across frames. Rounding each tick up
+        // made a 144 Hz UI type almost five times faster than a 30 Hz UI,
+        // and even update(0) emitted text.
+        m_streamCredit += 15.0 * step;
+        const auto count = static_cast<std::size_t>(m_streamCredit + 1e-9);
+        m_streamCredit = std::max(0.0, m_streamCredit - static_cast<double>(count));
         for (std::size_t i = 0; i < count && m_cursor < m_preloadedText.size(); ++i) {
             m_emittedBuffer.push_back(m_preloadedText[m_cursor++]);
             ++m_generatedChars;

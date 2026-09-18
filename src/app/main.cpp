@@ -182,8 +182,8 @@ constexpr wchar_t kAppVersion[]     = L"1.3.0";           // numeric, 3-part
 // v1.2.2 RC1: [[maybe_unused]] — this is a documented VERSION CARRIER
 // (check_version.py reads it), not a code-level constant; the UI shows the
 // title/version forms. Keeping it zero-maintenance and warning-clean.
-[[maybe_unused]] constexpr wchar_t kAppVersionFull[] = L"1.3.0-beta1";  // with channel
-constexpr wchar_t kAppTitle[]       = L"KieeKey v1.3.0-beta1";  // sync with kAppVersionFull
+[[maybe_unused]] constexpr wchar_t kAppVersionFull[] = L"1.3.0-beta2";  // with channel
+constexpr wchar_t kAppTitle[]       = L"KieeKey v1.3.0-beta2";  // sync with kAppVersionFull
 
 //===========================================================================
 // Output item: what the consumer thread must emit (trivially copyable → can
@@ -1087,25 +1087,16 @@ bool requestContextResync() noexcept {
 // has queued work that needs a wake (see ModernKeyHook::ProducerDecision).
 using PD = ok::hook::ModernKeyHook::ProducerDecision;
 
-// v1.3.0: does one of KieeKey's own windows own the foreground?
-//
-// KieeKey must never transform input inside its own UI: the Arcade Hub window
-// and the Chaos Lab window both drive their own message loops, and the
-// settings dialog contains real EDIT controls. When one of them is focused the
-// producer steps aside and lets Windows deliver the keystroke normally (the
-// arcade windows feed it to ArcadeManager::handleKey from their WM_KEYDOWN).
-// Two syscall-free handle compares — safe on the hook thread.
+// Only keyboard input is bypassed in our UI. Foreground/mouse bookkeeping
+// still runs so the next external composition cannot inherit a stale word.
+// Query ownership instead of reading UI-thread HWNDs or constructing window
+// singletons on the low-level hook thread (both raced window creation/close).
 bool ownWindowHasFocus() noexcept {
+    DWORD processId = 0;
     const HWND foreground = ::GetForegroundWindow();
     if (foreground == nullptr) { return false; }
-    if (foreground == g.hMain || foreground == g.hSettings) { return true; }
-    if (foreground == static_cast<HWND>(ok::app::ArcadeWindow::instance().handle())) {
-        return true;
-    }
-    if (foreground == static_cast<HWND>(ok::app::ChaosLabWindow::instance().handle())) {
-        return true;
-    }
-    return false;
+    ::GetWindowThreadProcessId(foreground, &processId);
+    return processId == ::GetCurrentProcessId();
 }
 
 //---------------------------------------------------------------------------
@@ -1153,27 +1144,12 @@ PD onHookEventImpl(const KeyEvent& ev) {
     // The hook thread no longer toggles anything.
     if (!g.engineEnabled.load(std::memory_order_relaxed)) { return PD{}; }
 
-    // v1.3.0: never transform input inside our own windows (see
-    // ownWindowHasFocus). Returning {false,false} passes the keystroke through
-    // untouched — no IME rewrite, no suppression — while still skipping the
-    // engine below, so a game window and the IME can never both eat a key.
-    if (ownWindowHasFocus()) { return PD{false, false}; }
-
-    // v1.3.0 Arcade Hub: if Arcade minigame is actively consuming keyboard, handle it here.
-    // Note the interplay with ownWindowHasFocus() above: when the hub window has
-    // the focus the key travels to the window instead, and this path only runs
-    // while the user plays with the focus in another application.
-    if (ok::arcade::ArcadeManager::instance().isConsumingKeyboard() &&
-        ev.source == EventSource::Keyboard &&
-        (ev.action == KeyAction::KeyDown || ev.action == KeyAction::SysKeyDown)) {
-        char32_t cch = layoutChar(ev.vkCode, ev.scanCode, ev.modifiers);
-        if (cch == 0) { cch = produceChar(ev.vkCode, ev.modifiers.shift, false); }
-        // InputResult is a scoped enum: compare explicitly (the old build
-        // compared it as a bool, which no longer compiles).
-        if (ok::arcade::ArcadeManager::instance().handleKey(ev.vkCode, cch, true) !=
-            ok::arcade::InputResult::NotConsumed) {
-            return PD{true, false}; // Consumed by Arcade minigame
-        }
+    // Games accept input ONLY through their focused UI, never through this
+    // system-wide hook. Background Arcade/Flexing must not eat another app's
+    // keys or mutate a game concurrently with the UI timer.
+    if (ev.source == EventSource::Keyboard && ownWindowHasFocus()) {
+        g.engineResyncPending.store(true, std::memory_order_release);
+        return PD{};
     }
 
     // v1.2.0 Stable: repair after a producer-side fault (see onHookEvent).
@@ -1590,14 +1566,9 @@ PD onHookEventImpl(const KeyEvent& ev) {
             static_cast<wchar_t>(in.kind == InputKind::Space ? L' ' : in.ch));
     }
 
-    // v1.3.0: Chaos Case transform (when active)
-    if (ok::chaos::ChaosEngine::instance().isChaosActive() && !g.repScratch.empty()) {
-        std::u32string u32;
-        for (wchar_t wc : g.repScratch) { u32.push_back(static_cast<char32_t>(wc)); }
-        auto cased = ok::chaos::ChaosEngine::instance().processCase(u32);
-        g.repScratch.clear();
-        for (char32_t c : cased) { g.repScratch.push_back(static_cast<wchar_t>(c)); }
-    }
+    // Chaos is an explicit Lab preview/injection operation. Transforming only
+    // IME replacement deltas changed accents but not pass-through letters and
+    // desynchronized the engine from the document. Never decorate these edits.
 
     // ---- output: per-app policy ----
     // D3 note: a long macro expansion does not fit the ring item's fixed
@@ -2323,7 +2294,6 @@ void showTrayMenu() noexcept {
             // The lab is its own window: type text, watch the chaos transform
             // live, and (optionally) write the result into the focused app.
             openChaosLab();
-            openSettingsDialog(6);
             break;
         case IDM_AI_RIVAL:
             openSettingsDialog(7);
@@ -3117,6 +3087,18 @@ void settingsToControls() {
                      g.engineEnabled.load(std::memory_order_relaxed)
                          ? L"Bộ gõ: ĐANG BẬT — bấm để TẮT"
                          : L"Bộ gõ: ĐANG TẮT — bấm để BẬT");
+    // The optional feature controls must reflect the live engine on reopen;
+    // unchecked defaults previously silently overwrote enabled options.
+    const auto chaos = ok::chaos::ChaosEngine::instance().getConfig();
+    ::CheckDlgButton(g.hSettings, IDC_CHK_CHAOS_MASTER, chaos.masterEnabled ? BST_CHECKED : BST_UNCHECKED);
+    ::CheckDlgButton(g.hSettings, IDC_CHK_CHAOS_CASE, chaos.randomCaseEnabled ? BST_CHECKED : BST_UNCHECKED);
+    ::CheckDlgButton(g.hSettings, IDC_CHK_GLYPH_TRANSFORM, chaos.glyphTransformEnabled ? BST_CHECKED : BST_UNCHECKED);
+    ::CheckDlgButton(g.hSettings, IDC_CHK_AI_OPTIN,
+                     ok::ai::AiRivalEngine::instance().isOptIn() ? BST_CHECKED : BST_UNCHECKED);
+    const auto arcade = ok::arcade::ArcadeManager::instance().getConfig();
+    ::SendMessageW(::GetDlgItem(g.hSettings, IDC_CMB_FAILMODE), CB_SETCURSEL,
+                   arcade.rhythmFailMode == ok::arcade::FailMode::HealthBar ? 1 : 0, 0);
+    ::SetDlgItemInt(g.hSettings, IDC_EDT_RHYTHM_BPM, static_cast<UINT>(arcade.rhythmBpm), FALSE);
     updateHeaderStatus();
     showTab(g_settingsOpenTab);
 }
@@ -3170,7 +3152,9 @@ void showTab(int tab) {
     static constexpr int kTab5[] = {
         IDC_GRP_ARCADE, IDC_BTN_PLAY_SNAKE, IDC_BTN_PLAY_TETRIS, IDC_BTN_PLAY_FISHING,
         IDC_BTN_PLAY_TYPINGRACE, IDC_BTN_PLAY_WASDRACE, IDC_BTN_PLAY_RHYTHM,
-        IDC_BTN_PLAY_NOMISTAKE, IDC_BTN_PLAY_FLEXING, IDC_STAT_ARCADE_STATUS, 0
+        IDC_BTN_PLAY_NOMISTAKE, IDC_BTN_PLAY_FLEXING, IDC_STAT_ARCADE_STATUS,
+        IDC_BTN_OPEN_CHAOS_LAB, IDC_CMB_FAILMODE, IDC_EDT_RHYTHM_BPM,
+        IDC_BTN_APPLY_ARCADE_CFG, IDC_STAT_FAILMODE, IDC_STAT_RHYTHM_BPM, 0
     };
     static constexpr int kTab6[] = {
         IDC_GRP_CHAOS, IDC_CHK_CHAOS_MASTER, IDC_CHK_CHAOS_CASE,
@@ -3515,7 +3499,7 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                   WS_CHILD | WS_VISIBLE | WS_TABSTOP, S(44), S(312), S(220), S(28),
                   reinterpret_cast<HMENU>(IDC_BTN_OPEN_CHAOS_LAB));
             mkCtl(hwnd, L"STATIC", L"Chế độ Rhythm / No-Mistake:",
-                  WS_CHILD | WS_VISIBLE | SS_LEFT, S(280), S(312), S(160), S(20), nullptr);
+                  WS_CHILD | WS_VISIBLE | SS_LEFT, S(280), S(312), S(220), S(20), reinterpret_cast<HMENU>(IDC_STAT_FAILMODE));
             HWND failMode = mkCtl(hwnd, L"COMBOBOX", L"",
                   WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL,
                   S(280), S(330), S(220), S(120), reinterpret_cast<HMENU>(IDC_CMB_FAILMODE));
@@ -3527,7 +3511,7 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 ::SendMessageW(failMode, CB_SETCURSEL, 0, 0);
             }
             mkCtl(hwnd, L"STATIC", L"Nhịp Rhythm (BPM 60-220):",
-                  WS_CHILD | WS_VISIBLE | SS_LEFT, S(280), S(354), S(160), S(20), nullptr);
+                  WS_CHILD | WS_VISIBLE | SS_LEFT, S(280), S(354), S(160), S(20), reinterpret_cast<HMENU>(IDC_STAT_RHYTHM_BPM));
             mkCtl(hwnd, L"EDIT", L"112",
                   WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_NUMBER | WS_BORDER,
                   S(444), S(352), S(56), S(22), reinterpret_cast<HMENU>(IDC_EDT_RHYTHM_BPM));
@@ -3539,7 +3523,7 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             mkCtl(hwnd, L"BUTTON", L"Phòng thí nghiệm Chaos & Thử nghiệm",
                   WS_CHILD | WS_VISIBLE | BS_GROUPBOX, S(24), S(86), S(494), S(280),
                   reinterpret_cast<HMENU>(IDC_GRP_CHAOS));
-            mkCtl(hwnd, L"BUTTON", L"Bật chế độ Chaos (Master Switch — Mặc định TẮT)",
+            mkCtl(hwnd, L"BUTTON", L"Bật Chaos trong Lab (không đổi chữ khi gõ bình thường)",
                   WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, S(44), S(112), S(450), S(22),
                   reinterpret_cast<HMENU>(IDC_CHK_CHAOS_MASTER));
             mkCtl(hwnd, L"BUTTON", L"Random Casing / Chaos Case (Viết hoa - thường ngẫu nhiên)",
@@ -3549,8 +3533,8 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                   WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, S(44), S(168), S(450), S(22),
                   reinterpret_cast<HMENU>(IDC_CHK_GLYPH_TRANSFORM));
             mkCtl(hwnd, L"STATIC",
-                  L"LƯU Ý: Hiệu ứng Glyph Visual chỉ biến đổi cách hiển thị chữ trên màn hình; "
-                  L"văn bản thực tế bên dưới và thao tác sao chép (copy/paste) vẫn giữ nguyên 100% gốc.",
+                  L"Chaos chỉ áp dụng trong Lab. Mở Lab để xem trước và chủ động gửi kết quả "
+                  L"ra ứng dụng khác. Không biến đổi chữ đang gõ bằng IME. Xoay 90/270 độ chỉ là hiển thị.",
                   WS_CHILD | WS_VISIBLE, S(44), S(200), S(450), S(80),
                   reinterpret_cast<HMENU>(IDC_STAT_CHAOS_WARN));
 
@@ -3792,6 +3776,7 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
             // AI Profile stats
             if (ok::ai::AiRivalEngine::instance().isOptIn()) {
+                ok::ai::AiRivalEngine::instance().trainBatch();
                 auto aiprof = ok::ai::AiRivalEngine::instance().getProfile();
                 wchar_t aibuf[256];
                 std::swprintf(aibuf, std::size(aibuf), L"AI: Mean IKI %.1f ms | Lỗi tự nhiên %.1f%% | Trễ phím dấu %.1f ms",
@@ -3801,9 +3786,12 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 auto coachRecs = ok::analytics::TypingAnalyticsEngine::instance().generateCoachingAdvice();
                 if (!coachRecs.empty()) {
                     std::string ctext = "[Thực tế]: " + coachRecs[0].measuredFact + "\n[Gợi ý]: " + coachRecs[0].heuristicAdvice;
-                    std::wstring wctext(ctext.begin(), ctext.end());
+                    std::wstring wctext = utf8ToUtf16(ctext);
                     ::SetWindowTextW(::GetDlgItem(hwnd, IDC_STAT_COACH_ADVICE), wctext.c_str());
                 }
+            } else {
+                ::SetWindowTextW(::GetDlgItem(hwnd, IDC_STAT_AI_STATS), L"AI: chưa bật (không học nhịp gõ).");
+                ::SetWindowTextW(::GetDlgItem(hwnd, IDC_STAT_COACH_ADVICE), L"Coach: bật AI để xem phân tích.");
             }
             return 0;
         }

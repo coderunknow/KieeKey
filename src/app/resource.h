@@ -147,6 +147,9 @@
 #define IDC_BTN_OPEN_CHAOS_LAB    598   // dedicated Chaos/Flexing test window
 #define IDC_BTN_APPLY_ARCADE_CFG  599   // apply fail-mode / BPM to ArcadeManager
 
+#define IDC_STAT_FAILMODE         616   // tab 5: labels must hide with the controls
+#define IDC_STAT_RHYTHM_BPM       617
+
 // tab 6: Chaos & Lab
 #define IDC_GRP_CHAOS             590
 #define IDC_CHK_CHAOS_MASTER      591

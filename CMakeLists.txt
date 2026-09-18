@@ -430,10 +430,31 @@ else()
         target_compile_features(ok_option_matrix PRIVATE cxx_std_23)
         target_link_libraries(ok_option_matrix PRIVATE Threads::Threads)
 
-        # v1.3.0 Arcade, Chaos, AI & Progression harnesses
-        add_executable(ok_arcade_tests tests/test_arcade.cpp src/core/Arcade.cpp)
-        target_include_directories(ok_arcade_tests PRIVATE src/core)
-        target_compile_features(ok_arcade_tests PRIVATE cxx_std_23)
+        # Shared portable feature implementation. Keep graphical/server tests
+        # registered with CTest too (the shell runner is not the only build).
+        add_library(ok_arcade_portable STATIC
+            src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ArcadeRender.cpp
+            src/core/Progression.cpp src/core/ArcadeServer.cpp
+            src/core/ChaosEngine.cpp src/core/AiRival.cpp src/core/TypingAnalytics.cpp)
+        target_include_directories(ok_arcade_portable PUBLIC src/core)
+        target_link_libraries(ok_arcade_portable PUBLIC Threads::Threads)
+
+        add_executable(ok_arcade_tests tests/test_arcade.cpp)
+        target_link_libraries(ok_arcade_tests PRIVATE ok_arcade_portable)
+        add_executable(ok_arcade_render_tests tests/test_arcade_render.cpp)
+        target_link_libraries(ok_arcade_render_tests PRIVATE ok_arcade_portable)
+        add_executable(ok_arcade_server_tests tests/test_arcade_server.cpp)
+        target_link_libraries(ok_arcade_server_tests PRIVATE ok_arcade_portable)
+        add_executable(ok_arcade_window_tests
+            tests/test_arcade_window.cpp tests/win32_gdi_stub.cpp
+            src/app/ArcadeWindow.cpp src/app/ChaosLabWindow.cpp)
+        target_include_directories(ok_arcade_window_tests PRIVATE
+            tests tests/win32_headers src/app src/core)
+        target_compile_definitions(ok_arcade_window_tests PRIVATE _WIN32)
+        target_compile_options(ok_arcade_window_tests PRIVATE
+            "-include${CMAKE_SOURCE_DIR}/tests/win32_gdi_shim.hpp")
+        target_link_libraries(ok_arcade_window_tests PRIVATE ok_arcade_portable)
+        kieekey_test_force_asserts(ok_arcade_window_tests)
 
         add_executable(ok_chaos_tests tests/test_chaos.cpp src/core/ChaosEngine.cpp)
         target_include_directories(ok_chaos_tests PRIVATE src/core)
@@ -455,7 +476,8 @@ else()
         target_include_directories(ok_online_tests PRIVATE src/core)
         target_compile_features(ok_online_tests PRIVATE cxx_std_23)
 
-        add_executable(ok_soak_arcade tests/test_soak_arcade.cpp src/core/Arcade.cpp src/core/ChaosEngine.cpp src/core/AiRival.cpp src/core/Progression.cpp src/core/TypingAnalytics.cpp)
+        add_executable(ok_soak_arcade tests/test_soak_arcade.cpp)
+        target_link_libraries(ok_soak_arcade PRIVATE ok_arcade_portable)
         target_include_directories(ok_soak_arcade PRIVATE src/core)
         target_compile_features(ok_soak_arcade PRIVATE cxx_std_23)
 
@@ -482,11 +504,11 @@ else()
 
         # v1.3.0 Arcade, Chaos, AI, Progression, Analytics & Ghost
         add_test(NAME ok_arcade_tests      COMMAND ok_arcade_tests)
-    add_test(NAME ok_arcade_render_tests COMMAND ok_arcade_render_tests)
-    add_test(NAME ok_arcade_server_tests COMMAND ok_arcade_server_tests)
-    if(TARGET ok_arcade_window_tests)
+        add_test(NAME ok_arcade_render_tests COMMAND ok_arcade_render_tests)
+        add_test(NAME ok_arcade_server_tests COMMAND ok_arcade_server_tests)
         add_test(NAME ok_arcade_window_tests COMMAND ok_arcade_window_tests)
-    endif()
+        set_tests_properties(ok_arcade_window_tests ok_arcade_render_tests ok_arcade_server_tests
+                             PROPERTIES TIMEOUT 120)
         add_test(NAME ok_chaos_tests       COMMAND ok_chaos_tests)
         add_test(NAME ok_ai_tests          COMMAND ok_ai_tests)
         add_test(NAME ok_progression_tests COMMAND ok_progression_tests)
@@ -532,6 +554,11 @@ else()
         # version strings). Skipped when no interpreter is available.
         find_package(Python3 COMPONENTS Interpreter QUIET)
         if(Python3_Interpreter_FOUND)
+            add_test(NAME ok_input_isolation
+                     COMMAND ${Python3_EXECUTABLE}
+                             ${CMAKE_SOURCE_DIR}/scripts/check_input_isolation.py
+                             --repo=${CMAKE_SOURCE_DIR})
+            set_tests_properties(ok_input_isolation PROPERTIES TIMEOUT 60)
             add_test(NAME ok_version_check
                      COMMAND ${Python3_EXECUTABLE}
                              ${CMAKE_SOURCE_DIR}/scripts/check_version.py
@@ -589,17 +616,13 @@ else()
         add_executable(ok_iso_bench
             tests/bench_v130_isolation.cpp
             src/core/TextEngine.cpp
-            src/core/Arcade.cpp
-            src/core/ChaosEngine.cpp
-            src/core/AiRival.cpp
-            src/core/Progression.cpp
-            src/core/TypingAnalytics.cpp
         )
+        target_link_libraries(ok_iso_bench PRIVATE ok_arcade_portable)
         target_include_directories(ok_iso_bench PRIVATE src/core tests)
         target_compile_features(ok_iso_bench PRIVATE cxx_std_23)
 
         message(STATUS "Non-Windows host: building the shim-based test suite and "
-                       "benchmarks (16 ctest targets + 4 manual bench executables). "
+                       "benchmarks (including Arcade, Lab UI and source-contract gates). "
                        "The Windows product targets (ok_core, ok_tsf, KieeKeyApp.exe) "
                        "require WIN32.")
     endif()
@@ -749,25 +772,6 @@ if(WIN32 AND KIEEKEY_BUILD_TESTS)
     add_executable(ok_arcade_server_tests tests/test_arcade_server.cpp)
     target_link_libraries(ok_arcade_server_tests PRIVATE ok_core)
 
-    # v1.3.0 graphical front-end: the Win32 GDI hub + Chaos Lab windows are
-    # executed against tests/win32_gdi_stub.cpp (a recording USER32/GDI32
-    # layer) on any host — including the Linux CI job, which has no Windows
-    # SDK. On Windows the real SDK is used instead, so the target is only
-    # meaningful where the shim does not shadow <windows.h>.
-    if(NOT WIN32)
-        add_executable(ok_arcade_window_tests
-            tests/test_arcade_window.cpp
-            tests/win32_gdi_stub.cpp
-            src/app/ArcadeWindow.cpp
-            src/app/ChaosLabWindow.cpp)
-        target_include_directories(ok_arcade_window_tests PRIVATE
-            tests tests/win32_headers src/app src/core)
-        target_compile_definitions(ok_arcade_window_tests PRIVATE _WIN32)
-        target_compile_options(ok_arcade_window_tests PRIVATE
-            -include tests/win32_gdi_shim.hpp)
-        target_link_libraries(ok_arcade_window_tests PRIVATE ok_core)
-        set_tests_properties(ok_arcade_window_tests PROPERTIES TIMEOUT 120)
-    endif()
     add_executable(ok_chaos_tests tests/test_chaos.cpp)
     target_link_libraries(ok_chaos_tests PRIVATE ok_core)
     add_executable(ok_ai_tests tests/test_ai_rival.cpp)
@@ -838,6 +842,11 @@ if(WIN32 AND KIEEKEY_BUILD_TESTS)
     # version strings either).
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if(Python3_Interpreter_FOUND)
+        add_test(NAME ok_input_isolation
+                 COMMAND ${Python3_EXECUTABLE}
+                         ${CMAKE_SOURCE_DIR}/scripts/check_input_isolation.py
+                         --repo=${CMAKE_SOURCE_DIR})
+        set_tests_properties(ok_input_isolation PROPERTIES TIMEOUT 60)
         add_test(NAME ok_version_check
                  COMMAND ${Python3_EXECUTABLE}
                          ${CMAKE_SOURCE_DIR}/scripts/check_version.py

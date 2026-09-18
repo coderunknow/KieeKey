@@ -318,7 +318,13 @@ function isNativeLabInput(event) {
   return !!(window.KieeKeyLabs && window.KieeKeyLabs.isNativeInput(event.target));
 }
 
+function gameInputHasFocus(event) {
+  return event.target === canvas ||
+    (activeSlug === 'flexing' && event.target === document.getElementById('flexTarget'));
+}
+
 window.addEventListener('keydown', (event) => {
+  if (!gameInputHasFocus(event) || event.isComposing) { return; }
   if (event.ctrlKey || event.metaKey || event.altKey) { return; }
   // Editing the prepared passage / chaos sample is normal text editing: the
   // keystroke belongs to the textarea, not to the game engine.
@@ -341,6 +347,7 @@ window.addEventListener('keydown', (event) => {
 });
 
 window.addEventListener('keyup', (event) => {
+  if (!gameInputHasFocus(event) || event.isComposing || event.ctrlKey || event.metaKey || event.altKey) { return; }
   if (isNativeLabInput(event)) { return; }
   const vk = virtualKeyFor(event);
   if (vk === 0) { return; }

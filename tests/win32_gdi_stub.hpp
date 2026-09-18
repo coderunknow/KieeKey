@@ -23,6 +23,8 @@
 #include "win32_gdi_shim.hpp"
 
 namespace okgdi {
+void denyForegroundChange(bool deny);
+void setDpi(int dpi);
 
 struct DrawCall {
     std::string kind;      // "rect" | "roundrect" | "ellipse" | "line" | "polygon" | "text" |

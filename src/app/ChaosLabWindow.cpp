@@ -12,6 +12,7 @@
 #include "ChaosLabWindow.hpp"
 
 #include "ArcadeHubLaunch.hpp"
+#include "UnicodeText.hpp"
 
 #if !defined(_WIN32)
 // Portable stub (see ArcadeWindow.cpp): keeps the translation unit compilable
@@ -74,6 +75,7 @@ constexpr int kIdFlexGran = 4042;      // granularity
 constexpr int kIdFlexLoad = 4043;      // load the prepared passage
 constexpr int kIdFlexInject = 4044;    // auto-inject every produced chunk
 constexpr int kIdFlexPrep = 4045;      // the prepared passage itself
+constexpr UINT_PTR kInjectionTimer = 0xC041;
 constexpr int kIdFlexSend = 4046;      // type the produced text into the app
 
 std::wstring widen(const std::string& utf8) {
@@ -126,7 +128,10 @@ struct ChaosLabWindow::Impl {
     HWND flexInject = nullptr;
     HWND flexSend = nullptr;
     std::wstring flexProduced;        // everything the engine produced so far
-    bool ignoreNotifications = false;
+    bool ownsFlexing = false;
+    std::wstring pendingInjection;
+    std::size_t injectionOffset = 0;
+    HWND injectionTarget = nullptr;
 };
 
 std::u32string ChaosLabWindow::transformForPreview(std::u32string_view input,
@@ -153,14 +158,7 @@ void refreshPreview(ChaosLabWindow::Impl& impl) {
         return;
     }
     const std::wstring typed = controlText(impl.input);
-    const std::u32string input = [] (const std::wstring& wide) {
-        std::u32string out;
-        out.reserve(wide.size());
-        for (wchar_t ch : wide) {
-            out.push_back(static_cast<char32_t>(ch));
-        }
-        return out;
-    }(typed);
+    const std::u32string input = codePointsFromWide(typed);
 
     const std::u32string transformed =
         ChaosLabWindow::transformForPreview(input, 0x5EEDu);
@@ -200,34 +198,28 @@ void appendToEdit(HWND edit, const std::wstring& text) {
     ::SendMessageW(edit, EM_REPLACESEL, FALSE, reinterpret_cast<LPARAM>(text.c_str()));
 }
 
+void applyFlexGranularity(ChaosLabWindow::Impl& impl) {
+    auto* game = dynamic_cast<ok::arcade::FlexingGame*>(
+        ok::arcade::ArcadeManager::instance().getCurrentGame());
+    if (game == nullptr || !impl.ownsFlexing) { return; }
+    const int selection = static_cast<int>(::SendMessageW(impl.flexGran, CB_GETCURSEL, 0, 0));
+    game->setGranularity(static_cast<ok::arcade::FlexGranularity>(
+        std::clamp(selection, 0, 3)), 3);
+}
+
 std::size_t ensureFlexingGame(ChaosLabWindow::Impl& impl) {
     auto& manager = ok::arcade::ArcadeManager::instance();
     if (manager.getCurrentGameType() != ok::arcade::GameType::Flexing) {
         (void)manager.launchGame(ok::arcade::GameType::Flexing);
     }
     auto* game = dynamic_cast<ok::arcade::FlexingGame*>(manager.getCurrentGame());
-    if (game == nullptr) {
-        return 0;
-    }
-    if (impl.flexPrep != nullptr) {
-        const std::wstring prepared = controlText(impl.flexPrep);
-        if (!prepared.empty()) {
-            game->setPreloadedText([] (const std::wstring& wide) {
-                std::u32string out;
-                out.reserve(wide.size());
-                for (wchar_t ch : wide) {
-                    out.push_back(static_cast<char32_t>(ch));
-                }
-                return out;
-            }(prepared));
-        }
-    }
-    if (impl.flexGran != nullptr) {
-        const int selection = static_cast<int>(::SendMessageW(impl.flexGran, CB_GETCURSEL, 0, 0));
-        const auto granularity = static_cast<ok::arcade::FlexGranularity>(
-            selection < 0 ? 0 : (selection > 3 ? 3 : selection));
-        game->setGranularity(granularity, 3);
-    }
+    if (game == nullptr) { return 0; }
+    impl.ownsFlexing = true;
+    // An empty passage clears the old one too; loading after completion resets
+    // the run. Merely changing granularity must NOT call this reload path.
+    game->setPreloadedText(codePointsFromWide(controlText(impl.flexPrep)));
+    applyFlexGranularity(impl);
+    ::SendMessageW(impl.flexingBox, BM_SETCHECK, BST_CHECKED, 0);
     return game->getPreloadedText().size();
 }
 
@@ -235,7 +227,7 @@ std::size_t ensureFlexingGame(ChaosLabWindow::Impl& impl) {
 // produced, log it and (when armed) really type it into the focus application.
 void pumpFlexing(ChaosLabWindow::Impl& impl, bool alsoOnTimer) {
     auto& manager = ok::arcade::ArcadeManager::instance();
-    if (manager.getCurrentGameType() != ok::arcade::GameType::Flexing) {
+    if (!impl.ownsFlexing || manager.getCurrentGameType() != ok::arcade::GameType::Flexing) {
         return;
     }
     auto* game = dynamic_cast<ok::arcade::FlexingGame*>(manager.getCurrentGame());
@@ -243,6 +235,7 @@ void pumpFlexing(ChaosLabWindow::Impl& impl, bool alsoOnTimer) {
         return;
     }
     if (alsoOnTimer) {
+        if (::GetForegroundWindow() != impl.hwnd) { return; }
         manager.update(static_cast<double>(ChaosLabWindow::kTimerIntervalMs) / 1000.0);
     }
     std::u32string produced = game->popEmittedOutput();
@@ -255,40 +248,71 @@ void pumpFlexing(ChaosLabWindow::Impl& impl, bool alsoOnTimer) {
 
 }
 
-// Splits text into typing-sized chunks so the injected text looks like a human
-// typing it instead of a single paste.
-std::vector<std::wstring> typingChunks(const std::wstring& text, std::size_t chunkChars) {
-    std::vector<std::wstring> chunks;
-    if (text.empty()) {
-        return chunks;
-    }
-    const std::size_t step = (chunkChars == 0) ? 1 : chunkChars;
-    for (std::size_t offset = 0; offset < text.size();) {
-        const std::size_t end = std::min(offset + step, text.size());
-        chunks.push_back(text.substr(offset, end - offset));
-        offset = end;
-    }
-    return chunks;
+// Never inject into KieeKey itself (including settings/other owned windows).
+bool isExternalTarget(HWND target) {
+    DWORD processId = 0;
+    if (target == nullptr || !::IsWindow(target)) { return false; }
+    ::GetWindowThreadProcessId(target, &processId);
+    return processId != 0 && processId != ::GetCurrentProcessId();
 }
 
-// Hands the focus back to the application the user came from and types there.
-// SendInput reaches whatever has the focus, so this must never run while the
-// lab itself is focused.
+void cancelInjection(ChaosLabWindow::Impl& impl) {
+    ::KillTimer(impl.hwnd, kInjectionTimer);
+    impl.pendingInjection.clear();
+    impl.injectionOffset = 0;
+    impl.injectionTarget = nullptr;
+}
+
+void pumpInjection(ChaosLabWindow::Impl& impl) {
+    // Focus can change between chunks. Cancel instead of typing into the wrong
+    // document, and never sleep/block the UI thread for a long passage.
+    if (!isExternalTarget(impl.injectionTarget) ||
+        ::GetForegroundWindow() != impl.injectionTarget ||
+        ChaosLabWindow::emitCallback() == nullptr) {
+        cancelInjection(impl);
+        return;
+    }
+    std::size_t end = std::min(impl.injectionOffset + 6, impl.pendingInjection.size());
+    if (end < impl.pendingInjection.size() && end > impl.injectionOffset &&
+        impl.pendingInjection[end - 1] >= 0xD800 && impl.pendingInjection[end - 1] <= 0xDBFF &&
+        impl.pendingInjection[end] >= 0xDC00 && impl.pendingInjection[end] <= 0xDFFF) {
+        ++end;   // never split a UTF-16 surrogate pair across SendInput batches
+    }
+    const std::wstring chunk = impl.pendingInjection.substr(impl.injectionOffset,
+                                                            end - impl.injectionOffset);
+    if (ChaosLabWindow::emitCallback()(chunk) != chunk.size()) {
+        cancelInjection(impl);
+        return;
+    }
+    impl.injectionOffset = end;
+    if (end == impl.pendingInjection.size()) { cancelInjection(impl); }
+}
+
 std::size_t typeIntoFocusApp(ChaosLabWindow::Impl& impl, const std::wstring& text, bool perChunk) {
-    if (text.empty() || !::IsWindow(impl.target) || ChaosLabWindow::emitCallback() == nullptr) {
+    cancelInjection(impl);
+    if (text.empty() || !isExternalTarget(impl.target) || ChaosLabWindow::emitCallback() == nullptr) {
         return 0;
     }
-    ::SetForegroundWindow(impl.target);
-    ::Sleep(80);   // let the activation settle before typing
-    if (!perChunk) {
-        return ChaosLabWindow::emitCallback()(text);
+    if (!::SetForegroundWindow(impl.target) || ::GetForegroundWindow() != impl.target) {
+        return 0;   // activation can be denied by Windows; fail closed
     }
-    std::size_t emitted = 0;
-    for (const std::wstring& chunk : typingChunks(text, 6)) {
-        emitted += ChaosLabWindow::emitCallback()(chunk);
-        ::Sleep(60);
+    if (!perChunk) { return ChaosLabWindow::emitCallback()(text); }
+    impl.pendingInjection = text;
+    impl.injectionTarget = impl.target;
+    if (::SetTimer(impl.hwnd, kInjectionTimer, 60, nullptr) == 0) {
+        cancelInjection(impl);
     }
-    return emitted;
+    return 0;   // queued, not yet emitted
+}
+
+void syncChaosControls(ChaosLabWindow::Impl& impl) {
+    const auto cfg = ok::chaos::ChaosEngine::instance().getConfig();
+    ::SendMessageW(impl.master, BM_SETCHECK, cfg.masterEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
+    ::SendMessageW(impl.caseBox, BM_SETCHECK, cfg.randomCaseEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
+    ::SendMessageW(impl.glyphBox, BM_SETCHECK, cfg.glyphTransformEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
+    ::SendMessageW(impl.intensity, TBM_SETPOS, TRUE,
+                   static_cast<LPARAM>(cfg.randomCaseIntensity * 100.0f));
+    ::SendMessageW(impl.mode, CB_SETCURSEL, static_cast<WPARAM>(cfg.glyphMode), 0);
 }
 
 } // namespace
@@ -327,11 +351,15 @@ LRESULT CALLBACK labWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
                 const bool enabled =
                     ::SendMessageW(impl->flexingBox, BM_GETCHECK, 0, 0) == BST_CHECKED;
                 if (enabled) {
-                    ok::arcade::ArcadeManager::instance().launchGame(ok::arcade::GameType::Flexing);
-                } else {
-                    ok::arcade::ArcadeManager::instance().stopGame();
+                    (void)ensureFlexingGame(*impl);
+                } else if (impl->ownsFlexing) {
+                    if (ok::arcade::ArcadeManager::instance().getCurrentGameType() ==
+                        ok::arcade::GameType::Flexing) {
+                        ok::arcade::ArcadeManager::instance().stopGame();
+                    }
+                    impl->ownsFlexing = false;
                 }
-                ::SetFocus(impl->input);
+                ::SetFocus(impl->flexInput);
                 return 0;
             }
             if (control == kIdFlexLoad && notification == BN_CLICKED) {
@@ -349,15 +377,15 @@ LRESULT CALLBACK labWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
                 return 0;
             }
             if (control == kIdFlexGran && notification == CBN_SELCHANGE) {
-                (void)ensureFlexingGame(*impl);
+                applyFlexGranularity(*impl);
                 return 0;
             }
-            if (control == kIdFlexInput && (notification == EN_CHANGE || notification == EN_UPDATE)) {
+            if (control == kIdFlexInput && notification == EN_CHANGE) {
                 // One physical character typed in the flexing box = one step of
                 // the game. The text the user sees appearing comes from the
                 // engine, not from what they pressed.
                 auto& manager = ok::arcade::ArcadeManager::instance();
-                if (manager.getCurrentGameType() == ok::arcade::GameType::Flexing) {
+                if (impl->ownsFlexing && manager.getCurrentGameType() == ok::arcade::GameType::Flexing) {
                     (void)manager.handleKey(0, U'x', true);
                     pumpFlexing(*impl, false);
                 }
@@ -383,18 +411,23 @@ LRESULT CALLBACK labWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
                 const bool inject =
                     ::SendMessageW(impl->injectBox, BM_GETCHECK, 0, 0) == BST_CHECKED;
                 const std::wstring text = controlText(impl->preview);
-                if (inject && !text.empty() && ::IsWindow(impl->target)) {
-                    ::SetForegroundWindow(impl->target);
-                    ::Sleep(80);   // let the activation settle before typing
-                    if (ChaosLabWindow::emitCallback() != nullptr) {
-                        (void)ChaosLabWindow::emitCallback()(text);
-                    }
-                }
+                if (inject) { (void)typeIntoFocusApp(*impl, text, false); }
                 return 0;
             }
             break;
         }
+        case WM_HSCROLL:
+            if (impl != nullptr && reinterpret_cast<HWND>(lParam) == impl->intensity) {
+                applyCheckboxes(*impl);
+                refreshPreview(*impl);
+                return 0;
+            }
+            break;
         case WM_TIMER:
+            if (impl != nullptr && wParam == kInjectionTimer) {
+                pumpInjection(*impl);
+                return 0;
+            }
             if (impl != nullptr && wParam == static_cast<WPARAM>(ChaosLabWindow::kTimerId)) {
                 refreshPreview(*impl);
                 // The flexing page also pumps the ArcadeManager, so the same
@@ -443,7 +476,8 @@ bool ChaosLabWindow::open(void* owner) {
     m_impl->owner = static_cast<HWND>(owner);
     // Remember the application the user was typing in, so the "gõ thật vào app"
     // button can hand the focus back before injecting the transformed text.
-    m_impl->target = ::GetForegroundWindow();
+    const HWND foreground = ::GetForegroundWindow();
+    if (isExternalTarget(foreground)) { m_impl->target = foreground; }
 
     if (m_impl->hwnd == nullptr) {
         WNDCLASSEXW wc{};
@@ -562,6 +596,8 @@ bool ChaosLabWindow::open(void* owner) {
         ::SetTimer(m_impl->hwnd, kTimerId, kTimerIntervalMs, nullptr);
     }
 
+    syncChaosControls(*m_impl);
+    refreshPreview(*m_impl);
     ::ShowWindow(m_impl->hwnd, SW_SHOW);
     ::SetForegroundWindow(m_impl->hwnd);
     ::SetFocus(m_impl->input);
@@ -573,6 +609,13 @@ void ChaosLabWindow::close() {
         return;
     }
     if (m_impl->hwnd != nullptr) {
+        cancelInjection(*m_impl);
+        if (m_impl->ownsFlexing && ok::arcade::ArcadeManager::instance().getCurrentGameType() ==
+            ok::arcade::GameType::Flexing) {
+            ok::arcade::ArcadeManager::instance().stopGame();
+        }
+        m_impl->ownsFlexing = false;
+        m_impl->flexProduced.clear();
         HWND hwnd = m_impl->hwnd;
         m_impl->hwnd = nullptr;
         ::KillTimer(hwnd, kTimerId);

@@ -4,6 +4,52 @@ All notable changes to KieeKey are documented here. Format based on
 Keep a Changelog; versioning: SemVer.
 
 ## [Unreleased]
+
+## [1.3.0-beta2] — 2026-09-18
+### Stabilization fixes
+* **Lost external keystrokes:** remove Arcade dispatch from the global keyboard
+  producer. Games receive input only in their own UI; Alt-Tab no longer feeds
+  another application's keys to a background game. This also removes concurrent
+  hook/UI mutation of game state. Native game timers advance only on the focused
+  surface, avoiding duplicate Hub/Lab ticks.
+* **IME state and feature isolation:** detect KieeKey-owned windows by process
+  ownership instead of reading UI-thread HWND fields/constructing UI singletons
+  on the hook thread. Keep foreground bookkeeping active and invalidate pending
+  word state when bypassing keyboard input in our UI.
+* **Settings UI:** register all Arcade controls and labels in tab visibility
+  lists (they previously overlaid unrelated IME tabs); restore live Chaos, AI and
+  game-config values when reopening settings. Preserve native system shortcuts
+  in the Hub and use its actual DPI scale for catalog hit testing.
+* **Chaos/Flexing Lab:** handle trackbars through `WM_HSCROLL`; initialize controls
+  from live config; handle only `EN_CHANGE`, not both edit notifications; keep the
+  cursor on granularity changes; permit reload after completion and clear empty
+  passages. Convert UTF-16 surrogate pairs correctly for previews/prepared text.
+* **Explicit injection safety:** preserve the external target across reopen,
+  reject owned/closed targets and denied activation, replace blocking chunk-send
+  sleeps with a cancellable timer, verify focus before each chunk and keep UTF-16
+  pairs together. Closing Lab cancels queued injection and Lab-owned Flexing.
+* **Flexing timing:** accumulate fractional AutoStream characters for a stable
+  15 chars/second across 30/60/144 Hz; a zero-time update emits nothing.
+* **Desktop AI/Coach:** train pending opt-in samples from the UI refresh path;
+  decode UTF-8 advice/achievement names instead of widening individual bytes.
+* **Web UI:** only focused game surfaces forward keys; leave settings controls,
+  shortcuts and IME composition alone. Stream updates no longer steal editor
+  focus, reopen dismissed Labs or overwrite an already-running passage.
+* **Build maintenance:** repair missing/incompletely linked Linux CMake Arcade,
+  renderer, server, window and isolation-benchmark targets. Add the full portable
+  regression suite to CI alongside Windows builds; introduce a source-contract
+  gate for hook isolation and settings-tab ownership.
+
+### Intentional safety change
+* Chaos transforms now run only in explicit Lab preview/injection, **not on
+  ordinary IME replacement deltas**. Transforming accented replacements while
+  passing plain letters unchanged desynchronized text from engine state.
+* No new end-user feature scope. Version is **1.3.0-beta2**, PE/manifest
+  **1.3.0.2**, with the Windows prerelease flag set.
+* Windows x64 manual acceptance is required before maintainer merge. See
+  [the checklist](docs/BETA2_TESTING.md); automated/shim checks do not establish
+  real-editor, TSF, UIPI, WinUI 3 or all-DPI compatibility.
+
 ### Added
 * **The web player can now run as a real service** instead of only in an
   ephemeral preview: `scripts/run_web_bridge.ps1` (Windows — `-Port/-Bind/-Fps`,

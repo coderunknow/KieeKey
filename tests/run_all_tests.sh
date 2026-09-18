@@ -212,13 +212,23 @@ build test_state_transitions -std=c++2b -O2 $INC tests/test_state_transitions.cp
 build soak_pipeline       -std=c++2b -O2 -pthread $INC tests/soak_pipeline.cpp         || rc=1
 
 # --- v1.3.0 Arcade, Chaos, AI & Progression additions -----------------------
-build test_arcade         -std=c++2b -O2 $INC tests/test_arcade.cpp src/core/Arcade.cpp || rc=1
+build test_arcade         -std=c++2b -O2 $INC tests/test_arcade.cpp src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ArcadeRender.cpp src/core/Progression.cpp || rc=1
+build test_arcade_render  -std=c++2b -O2 $INC tests/test_arcade_render.cpp src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ArcadeRender.cpp src/core/Progression.cpp || rc=1
+build test_arcade_server  -std=c++2b -O2 $INC tests/test_arcade_server.cpp src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ArcadeRender.cpp src/core/ArcadeServer.cpp src/core/Progression.cpp || rc=1
+# The Win32 hub/lab windows are executed here through tests/win32_gdi_stub.cpp
+# (a recording USER32/GDI32 layer), so the graphical front-end is covered on a
+# host without the Windows SDK. -D_WIN32 selects the real window implementation.
+build test_arcade_window  -std=c++2b -O2 $INC -Isrc/app -D_WIN32 -Itests/win32_headers -include tests/win32_gdi_shim.hpp \
+                          tests/test_arcade_window.cpp tests/win32_gdi_stub.cpp \
+                          src/app/ArcadeWindow.cpp src/app/ChaosLabWindow.cpp \
+                          src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ArcadeRender.cpp \
+                          src/core/ChaosEngine.cpp src/core/Progression.cpp -pthread || rc=1
 build test_chaos          -std=c++2b -O2 $INC tests/test_chaos.cpp src/core/ChaosEngine.cpp || rc=1
 build test_ai_rival       -std=c++2b -O2 $INC tests/test_ai_rival.cpp src/core/AiRival.cpp || rc=1
 build test_progression    -std=c++2b -O2 $INC tests/test_progression.cpp src/core/Progression.cpp || rc=1
 build test_analytics      -std=c++2b -O2 $INC tests/test_analytics.cpp src/core/TypingAnalytics.cpp || rc=1
 build test_online_ghost   -std=c++2b -O2 $INC tests/test_online_ghost.cpp src/core/OnlineGhost.cpp || rc=1
-build test_soak_arcade    -std=c++2b -O2 $INC tests/test_soak_arcade.cpp src/core/Arcade.cpp src/core/ChaosEngine.cpp src/core/AiRival.cpp src/core/Progression.cpp src/core/TypingAnalytics.cpp || rc=1
+build test_soak_arcade    -std=c++2b -O2 $INC tests/test_soak_arcade.cpp src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ChaosEngine.cpp src/core/AiRival.cpp src/core/Progression.cpp src/core/TypingAnalytics.cpp || rc=1
 
 # --- version-identifier consistency (no mixed version strings) --------------
 if command -v python3 >/dev/null 2>&1; then
@@ -339,6 +349,9 @@ fi
 
 # --- v1.3.0 new layer runners ----------------------------------------------
 run test_arcade              120
+run test_arcade_render        60
+run test_arcade_server        60
+run test_arcade_window        60
 run test_chaos               60
 run test_ai_rival            60
 run test_progression         60

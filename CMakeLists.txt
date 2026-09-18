@@ -168,6 +168,13 @@ if(WIN32)
         src/core/Notifications.hpp     # v1.2.1 RC2: notification center + QuickTelex detector
         src/core/Arcade.hpp            # v1.3.0: Arcade hub framework & minigames
         src/core/Arcade.cpp
+        src/core/ArcadeFrame.hpp       # v1.3.0: frame model + game catalog
+        src/core/ArcadeFrame.cpp
+        src/core/ArcadeRender.hpp      # v1.3.0: device-independent display list
+        src/core/ArcadeRender.cpp      #  (shared by the GDI window and the web client)
+        src/core/ArcadeServer.hpp      # v1.3.0: HTTP/JSON bridge + SSE frame stream
+        src/core/ArcadeServer.cpp
+        src/core/SeqRing.hpp           # v1.3.0: lock-free SPSC observation ring
         src/core/ChaosEngine.hpp       # v1.3.0: Chaos Case & visual glyph transforms
         src/core/ChaosEngine.cpp
         src/core/AiRival.hpp           # v1.3.0: Personal AI typing rival & simulation
@@ -184,6 +191,7 @@ if(WIN32)
     # Bare names — CMake maps them per toolchain (user32.lib / -luser32).
     target_link_libraries(ok_core PUBLIC
         user32 gdi32 shell32 ole32 dwmapi psapi version urlmon winmm
+        msimg32    # v1.3.0: GradientFill for the Arcade Hub background
         advapi32   # v1.1.3: OpenProcessToken / GetTokenInformation (elevation probe)
         wtsapi32)  # v1.2.0: WTSRegisterSessionNotification (lock/unlock, RDP)
 
@@ -201,6 +209,10 @@ if(WIN32)
     # old Ctrl+Shift global hotkey was removed).
     add_executable(openkey
         src/app/main.cpp
+        src/app/ArcadeWindow.hpp   # v1.3.0: graphical Arcade Hub window (GDI)
+        src/app/ArcadeWindow.cpp
+        src/app/ChaosLabWindow.hpp # v1.3.0: Chaos / Flexing lab window
+        src/app/ChaosLabWindow.cpp
         src/app/resource.h
         src/app/KieeKeyApp.rc      # icon(s) + manifest + version info —
                                    # compiled by the RC language rule above
@@ -461,6 +473,11 @@ else()
 
         # v1.3.0 Arcade, Chaos, AI, Progression, Analytics & Ghost
         add_test(NAME ok_arcade_tests      COMMAND ok_arcade_tests)
+    add_test(NAME ok_arcade_render_tests COMMAND ok_arcade_render_tests)
+    add_test(NAME ok_arcade_server_tests COMMAND ok_arcade_server_tests)
+    if(TARGET ok_arcade_window_tests)
+        add_test(NAME ok_arcade_window_tests COMMAND ok_arcade_window_tests)
+    endif()
         add_test(NAME ok_chaos_tests       COMMAND ok_chaos_tests)
         add_test(NAME ok_ai_tests          COMMAND ok_ai_tests)
         add_test(NAME ok_progression_tests COMMAND ok_progression_tests)
@@ -478,11 +495,15 @@ else()
                 ok_stress_tests ok_soak_tests ok_queue_stress_tests
                 ok_gate_tests ok_key_tests ok_state_tests ok_lifecycle_tests
                 ok_soak_pipeline ok_perf_profiles ok_option_matrix
-                ok_arcade_tests ok_chaos_tests ok_ai_tests
+                ok_arcade_tests ok_arcade_render_tests ok_arcade_server_tests
+                ok_chaos_tests ok_ai_tests
                 ok_progression_tests ok_analytics_tests ok_online_tests
                 ok_soak_arcade)
             kieekey_test_force_asserts(${_k_test_tgt})
         endforeach()
+        if(TARGET ok_arcade_window_tests)
+            kieekey_test_force_asserts(ok_arcade_window_tests)
+        endif()
 
         # Every registered test gets a hard cap. A regression that turns a
         # barrier/wait path into an infinite block must fail the gate in
@@ -714,6 +735,30 @@ if(WIN32 AND KIEEKEY_BUILD_TESTS)
     # v1.3.0 Arcade, Chaos, AI & Progression harnesses
     add_executable(ok_arcade_tests tests/test_arcade.cpp)
     target_link_libraries(ok_arcade_tests PRIVATE ok_core)
+    add_executable(ok_arcade_render_tests tests/test_arcade_render.cpp)
+    target_link_libraries(ok_arcade_render_tests PRIVATE ok_core)
+    add_executable(ok_arcade_server_tests tests/test_arcade_server.cpp)
+    target_link_libraries(ok_arcade_server_tests PRIVATE ok_core)
+
+    # v1.3.0 graphical front-end: the Win32 GDI hub + Chaos Lab windows are
+    # executed against tests/win32_gdi_stub.cpp (a recording USER32/GDI32
+    # layer) on any host — including the Linux CI job, which has no Windows
+    # SDK. On Windows the real SDK is used instead, so the target is only
+    # meaningful where the shim does not shadow <windows.h>.
+    if(NOT WIN32)
+        add_executable(ok_arcade_window_tests
+            tests/test_arcade_window.cpp
+            tests/win32_gdi_stub.cpp
+            src/app/ArcadeWindow.cpp
+            src/app/ChaosLabWindow.cpp)
+        target_include_directories(ok_arcade_window_tests PRIVATE
+            tests tests/win32_headers src/app src/core)
+        target_compile_definitions(ok_arcade_window_tests PRIVATE _WIN32)
+        target_compile_options(ok_arcade_window_tests PRIVATE
+            -include tests/win32_gdi_shim.hpp)
+        target_link_libraries(ok_arcade_window_tests PRIVATE ok_core)
+        set_tests_properties(ok_arcade_window_tests PROPERTIES TIMEOUT 120)
+    endif()
     add_executable(ok_chaos_tests tests/test_chaos.cpp)
     target_link_libraries(ok_chaos_tests PRIVATE ok_core)
     add_executable(ok_ai_tests tests/test_ai_rival.cpp)
@@ -837,11 +882,54 @@ if(WIN32 AND KIEEKEY_BUILD_UI STREQUAL "winui3")
         src/ui/App.xaml.cpp
         src/ui/pch.h
         src/ui/pch.cpp
+        # v1.3.0: the settings surface launches the native Arcade Hub / Chaos Lab
+        # windows (ok::app::launchArcadeHub / launchChaosLab).
+        src/app/ArcadeWindow.cpp
+        src/app/ArcadeWindow.hpp
+        src/app/ChaosLabWindow.cpp
+        src/app/ChaosLabWindow.hpp
     )
     set_source_files_properties(src/ui/MainWindow.xaml PROPERTIES
         XAML_IMPORT "Microsoft.UI.Xaml.Markup.XamlReader")
     target_link_libraries(kieekey_winui3 PRIVATE ok_core ok_tsf)
     target_compile_features(kieekey_winui3 PRIVATE cxx_std_23)
+endif()
+
+#----------------------------------------------------------------------------
+# Arcade Hub web bridge (tools/arcade_serve.cpp)
+#
+#   arcade_serve --port 8765 --host 0.0.0.0 --web web
+#
+# Serves web/ and drives the same ArcadeManager the GDI window paints, so the
+# games are playable (and testable) on any machine, Windows or not.
+#----------------------------------------------------------------------------
+if(TARGET ok_core)
+    # Standardized benchmark for the whole arcade pipeline (see
+    # docs/bench/arcade-130/ARCADE_BENCH_REPORT.md and tests/run_arcade_bench.sh).
+    add_executable(arcade_bench tools/arcade_bench.cpp)
+    target_link_libraries(arcade_bench PRIVATE ok_core)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        find_package(Threads REQUIRED)
+        target_link_libraries(arcade_bench PRIVATE Threads::Threads)
+    endif()
+
+    add_executable(arcade_serve tools/arcade_serve.cpp)
+    target_link_libraries(arcade_serve PRIVATE ok_core)
+    if(WIN32)
+        target_link_libraries(arcade_serve PRIVATE ws2_32)
+    endif()
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        find_package(Threads REQUIRED)
+        target_link_libraries(arcade_serve PRIVATE Threads::Threads)
+    endif()
+    set_target_properties(arcade_serve PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+    # The web assets ship next to the binary; the working directory of a ctest
+    # run is the build tree, so copy them once at configure time.
+    add_custom_target(arcade_web_assets ALL
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+                ${CMAKE_SOURCE_DIR}/web ${CMAKE_BINARY_DIR}/web
+        COMMENT "Copying the Arcade Hub web client into the build tree")
 endif()
 
 #----------------------------------------------------------------------------
@@ -853,4 +941,7 @@ if(WIN32)
             RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
     install(DIRECTORY src/core DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/openkey
             FILES_MATCHING PATTERN "*.hpp")
+    # The web client of the Arcade Hub (tools/arcade_serve serves this folder;
+    # KieeKeyApp.exe --arcade opens the native GDI window instead).
+    install(DIRECTORY web DESTINATION ${CMAKE_INSTALL_DATADIR}/kieekey)
 endif()

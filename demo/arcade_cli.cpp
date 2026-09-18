@@ -17,6 +17,7 @@
 #include <iostream>
 #include <string>
 #include "Arcade.hpp"
+#include "ArcadeRender.hpp"
 #include "ChaosEngine.hpp"
 #include "AiRival.hpp"
 #include "Progression.hpp"
@@ -29,6 +30,28 @@ using namespace ok::chaos;
 using namespace ok::ai;
 using namespace ok::progression;
 using namespace ok::analytics;
+
+// v1.3.0: the CLI shows the SAME display list the graphical front-ends paint
+// (Win32 GDI window / HTML5 canvas), so a terminal run is a faithful preview of
+// what the GUI shows — it is not a separate ASCII game implementation.
+void dumpFrame(ArcadeManager& manager) {
+    const Frame& frame = manager.getFrame();
+    RenderList list;
+    buildRenderList(frame, list);
+    const GameStats& stats = frame.stats;
+    std::cout << "  title   : " << list.title << "\n";
+    if (!list.status.empty()) { std::cout << "  status  : " << list.status << "\n"; }
+    if (!list.hint.empty())   { std::cout << "  hint    : " << list.hint << "\n"; }
+    std::cout << "  score   : " << stats.score << "  (best " << stats.highScore << ")\n";
+    std::cout << "  wpm/acc : " << stats.wpm << " WPM / " << stats.accuracy << "%\n";
+    std::cout << "  progress: " << static_cast<int>(stats.progress * 100.0) << "%\n";
+    std::cout << "  shapes  : " << list.commands.size() << " draw commands"
+              << " (rects+circles+lines+polys+texts), dropped "
+              << frame.droppedShapes << "\n";
+    const std::string json = renderListToJson(list);
+    std::cout << "  wire    : " << json.size() << " bytes of JSON per frame\n";
+    std::cout << "\n" << renderListToText(list);
+}
 
 void printMenu() {
     std::cout << "\n======================================================\n";
@@ -76,7 +99,7 @@ int main(int argc, char** argv) {
             for (int i = 0; i < 5; ++i) {
                 mgr.update(0.15);
             }
-            std::cout << mgr.renderCurrentGame();
+            dumpFrame(mgr);
             mgr.stopGame();
             break;
         }
@@ -84,14 +107,14 @@ int main(int argc, char** argv) {
             std::cout << "\n--- Tetris Simulation ---\n";
             mgr.launchGame(GameType::Tetris);
             mgr.update(0.5);
-            std::cout << mgr.renderCurrentGame();
+            dumpFrame(mgr);
             mgr.stopGame();
             break;
         }
         case 3: {
             std::cout << "\n--- Fishing Simulation ---\n";
             mgr.launchGame(GameType::Fishing);
-            std::cout << mgr.renderCurrentGame();
+            dumpFrame(mgr);
             mgr.stopGame();
             break;
         }
@@ -100,7 +123,7 @@ int main(int argc, char** argv) {
             mgr.launchGame(GameType::TypingRace);
             mgr.handleKey(0, U'K', true);
             mgr.update(0.5);
-            std::cout << mgr.renderCurrentGame();
+            dumpFrame(mgr);
             mgr.stopGame();
             break;
         }
@@ -108,7 +131,7 @@ int main(int argc, char** argv) {
             std::cout << "\n--- WASD Racing Simulation ---\n";
             mgr.launchGame(GameType::WasdRace);
             mgr.update(0.5);
-            std::cout << mgr.renderCurrentGame();
+            dumpFrame(mgr);
             mgr.stopGame();
             break;
         }
@@ -117,7 +140,7 @@ int main(int argc, char** argv) {
             mgr.launchGame(GameType::Rhythm);
             mgr.update(1.0);
             mgr.handleKey(0, U'd', true);
-            std::cout << mgr.renderCurrentGame();
+            dumpFrame(mgr);
             mgr.stopGame();
             break;
         }
@@ -127,7 +150,7 @@ int main(int argc, char** argv) {
             mgr.handleKey(0, U'h', true);
             mgr.handleKey(0, U'o', true);
             mgr.handleKey(0, U'c', true);
-            std::cout << mgr.renderCurrentGame();
+            dumpFrame(mgr);
             mgr.stopGame();
             break;
         }
@@ -138,7 +161,7 @@ int main(int argc, char** argv) {
                 mgr.handleKey(0x41, U'a', true);
             }
             mgr.update(0.2);
-            std::cout << mgr.renderCurrentGame();
+            dumpFrame(mgr);
             mgr.stopGame();
             break;
         }

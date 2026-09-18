@@ -42,6 +42,12 @@
 #include <memory>
 #include <string>
 
+#include "Arcade.hpp"
+#include "ChaosEngine.hpp"
+#include "AiRival.hpp"
+#include "Progression.hpp"
+#include "TypingAnalytics.hpp"
+
 #include "ModernKeyHook.hpp"
 #include "ProcessMonitor.hpp"
 #include "TextEngine.hpp"
@@ -71,6 +77,17 @@ private:
     static bool isModifierVk(std::uint32_t vk) noexcept;
     static void sendBackspaces(std::size_t n) noexcept;
     static void sendUnicodeText(const std::wstring& text) noexcept;
+
+    // v1.3.0 pages: Arcade Hub launcher, Chaos switches, progression & AI panel.
+    void OnOpenArcadeHub(IInspectable const&, RoutedEventArgs const&);
+    void OnOpenChaosLab(IInspectable const&, RoutedEventArgs const&);
+    void OnPlayArcadeGame(IInspectable const&, RoutedEventArgs const&);
+    void OnChaosChanged(IInspectable const&, RoutedEventArgs const&);
+    void OnAiOptInChanged(IInspectable const&, RoutedEventArgs const&);
+    void OnResetAiProfile(IInspectable const&, RoutedEventArgs const&);
+    void OnResetProgression(IInspectable const&, RoutedEventArgs const&);
+    // Refreshes the arcade/progression/AI panel (called by the 1 Hz timer).
+    void refreshProgressPanel();
 
     // Owned pipeline (the console app in src/app/main.cpp shares this design).
     std::shared_ptr<ok::text::TextEngine>     m_engine;

@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>KieeKey Arcade Hub</title>
+<link rel="stylesheet" href="arcade.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <span class="logo">⌨️</span>
+    <div>
+      <h1>KieeKey Arcade Hub</h1>
+      <p id="subtitle">Cùng một engine C++ với bản Win32 — vẽ bằng HTML5 Canvas</p>
+    </div>
+  </div>
+  <div class="status">
+    <span id="connection" class="pill pill-warn">đang kết nối…</span>
+    <span id="fps" class="pill">-- fps</span>
+  </div>
+</header>
+
+<main>
+  <section class="hud">
+    <div class="hud-item"><span class="k" id="title">—</span></div>
+    <div class="hud-item"><span class="k">Điểm</span><span class="v" id="score">0</span></div>
+    <div class="hud-item"><span class="k">Kỷ lục</span><span class="v" id="best">0</span></div>
+    <div class="hud-item"><span class="k">Cấp</span><span class="v" id="level">1</span></div>
+    <div class="hud-item"><span class="k">Combo</span><span class="v" id="combo">0</span></div>
+    <div class="hud-item"><span class="k">Mạng</span><span class="v" id="lives">0</span></div>
+    <div class="hud-item"><span class="k">WPM</span><span class="v" id="wpm">0</span></div>
+    <div class="hud-item"><span class="k">Chính xác</span><span class="v" id="acc">100%</span></div>
+  </section>
+
+  <section class="stage">
+    <canvas id="screen" width="1280" height="720" tabindex="0" aria-label="Màn hình game"></canvas>
+    <div id="banner" class="banner hidden"></div>
+    <div id="toast" class="toast hidden"></div>
+  </section>
+
+  <section class="side">
+    <h2>Chọn game</h2>
+    <div id="catalog" class="catalog"></div>
+
+    <h2>Cấu hình</h2>
+    <div class="config">
+      <label>Rhythm / No-Mistake
+        <select id="failMode">
+          <option value="0" selected>Hardcore — sai là chết</option>
+          <option value="1">Thanh máu — sai trừ máu</option>
+        </select>
+      </label>
+      <label>Nhịp Rhythm (BPM): <output id="bpmOut">112</output>
+        <input id="bpm" type="range" min="60" max="220" value="112">
+      </label>
+      <label>Pacer đua tốc độ (WPM): <output id="pacerOut">60</output>
+        <input id="pacer" type="range" min="0" max="200" value="60">
+      </label>
+    </div>
+
+    <h2>Điều khiển</h2>
+    <ul class="keys">
+      <li><b>Snake</b>: mũi tên hoặc WASD</li>
+      <li><b>Tetris</b>: ← → di chuyển, ↑ xoay, Space thả nhanh</li>
+      <li><b>Câu cá</b>: gõ đúng chuỗi chữ để kéo cá</li>
+      <li><b>Đua tốc độ</b>: gõ đoạn văn bản</li>
+      <li><b>Đua + né</b>: gõ chữ và WASD để né vật cản</li>
+      <li><b>Rhythm</b>: A S D F / J K L ;</li>
+      <li><b>Không lỗi</b>: gõ liên tục, tuyệt đối không sai</li>
+      <li><b>Flexing</b>: gõ gì cũng được</li>
+      <li><b>P / F1</b> tạm dừng · <b>F2</b> chơi lại · <b>Esc</b> thoát game</li>
+    </ul>
+    <p class="note">Mọi phím gửi lên đều đi vào engine C++ thật (ArcadeManager) — engine này cũng chính là engine mà bản Win32 vẽ bằng GDI.</p>
+  </section>
+</main>
+
+<footer>
+  <span>KieeKey v1.3.0 · Arcade Hub</span>
+  <button id="restart" class="btn">Chơi lại (F2)</button>
+  <button id="pause" class="btn">Tạm dừng (P)</button>
+  <button id="stop" class="btn btn-ghost">Thoát game (Esc)</button>
+</footer>
+
+<script src="arcade.js"></script>
+</body>
+</html>

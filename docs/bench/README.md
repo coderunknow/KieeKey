@@ -6,6 +6,7 @@ the bare `rc1/`, `rc2/`, `rc3/` trees are the older v1.2.1 campaign.
 
 | directory | campaign | documented in |
 |---|---|---|
+| `arcade-130/` | v1.3.0 arcade / chaos / AI stack (frame pipeline, HTTP bridge, steady-state allocations) | [`arcade-130/ARCADE_BENCH_REPORT.md`](arcade-130/ARCADE_BENCH_REPORT.md) |
 | `extreme-130/` | v1.3.0 Standardized extreme benchmark (host freeze, 3-engine showdown, 20M throughput floor, micro matrix, E2E pipeline, isolation gate) | this file, below |
 | `stable-122/` | v1.2.2 Stable release campaign (independent-host re-verification + three-way 1.2.1/RC4/Stable) | this file, below |
 | `rc4-122/` | v1.2.2 RC4 stable-qualification campaign | this file, below |
@@ -15,6 +16,19 @@ the bare `rc1/`, `rc2/`, `rc3/` trees are the older v1.2.1 campaign.
 | `rc1/`, `rc2/` | v1.2.1 RC1-vs-RC2 | this file, below |
 | `rc3/` | v1.2.1 RC2-vs-RC3 | this file, below |
 | `stable/` | v1.2.1 RC3-vs-Stable | this file, below |
+
+## v1.3.0 Arcade Stack Benchmark (`arcade-130/`)
+
+`arcade-130/` holds the standardized benchmark of the optional v1.3.0 feature
+stack, executed via `tests/run_arcade_bench.sh` (tool: `tools/arcade_bench.cpp`,
+also built as the `arcade_bench` target):
+
+- `arcade_bench.txt`: raw `key<TAB>value` measurements — per game the simulation,
+  display-list, JSON and input costs (mean/p50/p95/p99), the HTTP bridge cost,
+  and the steady-state allocation audit.
+- `environment.json`: host, compiler, kernel and parameter freeze.
+- [`ARCADE_BENCH_REPORT.md`](arcade-130/ARCADE_BENCH_REPORT.md): the written
+  campaign report (tables + interpretation + reproduction command).
 
 ## v1.3.0 Extreme Benchmark (`extreme-130/`)
 

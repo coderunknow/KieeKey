@@ -5,6 +5,92 @@ Keep a Changelog; versioning: SemVer.
 
 ## [Unreleased]
 
+### Added
+* **The v1.3.0 features now have their graphical surfaces** (the previous
+  submission shipped the engines but rendered the games as text in a settings
+  tab):
+  * `src/app/ArcadeWindow.{hpp,cpp}` — the Arcade Hub as a real Win32/Win32 GDI
+    window (1180x760, double-buffered, 16 ms `WM_TIMER`): game-catalogue
+    sidebar with hover/click, keyboard input through
+    `ArcadeManager::handleKey`, FPS + level-up toast, plus a portable stub so
+    the file still compiles in a cross-check build.
+  * `src/app/ChaosLabWindow.{hpp,cpp}` + `src/core/ArcadeHubLaunch.hpp` — a
+    dedicated Chaos Lab window: type text, see exactly what the chaos engine
+    would emit, and write it into the focused application through the IME's own
+    emitter (`ChaosLabWindow::setEmitCallback`). Flexing Mode is reachable from
+    the same window.
+  * `web/` (index.html + arcade.css + arcade.js) and `tools/arcade_serve.cpp` —
+    an HTML5 canvas player that drives the same C++ engine over HTTP + SSE;
+    `arcade_serve` is a real target on Windows and Linux.
+  * New launchers: tray menu items, settings-dialog buttons, WinUI 3 pages, and
+    the command line (`KieeKeyApp.exe --arcade[=slug] --chaos-lab
+    --settings=N`).
+  * The Arcade tab of the settings dialog gained the run configuration the
+    user asked to be selectable: **Rhythm / No-Mistake fail mode** (Hardcore —
+    one mistake ends the run, the default — or HP bar) and the **Rhythm BPM**,
+    applied through `ArcadeManager::setConfig`, next to a button that opens the
+    Chaos Lab. The web player exposes the same three settings.
+* `tools/arcade_bench.cpp` + `tests/run_arcade_bench.sh` — the standardized
+  arcade benchmark (per-game simulation/display-list/JSON/input percentiles,
+  HTTP bridge cost, steady-state allocation audit, determinism digest) with its
+  evidence committed under `docs/bench/arcade-130/` (see
+  `ARCADE_BENCH_REPORT.md`).
+* `tests/win32_gdi_shim.hpp`, `tests/win32_gdi_stub.{hpp,cpp}`,
+  `tests/win32_headers/windows.h` and `tests/test_arcade_window.cpp` — a
+  recording USER32/GDI32 harness that compiles, links and *executes* the real
+  window procedures (messages, GDI call log, control state) on any host, so the
+  graphical front-end is covered by `tests/run_all_tests.sh` even where no
+  Windows SDK exists.
+
+### Fixed
+* **Progression was never awarded for games played in the app**: run results
+  were only drained by the HTTP bridge, so "type a lot to level up" did
+  nothing in the desktop build. `ArcadeManager::drainRunResultsToProgression()`
+  is now the single credit path (called from `update()`, the hub frame pump and
+  the settings timer), and the bridge delegates to it — a run is still popped
+  exactly once, so nothing is credited twice.
+* **The IME rewrote keystrokes inside KieeKey's own windows**: the producer now
+  passes input through untouched while the hub, the lab or the settings dialog
+  has the focus (`ownWindowHasFocus()`), so a game window and the IME can no
+  longer both consume a key.
+* **Hook-thread lock**: the keystroke counter called
+  `ProgressionEngine::recordTypingSession()`, which takes the progression mutex,
+  on the hook thread. It now uses the lock-free recorders
+  (`recordKeystroke`/`recordActiveTimeMs`), with words counted on word
+  boundaries and the aggregate merged by `flushStats()` on the UI timer.
+* **Every keystroke reached a game twice in the hub window**: `WM_KEYDOWN` now
+  carries the `ToUnicode`-translated character with the real keyboard state and
+  `WM_CHAR` is swallowed; modifier keys are filtered out.
+* **Per-frame heap traffic in the render path**: `buildRenderList` re-created
+  every command's text buffer and re-converted the four frame strings on every
+  frame (~4 allocations/frame). Command slots and conversion buffers are now
+  reused (`RenderCommand::reset`, `RenderList::scratch`,
+  `utf8FromUtf32(text, out)`, `renderListToJson(list, out)`), which the
+  allocation audit in `test_arcade` pins at zero for the native pipeline.
+* **`src/ui/MainWindow.xaml` shipped stale identity**: the header still said
+  "OpenKey" / "KieeKey v1.1.2" and the settings surface had no arcade pages.
+  The title is now KieeKey, the version is derived from
+  `OPENKEY_KIEEKEY_VERSION_STRING` at runtime, and three new expanders
+  (Arcade Hub launcher, Chaos switches, progression/AI panel) plus handlers
+  were added.
+* `demo/arcade_cli.cpp` now prints the same display list the graphical
+  front-ends paint (title/score/WPM/shape count/wire size + the ASCII fallback)
+  instead of the removed `renderCurrentGame()` text renderer.
+
+### Changed
+* `tests/run_all_tests.sh` builds and runs four new suites
+  (`test_arcade_render`, `test_arcade_server`, `test_arcade_window`,
+  `test_soak_arcade` over the render/Progression objects) — the native gate is
+  now 33 programs.
+* `CMakeLists.txt`: registered the arcade render/server sources, `msimg32`,
+  the two window translation units, the `arcade_serve` + `arcade_bench` tools,
+  the new test targets (including the shim-based window harness with a 120 s
+  timeout) and `install(DIRECTORY web ...)`.
+* `README.md` was de-duplicated: three overlapping `v1.3.0-*` "What's new"
+  sections plus the whole historical changelog chain were collapsed into one
+  current-release section that points at `CHANGELOG.md` as the single source of
+  version history (795 -> ~330 lines).
+
 ### Fixed
 * **CI (build/x64)**: the `Verify SHA256SUMS manifest` gate failed on
   `main` because the "Update project status" commit edited `README.md`

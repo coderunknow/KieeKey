@@ -40,11 +40,16 @@
 #include "pch.h"
 #include "MainWindow.xaml.h"
 
+#include "ArcadeHubLaunch.hpp"
+
 #if __has_include("MainWindow.g.cpp")
 #include "MainWindow.g.cpp"
 #endif
 
 #include <chrono>
+#include <cstdio>
+#include <iterator>
+#include <string>
 
 namespace winrt {
 using namespace Microsoft::UI::Xaml;
@@ -133,8 +138,30 @@ MainWindow::MainWindow() {
         ExcludeFullscreen().IsChecked(exclFullscreen);
         ExcludeShell().IsChecked(exclShell);
         SmartSwitch().IsChecked(smartSwitch);
+
+        // v1.3.0: the version string is derived from the public macro, so the
+        // header can never advertise a stale release again (the XAML used to
+        // hardcode "KieeKey v1.1.2" next to an "OpenKey" title).
+        {
+            std::wstring version = L"v";
+            for (const char* p = OPENKEY_KIEEKEY_VERSION_STRING; p != nullptr && *p != 0; ++p) {
+                version += static_cast<wchar_t>(static_cast<unsigned char>(*p));
+            }
+            VersionText().Text(winrt::hstring(version));
+        }
+
+        // v1.3.0 panels: mirror the live engine state into the new controls.
+        {
+            const auto chaos = ok::chaos::ChaosEngine::instance().getConfig();
+            ChaosMaster().IsOn(chaos.masterEnabled);
+            ChaosCase().IsChecked(chaos.randomCaseEnabled);
+            ChaosGlyph().IsChecked(chaos.glyphTransformEnabled);
+            ChaosInject().IsChecked(false);
+            AiOptIn().IsOn(ok::ai::AiRivalEngine::instance().isOptIn());
+        }
     }
     m_uiInitializing = false;
+    refreshProgressPanel();
 
     // ---- telemetry timer (1 Hz; reads atomic counters, zero allocations) ----
     m_timer = DispatcherTimer();
@@ -490,6 +517,151 @@ void MainWindow::OnTelemetryTick(winrt::Microsoft::UI::Xaml::DispatcherTimer con
     if (auto s = m_monitor->snapshot(); s) {
         std::wstring exe = s->exePath.substr(s->exePath.find_last_of(L'\\') + 1);
         StatusText().Text(winrt::hstring(exe) + (s->autoExcluded() ? L" (đã loại trừ)" : L""));
+    }
+
+    // v1.3.0: keep the arcade / progression / AI panel live (1 Hz).
+    refreshProgressPanel();
+}
+
+//===========================================================================
+// v1.3.0: Arcade Hub / Chaos / progression pages
+//===========================================================================
+void MainWindow::OnOpenArcadeHub(IInspectable const&, RoutedEventArgs const&) {
+    if (ok::app::launchArcadeHub(nullptr)) {
+        StatusText().Text(L"Arcade Hub đã mở (cửa sổ đồ hoạ Win32 GDI).");
+    } else {
+        StatusText().Text(L"Không mở được Arcade Hub trên hệ thống này.");
+    }
+}
+
+void MainWindow::OnOpenChaosLab(IInspectable const&, RoutedEventArgs const&) {
+    if (ok::app::launchChaosLab()) {
+        StatusText().Text(L"Phòng thí nghiệm Chaos đã mở — gõ thử để xem kết quả thật.");
+    } else {
+        StatusText().Text(L"Không mở được phòng Chaos trên hệ thống này.");
+    }
+}
+
+void MainWindow::OnPlayArcadeGame(IInspectable const& sender, RoutedEventArgs const&) {
+    auto button = sender.try_as<winrt::Microsoft::UI::Xaml::Controls::Button>();
+    if (button == nullptr) {
+        return;
+    }
+    const winrt::hstring tag = button.Tag().as<winrt::hstring>();
+    std::string slug;
+    for (wchar_t ch : std::wstring(tag.c_str())) {
+        slug += static_cast<char>(ch);
+    }
+    if (ok::app::launchArcadeHub(slug.c_str())) {
+        StatusText().Text(winrt::hstring(L"Đang mở: ") + tag);
+    } else {
+        StatusText().Text(L"Không mở được cửa sổ game.");
+    }
+}
+
+void MainWindow::OnChaosChanged(IInspectable const&, RoutedEventArgs const&) {
+    if (m_uiInitializing) {
+        return;
+    }
+    // v1.3.0: the same ChaosEngine the IME output path reads. The checkbox
+    // "gõ thật ra ứng dụng đang mở" is intentionally informational: injection
+    // happens in the hook path, the lab window is where it is exercised.
+    auto& engine = ok::chaos::ChaosEngine::instance();
+    ok::chaos::ChaosConfig config = engine.getConfig();
+    config.masterEnabled = ChaosMaster().IsOn();
+    config.randomCaseEnabled = ChaosCase().IsChecked().GetBoolean();
+    config.glyphTransformEnabled = ChaosGlyph().IsChecked().GetBoolean();
+    engine.setConfig(config);
+    StatusText().Text(config.masterEnabled ? L"Chaos Engine: BẬT" : L"Chaos Engine: TẮT");
+}
+
+void MainWindow::OnAiOptInChanged(IInspectable const&, RoutedEventArgs const&) {
+    if (m_uiInitializing) {
+        return;
+    }
+    ok::ai::AiRivalEngine::instance().setOptIn(AiOptIn().IsOn());
+    refreshProgressPanel();
+}
+
+void MainWindow::OnResetAiProfile(IInspectable const&, RoutedEventArgs const&) {
+    ok::ai::AiRivalEngine::instance().resetProfile();
+    StatusText().Text(L"Hồ sơ AI đã được xoá.");
+    refreshProgressPanel();
+}
+
+void MainWindow::OnResetProgression(IInspectable const&, RoutedEventArgs const&) {
+    ok::progression::ProgressionEngine::instance().reset();
+    StatusText().Text(L"Tiến trình đã được đặt lại về cấp 1.");
+    refreshProgressPanel();
+}
+
+void MainWindow::refreshProgressPanel() {
+    using ok::progression::ProgressionEngine;
+    // Fold the hook thread's lock-free counters in before reading them.
+    ProgressionEngine::instance().flushStats();
+    const auto stats = ProgressionEngine::instance().getStats();
+
+    wchar_t buffer[256];
+    std::swprintf(buffer, std::size(buffer), L"Cấp độ: %u", stats.currentLevel);
+    LevelText().Text(winrt::hstring(buffer));
+    std::swprintf(buffer, std::size(buffer), L"Tổng XP: %llu (còn %llu XP để lên cấp)",
+                  static_cast<unsigned long long>(stats.totalXp),
+                  static_cast<unsigned long long>(
+                      ProgressionEngine::xpRemainingToNextLevel(stats.totalXp)));
+    XpText().Text(winrt::hstring(buffer));
+    std::swprintf(buffer, std::size(buffer), L"Số phím đã gõ: %llu · từ: %llu · thời gian gõ: %llu giây",
+                  static_cast<unsigned long long>(stats.totalKeystrokes),
+                  static_cast<unsigned long long>(stats.totalWords),
+                  static_cast<unsigned long long>(stats.typingTimeSeconds));
+    KeysText().Text(winrt::hstring(buffer));
+
+    const auto unlocked = ProgressionEngine::instance().getUnlockedAchievements();
+    const auto all = ProgressionEngine::getAllAchievements();
+    std::wstring achievements = L"Thành tựu: ";
+    achievements += std::to_wstring(unlocked.size());
+    achievements += L"/";
+    achievements += std::to_wstring(all.size());
+    if (!unlocked.empty()) {
+        achievements += L" — mới nhất: ";
+        const char* title = unlocked.back().title;
+        for (const char* p = title; p != nullptr && *p != '\0'; ++p) {
+            achievements += static_cast<wchar_t>(static_cast<unsigned char>(*p));
+        }
+    }
+    AchievementsText().Text(winrt::hstring(achievements));
+
+    if (ok::ai::AiRivalEngine::instance().isOptIn()) {
+        const auto profile = ok::ai::AiRivalEngine::instance().getProfile();
+        std::swprintf(buffer, std::size(buffer),
+                      L"AI: nhịp gõ trung bình %.1f ms (≈%.0f WPM) · lỗi tự nhiên %.1f%% · mẫu %llu",
+                      profile.meanIkiMs, profile.expectedWpm(), profile.errorRate * 100.0,
+                      static_cast<unsigned long long>(profile.sampleCount));
+        AiStatsText().Text(winrt::hstring(buffer));
+    } else {
+        AiStatsText().Text(L"AI: chưa bật (không thu thập dữ liệu gõ).");
+    }
+
+    const auto advice = ok::analytics::TypingAnalyticsEngine::instance().generateCoachingAdvice();
+    if (!advice.empty()) {
+        std::wstring text = L"Gợi ý: ";
+        for (char ch : advice.front().heuristicAdvice) {
+            text += static_cast<wchar_t>(static_cast<unsigned char>(ch));
+        }
+        CoachText().Text(winrt::hstring(text));
+    } else {
+        CoachText().Text(L"Gợi ý: cần thêm dữ liệu gõ để phân tích.");
+    }
+
+    auto& arcade = ok::arcade::ArcadeManager::instance();
+    if (arcade.hasActiveGame()) {
+        const ok::arcade::Frame& frame = arcade.getFrame();
+        std::swprintf(buffer, std::size(buffer), L"Đang chơi: %hs · điểm %lld · %.1f WPM",
+                      std::string(ok::arcade::gameSlug(
+                                      static_cast<int>(arcade.getCurrentGameType()))).c_str(),
+                      static_cast<long long>(frame.stats.score), frame.stats.wpm);
+        ArcadeStatusText().Text(winrt::hstring(buffer));
+    } else {
+        ArcadeStatusText().Text(L"Chưa có game nào đang chạy.");
     }
 }
 

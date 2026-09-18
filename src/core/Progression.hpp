@@ -29,20 +29,25 @@
 //============================================================================
 //----------------------------------------------------------------------------
 // KieeKey — Progression.hpp
-// Global Level & Typing Progression Engine.
+// Global level, lifetime statistics, achievements and daily streaks
+// ("📈 Level tăng vì gõ nhiều").
 //
-// Tracks user achievements, total characters/words/keystrokes, session time,
-// deterministic XP & leveling, and minigame records.
-//
-// GUARANTEES:
-//   * DETERMINISTIC: Level formulas and XP accumulation are 100% deterministic
-//     and free of floating-point overflow (uint64 counters).
-//   * RESILIENT: Corrupted profile files are rejected safely, falling back
-//     to pristine state without crashing the IME.
-//   * NON-BLOCKING: All stats persistence is separate from the typing hot path.
+// v1.3.0 fixes:
+//   * The hot path used `recordTypingSession(1, 0, 1, 0, 0.0, 100.0)` per
+//     keystroke from the hook thread — a mutex + full stats rewrite *per key*,
+//     and `totalSessions` grew by one for every character typed. Keystroke
+//     accounting is now lock-free (`recordKeystroke`) and merged into the
+//     persisted stats by `flushStats()` on the UI thread.
+//   * `totalWords` was never fed, so the "First word" achievement was
+//     unreachable; words are counted now.
+//   * `typingTimeSeconds` and the day streak never advanced. Both are tracked.
+//   * `loadFromFile()` could not distinguish "no file yet" from "corrupt file",
+//     and a corrupt file was silently ignored; there is a `LoadOutcome` now
+//     plus a best-effort `salvageDeserialize()` for recoverable damage.
 //----------------------------------------------------------------------------
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -75,89 +80,139 @@ struct AchievementInfo {
     AchievementId id;
     const char* title;
     const char* description;
-    uint32_t xpReward;
+    std::uint32_t xpReward;
 };
 
 struct ProgressionStats {
-    uint64_t totalCharacters = 0;
-    uint64_t totalWords = 0;
-    uint64_t totalKeystrokes = 0;
-    uint64_t totalSessions = 0;
-    uint64_t typingTimeSeconds = 0;
-
+    std::uint64_t totalCharacters = 0;
+    std::uint64_t totalWords = 0;
+    std::uint64_t totalKeystrokes = 0;
+    std::uint64_t totalSessions = 0;
+    std::uint64_t typingTimeSeconds = 0;
     double bestWpm = 0.0;
     double bestAccuracy = 0.0;
-
-    uint32_t currentStreakDays = 0;
-    uint32_t maxStreakDays = 0;
-
-    uint64_t totalXp = 0;
-    uint32_t currentLevel = 1;
-
+    std::uint32_t currentStreakDays = 0;
+    std::uint32_t maxStreakDays = 0;
+    std::uint64_t totalXp = 0;
+    std::uint32_t currentLevel = 1;
     // Minigame records
-    int64_t snakeHighScore = 0;
-    int64_t tetrisHighScore = 0;
-    uint64_t fishCaughtCount = 0;
-    uint64_t legendaryFishCount = 0;
+    std::int64_t snakeHighScore = 0;
+    std::int64_t tetrisHighScore = 0;
+    std::uint64_t fishCaughtCount = 0;
+    std::uint64_t legendaryFishCount = 0;
     double typingRaceBestWpm = 0.0;
-    int64_t wasdRaceHighScore = 0;
-    int64_t rhythmHighScore = 0;
-    uint64_t noMistakeMaxCombo = 0;
-
-    // Unlocked achievements bitmask (up to 64 achievements)
-    uint64_t achievementsUnlocked = 0;
+    std::int64_t wasdRaceHighScore = 0;
+    std::int64_t rhythmHighScore = 0;
+    std::uint64_t noMistakeMaxCombo = 0;
+    // Progression accounting
+    std::uint32_t lastActiveDayIndex = 0;      // days since 1970-01-01 (UTC)
+    std::uint64_t achievementsUnlocked = 0;    // bitmask (up to 64 achievements)
 
     void reset() noexcept;
+};
+
+enum class LoadOutcome : std::uint8_t {
+    Ok = 0,
+    FileMissing = 1,
+    Corrupt = 2,
+    Recovered = 3,   // parsed with the checksum failing (salvage path)
 };
 
 class ProgressionEngine {
 public:
     static ProgressionEngine& instance() noexcept;
 
-    ProgressionStats getStats() const;
-    void recordTypingSession(
-        uint64_t chars,
-        uint64_t words,
-        uint64_t keystrokes,
-        uint64_t durationSeconds,
-        double wpm,
-        double accuracy);
+    [[nodiscard]] ProgressionStats getStats() const;
 
-    void addXp(uint64_t xp);
-    void recordSnakeScore(int64_t score);
-    void recordTetrisScore(int64_t score);
+    //---- hot path (hook thread) -------------------------------------------
+    // Lock-free, allocation-free: only relaxed atomics are touched. The values
+    // are merged into the persisted stats by flushStats().
+    void recordKeystroke(bool isBackspace = false, std::uint32_t chars = 1,
+                         std::uint32_t words = 0) noexcept;
+    // Active typing time (hook thread, lock-free) — feeds typingTimeSeconds.
+    void recordActiveTimeMs(std::uint64_t ms) noexcept;
+
+    // Merge the pending lock-free counters into the stats and re-evaluate
+    // achievements/level. Call from the UI timer (e.g. twice a second).
+    void flushStats() noexcept;
+    [[nodiscard]] std::uint64_t pendingKeystrokes() const noexcept;
+
+    //---- session-level accounting (UI thread) ------------------------------
+    void recordTypingSession(std::uint64_t chars, std::uint64_t words, std::uint64_t keystrokes,
+                             std::uint64_t durationSeconds, double wpm, double accuracy);
+    // Ends a live session: counts it once, records best WPM/accuracy.
+    void endSession(double wpm, double accuracy) noexcept;
+
+    void addXp(std::uint64_t xp);
+
+    //---- minigame results ---------------------------------------------------
+    void recordSnakeScore(std::int64_t score);
+    void recordTetrisScore(std::int64_t score);
     void recordFishCaught(bool isLegendary);
     void recordTypingRace(double wpm);
-    void recordWasdRaceScore(int64_t score);
-    void recordRhythmScore(int64_t score, uint32_t combo);
-    void recordNoMistakeCombo(uint64_t combo);
+    void recordWasdRaceScore(std::int64_t score);
+    void recordRhythmScore(std::int64_t score, std::uint32_t combo);
+    void recordNoMistakeCombo(std::uint64_t combo);
+    // Generic entry point used by the Arcade Hub result pump.
+    void recordArcadeRun(int gameTypeId, std::int64_t score, std::uint32_t maxCombo,
+                         double wpm);
 
-    bool isAchievementUnlocked(AchievementId id) const noexcept;
-    std::vector<AchievementInfo> getUnlockedAchievements() const;
-    static AchievementInfo getAchievementInfo(AchievementId id) noexcept;
+    [[nodiscard]] bool isAchievementUnlocked(AchievementId id) const noexcept;
+    [[nodiscard]] std::vector<AchievementInfo> getUnlockedAchievements() const;
+    [[nodiscard]] static AchievementInfo getAchievementInfo(AchievementId id) noexcept;
+    [[nodiscard]] static std::vector<AchievementInfo> getAllAchievements();
 
-    // Deterministic formula calculations
-    static uint32_t calculateLevel(uint64_t xp) noexcept;
-    static uint64_t xpRequiredForLevel(uint32_t level) noexcept;
-    static uint64_t xpRemainingToNextLevel(uint64_t currentXp) noexcept;
+    //---- day streaks --------------------------------------------------------
+    [[nodiscard]] static std::uint32_t dayIndexFromUnixSeconds(std::uint64_t unixSeconds) noexcept;
+    void touchDailyStreak(std::uint32_t dayIndex) noexcept;
 
-    // Serialization & resilience
-    std::string serialize() const;
+    //---- level-up signal (consumed by the UI) ------------------------------
+    [[nodiscard]] bool consumeLevelUp(std::uint32_t& newLevel) noexcept;
+
+    //---- deterministic formulas --------------------------------------------
+    [[nodiscard]] static std::uint32_t calculateLevel(std::uint64_t xp) noexcept;
+    [[nodiscard]] static std::uint64_t xpRequiredForLevel(std::uint32_t level) noexcept;
+    [[nodiscard]] static std::uint64_t xpRemainingToNextLevel(std::uint64_t currentXp) noexcept;
+    [[nodiscard]] static std::uint64_t xpIntoCurrentLevel(std::uint64_t currentXp) noexcept;
+    [[nodiscard]] static std::uint64_t xpSpanOfCurrentLevel(std::uint64_t currentXp) noexcept;
+
+    //---- serialization & resilience ----------------------------------------
+    [[nodiscard]] std::string serialize() const;
     bool deserialize(std::string_view data);
-    void reset();
+    // Best-effort parse that ignores a failing checksum (used after
+    // `deserialize()` reported Corrupt).
+    bool salvageDeserialize(std::string_view data);
 
-    // File persistence
     bool saveToFile(std::string_view path) const;
-    bool loadFromFile(std::string_view path);
+    bool loadFromFile(std::string_view path, LoadOutcome* outcome = nullptr);
+    void reset();
 
 private:
     ProgressionEngine();
     ~ProgressionEngine() = default;
+    ProgressionEngine(const ProgressionEngine&) = delete;
+    ProgressionEngine& operator=(const ProgressionEngine&) = delete;
 
     void checkAchievementsLocked();
+    void applyLevelLocked();
+    static bool parsePayload(std::string_view payload, ProgressionStats& out);
+    static bool applyField(ProgressionStats& stats, const std::string& key, const std::string& value);
 
     mutable std::mutex m_mutex;
     ProgressionStats m_stats{};
+
+    // Lock-free pending counters (hook thread → flushStats()).
+    std::atomic<std::uint64_t> m_pendingChars{0};
+    std::atomic<std::uint64_t> m_pendingWords{0};
+    std::atomic<std::uint64_t> m_pendingKeystrokes{0};
+    std::atomic<std::uint64_t> m_pendingBackspaces{0};
+    std::atomic<std::uint64_t> m_pendingTimeMs{0};
+    // Sub-second remainder of the accumulated typing time. Without it every
+    // flush truncated `ms / 1000`, so a session that reported time in small
+    // batches (the normal case: a flush every UI tick) lost up to a second per
+    // flush and the "typing time" statistic ran far behind reality.
+    std::uint64_t m_timeCarryMs = 0;
+    std::atomic<std::uint32_t> m_pendingLevelUp{0};
 };
 
 } // namespace ok::progression

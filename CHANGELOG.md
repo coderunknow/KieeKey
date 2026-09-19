@@ -122,6 +122,14 @@ no-regression benchmark campaign: `docs/bench/beta4/BENCHMARK_REPORT.md`.
   and a call to nonexistent `Histogram::count()` — `total()` is the API).
   All three fixed before tagging; the cross-build now compiles all 18 TUs,
   the resources, and links a runnable PE32+ (static runtime).
+* MSVC CI then surfaced two more classes the local cross-build could not:
+  three `/W4 /WX` shadowing/discard warnings in the new code (now clean —
+  verified locally by compiling every Windows TU with
+  `-Wall -Wextra -Wshadow -Wunused-result -Werror`), and **LNK2019 on every
+  `ok::diag` symbol: the CMake `ok_core` target never listed
+  `Diagnostics.cpp`** — invisible in beta3 precisely because beta3 had zero
+  `ok::diag` call sites. Fixed by adding the TU to `ok_core`; the Linux CI
+  never saw it because the portable suite compiles sources directly.
 
 ## [1.3.0-beta3] — 2026-09-18
 ### Five reported defects fixed at the root (file build 1.3.0.4)

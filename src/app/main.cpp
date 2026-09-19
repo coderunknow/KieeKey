@@ -3434,13 +3434,13 @@ int runDiagQuickCheck(std::string& failDetail) {
         TextEngine engine;
         ok::text::TextInput in{};
         in.kind = ok::text::InputKind::Char;
+        const ok::text::EngineResult* last = nullptr;
         for (const char c : std::string("booj")) {
             in.ch = static_cast<char32_t>(c);
-            engine.process(in);
+            last = &engine.process(in);
         }
-        const ok::text::EngineResult& r = engine.lastResult();
         std::wstring rep;
-        engine.replacementUtf16(r, rep);
+        engine.replacementUtf16(*last, rep);
         if (rep == L"bộ") { ++passed; } else { failDetail += "engine;"; }
     } catch (...) { failDetail += "engine-throw;"; }
 
@@ -4012,15 +4012,15 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             // for the "chữ bị đè / chữ bị mất" bug class — no future string
             // edit or DPI change can silently clip text again.
             {
-                HWND tab = ::GetDlgItem(hwnd, IDC_TAB);
-                if (tab != nullptr) {
+                HWND tabCtl = ::GetDlgItem(hwnd, IDC_TAB);
+                if (tabCtl != nullptr) {
                     // -- 1a. Tab headers: measure + plan; multi-row if needed. --
                     const wchar_t* kTabTexts[9] = {t0, t1, t2, t3, t4, t5, t6, t7, t8};
                     RECT rcTab{};
-                    ::GetWindowRect(tab, &rcTab);
+                    ::GetWindowRect(tabCtl, &rcTab);
                     ::MapWindowPoints(nullptr, hwnd, reinterpret_cast<POINT*>(&rcTab), 2);
                     const int tabWidth = rcTab.right - rcTab.left;
-                    HDC tdc = ::GetDC(tab);
+                    HDC tdc = ::GetDC(tabCtl);
                     if (tdc != nullptr) {
                         HGDIOBJ oldFont = ::SelectObject(tdc, uiFont());
                         std::vector<int> labelW(9, 0);
@@ -4031,12 +4031,12 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                             labelW[static_cast<std::size_t>(i)] = r.right - r.left;
                         }
                         ::SelectObject(tdc, oldFont);
-                        ::ReleaseDC(tab, tdc);
+                        ::ReleaseDC(tabCtl, tdc);
                         const ok::layout::TabPlan tabPlan = ok::layout::planTabs(
                             labelW, labelW, tabWidth - S(16), S(18), S(22), S(6));
                         if (tabPlan.multiline) {
-                            ::SetWindowLongPtrW(tab, GWL_STYLE,
-                                ::GetWindowLongPtrW(tab, GWL_STYLE) | TCS_MULTILINE);
+                            ::SetWindowLongPtrW(tabCtl, GWL_STYLE,
+                                ::GetWindowLongPtrW(tabCtl, GWL_STYLE) | TCS_MULTILINE);
                         }
                     }
 
@@ -4053,7 +4053,7 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     };
                     // The tab control's DISPLAY rect, in dialog-client coords.
                     RECT disp = rcTab;
-                    ::SendMessageW(tab, TCM_ADJUSTRECT, FALSE,
+                    ::SendMessageW(tabCtl, TCM_ADJUSTRECT, FALSE,
                                    reinterpret_cast<LPARAM>(&disp));
 
                     std::vector<ok::layout::ControlSpec> specs;
@@ -4064,7 +4064,7 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     wchar_t text[512];
                     for (HWND c = ::GetWindow(hwnd, GW_CHILD); c != nullptr;
                          c = ::GetWindow(c, GW_HWNDNEXT)) {
-                        if (c == tab) { continue; }
+                        if (c == tabCtl) { continue; }
                         const int id = ::GetDlgCtrlID(c);
                         if (id == 0) { continue; }
                         RECT rc{};
@@ -4508,14 +4508,14 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     std::string failDetail;
                     const int passed = runDiagQuickCheck(failDetail);
                     if (HWND r = ::GetDlgItem(hwnd, IDC_STAT_DIAG_RESULT)) {
-                        wchar_t msg[160]{};
+                        wchar_t buf[160]{};
                         if (passed == 5) {
-                            swprintf_s(msg, L"Kiểm tra nhanh: ĐẠT 5/5 hạng mục ✓");
+                            swprintf_s(buf, L"Kiểm tra nhanh: ĐẠT 5/5 hạng mục ✓");
                         } else {
-                            swprintf_s(msg, L"Kiểm tra nhanh: %d/5 — lỗi: %hs",
+                            swprintf_s(buf, L"Kiểm tra nhanh: %d/5 — lỗi: %hs",
                                        passed, failDetail.c_str());
                         }
-                        ::SetWindowTextW(r, msg);
+                        ::SetWindowTextW(r, buf);
                     }
                     return 0;
                 }
@@ -4523,8 +4523,8 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     std::wstring path;
                     if (exportDiagReport(path)) {
                         if (HWND r = ::GetDlgItem(hwnd, IDC_STAT_DIAG_RESULT)) {
-                            std::wstring msg = L"Đã xuất báo cáo: " + path;
-                            ::SetWindowTextW(r, msg.c_str());
+                            std::wstring reportMsg = L"Đã xuất báo cáo: " + path;
+                            ::SetWindowTextW(r, reportMsg.c_str());
                         }
                     } else if (HWND r = ::GetDlgItem(hwnd, IDC_STAT_DIAG_RESULT)) {
                         ::SetWindowTextW(r, L"Không ghi được báo cáo (thư mục %APPDATA%?)");

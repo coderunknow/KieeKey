@@ -461,6 +461,7 @@ enum class FishRarity : std::uint8_t {
 class FishingGame final : public IArcadeGame {
 public:
     FishingGame();
+    ~FishingGame() override;   // defined in Arcade.cpp (VnComposer incomplete here)
 
     [[nodiscard]] GameType getType() const noexcept override { return GameType::Fishing; }
 
@@ -487,6 +488,15 @@ public:
     void setAutomationMode(AutomationMode mode) noexcept { m_autoMode = mode; }
     [[nodiscard]] AutomationMode getAutomationMode() const noexcept { return m_autoMode; }
 
+    // v1.3.0-beta4: Vietnamese prompts with full diacritics + in-window
+    // Telex/VNI composition (same VnComposer model as TypingRace/WasdRace —
+    // the prompts were deliberately ASCII-only in beta3, which is the
+    // reported "arcade chưa có dấu tiếng Việt"). English keeps the legacy
+    // ASCII prompt and 1:1 matching. Resets the run.
+    void setPassageLanguage(PassageLanguage lang, VnInputMethod method);
+    [[nodiscard]] bool isVnMode() const noexcept { return m_vnMode; }
+    [[nodiscard]] std::u32string composedText() const;   // defined in Arcade.cpp
+
     // Upgrades (bounded, 1..5). Effects: rod = score, bait = rarity, reel = pull.
     void upgradeRod() noexcept { if (m_rodLevel < 5) ++m_rodLevel; }
     void upgradeBait() noexcept { if (m_baitLevel < 5) ++m_baitLevel; }
@@ -503,6 +513,10 @@ public:
     [[nodiscard]] double getTension() const noexcept { return m_lineTension; }
     [[nodiscard]] double getEscapeTimer() const noexcept { return m_escapeTimer; }
     [[nodiscard]] std::uint32_t getCatches() const noexcept { return m_catches; }
+    // v1.3.0-beta4: read access for tests/front-ends that pace their reeling
+    // against the line tension (the "slow down when tense" loop).
+    [[nodiscard]] double getLineTension() const noexcept { return m_lineTension; }
+    [[nodiscard]] bool isLineTensionHigh() const noexcept { return m_lineTension >= 70.0; }
     [[nodiscard]] std::uint32_t getEscapes() const noexcept { return m_escapes; }
 
 private:
@@ -521,6 +535,11 @@ private:
     // buffers, so a fishing session allocates nothing between catches.
     std::string m_fishName;
     std::u32string m_displayFish;
+    // v1.3.0-beta4: in-window Vietnamese composition (null in English mode).
+    bool m_vnMode = false;
+    std::unique_ptr<VnComposer> m_composer;
+    std::uint32_t m_vnWordsTotal = 0;
+    std::uint32_t m_vnWordsWrong = 0;
     double m_pullProgress = 20.0;
     double m_lineTension = 30.0;
     double m_escapeTimer = 18.0;
@@ -787,6 +806,17 @@ public:
     }
     void setApproachSec(double sec) noexcept;
     [[nodiscard]] double getApproachSec() const noexcept { return m_approachSec; }
+    // v1.3.0-beta4: Vietnamese mode. The four lane keys become the ARROW keys
+    // (user request: "có thể sửa thành wasd/mũi tên") so no lane key collides
+    // with Telex letters, and each note shows a Vietnamese SYLLABLE with full
+    // diacritics instead of the bare d/f/j/k letter. The legacy d/f/j/k keys
+    // still hit their lanes (they are pure rhythm input inside our own
+    // window, the hook never sees them). English mode keeps the legacy
+    // letter notes unchanged. Regenerates the chart and resets the run.
+    void setPassageLanguage(PassageLanguage lang, VnInputMethod method);
+    [[nodiscard]] bool isVnMode() const noexcept { return m_vnMode; }
+    // The glyph a note displays (the Vietnamese syllable, or the legacy letter).
+    [[nodiscard]] std::u32string noteGlyph(std::size_t noteIndex) const;
 
     // View/state accessors
     [[nodiscard]] double getSongTime() const noexcept { return m_songTime; }
@@ -803,12 +833,17 @@ public:
 
 private:
     void generateChart();
+    void pickVnGlyphs();   // v1.3.0-beta4: seeded per-lane Vietnamese syllables
     void judge(int lane);
     void registerOutcome(HitRating rating, bool fromExtraKey);
     [[nodiscard]] int laneForKey(char32_t ch) const noexcept;
+    [[nodiscard]] int laneForEvent(const InputEvent& ev) const noexcept;
 
     std::vector<RhythmNote> m_notes;
     std::uint32_t m_noteCount = 64;
+    // v1.3.0-beta4: VN mode — arrow lanes + Vietnamese note glyphs.
+    bool m_vnMode = false;
+    std::u32string m_vnGlyphs[kLaneCount];   // per-lane syllable pool (seeded once)
     double m_songTime = 0.0;
     double m_bpm = 112.0;
     double m_approachSec = 1.8;
@@ -840,6 +875,7 @@ private:
 class NoMistakeGame final : public IArcadeGame {
 public:
     NoMistakeGame();
+    ~NoMistakeGame() override;   // defined in Arcade.cpp (VnComposer incomplete here)
 
     [[nodiscard]] GameType getType() const noexcept override { return GameType::NoMistake; }
 
@@ -880,10 +916,23 @@ public:
     [[nodiscard]] std::uint32_t getCombo() const noexcept { return m_combo; }
     [[nodiscard]] std::uint32_t getLevel() const noexcept { return m_level; }
     [[nodiscard]] std::uint32_t getMistakes() const noexcept { return m_mistakes; }
+    // v1.3.0-beta4: Vietnamese stream with full diacritics + in-window
+    // Telex/VNI composition (the stream was deliberately ASCII-only in
+    // beta3). The strict rule becomes WORD-strict in VN mode: mid-syllable
+    // Telex divergence is normal typing, a "mistake" is a committed word that
+    // diverges from the target. English keeps per-character strictness.
+    void setPassageLanguage(PassageLanguage lang, VnInputMethod method);
+    [[nodiscard]] bool isVnMode() const noexcept { return m_vnMode; }
+    [[nodiscard]] std::u32string composedText() const;   // defined in Arcade.cpp
 
 private:
     std::u32string m_textStream;
     std::size_t m_currentIndex = 0;
+    // v1.3.0-beta4: in-window Vietnamese composition (null in English mode).
+    bool m_vnMode = false;
+    std::unique_ptr<VnComposer> m_composer;
+    std::uint32_t m_vnWordsTotal = 0;
+    std::uint32_t m_vnWordsWrong = 0;
     std::uint32_t m_combo = 0;
     std::uint32_t m_maxCombo = 0;
     std::uint32_t m_level = 1;
@@ -1076,7 +1125,25 @@ private:
     // so a score is credited even when the player never presses another key.
     void collectResultFrom(const std::shared_ptr<IArcadeGame>& game);
 
-    mutable std::mutex m_mutex;                        // guards launch/stop only
+    // v1.3.0-beta4 — two locks, one strict order:
+    //   m_mutex   — the manager's OWN state (m_game pointer swap, m_config,
+    //               m_results, m_seed). Never held while calling INTO a game.
+    //   m_gameMtx — serializes every call into the CURRENT game object
+    //               (update/handleKey/buildFrame/reset/pollRunResult/live
+    //               config). The beta3 design only made the m_game POINTER
+    //               safe to read (shared_ptr snapshot, no use-after-free)
+    //               and relied on "input and UI threads only" meaning one
+    //               thread at a time — but the desktop hub timer, the web
+    //               bridge tick and the settings "apply" can all reach the
+    //               same game concurrently, and tests/test_arcade.cpp's
+    //               concurrency section crashed ~15% of runs on main
+    //               (reproduced 6/40 segfaults with no KieeKey change at
+    //               all). m_gameMtx closes that hole; the IME hot path never
+    //               takes either lock (it checks the atomic m_active only).
+    // LOCK ORDER: the two mutexes are never held simultaneously. Snapshot
+    // under m_mutex, release, then take m_gameMtx.
+    mutable std::mutex m_mutex;
+    mutable std::mutex m_gameMtx;                      // serializes game calls
     std::shared_ptr<IArcadeGame> m_game;               // atomic snapshot for readers
     std::atomic<bool> m_active{false};                 // fast hot-path check
     ArcadeConfig m_config{};

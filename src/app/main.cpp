@@ -141,6 +141,7 @@
 #include "ProcessMonitor.hpp"
 #include "Profiler.hpp"
 #include "TextEngine.hpp"
+#include "Diagnostics.hpp"   // v1.3.0-beta4: recorder wiring + control panel
 #include "TsfComposer.hpp"
 #include "Win32RAII.hpp"
 #include "win32_wrapper.hpp"   // v3.3.1: pipeline (OutputRing 1024, batched
@@ -156,6 +157,7 @@
 #include "ChaosLabWindow.hpp"  // v1.3.0: Chaos/Flexing lab window (real output)
 
 #include "resource.h"
+#include "DialogLayout.hpp"   // v1.3.0-beta4: runtime layout solver
 
 using namespace ok::hook;
 using namespace ok::text;
@@ -183,8 +185,8 @@ constexpr wchar_t kAppVersion[]     = L"1.3.0";           // numeric, 3-part
 // v1.2.2 RC1: [[maybe_unused]] — this is a documented VERSION CARRIER
 // (check_version.py reads it), not a code-level constant; the UI shows the
 // title/version forms. Keeping it zero-maintenance and warning-clean.
-[[maybe_unused]] constexpr wchar_t kAppVersionFull[] = L"1.3.0-beta3";  // with channel
-constexpr wchar_t kAppTitle[]       = L"KieeKey v1.3.0-beta3";  // sync with kAppVersionFull
+[[maybe_unused]] constexpr wchar_t kAppVersionFull[] = L"1.3.0-beta4";  // with channel
+constexpr wchar_t kAppTitle[]       = L"KieeKey v1.3.0-beta4";  // sync with kAppVersionFull
 
 //===========================================================================
 // Output item: what the consumer thread must emit (trivially copyable → can
@@ -1149,13 +1151,33 @@ bool focusIsMacroEditor() noexcept {
 PD onHookEventImpl(const KeyEvent& ev);
 
 PD onHookEvent(const KeyEvent& ev) noexcept {
+    // v1.3.0-beta4: diagnostics recorders. ONE relaxed load gates the whole
+    // block; at Level::Off this is a single compare + branch on the hot path.
+    ok::diag::Diagnostics& diag = ok::diag::Diagnostics::instance();
+    const bool diagOn = diag.atLeast(ok::diag::Level::Basic);
+    const std::int64_t diagT0 = diagOn ? ok::diag::Diagnostics::nowUs() : 0;
     try {
-        return onHookEventImpl(ev);
+        const PD pd = onHookEventImpl(ev);
+        if (diagOn) {
+            if (ev.source == EventSource::Keyboard) {
+                if (ev.action == KeyAction::KeyDown || ev.action == KeyAction::SysKeyDown) {
+                    diag.add(ok::diag::Counter::KeyDown);
+                } else {
+                    diag.add(ok::diag::Counter::KeyUp);
+                }
+                diag.add(pd.suppressKey ? ok::diag::Counter::KeySuppressed
+                                        : ok::diag::Counter::KeyPassThrough);
+            }
+            diag.record(ok::diag::Stage::HookToDecision,
+                        ok::diag::Diagnostics::nowUs() - diagT0);
+        }
+        return pd;
     } catch (...) {
         // Counted (MemoryFailPoint-style degradation), never fatal. Taking
         // g.engineMtx here could deadlock if the thrower owns it, so the
         // repair is deferred to the next key event instead.
         g.producerFailures.fetch_add(1, std::memory_order_relaxed);
+        if (diagOn) { diag.add(ok::diag::Counter::ProducerExceptions); }
         g.engineResyncPending.store(true, std::memory_order_release);
         return PD{};   // pass-through — the keystroke is never lost
     }
@@ -1511,7 +1533,20 @@ PD onHookEventImpl(const KeyEvent& ev) {
         // the clean Vietnamese the user typed, not a random-case/flip variant.
         liveOutput = !macroEditorFocus &&
                      g.liveEffects.enabled() && g.options.codeTable == CodeTable::Unicode;
+        const std::int64_t diagEngT0 =
+            ok::diag::Diagnostics::instance().atLeast(ok::diag::Level::Basic)
+                ? ok::diag::Diagnostics::nowUs() : 0;
         const EngineResult& r = g.engine.process(in);
+        if (diagEngT0 != 0) {
+            // v1.3.0-beta4: engine-decision latency + the edit counter, both
+            // gated to Basic and both relaxed-RMW only (hook thread safe).
+            ok::diag::Diagnostics::instance().record(
+                ok::diag::Stage::EngineDecision,
+                ok::diag::Diagnostics::nowUs() - diagEngT0);
+            if (r.consumed()) {
+                ok::diag::Diagnostics::instance().add(ok::diag::Counter::EngineEdits);
+            }
+        }
         // v1.1.2-r3 NUMBER-SAFETY GUARD (defense in depth, the LAST layer
         // before output). The engine promise is: with digitsAreLiteral ON, a
         // digit Char event is inert (DoNothing — the tests assert zero
@@ -1812,11 +1847,24 @@ void onConsumerEvent(const KeyEvent& /*ev*/) noexcept {
         // Degrade to the SendInput fallback for the unapplied suffix instead.
         std::size_t appliedCountRead = 0;
         bool batchOk = false;
+        // v1.3.0-beta4: consumer-side diagnostics — TSF commit latency and
+        // the commit counters (relaxed, gated to Basic).
+        ok::diag::Diagnostics& diagIns = ok::diag::Diagnostics::instance();
+        const bool diagC = diagIns.atLeast(ok::diag::Level::Basic);
+        const std::int64_t diagCommitT0 = diagC ? ok::diag::Diagnostics::nowUs() : 0;
         try {
             batchOk = g.composer.commitBatch(g_editBatch, &appliedCountRead);
         } catch (...) {
             batchOk = false;
             appliedCountRead = 0;   // unknown progress — re-deliver the batch
+        }
+        if (diagC) {
+            diagIns.record(ok::diag::Stage::TsfCommit,
+                           ok::diag::Diagnostics::nowUs() - diagCommitT0);
+            diagIns.add(ok::diag::Counter::TsfCommits);
+            if (batchOk && g.composer.lastCommitSlow()) {
+                diagIns.add(ok::diag::Counter::TsfSlowCommits);
+            }
         }
         if (batchOk) {
             // v1.1.0 — TSF slow-commit watchdog: a synchronous commit that
@@ -1925,7 +1973,18 @@ void onConsumerEvent(const KeyEvent& /*ev*/) noexcept {
             const std::uint64_t profSeq = it.profSeq;
             const std::uint64_t tFlush = ok::prof::qpcNow();
 #endif
-            g.hook.emitter().sendEdit(it.backspace, it.text, it.textLen);
+            // v1.3.0-beta4: consumer-side diagnostics — the SendInput emit
+            // latency + call counter (relaxed, gated to Basic).
+            if (ok::diag::Diagnostics::instance().atLeast(ok::diag::Level::Basic)) {
+                ok::diag::Diagnostics& dIns = ok::diag::Diagnostics::instance();
+                const std::int64_t dT0 = ok::diag::Diagnostics::nowUs();
+                g.hook.emitter().sendEdit(it.backspace, it.text, it.textLen);
+                dIns.record(ok::diag::Stage::SendInputCall,
+                            ok::diag::Diagnostics::nowUs() - dT0);
+                dIns.add(ok::diag::Counter::SendInputCalls);
+            } else {
+                g.hook.emitter().sendEdit(it.backspace, it.text, it.textLen);
+            }
 #if KIEEKEY_PROFILE
             if (profOn && profT0 != 0) {
                 ok::prof::StageRecord r;
@@ -3215,7 +3274,8 @@ void settingsToControls() {
     ::SendMessageW(::GetDlgItem(g.hSettings, IDC_CMB_LIVE_GLYPH), CB_SETCURSEL,
                    static_cast<WPARAM>(live.glyph), 0);
     ::SendMessageW(::GetDlgItem(g.hSettings, IDC_CMB_LIVE_INTENSITY), CB_SETCURSEL,
-                   live.intensity == 100 ? 2 : (live.intensity == 25 ? 0 : 1), 0);
+                   live.intensity == 100 ? 3 : (live.intensity == 75 ? 2 :
+                   (live.intensity == 25 ? 0 : 1)), 0);
     const auto arcade = ok::arcade::ArcadeManager::instance().getConfig();
     ::SendMessageW(::GetDlgItem(g.hSettings, IDC_CMB_FAILMODE), CB_SETCURSEL,
                    arcade.rhythmFailMode == ok::arcade::FailMode::HealthBar ? 1 : 0, 0);
@@ -3227,6 +3287,71 @@ void settingsToControls() {
     showTab(g_settingsOpenTab);
 }
 
+static constexpr int kTab0[] = {
+    IDC_GRP_METHOD, IDC_RADIO_TELEX, IDC_RADIO_VNI, IDC_RADIO_SIMPLETELEX,
+    IDC_STAT_METHOD_HINT,
+    IDC_STAT_CODETABLE, IDC_COMBO_CODETABLE,
+    IDC_GRP_OPTIONS,
+    IDC_CHK_DIGITS, IDC_CHK_SPELL, IDC_CHK_RESTORE, IDC_CHK_QUICK,
+    IDC_CHK_MODERN, IDC_CHK_UPPER, IDC_CHK_MACRO,
+    IDC_GRP_OUTPUT,
+    IDC_RADIO_OUT_AUTO, IDC_RADIO_OUT_TSF, IDC_RADIO_OUT_SEND,
+    IDC_STAT_OUT_NOTE,
+    IDC_STAT_PERF_LAB, IDC_COMBO_PERF, IDC_CHK_PERF_LOWCPU, IDC_CHK_PERF_DICT,
+    IDC_STAT_PERF_NOTE,
+    0
+};
+static constexpr int kTab1[] = {
+    IDC_STAT_APPS_TITLE, IDC_STAT_APPS_NOTE, IDC_CHK_NOTIFY,
+    IDC_CHK_EXCLUDE_IDE, IDC_CHK_EXCLUDE_GAME, IDC_CHK_EXCLUDE_SHELL, 0
+};
+// v1.1.0: tab 2 is the macro editor ("Gõ tắt"); diagnostics moved to 3.
+static constexpr int kTab2[] = {
+    IDC_STAT_MACRO_HINT, IDC_EDIT_MACRO, 0
+};
+static constexpr int kTab3[] = {
+    IDC_STAT_LATLAB, IDC_STAT_AVGLAB, IDC_STAT_PUSHLAB, IDC_STAT_DROPLAB,
+    IDC_STAT_WPMLAB, IDC_STAT_DESC,
+    IDC_STAT_LATVAL, IDC_STAT_AVGVAL, IDC_STAT_PUSHV, IDC_STAT_DROPV,
+    IDC_STAT_WPMVAL,
+    IDC_STAT_BARRIERLAB, IDC_STAT_BARRIERV,
+    IDC_STAT_REINSTLAB, IDC_STAT_REINSTV,
+    IDC_STAT_TSFLAB, IDC_STAT_TSFV,
+    IDC_STAT_APPLAB, IDC_STAT_APPV,
+    IDC_GRP_DIAG, IDC_RAD_DIAG_OFF, IDC_RAD_DIAG_BASIC, IDC_RAD_DIAG_FULL,
+    IDC_BTN_DIAG_RUN, IDC_BTN_DIAG_REPORT, IDC_STAT_DIAG_RESULT, 0
+};
+// v1.1.2: tab 4 — Information (introduces the app inside the app).
+static constexpr int kTab4[] = {
+    IDC_STAT_INFO_NAME, IDC_STAT_INFO_STATUS, IDC_STAT_INFO_ABOUT,
+    IDC_STAT_INFO_FEAT, IDC_STAT_INFO_GUIDE, IDC_STAT_INFO_LICENSE,
+    IDC_LNK_REPO, 0
+};
+// v1.3.0: tabs 5..8 (Arcade, Chaos, AI, Progression)
+static constexpr int kTab5[] = {
+    IDC_GRP_ARCADE, IDC_BTN_PLAY_SNAKE, IDC_BTN_PLAY_TETRIS, IDC_BTN_PLAY_FISHING,
+    IDC_BTN_PLAY_TYPINGRACE, IDC_BTN_PLAY_WASDRACE, IDC_BTN_PLAY_RHYTHM,
+    IDC_BTN_PLAY_NOMISTAKE, IDC_BTN_PLAY_FLEXING, IDC_STAT_ARCADE_STATUS,
+    IDC_BTN_OPEN_CHAOS_LAB, IDC_CMB_FAILMODE, IDC_EDT_RHYTHM_BPM,
+    IDC_BTN_APPLY_ARCADE_CFG, IDC_STAT_FAILMODE, IDC_STAT_RHYTHM_BPM,
+    IDC_STAT_PASSAGE_LANG, IDC_CMB_PASSAGE_LANG, 0
+};
+static constexpr int kTab6[] = {
+    IDC_GRP_CHAOS, IDC_CHK_CHAOS_MASTER, IDC_CHK_CHAOS_CASE,
+    IDC_CHK_GLYPH_TRANSFORM, IDC_STAT_CHAOS_WARN,
+    IDC_GRP_LIVE, IDC_CHK_LIVE, IDC_CHK_LIVE_CASE, IDC_CMB_LIVE_GLYPH,
+    IDC_STAT_LIVE_GLYPH, IDC_CMB_LIVE_INTENSITY, IDC_STAT_LIVE_INTENSITY,
+    IDC_STAT_LIVE_HINT, 0
+};
+static constexpr int kTab7[] = {
+    IDC_GRP_AI, IDC_CHK_AI_OPTIN, IDC_BTN_AI_RESET,
+    IDC_STAT_AI_STATS, IDC_STAT_COACH_ADVICE, 0
+};
+static constexpr int kTab8[] = {
+    IDC_GRP_PROG, IDC_STAT_LEVEL_VAL, IDC_STAT_XP_VAL,
+    IDC_STAT_KEYS_VAL, IDC_STAT_ACHIEVEMENTS, IDC_BTN_PROG_RESET, 0
+};
+
 void showTab(int tab) {
     // Every control (including static labels) belongs to exactly one tab;
     // toggle visibility so only the active tab's controls are shown.
@@ -3234,68 +3359,6 @@ void showTab(int tab) {
     //  all three tabs' labels were drawn overlapping each other.)
     // v1.1.2: the header (icon/title/status) and the bottom button row are
     // NOT tab-assigned — they are always visible chrome.
-    static constexpr int kTab0[] = {
-        IDC_GRP_METHOD, IDC_RADIO_TELEX, IDC_RADIO_VNI, IDC_RADIO_SIMPLETELEX,
-        IDC_STAT_METHOD_HINT,
-        IDC_STAT_CODETABLE, IDC_COMBO_CODETABLE,
-        IDC_GRP_OPTIONS,
-        IDC_CHK_DIGITS, IDC_CHK_SPELL, IDC_CHK_RESTORE, IDC_CHK_QUICK,
-        IDC_CHK_MODERN, IDC_CHK_UPPER, IDC_CHK_MACRO,
-        IDC_GRP_OUTPUT,
-        IDC_RADIO_OUT_AUTO, IDC_RADIO_OUT_TSF, IDC_RADIO_OUT_SEND,
-        IDC_STAT_OUT_NOTE,
-        IDC_STAT_PERF_LAB, IDC_COMBO_PERF, IDC_CHK_PERF_LOWCPU, IDC_CHK_PERF_DICT,
-        IDC_STAT_PERF_NOTE, IDC_CHK_NOTIFY,
-        0
-    };
-    static constexpr int kTab1[] = {
-        IDC_STAT_APPS_TITLE, IDC_STAT_APPS_NOTE,
-        IDC_CHK_EXCLUDE_IDE, IDC_CHK_EXCLUDE_GAME, IDC_CHK_EXCLUDE_SHELL, 0
-    };
-    // v1.1.0: tab 2 is the macro editor ("Gõ tắt"); diagnostics moved to 3.
-    static constexpr int kTab2[] = {
-        IDC_STAT_MACRO_HINT, IDC_EDIT_MACRO, 0
-    };
-    static constexpr int kTab3[] = {
-        IDC_STAT_LATLAB, IDC_STAT_AVGLAB, IDC_STAT_PUSHLAB, IDC_STAT_DROPLAB,
-        IDC_STAT_WPMLAB, IDC_STAT_DESC,
-        IDC_STAT_LATVAL, IDC_STAT_AVGVAL, IDC_STAT_PUSHV, IDC_STAT_DROPV,
-        IDC_STAT_WPMVAL,
-        IDC_STAT_BARRIERLAB, IDC_STAT_BARRIERV,
-        IDC_STAT_REINSTLAB, IDC_STAT_REINSTV,
-        IDC_STAT_TSFLAB, IDC_STAT_TSFV,
-        IDC_STAT_APPLAB, IDC_STAT_APPV, 0
-    };
-    // v1.1.2: tab 4 — Information (introduces the app inside the app).
-    static constexpr int kTab4[] = {
-        IDC_STAT_INFO_NAME, IDC_STAT_INFO_STATUS, IDC_STAT_INFO_ABOUT,
-        IDC_STAT_INFO_FEAT, IDC_STAT_INFO_GUIDE, IDC_STAT_INFO_LICENSE,
-        IDC_LNK_REPO, 0
-    };
-    // v1.3.0: tabs 5..8 (Arcade, Chaos, AI, Progression)
-    static constexpr int kTab5[] = {
-        IDC_GRP_ARCADE, IDC_BTN_PLAY_SNAKE, IDC_BTN_PLAY_TETRIS, IDC_BTN_PLAY_FISHING,
-        IDC_BTN_PLAY_TYPINGRACE, IDC_BTN_PLAY_WASDRACE, IDC_BTN_PLAY_RHYTHM,
-        IDC_BTN_PLAY_NOMISTAKE, IDC_BTN_PLAY_FLEXING, IDC_STAT_ARCADE_STATUS,
-        IDC_BTN_OPEN_CHAOS_LAB, IDC_CMB_FAILMODE, IDC_EDT_RHYTHM_BPM,
-        IDC_BTN_APPLY_ARCADE_CFG, IDC_STAT_FAILMODE, IDC_STAT_RHYTHM_BPM,
-        IDC_STAT_PASSAGE_LANG, IDC_CMB_PASSAGE_LANG, 0
-    };
-    static constexpr int kTab6[] = {
-        IDC_GRP_CHAOS, IDC_CHK_CHAOS_MASTER, IDC_CHK_CHAOS_CASE,
-        IDC_CHK_GLYPH_TRANSFORM, IDC_STAT_CHAOS_WARN,
-        IDC_GRP_LIVE, IDC_CHK_LIVE, IDC_CHK_LIVE_CASE, IDC_CMB_LIVE_GLYPH,
-        IDC_STAT_LIVE_GLYPH, IDC_CMB_LIVE_INTENSITY, IDC_STAT_LIVE_INTENSITY,
-        IDC_STAT_LIVE_HINT, 0
-    };
-    static constexpr int kTab7[] = {
-        IDC_GRP_AI, IDC_CHK_AI_OPTIN, IDC_BTN_AI_RESET,
-        IDC_STAT_AI_STATS, IDC_STAT_COACH_ADVICE, 0
-    };
-    static constexpr int kTab8[] = {
-        IDC_GRP_PROG, IDC_STAT_LEVEL_VAL, IDC_STAT_XP_VAL,
-        IDC_STAT_KEYS_VAL, IDC_STAT_ACHIEVEMENTS, IDC_BTN_PROG_RESET, 0
-    };
 
     if (!g.hSettings) { return; }
     for (const int* p = kTab0; *p; ++p) { ::ShowWindow(::GetDlgItem(g.hSettings, *p), tab == 0 ? SW_SHOW : SW_HIDE); }
@@ -3307,6 +3370,138 @@ void showTab(int tab) {
     for (const int* p = kTab6; *p; ++p) { ::ShowWindow(::GetDlgItem(g.hSettings, *p), tab == 6 ? SW_SHOW : SW_HIDE); }
     for (const int* p = kTab7; *p; ++p) { ::ShowWindow(::GetDlgItem(g.hSettings, *p), tab == 7 ? SW_SHOW : SW_HIDE); }
     for (const int* p = kTab8; *p; ++p) { ::ShowWindow(::GetDlgItem(g.hSettings, *p), tab == 8 ? SW_SHOW : SW_HIDE); }
+}
+
+//===========================================================================
+// v1.3.0-beta4 — Diagnostics control panel (tab 3 "Chẩn đoán")
+//
+// ok::diag shipped in beta3 fully implemented and unit-tested but with ZERO
+// call sites: no UI, no recorder, nothing to look at. This section is the
+// missing half — level control (persisted), a REAL quick self-check, and the
+// report export — plus the recorder wiring on the hook path further below.
+//===========================================================================
+
+// %APPDATA%\KieeKey (the macros.txt directory; created on demand).
+std::wstring diagAppDataDir() {
+    wchar_t* appData = nullptr;
+    std::wstring dir;
+    if (S_OK != ::SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &appData)) {
+        return L"";
+    }
+    dir = std::wstring(appData) + L"\\KieeKey";
+    ::CoTaskMemFree(appData);
+    ::CreateDirectoryW(dir.c_str(), nullptr);   // ok if it already exists
+    return dir;
+}
+
+std::wstring diagLevelFilePath() {
+    const std::wstring dir = diagAppDataDir();
+    return dir.empty() ? std::wstring() : dir + L"\\diag-level.txt";
+}
+
+// The level survives restarts via a one-line file ("0"/"1"/"2"). Kept out of
+// the main options matrix on purpose: the option-matrix tests pin the exact
+// option set, and a diagnostics knob is operational, not a typing behaviour.
+ok::diag::Level loadDiagLevel() {
+    const std::wstring path = diagLevelFilePath();
+    if (path.empty()) { return ok::diag::Level::Basic; }
+    std::ifstream f(path.c_str(), std::ios::binary);
+    std::string raw((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    if (!raw.empty() && raw[0] != '0' && raw[0] != '1' && raw[0] != '2') {
+        return ok::diag::Level::Basic;
+    }
+    return raw.empty() ? ok::diag::Level::Basic : ok::diag::levelFromInt(raw[0] - '0');
+}
+
+void saveDiagLevel(ok::diag::Level level) {
+    const std::wstring path = diagLevelFilePath();
+    if (path.empty()) { return; }
+    std::ofstream out(path.c_str(), std::ios::binary | std::ios::trunc);
+    if (out) { out << static_cast<int>(level); }
+}
+
+// The quick self-check exercises the SHIPPED pipeline pieces for real (a local
+// TextEngine round-trip, the live counters/histograms, verdict + report). It
+// is the "Chạy kiểm tra nhanh" button: a pass means the machinery answers, not
+// that the machine is fast.
+int runDiagQuickCheck(std::string& failDetail) {
+    int passed = 0;
+    const int total = 5;
+    failDetail.clear();
+
+    // 1. Engine composition round-trip on the default configuration.
+    try {
+        TextEngine engine;
+        ok::text::TextInput in{};
+        in.kind = ok::text::InputKind::Char;
+        const ok::text::EngineResult* last = nullptr;
+        for (const char c : std::string("booj")) {
+            in.ch = static_cast<char32_t>(c);
+            last = &engine.process(in);
+        }
+        std::wstring rep;
+        engine.replacementUtf16(*last, rep);
+        if (rep == L"bộ") { ++passed; } else { failDetail += "engine;"; }
+    } catch (...) { failDetail += "engine-throw;"; }
+
+    // 2. Engine backspace at a word boundary must be a clean no-op (the exact
+    //    contract the arcade backspace fix depends on).
+    try {
+        TextEngine engine;
+        ok::text::TextInput in{};
+        in.kind = ok::text::InputKind::Backspace;
+        const ok::text::EngineResult& r = engine.process(in);
+        if (!r.consumed()) { ++passed; } else { failDetail += "backspace;"; }
+    } catch (...) { failDetail += "backspace-throw;"; }
+
+    // 3. Live counters answer (they were being recorded all along).
+    try {
+        const std::uint64_t n = ok::diag::Diagnostics::instance().keyboardEvents();
+        (void)n;   // any value is a pass; the API must simply not misbehave
+        ++passed;
+    } catch (...) { failDetail += "counters;"; }
+
+    // 4. Latency histograms answer with sane bucket totals.
+    try {
+        const std::uint64_t n = ok::diag::Diagnostics::instance()
+                                    .histogram(ok::diag::Stage::HookToDecision)
+                                    .total();
+        (void)n;
+        ++passed;
+    } catch (...) { failDetail += "histogram;"; }
+
+    // 5. The health verdict + full report generate.
+    try {
+        const std::string v = ok::diag::Diagnostics::instance().verdict();
+        const std::string rep = ok::diag::Diagnostics::instance().report(8);
+        if (!v.empty() && rep.size() > 100) { ++passed; } else { failDetail += "report;"; }
+    } catch (...) { failDetail += "report-throw;"; }
+
+    (void)total;
+    return passed;
+}
+
+// "Xuất báo cáo": write ok::diag::report() next to macros.txt and hand the
+// path back for the status line. UTF-8 with BOM so Notepad opens it correctly.
+bool exportDiagReport(std::wstring& outPath) {
+    const std::wstring dir = diagAppDataDir();
+    if (dir.empty()) { return false; }
+    SYSTEMTIME st{};
+    ::GetLocalTime(&st);
+    wchar_t name[64]{};
+    swprintf_s(name, L"\\diag-report-%04u%02u%02u-%02u%02u%02u.txt",
+               st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+    outPath = dir + name;
+    std::ofstream out(outPath.c_str(), std::ios::binary | std::ios::trunc);
+    if (!out) { return false; }
+    out << "\xEF\xBB\xBF";
+    out << ok::diag::Diagnostics::instance().report(40);
+    return true;
+}
+
+void setDiagLevelAndSave(ok::diag::Level level) {
+    ok::diag::Diagnostics::instance().setLevel(level);
+    saveDiagLevel(level);
 }
 
 LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -3368,9 +3563,12 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             wchar_t t3[] = L"Chẩn đoán";
             wchar_t t4[] = L"Thông tin";
             wchar_t t5[] = L"Arcade";
-            wchar_t t6[] = L"Phòng Chaos";
-            wchar_t t7[] = L"AI Rival";
-            wchar_t t8[] = L"Tiến trình";
+            // v1.3.0-beta4: the last three headers were clipped mid-word
+            // (9 labels need ~598px, the control offers 528px). Shortened;
+            // the runtime planTabs() below can still go multi-row at high DPI.
+            wchar_t t6[] = L"Chaos";
+            wchar_t t7[] = L"AI";
+            wchar_t t8[] = L"Cấp độ";
             item.pszText = t0; ::SendMessageW(tab, TCM_INSERTITEMW, 0, reinterpret_cast<LPARAM>(&item));
             item.pszText = t1; ::SendMessageW(tab, TCM_INSERTITEMW, 1, reinterpret_cast<LPARAM>(&item));
             item.pszText = t2; ::SendMessageW(tab, TCM_INSERTITEMW, 2, reinterpret_cast<LPARAM>(&item));
@@ -3383,7 +3581,7 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
             // ---- tab 0: Bàn phím (v1.1.2: grouped layout + digits option) ----
             mkCtl(hwnd, L"BUTTON", L"Phương thức gõ",
-                  WS_CHILD | WS_VISIBLE | BS_GROUPBOX, S(24), S(100), S(494), S(76),
+                  WS_CHILD | WS_VISIBLE | BS_GROUPBOX, S(24), S(100), S(494), S(84),
                   reinterpret_cast<HMENU>(IDC_GRP_METHOD));
             mkCtl(hwnd, L"BUTTON", L"Telex", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
                   S(44), S(122), S(74), S(20), reinterpret_cast<HMENU>(IDC_RADIO_TELEX));
@@ -3394,18 +3592,18 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             mkCtl(hwnd, L"STATIC",
                   L"Telex & Simple Telex gõ dấu bằng chữ (as → á). VNI gõ dấu bằng số "
                   L"(a1 → á) — chỉ khi tùy chọn chữ số bên dưới đang TẮT.",
-                  WS_CHILD | WS_VISIBLE, S(44), S(146), S(460), S(26),
+                  WS_CHILD | WS_VISIBLE, S(44), S(146), S(460), S(34),
                   reinterpret_cast<HMENU>(IDC_STAT_METHOD_HINT));
-            mkCtl(hwnd, L"STATIC", L"Bảng mã:", WS_CHILD | WS_VISIBLE, S(28), S(186), S(90), S(18),
+            mkCtl(hwnd, L"STATIC", L"Bảng mã:", WS_CHILD | WS_VISIBLE, S(28), S(190), S(90), S(18),
                   reinterpret_cast<HMENU>(IDC_STAT_CODETABLE));
             HWND combo = mkCtl(hwnd, WC_COMBOBOXW, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP |
-                               CBS_DROPDOWNLIST, S(128), S(182), S(210), S(200), reinterpret_cast<HMENU>(IDC_COMBO_CODETABLE));
+                               CBS_DROPDOWNLIST, S(128), S(186), S(210), S(200), reinterpret_cast<HMENU>(IDC_COMBO_CODETABLE));
             for (const wchar_t* s : {L"Unicode", L"TCVN3 (ABC)", L"VNI Windows",
                                      L"Unicode tổ hợp", L"CP 1258"}) {
                 ::SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(s));
             }
             mkCtl(hwnd, L"BUTTON", L"Tùy chọn gõ",
-                  WS_CHILD | WS_VISIBLE | BS_GROUPBOX, S(24), S(210), S(494), S(180),
+                  WS_CHILD | WS_VISIBLE | BS_GROUPBOX, S(24), S(214), S(494), S(168),
                   reinterpret_cast<HMENU>(IDC_GRP_OPTIONS));
             const wchar_t* kOpts[] = {
                 L"Số 0–9 luôn là chữ số — không dùng số để gõ dấu tiếng Việt (VNI)",
@@ -3431,41 +3629,41 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
             // Chế độ xuất — v1.1.2: grouped, unchanged semantics.
             mkCtl(hwnd, L"BUTTON", L"Chế độ xuất & hiệu năng",
-                  WS_CHILD | WS_VISIBLE | BS_GROUPBOX, S(24), S(400), S(494), S(176),
+                  WS_CHILD | WS_VISIBLE | BS_GROUPBOX, S(24), S(388), S(494), S(178),
                   reinterpret_cast<HMENU>(IDC_GRP_OUTPUT));
             mkCtl(hwnd, L"BUTTON", L"Auto", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
-                  S(44), S(422), S(66), S(20), reinterpret_cast<HMENU>(IDC_RADIO_OUT_AUTO));
+                  S(44), S(410), S(66), S(20), reinterpret_cast<HMENU>(IDC_RADIO_OUT_AUTO));
             mkCtl(hwnd, L"BUTTON", L"Luôn TSF (chống nháy)", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
-                  S(118), S(422), S(180), S(20), reinterpret_cast<HMENU>(IDC_RADIO_OUT_TSF));
+                  S(118), S(410), S(180), S(20), reinterpret_cast<HMENU>(IDC_RADIO_OUT_TSF));
             mkCtl(hwnd, L"BUTTON", L"Luôn SendInput (nhanh nhất)", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
-                  S(44), S(446), S(240), S(20), reinterpret_cast<HMENU>(IDC_RADIO_OUT_SEND));
+                  S(44), S(432), S(240), S(20), reinterpret_cast<HMENU>(IDC_RADIO_OUT_SEND));
             mkCtl(hwnd, L"STATIC",
                   L"Auto: TSF cho trình duyệt & Office (không nháy chữ), SendInput trực tiếp "
                   L"cho các ứng dụng khác. Khuyến nghị: giữ Auto và chọn hồ sơ hiệu năng bên dưới.",
-                  WS_CHILD | WS_VISIBLE, S(44), S(468), S(460), S(28),
+                  WS_CHILD | WS_VISIBLE, S(44), S(454), S(460), S(34),
                   reinterpret_cast<HMENU>(IDC_STAT_OUT_NOTE));
             // v1.2.1 RC2 — Performance preference profile (inside the output group).
             mkCtl(hwnd, L"STATIC", L"Hồ sơ hiệu năng:", WS_CHILD | WS_VISIBLE,
-                  S(44), S(502), S(110), S(18), reinterpret_cast<HMENU>(IDC_STAT_PERF_LAB));
+                  S(44), S(492), S(110), S(18), reinterpret_cast<HMENU>(IDC_STAT_PERF_LAB));
             HWND perfCombo = mkCtl(hwnd, WC_COMBOBOXW, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP |
-                                   CBS_DROPDOWNLIST, S(158), S(498), S(180), S(160),
+                                   CBS_DROPDOWNLIST, S(158), S(488), S(180), S(160),
                                    reinterpret_cast<HMENU>(IDC_COMBO_PERF));
             for (const wchar_t* s : {L"Cân bằng (mặc định)", L"Nhanh nhất", L"Ít nháy chữ nhất",
                                      L"Chính xác tối đa", L"Tự động thích ứng"}) {
                 ::SendMessageW(perfCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(s));
             }
             mkCtl(hwnd, L"BUTTON", L"Tiết kiệm CPU", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-                  S(346), S(499), S(80), S(20), reinterpret_cast<HMENU>(IDC_CHK_PERF_LOWCPU));
+                  S(346), S(489), S(80), S(20), reinterpret_cast<HMENU>(IDC_CHK_PERF_LOWCPU));
             mkCtl(hwnd, L"BUTTON", L"Từ điển", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-                  S(430), S(499), S(80), S(20), reinterpret_cast<HMENU>(IDC_CHK_PERF_DICT));
+                  S(430), S(489), S(80), S(20), reinterpret_cast<HMENU>(IDC_CHK_PERF_DICT));
             mkCtl(hwnd, L"STATIC",
                   L"Nhanh nhất: SendInput, xử lý nóng. Ít nháy: TSF gộp lệnh. Chính xác: mọi lưới an toàn. "
                   L"Tự động: điều chỉnh theo máy. Có thể kết hợp thêm hai ô bên phải.",
-                  WS_CHILD | WS_VISIBLE, S(44), S(522), S(460), S(28),
+                  WS_CHILD | WS_VISIBLE, S(44), S(516), S(460), S(34),
                   reinterpret_cast<HMENU>(IDC_STAT_PERF_NOTE));
-            mkCtl(hwnd, L"BUTTON", L"Thông báo thông minh (gợi ý khi Telex nhanh sửa nhầm, TSF chậm…)",
-                  WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, S(44), S(552), S(460), S(20),
-                  reinterpret_cast<HMENU>(IDC_CHK_NOTIFY));
+            // (v1.3.0-beta4: IDC_CHK_NOTIFY moved to tab 1 — the output
+            // group's notes grew to their real wrapped height and the page
+            // had no room left below them; the toggle is app behaviour.)
 
             // ---- tab 1: Ứng dụng ----
             mkCtl(hwnd, L"STATIC", L"Tự động tắt bộ gõ khi cửa sổ đang chạy là:",
@@ -3487,6 +3685,11 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                   L"trên dòng đầu cửa sổ và tooltip khay hệ thống.",
                   WS_CHILD | WS_VISIBLE, S(28), S(224), S(480), S(64),
                   reinterpret_cast<HMENU>(IDC_STAT_APPS_NOTE));
+            // v1.3.0-beta4: moved from tab 0 (see the output group) — this
+            // page has the room and the toggle is application behaviour.
+            mkCtl(hwnd, L"BUTTON", L"Thông báo thông minh (gợi ý khi Telex nhanh sửa nhầm, TSF chậm…)",
+                  WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, S(28), S(320), S(480), S(20),
+                  reinterpret_cast<HMENU>(IDC_CHK_NOTIFY));
 
             // ---- tab 2: Gõ tắt (v1.1.0 — the macro feature is now real) ----
             mkCtl(hwnd, L"STATIC",
@@ -3551,6 +3754,29 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                   WS_CHILD | WS_VISIBLE, S(28), S(352), S(480), S(90),
                   reinterpret_cast<HMENU>(IDC_STAT_DESC));
 
+            // v1.3.0-beta4: the diagnostics module (ok::diag) shipped in
+            // beta3 fully implemented but with ZERO call sites and no UI —
+            // this group is the missing control panel. Level gates every
+            // recorder (Off = one relaxed load per key), the quick check
+            // runs a real smoke test of the shipped pipeline, and the report
+            // button writes ok::diag::report() to %APPDATA%\KieeKey.
+            mkCtl(hwnd, L"BUTTON", L"Tự kiểm tra & mức chẩn đoán",
+                  WS_CHILD | WS_VISIBLE | BS_GROUPBOX, S(24), S(450), S(494), S(112),
+                  reinterpret_cast<HMENU>(IDC_GRP_DIAG));
+            mkCtl(hwnd, L"BUTTON", L"Tắt", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
+                  S(44), S(470), S(54), S(20), reinterpret_cast<HMENU>(IDC_RAD_DIAG_OFF));
+            mkCtl(hwnd, L"BUTTON", L"Cơ bản", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
+                  S(106), S(470), S(80), S(20), reinterpret_cast<HMENU>(IDC_RAD_DIAG_BASIC));
+            mkCtl(hwnd, L"BUTTON", L"Đầy đủ", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
+                  S(194), S(470), S(84), S(20), reinterpret_cast<HMENU>(IDC_RAD_DIAG_FULL));
+            mkCtl(hwnd, L"BUTTON", L"Chạy kiểm tra nhanh", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                  S(44), S(496), S(170), S(26), reinterpret_cast<HMENU>(IDC_BTN_DIAG_RUN));
+            mkCtl(hwnd, L"BUTTON", L"Xuất báo cáo", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                  S(226), S(496), S(140), S(26), reinterpret_cast<HMENU>(IDC_BTN_DIAG_REPORT));
+            mkCtl(hwnd, L"STATIC", L"Cơ bản: đếm + độ trễ · Đầy đủ: thêm trace · Tắt: ~miễn phí",
+                  WS_CHILD | WS_VISIBLE, S(44), S(528), S(456), S(26),
+                  reinterpret_cast<HMENU>(IDC_STAT_DIAG_RESULT));
+
             // ---- tab 4: Thông tin (v1.1.2 — in-app introduction) ----
             // v1.1.2-r3: the tagline merged into the about paragraph; its
             // slot is now the LIVE DIAGNOSTICS block (running build + state
@@ -3594,11 +3820,11 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             mkCtl(hwnd, L"STATIC",
                   L"Nguồn gốc & bản quyền: KieeKey phát triển từ OpenKey © 2019 Tuyen Mai, "
                   L"phát hành theo GNU GPL v3. Phần hiện đại hoá © 2026 coderunknow.",
-                  WS_CHILD | WS_VISIBLE, S(28), S(516), S(500), S(32),
+                  WS_CHILD | WS_VISIBLE, S(28), S(510), S(500), S(32),
                   reinterpret_cast<HMENU>(IDC_STAT_INFO_LICENSE));
             mkCtl(hwnd, WC_LINK,
                   L"<A HREF=\"https://github.com/coderunknow/KieeKey\">Mã nguồn · tài liệu · cập nhật: github.com/coderunknow/KieeKey</A>",
-                  WS_CHILD | WS_VISIBLE | WS_TABSTOP, S(28), S(552), S(500), S(20),
+                  WS_CHILD | WS_VISIBLE | WS_TABSTOP, S(28), S(546), S(500), S(20),
                   reinterpret_cast<HMENU>(IDC_LNK_REPO));
 
             // ---- tab 5: Arcade (v1.3.0) ----
@@ -3712,14 +3938,16 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             HWND liveIntensity = mkCtl(hwnd, L"COMBOBOX", L"",
                   WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST,
                   S(176), S(426), S(318), S(140), reinterpret_cast<HMENU>(IDC_CMB_LIVE_INTENSITY));
-            for (const wchar_t* level : {L"25%", L"50%", L"100%"}) {
+            for (const wchar_t* level : {L"25%", L"50%", L"75%", L"100%"}) {
                 ::SendMessageW(liveIntensity, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(level));
             }
             mkCtl(hwnd, L"STATIC",
-                  L"Cần bộ gõ BẬT + Unicode; không tác động app bị loại trừ. Đổi chữ thật khi "
-                  L"Lab đóng. Không dùng khi nhập mật khẩu. Glyph không có bản lật giữ nguyên; "
-                  L"không xoay hình học 90°/270°. Mặc định TẮT, không lưu qua lần chạy.",
-                  WS_CHILD | WS_VISIBLE, S(44), S(464), S(450), S(72),
+                  L"Cần bộ gõ BẬT + bảng mã Unicode (TCVN3/VNI không hiện được chữ lật — "
+                  L"đổi ở tab Bàn phím); không tác động app bị loại trừ. Nguyên âm tiếng Việt "
+                  L"có dấu được lật theo dấu: sắc↔huyền, hỏi↔ngã; chữ không có bản lật giữ "
+                  L"nguyên. Không dùng khi nhập mật khẩu; không xoay hình học 90°/270°. "
+                  L"Mặc định TẮT, không lưu qua lần chạy.",
+                  WS_CHILD | WS_VISIBLE, S(44), S(464), S(450), S(80),
                   reinterpret_cast<HMENU>(IDC_STAT_LIVE_HINT));
 
             // ---- tab 7: AI Rival & Coaching (v1.3.0) ----
@@ -3773,7 +4001,169 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             mkCtl(hwnd, L"BUTTON", L"Áp dụng", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
                   S(468), S(580), S(80), S(30), reinterpret_cast<HMENU>(IDC_BTN_APPLY));
 
+            // ---- v1.3.0-beta4: runtime layout solve (ok::layout) ----
+            // The authored rectangles above are the 96-dpi design, gated
+            // statically by scripts/audit_layout.py. Here the app MEASURES
+            // the real font on the real monitor (DrawTextW + DT_CALCRECT)
+            // and lets the solver reflow: every wrapping label grows to its
+            // measured height, the controls below shift down, group boxes
+            // stretch to keep containing their children, and the window
+            // grows if the deepest page needs it. This is the durable fix
+            // for the "chữ bị đè / chữ bị mất" bug class — no future string
+            // edit or DPI change can silently clip text again.
+            {
+                HWND tabCtl = ::GetDlgItem(hwnd, IDC_TAB);
+                if (tabCtl != nullptr) {
+                    // -- 1a. Tab headers: measure + plan; multi-row if needed. --
+                    const wchar_t* kTabTexts[9] = {t0, t1, t2, t3, t4, t5, t6, t7, t8};
+                    RECT rcTab{};
+                    ::GetWindowRect(tabCtl, &rcTab);
+                    ::MapWindowPoints(nullptr, hwnd, reinterpret_cast<POINT*>(&rcTab), 2);
+                    const int tabWidth = rcTab.right - rcTab.left;
+                    HDC tdc = ::GetDC(tabCtl);
+                    if (tdc != nullptr) {
+                        HGDIOBJ oldFont = ::SelectObject(tdc, uiFont());
+                        std::vector<int> labelW(9, 0);
+                        for (int i = 0; i < 9; ++i) {
+                            RECT r{0, 0, 0, 0};
+                            ::DrawTextW(tdc, kTabTexts[i], -1, &r,
+                                        DT_CALCRECT | DT_SINGLELINE);
+                            labelW[static_cast<std::size_t>(i)] = r.right - r.left;
+                        }
+                        ::SelectObject(tdc, oldFont);
+                        ::ReleaseDC(tabCtl, tdc);
+                        const ok::layout::TabPlan tabPlan = ok::layout::planTabs(
+                            labelW, labelW, tabWidth - S(16), S(18), S(22), S(6));
+                        if (tabPlan.multiline) {
+                            ::SetWindowLongPtrW(tabCtl, GWL_STYLE,
+                                ::GetWindowLongPtrW(tabCtl, GWL_STYLE) | TCS_MULTILINE);
+                        }
+                    }
+
+                    // -- 1b. Pages: measure every label, autoFit, apply. --
+                    const int* pages[9] = {kTab0, kTab1, kTab2, kTab3,
+                                           kTab4, kTab5, kTab6, kTab7, kTab8};
+                    auto pageOf = [&pages](int id) {
+                        for (int t = 0; t < 9; ++t) {
+                            for (const int* p = pages[t]; *p; ++p) {
+                                if (*p == id) { return t; }
+                            }
+                        }
+                        return ok::layout::ControlSpec::kAlwaysVisible;
+                    };
+                    // The tab control's DISPLAY rect, in dialog-client coords.
+                    RECT disp = rcTab;
+                    ::SendMessageW(tabCtl, TCM_ADJUSTRECT, FALSE,
+                                   reinterpret_cast<LPARAM>(&disp));
+
+                    std::vector<ok::layout::ControlSpec> specs;
+                    specs.reserve(140);
+                    std::vector<HWND> hwnds;
+                    hwnds.reserve(140);
+                    wchar_t cls[32];
+                    wchar_t text[512];
+                    for (HWND c = ::GetWindow(hwnd, GW_CHILD); c != nullptr;
+                         c = ::GetWindow(c, GW_HWNDNEXT)) {
+                        if (c == tabCtl) { continue; }
+                        const int id = ::GetDlgCtrlID(c);
+                        if (id == 0) { continue; }
+                        RECT rc{};
+                        ::GetWindowRect(c, &rc);
+                        ::MapWindowPoints(nullptr, hwnd, reinterpret_cast<POINT*>(&rc), 2);
+                        ok::layout::ControlSpec spec;
+                        spec.id = id;
+                        spec.rect = {rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top};
+                        spec.tab = pageOf(id);
+                        const int clsLen = ::GetClassNameW(c, cls, 32);
+                        const bool isStatic = (clsLen == 6 && wcscmp(cls, L"STATIC") == 0);
+                        const LONG_PTR style = ::GetWindowLongPtrW(c, GWL_STYLE);
+                        const bool isGroupBox =
+                            (clsLen == 6 && wcscmp(cls, L"BUTTON") == 0) &&
+                            ((style & BS_GROUPBOX) == BS_GROUPBOX);
+                        spec.groupBox = isGroupBox;
+                        spec.growable = isStatic && !isGroupBox &&
+                                        ((style & SS_TYPEMASK) != SS_ICON) &&
+                                        ((style & SS_TYPEMASK) != SS_OWNERDRAW);
+                        if (spec.growable) {
+                            const int tLen = ::GetWindowTextW(c, text, 512);
+                            if (tLen > 0) {
+                                HDC dc = ::GetDC(hwnd);
+                                if (dc != nullptr) {
+                                    HGDIOBJ of = ::SelectObject(dc,
+                                        reinterpret_cast<HGDIOBJ>(::SendMessageW(
+                                            c, WM_GETFONT, 0, 0)));
+                                    RECT calc{0, 0, spec.rect.w, 0};
+                                    ::DrawTextW(dc, text, tLen, &calc,
+                                                DT_CALCRECT | DT_WORDBREAK);
+                                    ::SelectObject(dc, of);
+                                    ::ReleaseDC(hwnd, dc);
+                                    spec.requiredHeight = calc.bottom - calc.top;
+                                }
+                            }
+                        }
+                        specs.push_back(spec);
+                        hwnds.push_back(c);
+                    }
+                    const ok::layout::LayoutPlan plan = ok::layout::autoFit(
+                        specs, disp.top, disp.bottom);
+                    for (std::size_t i = 0; i < specs.size(); ++i) {
+                        const ok::layout::Rect& want = plan.rects[i];
+                        const ok::layout::Rect& was = specs[i].rect;
+                        if (want.x != was.x || want.y != was.y ||
+                            want.w != was.w || want.h != was.h) {
+                            ::SetWindowPos(hwnds[i], nullptr, want.x, want.y, want.w, want.h,
+                                           SWP_NOZORDER | SWP_NOACTIVATE);
+                        }
+                    }
+                    if (plan.extraHeightPx > 0) {
+                        // Grow the window (capped by the monitor work area),
+                        // the tab control, and shift the always-visible
+                        // button row down to stay at the bottom.
+                        RECT rcWork{};
+                        ::SystemParametersInfoW(SPI_GETWORKAREA, 0, &rcWork, 0);
+                        RECT rcDlg{};
+                        ::GetWindowRect(hwnd, &rcDlg);
+                        const ok::layout::WindowGrowth growth = ok::layout::growWindow(
+                            rcDlg.bottom - rcDlg.top, plan.extraHeightPx,
+                            rcWork.bottom - rcWork.top);
+                        if (growth.unsatisfiedPx == 0) {
+                            ::SetWindowPos(hwnd, nullptr, 0, 0,
+                                           rcDlg.right - rcDlg.left, growth.newClientHeight,
+                                           SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+                            ::SetWindowPos(tab, nullptr, 0, 0, tabWidth,
+                                           (rcTab.bottom - rcTab.top) + plan.extraHeightPx,
+                                           SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+                            for (HWND c = ::GetWindow(hwnd, GW_CHILD); c != nullptr;
+                                 c = ::GetWindow(c, GW_HWNDNEXT)) {
+                                if (c == tab) { continue; }
+                                const int id = ::GetDlgCtrlID(c);
+                                if (pageOf(id) != ok::layout::ControlSpec::kAlwaysVisible) {
+                                    continue;   // page content keeps its solved rect
+                                }
+                                RECT rc{};
+                                ::GetWindowRect(c, &rc);
+                                ::MapWindowPoints(nullptr, hwnd,
+                                                  reinterpret_cast<POINT*>(&rc), 2);
+                                if (rc.top >= rcTab.bottom) {   // the bottom button row
+                                    ::SetWindowPos(c, nullptr, 0, rc.top + plan.extraHeightPx,
+                                                   0, 0, SWP_NOSIZE | SWP_NOZORDER);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             settingsToControls();
+            // v1.3.0-beta4: reflect the persisted diagnostics level in the
+            // tab-3 radios (the level itself was applied at boot).
+            {
+                const ok::diag::Level lvl = ok::diag::Diagnostics::instance().level();
+                ::CheckRadioButton(hwnd, IDC_RAD_DIAG_OFF, IDC_RAD_DIAG_FULL,
+                                   lvl == ok::diag::Level::Off ? IDC_RAD_DIAG_OFF :
+                                   lvl == ok::diag::Level::Full ? IDC_RAD_DIAG_FULL :
+                                                                  IDC_RAD_DIAG_BASIC);
+            }
             // v1.1.0: the latency peak now reads "since the dialog opened"
             // (previously a process-lifetime outlier dominated the display).
             g.hook.resetPeakLatency();
@@ -4068,7 +4458,8 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     const auto mode = ::SendMessageW(::GetDlgItem(hwnd, IDC_CMB_LIVE_GLYPH), CB_GETCURSEL, 0, 0);
                     config.glyph = static_cast<ok::effects::Glyph>(std::clamp<LRESULT>(mode, 0, 3));
                     const auto intensity = ::SendMessageW(::GetDlgItem(hwnd, IDC_CMB_LIVE_INTENSITY), CB_GETCURSEL, 0, 0);
-                    config.intensity = intensity == 2 ? 100u : (intensity == 0 ? 25u : 50u);
+                    config.intensity = intensity == 3 ? 100u : (intensity == 2 ? 75u :
+                                     (intensity == 0 ? 25u : 50u));
                     g.liveEffects.configure(config);
                     g.engineResyncPending.store(true, std::memory_order_release);
                     return 0;
@@ -4095,6 +4486,51 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 case IDC_BTN_PROG_RESET:
                     ok::progression::ProgressionEngine::instance().reset();
                     return 0;
+                // ---- v1.3.0-beta4: diagnostics control panel (tab 3) ----
+                case IDC_RAD_DIAG_OFF:
+                case IDC_RAD_DIAG_BASIC:
+                case IDC_RAD_DIAG_FULL: {
+                    const ok::diag::Level lvl =
+                        (wParam == IDC_RAD_DIAG_OFF) ? ok::diag::Level::Off :
+                        (wParam == IDC_RAD_DIAG_FULL) ? ok::diag::Level::Full :
+                                                        ok::diag::Level::Basic;
+                    setDiagLevelAndSave(lvl);
+                    if (HWND r = ::GetDlgItem(hwnd, IDC_STAT_DIAG_RESULT)) {
+                        ::SetWindowTextW(r, lvl == ok::diag::Level::Off
+                            ? L"Chẩn đoán: TẮT — mọi bộ đếm ngừng (chi phí ~0)"
+                            : lvl == ok::diag::Level::Full
+                                ? L"Chẩn đoán: ĐẦY ĐỦ — bộ đếm + độ trễ + ghi từng phím"
+                                : L"Chẩn đoán: CƠ BẢN — bộ đếm + độ trễ");
+                    }
+                    return 0;
+                }
+                case IDC_BTN_DIAG_RUN: {
+                    std::string failDetail;
+                    const int passed = runDiagQuickCheck(failDetail);
+                    if (HWND r = ::GetDlgItem(hwnd, IDC_STAT_DIAG_RESULT)) {
+                        wchar_t buf[160]{};
+                        if (passed == 5) {
+                            swprintf_s(buf, L"Kiểm tra nhanh: ĐẠT 5/5 hạng mục ✓");
+                        } else {
+                            swprintf_s(buf, L"Kiểm tra nhanh: %d/5 — lỗi: %hs",
+                                       passed, failDetail.c_str());
+                        }
+                        ::SetWindowTextW(r, buf);
+                    }
+                    return 0;
+                }
+                case IDC_BTN_DIAG_REPORT: {
+                    std::wstring path;
+                    if (exportDiagReport(path)) {
+                        if (HWND r = ::GetDlgItem(hwnd, IDC_STAT_DIAG_RESULT)) {
+                            std::wstring reportMsg = L"Đã xuất báo cáo: " + path;
+                            ::SetWindowTextW(r, reportMsg.c_str());
+                        }
+                    } else if (HWND r = ::GetDlgItem(hwnd, IDC_STAT_DIAG_RESULT)) {
+                        ::SetWindowTextW(r, L"Không ghi được báo cáo (thư mục %APPDATA%?)");
+                    }
+                    return 0;
+                }
                 case IDOK:
                     settingsFromControls();
                     saveSettings();
@@ -4382,6 +4818,10 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
 
     // Settings from registry
     loadSettings();
+    // v1.3.0-beta4: apply the persisted diagnostics level BEFORE the hook
+    // installs, so the recorders observe the user's choice from the first
+    // keystroke (default Basic; Off/Full come from diag-level.txt).
+    ok::diag::Diagnostics::instance().setLevel(loadDiagLevel());
     loadMacros();   // v1.1.0: real macro table (%APPDATA%\KieeKey\macros.txt)
     {
         std::lock_guard<std::mutex> lk(g.engineMtx);

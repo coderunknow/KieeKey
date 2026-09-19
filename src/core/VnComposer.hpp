@@ -105,19 +105,33 @@ public:
         }
     }
 
-    // Feed a backspace. The engine undoes within the composed word; if it declines
-    // (nothing to undo internally) we drop the last composed code point so the game
-    // stays forgiving like the ASCII path.
+    // Feed a backspace. v1.3.0-beta4 — COHERENT per-character rewind.
+    //
+    // The beta3 model mirrored the IME contract (engine rewinds ONE RAW KEY,
+    // composer pops ONE COMPOSED code point) and that split is the root cause
+    // of the reported "sai rồi backspace thì không gõ tiếp được": after
+    // "booj"→"bộ" one backspace leaves the engine holding raw "boo" while the
+    // visible buffer shows "b" — from that point on every correctly typed
+    // keystroke composes against a state the player cannot see, progress
+    // freezes, and no amount of correct typing recovers the missing tone.
+    // (Reproduced deterministically: the "wrong key + matched backspaces ->
+    // correct continuation" fuzz failed 500/500 seeded runs before this fix.)
+    //
+    // The fix: the composed buffer is the single source of truth. A backspace
+    // pops ONE composed code point (exactly what a text editor shows) and the
+    // engine is returned to a fresh word state, so it can never keep a raw-key
+    // history that disagrees with the visible text. Composition after the
+    // reset is position-independent — the next keystrokes start a fresh word
+    // whose replacement is appended to the buffer — which is what makes
+    // mid-syllable repair work: "gõ" -> Backspace -> "g" -> type "ox" ->
+    // "gõ" again. (A bare tone key right after the pop composes as a fresh
+    // word, never as the popped syllable's tone — the player sees it on
+    // screen and backspaces again; the state can never wedge.)
     void feedBackspace() noexcept {
-        ok::text::TextInput in;
-        in.kind = ok::text::InputKind::Backspace;
-        in.vkCode = 0x08;
-        const ok::text::EngineResult& r = m_engine.process(in);
-        if (r.consumed()) {
-            eraseAndAppend(r);
-        } else if (!m_composed.empty()) {
-            m_composed.pop_back();
+        if (!m_composed.empty()) {
+            m_composed.pop_back();   // one composed code point, editor-style
         }
+        m_engine.resetForNewContext();
     }
 
     // Convenience for the games: derive caps from an already-cased ASCII character

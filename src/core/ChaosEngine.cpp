@@ -349,6 +349,143 @@ char32_t ChaosEngine::getFlippedVerticalGlyph(char32_t ch) noexcept {
         case U'<': return U'>';
         case U'>': return U'<';
         case U'_': return 0x203E;   // ‾
+        // ---- v1.3.0-beta4: Vietnamese precomposed vowels ----
+        // A vertical flip turns a rising tone stroke into a falling one, so
+        // the honest single-codepoint approximation is the TONE MIRROR:
+        //   sắc (´) <-> huyền (`), hỏi (?) <-> ngã (~),
+        //   nặng (.) -> hỏi (a dot below reappears above as a hook-ish mark).
+        // Shape marks (circumflex/breve/horn) are visually near-symmetric and
+        // stay. Vowels with no tone (â, ă, ê, ô, ơ, ư, đ) have no precomposed
+        // mirror and pass through — the mode stays 1:1 with the input, which
+        // the live-effects erase accounting REQUIRES (one UTF-16 code unit in,
+        // one out). Before this table, typing Vietnamese showed NO visible
+        // ---- v1.3.0-beta4: Vietnamese precomposed vowels ----
+        // A vertical flip turns a rising tone stroke into a falling one, so
+        // the honest single-codepoint approximation is the TONE MIRROR:
+        //   sắc (´) <-> huyền (`), hỏi (?) <-> ngã (~),
+        //   nặng (.) -> hỏi (a dot below reappears above as a hook-ish mark).
+        // Shape marks (circumflex/breve/horn) are visually near-symmetric and
+        // stay. Vowels with no tone (â, ă, ê, ô, ơ, ư, đ) have no precomposed
+        // mirror and pass through — the mode stays 1:1 with the input, which
+        // the live-effects erase accounting REQUIRES (one UTF-16 code unit in,
+        // one out). Before this table, typing Vietnamese showed NO visible
+        // change at any intensity: the reported "mode không hoạt động".
+        case U'\u00C0': return U'\u00C1';   // À -> Á
+        case U'\u00C1': return U'\u00C0';   // Á -> À
+        case U'\u00C3': return U'\u1EA2';   // Ã -> Ả
+        case U'\u00C8': return U'\u00C9';   // È -> É
+        case U'\u00C9': return U'\u00C8';   // É -> È
+        case U'\u00CC': return U'\u00CD';   // Ì -> Í
+        case U'\u00CD': return U'\u00CC';   // Í -> Ì
+        case U'\u00D2': return U'\u00D3';   // Ò -> Ó
+        case U'\u00D3': return U'\u00D2';   // Ó -> Ò
+        case U'\u00D5': return U'\u1ECE';   // Õ -> Ỏ
+        case U'\u00D9': return U'\u00DA';   // Ù -> Ú
+        case U'\u00DA': return U'\u00D9';   // Ú -> Ù
+        case U'\u00DD': return U'\u1EF2';   // Ý -> Ỳ
+        case U'\u00E0': return U'\u00E1';   // à -> á
+        case U'\u00E1': return U'\u00E0';   // á -> à
+        case U'\u00E3': return U'\u1EA3';   // ã -> ả
+        case U'\u00E8': return U'\u00E9';   // è -> é
+        case U'\u00E9': return U'\u00E8';   // é -> è
+        case U'\u00EC': return U'\u00ED';   // ì -> í
+        case U'\u00ED': return U'\u00EC';   // í -> ì
+        case U'\u00F2': return U'\u00F3';   // ò -> ó
+        case U'\u00F3': return U'\u00F2';   // ó -> ò
+        case U'\u00F5': return U'\u1ECF';   // õ -> ỏ
+        case U'\u00F9': return U'\u00FA';   // ù -> ú
+        case U'\u00FA': return U'\u00F9';   // ú -> ù
+        case U'\u00FD': return U'\u1EF3';   // ý -> ỳ
+        case U'\u1EA0': return U'\u1EA2';   // Ạ -> Ả
+        case U'\u1EA1': return U'\u1EA3';   // ạ -> ả
+        case U'\u1EA2': return U'\u00C3';   // Ả -> Ã
+        case U'\u1EA3': return U'\u00E3';   // ả -> ã
+        case U'\u1EA4': return U'\u1EA6';   // Ấ -> Ầ
+        case U'\u1EA5': return U'\u1EA7';   // ấ -> ầ
+        case U'\u1EA6': return U'\u1EA4';   // Ầ -> Ấ
+        case U'\u1EA7': return U'\u1EA5';   // ầ -> ấ
+        case U'\u1EA8': return U'\u1EAA';   // Ẩ -> Ẫ
+        case U'\u1EA9': return U'\u1EAB';   // ẩ -> ẫ
+        case U'\u1EAA': return U'\u1EA8';   // Ẫ -> Ẩ
+        case U'\u1EAB': return U'\u1EA9';   // ẫ -> ẩ
+        case U'\u1EAC': return U'\u1EA8';   // Ậ -> Ẩ
+        case U'\u1EAD': return U'\u1EA9';   // ậ -> ẩ
+        case U'\u1EAE': return U'\u1EB0';   // Ắ -> Ằ
+        case U'\u1EAF': return U'\u1EB1';   // ắ -> ằ
+        case U'\u1EB0': return U'\u1EAE';   // Ằ -> Ắ
+        case U'\u1EB1': return U'\u1EAF';   // ằ -> ắ
+        case U'\u1EB2': return U'\u1EB4';   // Ẳ -> Ẵ
+        case U'\u1EB3': return U'\u1EB5';   // ẳ -> ẵ
+        case U'\u1EB4': return U'\u1EB2';   // Ẵ -> Ẳ
+        case U'\u1EB5': return U'\u1EB3';   // ẵ -> ẳ
+        case U'\u1EB6': return U'\u1EB2';   // Ặ -> Ẳ
+        case U'\u1EB7': return U'\u1EB3';   // ặ -> ẳ
+        case U'\u1EB8': return U'\u1EBA';   // Ẹ -> Ẻ
+        case U'\u1EB9': return U'\u1EBB';   // ẹ -> ẻ
+        case U'\u1EBA': return U'\u1EBC';   // Ẻ -> Ẽ
+        case U'\u1EBB': return U'\u1EBD';   // ẻ -> ẽ
+        case U'\u1EBC': return U'\u1EBA';   // Ẽ -> Ẻ
+        case U'\u1EBD': return U'\u1EBB';   // ẽ -> ẻ
+        case U'\u1EBE': return U'\u1EC0';   // Ế -> Ề
+        case U'\u1EBF': return U'\u1EC1';   // ế -> ề
+        case U'\u1EC0': return U'\u1EBE';   // Ề -> Ế
+        case U'\u1EC1': return U'\u1EBF';   // ề -> ế
+        case U'\u1EC2': return U'\u1EC4';   // Ể -> Ễ
+        case U'\u1EC3': return U'\u1EC5';   // ể -> ễ
+        case U'\u1EC4': return U'\u1EC2';   // Ễ -> Ể
+        case U'\u1EC5': return U'\u1EC3';   // ễ -> ể
+        case U'\u1EC6': return U'\u1EC2';   // Ệ -> Ể
+        case U'\u1EC7': return U'\u1EC3';   // ệ -> ể
+        case U'\u1EC8': return U'\u0128';   // Ỉ -> Ĩ
+        case U'\u1EC9': return U'\u0129';   // ỉ -> ĩ
+        case U'\u1ECA': return U'\u1EC8';   // Ị -> Ỉ
+        case U'\u1ECB': return U'\u1EC9';   // ị -> ỉ
+        case U'\u1ECC': return U'\u1ECE';   // Ọ -> Ỏ
+        case U'\u1ECD': return U'\u1ECF';   // ọ -> ỏ
+        case U'\u1ECE': return U'\u00D5';   // Ỏ -> Õ
+        case U'\u1ECF': return U'\u00F5';   // ỏ -> õ
+        case U'\u1ED0': return U'\u1ED2';   // Ố -> Ồ
+        case U'\u1ED1': return U'\u1ED3';   // ố -> ồ
+        case U'\u1ED2': return U'\u1ED0';   // Ồ -> Ố
+        case U'\u1ED3': return U'\u1ED1';   // ồ -> ố
+        case U'\u1ED4': return U'\u1ED6';   // Ổ -> Ỗ
+        case U'\u1ED5': return U'\u1ED7';   // ổ -> ỗ
+        case U'\u1ED6': return U'\u1ED4';   // Ỗ -> Ổ
+        case U'\u1ED7': return U'\u1ED5';   // ỗ -> ổ
+        case U'\u1ED8': return U'\u1ED4';   // Ộ -> Ổ
+        case U'\u1ED9': return U'\u1ED5';   // ộ -> ổ
+        case U'\u1EDA': return U'\u1EDC';   // Ớ -> Ờ
+        case U'\u1EDB': return U'\u1EDD';   // ớ -> ờ
+        case U'\u1EDC': return U'\u1EDA';   // Ờ -> Ớ
+        case U'\u1EDD': return U'\u1EDB';   // ờ -> ớ
+        case U'\u1EDE': return U'\u1EE0';   // Ở -> Ỡ
+        case U'\u1EDF': return U'\u1EE1';   // ở -> ỡ
+        case U'\u1EE0': return U'\u1EDE';   // Ỡ -> Ở
+        case U'\u1EE1': return U'\u1EDF';   // ỡ -> ở
+        case U'\u1EE2': return U'\u1EDE';   // Ợ -> Ở
+        case U'\u1EE3': return U'\u1EDF';   // ợ -> ở
+        case U'\u1EE4': return U'\u1EE6';   // Ụ -> Ủ
+        case U'\u1EE5': return U'\u1EE7';   // ụ -> ủ
+        case U'\u1EE6': return U'\u0168';   // Ủ -> Ũ
+        case U'\u1EE7': return U'\u0169';   // ủ -> ũ
+        case U'\u1EE8': return U'\u1EEA';   // Ứ -> Ừ
+        case U'\u1EE9': return U'\u1EEB';   // ứ -> ừ
+        case U'\u1EEA': return U'\u1EE8';   // Ừ -> Ứ
+        case U'\u1EEB': return U'\u1EE9';   // ừ -> ứ
+        case U'\u1EEC': return U'\u1EEE';   // Ử -> Ữ
+        case U'\u1EED': return U'\u1EEF';   // ử -> ữ
+        case U'\u1EEE': return U'\u1EEC';   // Ữ -> Ử
+        case U'\u1EEF': return U'\u1EED';   // ữ -> ử
+        case U'\u1EF0': return U'\u1EEC';   // Ự -> Ử
+        case U'\u1EF1': return U'\u1EED';   // ự -> ử
+        case U'\u1EF2': return U'\u00DD';   // Ỳ -> Ý
+        case U'\u1EF3': return U'\u00FD';   // ỳ -> ý
+        case U'\u1EF4': return U'\u1EF6';   // Ỵ -> Ỷ
+        case U'\u1EF5': return U'\u1EF7';   // ỵ -> ỷ
+        case U'\u1EF6': return U'\u1EF8';   // Ỷ -> Ỹ
+        case U'\u1EF7': return U'\u1EF9';   // ỷ -> ỹ
+        case U'\u1EF8': return U'\u1EF6';   // Ỹ -> Ỷ
+        case U'\u1EF9': return U'\u1EF7';   // ỹ -> ỷ
         default: return ch;
     }
 }
@@ -377,6 +514,126 @@ char32_t ChaosEngine::getFlippedHorizontalGlyph(char32_t ch) noexcept {
         case U'Z': return U'Z';
         case U'2': return U'S';
         case U'5': return U'Z';
+        // ---- v1.3.0-beta4: Vietnamese precomposed vowels ----
+        // Horizontally mirroring a tone mark turns sắc into huyền and vice
+        // versa (the same rising->falling stroke change as the vertical
+        // flip), so the vowel table is shared with getFlippedVerticalGlyph.
+        case U'\u00C0': return U'\u00C1';   // À -> Á
+        case U'\u00C1': return U'\u00C0';   // Á -> À
+        case U'\u00C3': return U'\u1EA2';   // Ã -> Ả
+        case U'\u00C8': return U'\u00C9';   // È -> É
+        case U'\u00C9': return U'\u00C8';   // É -> È
+        case U'\u00CC': return U'\u00CD';   // Ì -> Í
+        case U'\u00CD': return U'\u00CC';   // Í -> Ì
+        case U'\u00D2': return U'\u00D3';   // Ò -> Ó
+        case U'\u00D3': return U'\u00D2';   // Ó -> Ò
+        case U'\u00D5': return U'\u1ECE';   // Õ -> Ỏ
+        case U'\u00D9': return U'\u00DA';   // Ù -> Ú
+        case U'\u00DA': return U'\u00D9';   // Ú -> Ù
+        case U'\u00DD': return U'\u1EF2';   // Ý -> Ỳ
+        case U'\u00E0': return U'\u00E1';   // à -> á
+        case U'\u00E1': return U'\u00E0';   // á -> à
+        case U'\u00E3': return U'\u1EA3';   // ã -> ả
+        case U'\u00E8': return U'\u00E9';   // è -> é
+        case U'\u00E9': return U'\u00E8';   // é -> è
+        case U'\u00EC': return U'\u00ED';   // ì -> í
+        case U'\u00ED': return U'\u00EC';   // í -> ì
+        case U'\u00F2': return U'\u00F3';   // ò -> ó
+        case U'\u00F3': return U'\u00F2';   // ó -> ò
+        case U'\u00F5': return U'\u1ECF';   // õ -> ỏ
+        case U'\u00F9': return U'\u00FA';   // ù -> ú
+        case U'\u00FA': return U'\u00F9';   // ú -> ù
+        case U'\u00FD': return U'\u1EF3';   // ý -> ỳ
+        case U'\u1EA0': return U'\u1EA2';   // Ạ -> Ả
+        case U'\u1EA1': return U'\u1EA3';   // ạ -> ả
+        case U'\u1EA2': return U'\u00C3';   // Ả -> Ã
+        case U'\u1EA3': return U'\u00E3';   // ả -> ã
+        case U'\u1EA4': return U'\u1EA6';   // Ấ -> Ầ
+        case U'\u1EA5': return U'\u1EA7';   // ấ -> ầ
+        case U'\u1EA6': return U'\u1EA4';   // Ầ -> Ấ
+        case U'\u1EA7': return U'\u1EA5';   // ầ -> ấ
+        case U'\u1EA8': return U'\u1EAA';   // Ẩ -> Ẫ
+        case U'\u1EA9': return U'\u1EAB';   // ẩ -> ẫ
+        case U'\u1EAA': return U'\u1EA8';   // Ẫ -> Ẩ
+        case U'\u1EAB': return U'\u1EA9';   // ẫ -> ẩ
+        case U'\u1EAC': return U'\u1EA8';   // Ậ -> Ẩ
+        case U'\u1EAD': return U'\u1EA9';   // ậ -> ẩ
+        case U'\u1EAE': return U'\u1EB0';   // Ắ -> Ằ
+        case U'\u1EAF': return U'\u1EB1';   // ắ -> ằ
+        case U'\u1EB0': return U'\u1EAE';   // Ằ -> Ắ
+        case U'\u1EB1': return U'\u1EAF';   // ằ -> ắ
+        case U'\u1EB2': return U'\u1EB4';   // Ẳ -> Ẵ
+        case U'\u1EB3': return U'\u1EB5';   // ẳ -> ẵ
+        case U'\u1EB4': return U'\u1EB2';   // Ẵ -> Ẳ
+        case U'\u1EB5': return U'\u1EB3';   // ẵ -> ẳ
+        case U'\u1EB6': return U'\u1EB2';   // Ặ -> Ẳ
+        case U'\u1EB7': return U'\u1EB3';   // ặ -> ẳ
+        case U'\u1EB8': return U'\u1EBA';   // Ẹ -> Ẻ
+        case U'\u1EB9': return U'\u1EBB';   // ẹ -> ẻ
+        case U'\u1EBA': return U'\u1EBC';   // Ẻ -> Ẽ
+        case U'\u1EBB': return U'\u1EBD';   // ẻ -> ẽ
+        case U'\u1EBC': return U'\u1EBA';   // Ẽ -> Ẻ
+        case U'\u1EBD': return U'\u1EBB';   // ẽ -> ẻ
+        case U'\u1EBE': return U'\u1EC0';   // Ế -> Ề
+        case U'\u1EBF': return U'\u1EC1';   // ế -> ề
+        case U'\u1EC0': return U'\u1EBE';   // Ề -> Ế
+        case U'\u1EC1': return U'\u1EBF';   // ề -> ế
+        case U'\u1EC2': return U'\u1EC4';   // Ể -> Ễ
+        case U'\u1EC3': return U'\u1EC5';   // ể -> ễ
+        case U'\u1EC4': return U'\u1EC2';   // Ễ -> Ể
+        case U'\u1EC5': return U'\u1EC3';   // ễ -> ể
+        case U'\u1EC6': return U'\u1EC2';   // Ệ -> Ể
+        case U'\u1EC7': return U'\u1EC3';   // ệ -> ể
+        case U'\u1EC8': return U'\u0128';   // Ỉ -> Ĩ
+        case U'\u1EC9': return U'\u0129';   // ỉ -> ĩ
+        case U'\u1ECA': return U'\u1EC8';   // Ị -> Ỉ
+        case U'\u1ECB': return U'\u1EC9';   // ị -> ỉ
+        case U'\u1ECC': return U'\u1ECE';   // Ọ -> Ỏ
+        case U'\u1ECD': return U'\u1ECF';   // ọ -> ỏ
+        case U'\u1ECE': return U'\u00D5';   // Ỏ -> Õ
+        case U'\u1ECF': return U'\u00F5';   // ỏ -> õ
+        case U'\u1ED0': return U'\u1ED2';   // Ố -> Ồ
+        case U'\u1ED1': return U'\u1ED3';   // ố -> ồ
+        case U'\u1ED2': return U'\u1ED0';   // Ồ -> Ố
+        case U'\u1ED3': return U'\u1ED1';   // ồ -> ố
+        case U'\u1ED4': return U'\u1ED6';   // Ổ -> Ỗ
+        case U'\u1ED5': return U'\u1ED7';   // ổ -> ỗ
+        case U'\u1ED6': return U'\u1ED4';   // Ỗ -> Ổ
+        case U'\u1ED7': return U'\u1ED5';   // ỗ -> ổ
+        case U'\u1ED8': return U'\u1ED4';   // Ộ -> Ổ
+        case U'\u1ED9': return U'\u1ED5';   // ộ -> ổ
+        case U'\u1EDA': return U'\u1EDC';   // Ớ -> Ờ
+        case U'\u1EDB': return U'\u1EDD';   // ớ -> ờ
+        case U'\u1EDC': return U'\u1EDA';   // Ờ -> Ớ
+        case U'\u1EDD': return U'\u1EDB';   // ờ -> ớ
+        case U'\u1EDE': return U'\u1EE0';   // Ở -> Ỡ
+        case U'\u1EDF': return U'\u1EE1';   // ở -> ỡ
+        case U'\u1EE0': return U'\u1EDE';   // Ỡ -> Ở
+        case U'\u1EE1': return U'\u1EDF';   // ỡ -> ở
+        case U'\u1EE2': return U'\u1EDE';   // Ợ -> Ở
+        case U'\u1EE3': return U'\u1EDF';   // ợ -> ở
+        case U'\u1EE4': return U'\u1EE6';   // Ụ -> Ủ
+        case U'\u1EE5': return U'\u1EE7';   // ụ -> ủ
+        case U'\u1EE6': return U'\u0168';   // Ủ -> Ũ
+        case U'\u1EE7': return U'\u0169';   // ủ -> ũ
+        case U'\u1EE8': return U'\u1EEA';   // Ứ -> Ừ
+        case U'\u1EE9': return U'\u1EEB';   // ứ -> ừ
+        case U'\u1EEA': return U'\u1EE8';   // Ừ -> Ứ
+        case U'\u1EEB': return U'\u1EE9';   // ừ -> ứ
+        case U'\u1EEC': return U'\u1EEE';   // Ử -> Ữ
+        case U'\u1EED': return U'\u1EEF';   // ử -> ữ
+        case U'\u1EEE': return U'\u1EEC';   // Ữ -> Ử
+        case U'\u1EEF': return U'\u1EED';   // ữ -> ử
+        case U'\u1EF0': return U'\u1EEC';   // Ự -> Ử
+        case U'\u1EF1': return U'\u1EED';   // ự -> ử
+        case U'\u1EF2': return U'\u00DD';   // Ỳ -> Ý
+        case U'\u1EF3': return U'\u00FD';   // ỳ -> ý
+        case U'\u1EF4': return U'\u1EF6';   // Ỵ -> Ỷ
+        case U'\u1EF5': return U'\u1EF7';   // ỵ -> ỷ
+        case U'\u1EF6': return U'\u1EF8';   // Ỷ -> Ỹ
+        case U'\u1EF7': return U'\u1EF9';   // ỷ -> ỹ
+        case U'\u1EF8': return U'\u1EF6';   // Ỹ -> Ỷ
+        case U'\u1EF9': return U'\u1EF7';   // ỹ -> ỷ
         default: return ch;
     }
 }

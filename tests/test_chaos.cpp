@@ -294,12 +294,57 @@ void testGlyphTablesAndDisplayPipeline() {
     std::cout << "  [PASS] Glyph tables & full display pipeline tests\n";
 }
 
+//---------------------------------------------------------------------------
+// v1.3.0-beta4: Vietnamese precomposed vowels must VISIBLY transform under
+// the glyph modes. Before the tone-mirror table, typing Vietnamese showed no
+// change at any intensity — the reported "mode không hoạt động khi gõ ở ngoài".
+void testVietnameseGlyphFlips() {
+    // Tone mirror: sắc <-> huyền (a vertical or horizontal flip turns the
+    // rising stroke into a falling one).
+    assert(ChaosEngine::getFlippedVerticalGlyph(U'\u00E1') == U'\u00E0');   // á -> à
+    assert(ChaosEngine::getFlippedVerticalGlyph(U'\u00E0') == U'\u00E1');   // à -> á
+    assert(ChaosEngine::getFlippedVerticalGlyph(U'\u1EBF') == U'\u1EC1');   // ế -> ề
+    assert(ChaosEngine::getFlippedHorizontalGlyph(U'\u1ED1') == U'\u1ED3'); // ố -> ồ
+    assert(ChaosEngine::getFlippedVerticalGlyph(U'\u1ED9') == U'\u1ED5');   // ộ -> ổ
+    // hook <-> tilde
+    assert(ChaosEngine::getFlippedVerticalGlyph(U'\u1EA3') == U'\u00E3');   // ả -> ã
+    assert(ChaosEngine::getFlippedVerticalGlyph(U'\u1EC9') == U'\u0129');   // ỉ -> ĩ
+    // Tone-less vowels have no precomposed mirror: pass through unchanged.
+    assert(ChaosEngine::getFlippedVerticalGlyph(U'\u00E2') == U'\u00E2');   // â
+    assert(ChaosEngine::getFlippedVerticalGlyph(U'\u0111') == U'\u0111');   // đ
+    // Every accented VN vowel maps to a single codepoint (the live-effects
+    // erase accounting requires 1 UTF-16 unit in -> 1 unit out).
+    for (char32_t ch = 0x00C0; ch <= 0x1EF9; ++ch) {
+        if (ChaosEngine::getFlippedVerticalGlyph(ch) != ch) {
+            assert(ChaosEngine::getFlippedVerticalGlyph(ch) >= 0x20);
+        }
+    }
+    // A real Vietnamese sentence visibly changes under every text-safe mode,
+    // and the output length is IDENTICAL to the input (1:1 substitution).
+    const std::u32string vn = U"b\u1ED9 g\u00F5 ti\u1EBFng Vi\u1EC7t c\u00F3 d\u1EA5u";
+    for (auto mode : {GlyphTransformMode::FlipVertical, GlyphTransformMode::FlipHorizontal,
+                      GlyphTransformMode::Rotate180, GlyphTransformMode::Random}) {
+        const std::u32string out = ChaosEngine::applyGlyphTransform(vn, mode, 7, 1.0f);
+        assert(out.size() == vn.size());
+        std::size_t changed = 0;
+        for (std::size_t i = 0; i < vn.size(); ++i) {
+            if (out[i] != vn[i]) { ++changed; }
+        }
+        assert(changed >= vn.size() / 3);   // the sentence is visibly transformed
+    }
+    // Rotate180 keeps the classic upside-down shape: last char first.
+    const std::u32string r180 = ChaosEngine::applyGlyphTransform(vn, GlyphTransformMode::Rotate180, 7, 1.0f);
+    assert(r180.front() == ChaosEngine::getFlippedVerticalGlyph(vn.back()));
+    std::cout << "  [PASS] Vietnamese glyph flip (tone mirror) tests\n";
+}
+
 int main() {
     std::cout << "=== Running Chaos / Experimental Lab Suite ===\n";
     testChaosCase();
     testGlyphTransformTextIntegrity();
     testVietnameseCaseMapping();
     testGlyphTablesAndDisplayPipeline();
+    testVietnameseGlyphFlips();
     std::cout << "=== ALL CHAOS TESTS PASSED ===\n";
     return 0;
 }

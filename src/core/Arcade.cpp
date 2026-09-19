@@ -890,6 +890,8 @@ void FishingGame::reset() {
     m_catches = 0;
     m_escapes = 0;
     m_runTimeSec = 0.0;
+    m_vnWordsTotal = 0;
+    m_vnWordsWrong = 0;
     m_paused = false;
     m_gameOver = false;
     m_resultPending = false;
@@ -904,6 +906,37 @@ double FishingGame::rarityTensionGain() const noexcept {
     return 3.0 + static_cast<double>(static_cast<int>(m_currentRarity)) * 1.6;
 }
 
+// Out-of-line: VnComposer is only forward-declared in Arcade.hpp (see
+// TypingRaceGame).
+FishingGame::~FishingGame() = default;
+
+// v1.3.0-beta4: Vietnamese prompts — the same sentences the legacy ASCII
+// prompts were the stripped-down spelling of, now bearing full diacritics.
+// Order/indices mirror kFish below exactly.
+constexpr std::u32string_view kFishingPromptsVn[] = {
+    U"thần ngư khổng lồ xuất hiện dưới dòng nước sâu",
+    U"cá rồng uốn lượn đẹp mắt trên mặt hồ",
+    U"cá hồi bơi ngược dòng suối lạnh",
+    U"cá trắm đen cần câu rất khéo",
+    U"cá rô đồng bơi lội tung tăng",
+};
+
+void FishingGame::setPassageLanguage(PassageLanguage lang, VnInputMethod method) {
+    const bool vn = (lang == PassageLanguage::Vietnamese);
+    m_vnMode = vn;
+    if (vn) {
+        if (!m_composer) { m_composer = std::make_unique<VnComposer>(); }
+        m_composer->setMethod(static_cast<ok::text::InputMethod>(method));
+    } else {
+        m_composer.reset();
+    }
+    reset();
+}
+
+std::u32string FishingGame::composedText() const {
+    return (m_vnMode && m_composer) ? m_composer->text() : std::u32string{};
+}
+
 void FishingGame::hookNewFish() {
     const std::uint32_t roll = m_rng.below(100);
     const std::uint32_t baitBonus = (m_baitLevel - 1) * 3;
@@ -914,8 +947,9 @@ void FishingGame::hookNewFish() {
         const char* prompt;
         double escapeSec;
     };
-    // Prompts stay ASCII-lowercase on purpose: the player types with a
+    // The English prompts stay ASCII-lowercase: the player types with a
     // Vietnamese IME loaded, so accented targets would double-transform.
+    // (Vietnamese mode swaps in the kFishingPromptsVn table below.)
     static const FishDef kFish[] = {
         {FishRarity::Legendary, "Thần Ngư Sông Hồng",
          "than ngu khong lo xuat hien duoi dong nuoc sau", 24.0},
@@ -958,13 +992,19 @@ void FishingGame::hookNewFish() {
         m_displayFish.push_back(cp);
     }
     m_prompt.clear();
-    for (const char* p = def.prompt; *p != '\0'; ++p) {
-        m_prompt.push_back(static_cast<char32_t>(*p));
+    if (m_vnMode) {
+        // v1.3.0-beta4: diacritic-bearing prompt; typed through the composer.
+        m_prompt.assign(kFishingPromptsVn[index].begin(), kFishingPromptsVn[index].end());
+    } else {
+        for (const char* p = def.prompt; *p != '\0'; ++p) {
+            m_prompt.push_back(static_cast<char32_t>(*p));
+        }
     }
     m_escapeTimer = def.escapeSec;
     m_promptIndex = 0;
     m_pullProgress = 20.0;
     m_lineTension = 30.0;
+    if (m_vnMode && m_composer) { m_composer->reset(); }
 }
 
 void FishingGame::onCatchSuccess() {
@@ -1050,6 +1090,54 @@ InputResult FishingGame::handleKey(const InputEvent& ev) {
     }
 
     if (m_promptIndex >= m_prompt.size()) {
+        return InputResult::Consumed;
+    }
+
+    // v1.3.0-beta4: Vietnamese mode — compose Telex/VNI in-window and match
+    // the composed text against the diacritic-bearing prompt. Progress is the
+    // longest common prefix; pull is gained per matched code point (a Telex
+    // syllable takes several keystrokes, exactly like TypingRace VN). A word
+    // is judged wrong only at a committed boundary (space), so mid-syllable
+    // Telex divergence never counts as a mistype.
+    if (m_vnMode && m_composer) {
+        if (ev.vk == 0x08 || ev.ch == U'\b') {
+            m_composer->feedBackspace();
+            m_promptIndex = m_composer->matchLength(m_prompt);
+            return InputResult::Consumed;
+        }
+        if (ev.ch == U'\0') { return InputResult::Consumed; }
+        const std::size_t before = m_promptIndex;
+        const bool isSpace = (ev.ch == U' ');
+        if (isSpace) { m_composer->feedSpace(); } else { m_composer->feedProduced(ev.ch); }
+        const std::size_t after = m_composer->matchLength(m_prompt);
+        m_promptIndex = after;
+        if (after > before) {
+            const double pullDelta =
+                (8.0 + static_cast<double>(m_reelLevel - 1) * 2.0) *
+                static_cast<double>(after - before);
+            m_pullProgress += pullDelta;
+            m_lineTension += rarityTensionGain() * static_cast<double>(after - before);
+            m_feedback = 1;
+            m_feedbackTime = 0.4;
+            if (m_lineTension >= 100.0) {
+                m_lineTension = 0.0;
+                onFishEscape();
+                return InputResult::Consumed;
+            }
+            if (m_pullProgress >= 100.0 || m_promptIndex == m_prompt.size()) {
+                onCatchSuccess();
+                return InputResult::Consumed;
+            }
+        }
+        if (isSpace) {
+            ++m_vnWordsTotal;
+            if (after < m_composer->length()) {
+                ++m_vnWordsWrong;
+                m_feedback = -1;
+                m_feedbackTime = 0.5;
+                m_pullProgress = std::max(0.0, m_pullProgress - 5.0);
+            }
+        }
         return InputResult::Consumed;
     }
 
@@ -1184,7 +1272,9 @@ void FishingGame::buildFrame(Frame& frame) const {
     frame.stats.highScore = m_highScore;
     frame.stats.level = 1 + m_catches / 5;
     frame.stats.status = frame.internDouble(U"Thoát sau ", m_escapeTimer, 1, U"s");
-    frame.stats.hint = U"Gõ đúng câu mồi · F1 tạm dừng · F2 chơi lại · Esc thoát";
+    frame.stats.hint = m_vnMode
+        ? U"Gõ Telex/VNI đúng câu mồi · Backspace xóa âm tiết · F1 tạm dừng · F2 chơi lại"
+        : U"Gõ đúng câu mồi · F1 tạm dừng · F2 chơi lại · Esc thoát";
     frame.stats.hasMeter = true;
     frame.stats.meter = m_lineTension;
     frame.stats.meterMax = 100.0;
@@ -1722,10 +1812,18 @@ InputResult WasdRaceGame::handleKey(const InputEvent& ev) {
     }
 
     // Typing fuels the engine
-    if (ev.ch == U'\b') {
+    // v1.3.0-beta4: accept the Backspace BOTH ways a front-end delivers it —
+    // the native window (and the web bridge) send vk=0x08 with ch=0, because
+    // ToUnicode yields no character for control keys. beta3 only matched
+    // ev.ch == '\b', so Backspace did NOTHING in real play (reproduced by
+    // tests/test_arcade_vn.cpp — the EN rewind and the VN composer rewind
+    // were both unreachable from the real window paths).
+    if (ev.vk == 0x08 || ev.ch == U'\b') {
         if (m_vnMode && m_composer) {
             m_composer->feedBackspace();
             m_textIndex = m_composer->matchLength(m_passage);
+        } else if (m_textIndex > 0) {
+            --m_textIndex;   // forgiving rewind, like TypingRace EN mode
         }
         return InputResult::Consumed;
     }
@@ -1909,8 +2007,68 @@ void RhythmTypingGame::setSeed(std::uint32_t seed) {
     reset();
 }
 
+// v1.3.0-beta4: per-lane Vietnamese syllable pools for VN mode. Each lane
+// shows a real, diacritic-bearing Vietnamese syllable (drawn from a small
+// seeded pool) instead of the bare lane letter. The lane KEY is the arrow
+// cluster; d/f/j/k remain accepted aliases (pure rhythm input inside our own
+// window — the keyboard hook never sees them, so there is no Telex conflict).
+void RhythmTypingGame::setPassageLanguage(PassageLanguage lang, VnInputMethod method) {
+    const bool vn = (lang == PassageLanguage::Vietnamese);
+    m_vnMode = vn;
+    // A rhythm game judges single keystrokes against a timing window, so no
+    // composer is used; the method is kept for API symmetry with the typing
+    // games (and future syllable-typing modes).
+    (void)method;
+    generateChart();
+    reset();
+}
+
+// v1.3.0-beta4: (re)pick the per-lane Vietnamese syllable from the seeded
+// pool. Called from generateChart() so the FINAL seed (makeGame applies the
+// config first, then setSeed) drives the choice — same seed, same chart.
+void RhythmTypingGame::pickVnGlyphs() {
+    if (!m_vnMode) {
+        for (auto& g : m_vnGlyphs) { g.clear(); }
+        return;
+    }
+    static const std::u32string_view kPools[kLaneCount] = {
+        U"bà đá lá nà cà rà chà đà tà và",
+        U"cối kể bế mê tê nê lê hê sế kể",
+        U"bù đù lù nù tù vù cù sù rù xù",
+        U"cổ lỗ tỏ rõ bở sơ hở ngỡ lỡ võ",
+    };
+    Rng glyphRng(m_seed ^ 0xA5A5F00Du);
+    for (std::uint32_t lane = 0; lane < kLaneCount; ++lane) {
+        m_vnGlyphs[lane].clear();
+        std::u32string_view pool = kPools[lane];
+        std::size_t start = 0;
+        std::vector<std::u32string_view> words;
+        for (std::size_t i = 0; i <= pool.size(); ++i) {
+            if (i == pool.size() || pool[i] == U' ') {
+                if (i > start) { words.push_back(pool.substr(start, i - start)); }
+                start = i + 1;
+            }
+        }
+        if (words.empty()) { m_vnGlyphs[lane] = U"nốt"; continue; }
+        const std::size_t pick = glyphRng.below(static_cast<std::uint32_t>(words.size()));
+        m_vnGlyphs[lane].assign(words[pick].begin(), words[pick].end());
+    }
+}
+
+std::u32string RhythmTypingGame::noteGlyph(std::size_t noteIndex) const {
+    if (!m_vnMode) {
+        if (noteIndex < m_notes.size()) { return std::u32string(1, m_notes[noteIndex].ch); }
+        return {};
+    }
+    const std::uint32_t lane = (noteIndex < m_notes.size())
+        ? m_notes[noteIndex].lane : 0u;
+    if (!m_vnGlyphs[lane].empty()) { return m_vnGlyphs[lane]; }
+    return std::u32string(1, m_notes[noteIndex].ch);
+}
+
 void RhythmTypingGame::generateChart() {
     m_notes.clear();
+    pickVnGlyphs();   // v1.3.0-beta4: seeded with the same seed as the chart
     static const char32_t kLaneKeys[kLaneCount] = {U'd', U'f', U'j', U'k'};
     m_notes.reserve(m_noteCount);
     // Two beats of lead-in so the first note is never a surprise.
@@ -1972,6 +2130,21 @@ int RhythmTypingGame::laneForKey(char32_t ch) const noexcept {
         case U'k': case U'K': return 3;
         default: return -1;
     }
+}
+
+// v1.3.0-beta4: VN mode lane keys are the ARROWS (Left/Down/Up/Right), so no
+// lane input is a Telex letter. The legacy d/f/j/k letters stay accepted.
+int RhythmTypingGame::laneForEvent(const InputEvent& ev) const noexcept {
+    if (m_vnMode) {
+        switch (ev.vk) {
+            case vk::kLeft:  return 0;
+            case vk::kDown:  return 1;
+            case vk::kUp:    return 2;
+            case vk::kRight: return 3;
+            default: break;
+        }
+    }
+    return laneForKey(ev.ch);
 }
 
 void RhythmTypingGame::registerOutcome(HitRating rating, bool fromExtraKey) {
@@ -2131,7 +2304,7 @@ InputResult RhythmTypingGame::handleKey(const InputEvent& ev) {
         return InputResult::Consumed;
     }
 
-    const int lane = laneForKey(ev.ch);
+    const int lane = laneForEvent(ev);
     if (lane < 0) {
         return InputResult::Consumed;   // lane keys only; other keys are ignored
     }
@@ -2182,8 +2355,16 @@ void RhythmTypingGame::buildFrame(Frame& frame) const {
         const float x = kHighwayX + kLaneW * static_cast<float>(lane);
         frame.addRect(x + 4, 60, kLaneW - 8, kHitLineY - 40, rgba(0x2A, 0x20, 0x40), 8);
         frame.addRect(x + 10, kHitLineY - 8, kLaneW - 20, 16, kLaneColors[lane], 8);
-        const char32_t key = (lane == 0) ? U'D' : (lane == 1) ? U'F' : (lane == 2) ? U'J' : U'K';
-        const std::u32string_view label(&key, 1);
+        // v1.3.0-beta4: VN mode labels the lanes with the ARROW cluster; the
+        // legacy mode keeps the D/F/J/K letters.
+        std::u32string label;
+        if (m_vnMode) {
+            static const std::u32string_view kArrows[kLaneCount] = {U"←", U"↓", U"↑", U"→"};
+            label.assign(kArrows[lane].begin(), kArrows[lane].end());
+        } else {
+            const char32_t key = (lane == 0) ? U'D' : (lane == 1) ? U'F' : (lane == 2) ? U'J' : U'K';
+            label.push_back(key);
+        }
         frame.addText(x + kLaneW * 0.5f, kHitLineY + 22, 26, kLaneColors[lane],
                       TextAlign::Center, label, true);
     }
@@ -2208,6 +2389,17 @@ void RhythmTypingGame::buildFrame(Frame& frame) const {
             color = palette::kGood;
         }
         frame.addRect(x + 16, y - 16, kLaneW - 32, 32, color, 8);
+        if (m_vnMode) {
+            // v1.3.0-beta4: the note carries a Vietnamese syllable (full
+            // diacritics) instead of the bare lane letter.
+            const std::size_t index = static_cast<std::size_t>(&note - m_notes.data());
+            frame.addText(x + kLaneW * 0.5f, y + 1, 20, palette::kText,
+                          TextAlign::Center, noteGlyph(index), true);
+        } else {
+            const std::u32string letter(1, note.ch);
+            frame.addText(x + kLaneW * 0.5f, y + 1, 20, palette::kText,
+                          TextAlign::Center, letter, true);
+        }
     }
 
     // Judgment + combo
@@ -2241,7 +2433,9 @@ void RhythmTypingGame::buildFrame(Frame& frame) const {
     frame.stats.combo = m_combo;
     frame.stats.maxCombo = m_maxCombo;
     frame.stats.status = frame.internDouble(U"BPM ", m_bpm, 0);
-    frame.stats.hint = U"D / F / J / K đúng nhịp · F1 tạm dừng · F2 chơi lại · Esc thoát";
+    frame.stats.hint = m_vnMode
+        ? U"Mũi tên đúng nhịp (nốt tiếng Việt) · D/F/J/K vẫn dùng được · F1 tạm dừng · F2 chơi lại"
+        : U"D / F / J / K đúng nhịp · F1 tạm dừng · F2 chơi lại · Esc thoát";
     frame.stats.hasMeter = (m_failMode == FailMode::HealthBar);
     frame.stats.meter = m_health;
     frame.stats.meterMax = 100.0;
@@ -2282,9 +2476,37 @@ std::string RhythmTypingGame::renderText() const {
 //===========================================================================
 // 7. No-Mistake Mode
 //===========================================================================
+// v1.3.0-beta4: the Vietnamese stream — the same sentence the legacy ASCII
+// stream was the stripped-down spelling of, now bearing full diacritics.
+constexpr std::u32string_view kNoMistakeStreamVn =
+    U"học ăn học nói học gói học mở cẩn thận trong từng phím bắn kiên trì bền bỉ";
+constexpr std::u32string_view kNoMistakeStreamEn =
+    U"hoc an hoc noi hoc goi hoc mo can than trong tung phim bam kien tri ben bi";
+
 NoMistakeGame::NoMistakeGame() {
-    m_textStream = U"hoc an hoc noi hoc goi hoc mo can than trong tung phim bam kien tri ben bi";
+    m_textStream.assign(kNoMistakeStreamEn.begin(), kNoMistakeStreamEn.end());
     reset();
+}
+
+// Out-of-line: VnComposer is only forward-declared in Arcade.hpp.
+NoMistakeGame::~NoMistakeGame() = default;
+
+void NoMistakeGame::setPassageLanguage(PassageLanguage lang, VnInputMethod method) {
+    const bool vn = (lang == PassageLanguage::Vietnamese);
+    m_vnMode = vn;
+    if (vn) {
+        if (!m_composer) { m_composer = std::make_unique<VnComposer>(); }
+        m_composer->setMethod(static_cast<ok::text::InputMethod>(method));
+        m_textStream.assign(kNoMistakeStreamVn.begin(), kNoMistakeStreamVn.end());
+    } else {
+        m_composer.reset();
+        m_textStream.assign(kNoMistakeStreamEn.begin(), kNoMistakeStreamEn.end());
+    }
+    reset();
+}
+
+std::u32string NoMistakeGame::composedText() const {
+    return (m_vnMode && m_composer) ? m_composer->text() : std::u32string{};
 }
 
 void NoMistakeGame::setStartReserve(std::int64_t reserve) noexcept {
@@ -2306,6 +2528,9 @@ void NoMistakeGame::reset() {
     m_maxCombo = 0;
     m_level = 1;
     m_mistakes = 0;
+    m_vnWordsTotal = 0;
+    m_vnWordsWrong = 0;
+    if (m_composer) { m_composer->reset(); }
     m_score = m_startReserve;   // score IS the life reserve in this mode
     m_elapsedSec = 0.0;
     m_paused = false;
@@ -2343,8 +2568,86 @@ InputResult NoMistakeGame::handleKey(const InputEvent& ev) {
     }
 
     // Navigation/modifier/control events have no printable character. They
-    // are not typing mistakes (Backspace cannot rewind this strict game).
-    if (ev.ch < U' ') { return InputResult::Consumed; }
+    // are not typing mistakes. In English mode Backspace cannot rewind this
+    // strict game; in Vietnamese mode it rewinds the pending syllable (the
+    // player is fixing a typo before it is committed — a committed wrong word
+    // has already been judged, which is the mode's contract).
+    if (ev.ch < U' ') {
+        const bool backspace = (ev.vk == 0x08 || ev.ch == U'\b');
+        if (!backspace || !(m_vnMode && m_composer)) {
+            return InputResult::Consumed;
+        }
+    }
+
+    // v1.3.0-beta4: Vietnamese mode — compose Telex/VNI in-window and match
+    // the composed text against the diacritic-bearing stream. Progress is the
+    // longest common prefix. The "no mistake" rule is judged at WORD
+    // boundaries: a committed word that diverges from the target is the
+    // mistake (mid-syllable Telex divergence is normal composition, not an
+    // error). Backspace rewinds the pending syllable so a slip is fixable
+    // BEFORE it is committed — after the space it is too late, which is the
+    // mode's contract.
+    if (m_vnMode && m_composer) {
+        if (ev.vk == 0x08 || ev.ch == U'\b') {
+            m_composer->feedBackspace();
+            m_currentIndex = m_composer->matchLength(m_textStream);
+            return InputResult::Consumed;
+        }
+        if (ev.ch == U'\0') { return InputResult::Consumed; }
+        const bool isSpace = (ev.ch == U' ');
+        if (isSpace) { m_composer->feedSpace(); } else { m_composer->feedProduced(ev.ch); }
+        const std::size_t idx = m_composer->matchLength(m_textStream);
+        m_currentIndex = idx;
+        if (isSpace) {
+            const bool wordWrong = (idx < m_composer->length());
+            if (wordWrong) {
+                // A committed wrong word IS the mistake — the EN penalty
+                // ladder applies unchanged (Hardcore ends the run, the
+                // health-bar mode deducts the soft penalty).
+                ++m_vnWordsTotal;
+                ++m_vnWordsWrong;
+                ++m_mistakes;
+                if (m_failMode == FailMode::Hardcore) {
+                    m_score -= m_scorePenalty;
+                    if (m_score <= 0) { m_score = 0; }
+                    m_combo = 0;
+                    m_gameOver = true;
+                    m_finished = false;
+                    m_resultPending = true;
+                    return InputResult::Consumed;
+                }
+                if (m_combo > m_comboPenalty) { m_combo -= m_comboPenalty; }
+                else { m_combo = 0; }
+                m_score -= m_softPenalty;
+                if (m_score <= 0) {
+                    m_score = 0;
+                    m_gameOver = true;
+                    m_finished = false;
+                    m_resultPending = true;
+                }
+                return InputResult::Consumed;
+            }
+            if (idx < m_textStream.size()) {
+                // Correct word committed: combo/score/level rewards, EN-style.
+                ++m_vnWordsTotal;
+                ++m_combo;
+                m_maxCombo = std::max(m_maxCombo, m_combo);
+                m_score += 100 * (1 + static_cast<int64_t>(m_combo / 20));
+                if (m_score > m_highScore) { m_highScore = m_score; }
+                m_level = 1 + (m_combo / 50);
+            }
+        }
+        if (idx >= m_textStream.size() && !m_textStream.empty()) {
+            // The whole stream composed correctly (the final word has no
+            // trailing space, so it is counted here, once): the win condition.
+            ++m_vnWordsTotal;
+            m_finished = true;
+            m_gameOver = true;
+            m_resultPending = true;
+            if (m_score > m_highScore) { m_highScore = m_score; }
+        }
+        return InputResult::Consumed;
+    }
 
     const char32_t target = m_textStream[m_currentIndex];
     if (ev.ch == target) {
@@ -2464,7 +2767,7 @@ void NoMistakeGame::buildFrame(Frame& frame) const {
     frame.stats.maxCombo = m_maxCombo;
     frame.stats.status = frame.internNumber(U"Ký tự: ",
                                             static_cast<std::int64_t>(m_currentIndex));
-    frame.stats.hint = U"Gõ đúng từng ký tự · F1 tạm dừng · F2 chơi lại · Esc thoát";
+    frame.stats.hint = U"Gõ đúng tững ký tự · F1 tạm dừng · F2 chơi lại · Esc thoát";
     frame.stats.progress = m_textStream.empty()
                                ? 0.0
                                : static_cast<double>(m_currentIndex) /
@@ -2764,6 +3067,9 @@ namespace {
 // created (full set).
 void applyFullConfigToGame(IArcadeGame& game, const ArcadeConfig& config) {
     if (auto* rhythm = dynamic_cast<RhythmTypingGame*>(&game)) {
+        // v1.3.0-beta4: the language must be set FIRST — it regenerates the
+        // chart and resets the run, and so do setBpm/setNoteCount/setApproachSec.
+        rhythm->setPassageLanguage(config.passageLanguage, config.vnInputMethod);
         rhythm->setFailMode(config.rhythmFailMode);
         rhythm->setBpm(config.rhythmBpm);
         rhythm->setNoteCount(config.rhythmNoteCount);
@@ -2773,6 +3079,7 @@ void applyFullConfigToGame(IArcadeGame& game, const ArcadeConfig& config) {
         noMistake->setMistakePenalty(config.noMistakeScorePenalty,
                                      config.noMistakeComboPenalty);
         noMistake->setStartReserve(config.noMistakeStartReserve);
+        noMistake->setPassageLanguage(config.passageLanguage, config.vnInputMethod);
     } else if (auto* race = dynamic_cast<TypingRaceGame*>(&game)) {
         race->setPacerWpm(config.typingRacePacerWpm);
         race->setPassageLanguage(config.passageLanguage, config.vnInputMethod);
@@ -2782,6 +3089,7 @@ void applyFullConfigToGame(IArcadeGame& game, const ArcadeConfig& config) {
         wasd->setPassageLanguage(config.passageLanguage, config.vnInputMethod);
     } else if (auto* fishing = dynamic_cast<FishingGame*>(&game)) {
         fishing->setAutomationMode(config.fishingAutomation);
+        fishing->setPassageLanguage(config.passageLanguage, config.vnInputMethod);
     }
 }
 
@@ -2840,8 +3148,14 @@ void ArcadeManager::collectResultFrom(const std::shared_ptr<IArcadeGame>& game) 
         return;
     }
     RunResult result;
-    if (!game->pollRunResult(result)) {
-        return;
+    {
+        // v1.3.0-beta4: pollRunResult mutates the game (m_resultPending) — it
+        // runs under m_gameMtx so it cannot race update()/handleKey() from
+        // another front-end thread. m_mutex is taken after, never before.
+        std::lock_guard<std::mutex> glock(m_gameMtx);
+        if (!game->pollRunResult(result)) {
+            return;
+        }
     }
     std::lock_guard<std::mutex> lock(m_mutex);
     if (m_results.size() < 64) {
@@ -2914,12 +3228,19 @@ void ArcadeManager::stopGame() {
             std::lock_guard<std::mutex> lock(m_mutex);
             return m_resultCollected;
         }();
-        if (!alreadyReported && game->getScore() > 0) {
-            RunResult synth;
+        // v1.3.0-beta4: the game-object reads run under m_gameMtx (another
+        // thread may still be inside update()/handleKey() on this game).
+        RunResult synth;
+        synth.completed = false;
+        bool synthOk = false;
+        {
+            std::lock_guard<std::mutex> glock(m_gameMtx);
             synth.type = game->getType();
             synth.score = game->getScore();
             synth.highScore = game->getHighScore();
-            synth.completed = false;
+            synthOk = !alreadyReported && synth.score > 0;
+        }
+        if (synthOk) {
             std::lock_guard<std::mutex> lock(m_mutex);
             if (m_results.size() < 64) {
                 m_results.push_back(synth);
@@ -2936,8 +3257,11 @@ void ArcadeManager::restartGame() {
     }
     if (game) {
         collectResultFrom(game);   // bank the abandoned attempt first
-        game->reset();
-        game->start();
+        {
+            std::lock_guard<std::mutex> glock(m_gameMtx);
+            game->reset();
+            game->start();
+        }
         std::lock_guard<std::mutex> lock(m_mutex);
         m_resultCollected = false;
     }
@@ -2957,16 +3281,21 @@ bool ArcadeManager::isConsumingKeyboard() const noexcept {
 
 void ArcadeManager::update(double dt) {
     std::shared_ptr<IArcadeGame> game;
+    double maxStepSec = 0.05;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         game = m_game;
+        maxStepSec = m_config.maxFrameStepSec;
     }
     if (!game) {
         return;
     }
-    const double step = (dt > m_config.maxFrameStepSec) ? m_config.maxFrameStepSec
+    const double step = (dt > maxStepSec) ? maxStepSec
                        : (dt > 0.0 ? dt : 0.0);
-    game->update(step);
+    {
+        std::lock_guard<std::mutex> glock(m_gameMtx);
+        game->update(step);
+    }
     // A run that just ended is reported *now*: the previous build only queued
     // the result on the next key press, so a player who finished a race and
     // closed the window (or the hub tab) lost the score, the highscore and the
@@ -2988,8 +3317,14 @@ InputResult ArcadeManager::handleKey(const InputEvent& ev) {
     if (!game) {
         return InputResult::NotConsumed;
     }
-    const InputResult result = game->handleKey(ev);
-    if (result == InputResult::ExitRequested || game->wantsExit()) {
+    InputResult result = InputResult::NotConsumed;
+    bool wantsExit = false;
+    {
+        std::lock_guard<std::mutex> glock(m_gameMtx);
+        result = game->handleKey(ev);
+        wantsExit = (result == InputResult::ExitRequested) || game->wantsExit();
+    }
+    if (wantsExit) {
         // Queue the run result, then release the keyboard back to the IME.
         collectResultFrom(game);
         {
@@ -3019,6 +3354,10 @@ const Frame& ArcadeManager::getFrame() const {
     }
     m_frame.clear();
     if (game) {
+        // v1.3.0-beta4: buildFrame runs under m_gameMtx — the game state and
+        // the shared frame buffer must not be touched while another
+        // front-end thread is inside update()/handleKey().
+        std::lock_guard<std::mutex> glock(m_gameMtx);
         game->buildFrame(m_frame);
     } else {
         m_frame.worldW = 960.0f;
@@ -3040,6 +3379,7 @@ std::string ArcadeManager::renderCurrentGame() const {
     if (!game) {
         return "No game active.\n";
     }
+    std::lock_guard<std::mutex> glock(m_gameMtx);
     return game->renderText();
 }
 

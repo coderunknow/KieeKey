@@ -168,14 +168,14 @@ Backdrop notes:
                 <!-- Chaos engine -->
                 <Expander Header="Chaos Engine (hoa/thường ngẫu nhiên, xoay/lật glyph)" IsExpanded="False">
                     <StackPanel Spacing="12" Margin="0,12,0,0">
-                        <ToggleSwitch x:Name="ChaosMaster" Header="Bật Chaos (mặc định TẮT)"
+                        <ToggleSwitch x:Name="ChaosMaster" Header="Bật Chaos trong Lab (không đổi chữ gõ bình thường)"
                                       Toggled="OnChaosChanged"/>
                         <CheckBox x:Name="ChaosCase" Content="Đổi hoa/thường ngẫu nhiên"
                                   Checked="OnChaosChanged" Unchecked="OnChaosChanged"/>
                         <CheckBox x:Name="ChaosGlyph" Content="Biến đổi glyph khi hiển thị"
                                   Checked="OnChaosChanged" Unchecked="OnChaosChanged"/>
-                        <CheckBox x:Name="ChaosInject" Content="Cho phép gõ thật ra ứng dụng đang mở"
-                                  Checked="OnChaosChanged" Unchecked="OnChaosChanged"/>
+                        <TextBlock Text="Gửi chữ ra ứng dụng khác bằng nút trong Lab. Không tự biến đổi chữ đang gõ."
+                                   TextWrapping="Wrap"/>
                         <Button Content="Mở phòng thí nghiệm Chaos (test gõ thật)"
                                 Click="OnOpenChaosLab"/>
                     </StackPanel>

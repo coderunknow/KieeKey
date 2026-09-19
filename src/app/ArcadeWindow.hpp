@@ -19,7 +19,7 @@
 //     HTML5 client does with the same list.
 //   * WM_TIMER at ~16 ms drives update+paint (the same cadence as the browser
 //     client's server-side tick thread).
-//   * Keyboard goes through the same `handleKey()` entry point as the IME hook,
+//   * Keyboard goes through the same `handleKey()` entry point as the web client,
 //     so pause/restart/exit behave identically in both front-ends.
 //   * The window is closed (not destroyed) on Esc/Hub close: `stopGame()`
 //     already reports the run to progression.
@@ -71,6 +71,7 @@ public:
     // are also what an automated UI test can assert against.
     [[nodiscard]] int hoverIndexForTest() const noexcept;
     void setHoverIndex(int index) noexcept;
+    [[nodiscard]] double dpiScale() const noexcept;
 
     // One game frame + one repaint. Public so the host can drive it from its own
     // timer if WM_TIMER is not available (tests/automation).

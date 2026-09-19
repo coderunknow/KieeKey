@@ -140,6 +140,7 @@ struct TextShape {
     TextAlign align = TextAlign::Left;
     bool bold = false;
     bool mono = false;
+    float advance = 0;       // explicit code-point cell width; 0 = natural text
     std::u32string_view text{};
 };
 
@@ -218,7 +219,7 @@ public:
     // already interned by this frame (intern/internNumber/internAscii) are kept
     // by reference, so the HUD path still allocates nothing per frame.
     bool addText(float x, float y, float size, Color color, TextAlign align,
-                 std::u32string_view text, bool bold = false, bool mono = false);
+                 std::u32string_view text, bool bold = false, bool mono = false, float advance = 0);
 
     // True when `s` points into this frame's arena (i.e. it outlives the
     // current statement, so addText can keep the view instead of copying).

@@ -33,6 +33,10 @@
 #include <vector>
 
 namespace okgdi {
+static bool g_denyForeground = false;
+static int g_dpi = 96;
+void denyForegroundChange(bool deny) { g_denyForeground = deny; }
+void setDpi(int dpi) { g_dpi = dpi; }
 
 std::vector<DrawCall>& log() {
     static std::vector<DrawCall> calls;
@@ -129,7 +133,7 @@ std::map<std::uintptr_t, COLORREF>& handleColors() {
 
 std::uintptr_t nextHandle(std::uintptr_t tag) {
     static std::uintptr_t counter = 1;
-    return tag | (++counter << 12);
+    return tag | (++counter << 16);
 }
 
 struct DcState {
@@ -397,7 +401,15 @@ LONG_PTR SetWindowLongPtrW(HWND hwnd, int index, LONG_PTR value) {
 
 HWND GetForegroundWindow(void) { return okgdi::g_foreground; }
 
+DWORD GetCurrentProcessId(void) { return 1; }
+DWORD GetWindowThreadProcessId(HWND hwnd, DWORD* processId) {
+    const auto* window = okgdi::findWindow(hwnd);
+    *processId = window == nullptr ? 0 : (window->windowClass == L"TestTargetApp" ? 2 : 1);
+    return *processId;
+}
+
 BOOL SetForegroundWindow(HWND hwnd) {
+    if (okgdi::g_denyForeground) { return FALSE; }
     okgdi::g_foreground = hwnd;
     return TRUE;
 }
@@ -536,7 +548,7 @@ HFONT CreateFontIndirectW(const LOGFONTW* lf) {
 }
 
 int GetDeviceCaps(HDC, int index) {
-    return (index == LOGPIXELSX) ? 96 : 0;
+    return (index == LOGPIXELSX) ? okgdi::g_dpi : 0;
 }
 
 BOOL BitBlt(HDC, int x, int y, int width, int height, HDC, int, int, DWORD) {
@@ -627,9 +639,10 @@ BOOL LineTo(HDC dc, int x, int y) {
     return TRUE;
 }
 
-BOOL TextOutW(HDC, int x, int y, LPCWSTR text, int count) {
+BOOL TextOutW(HDC dc, int x, int y, LPCWSTR text, int count) {
     okgdi::DrawCall call;
     call.kind = "text";
+    call.fontHeight = static_cast<int>(okgdi::handleColors()[reinterpret_cast<std::uintptr_t>(okgdi::dcStates()[dc].font)]);
     call.a = x;
     call.b = y;
     call.d = count;
@@ -641,6 +654,15 @@ BOOL TextOutW(HDC, int x, int y, LPCWSTR text, int count) {
     return TRUE;
 }
 
+BOOL ExtTextOutW(HDC dc, int x, int y, UINT options, const RECT* rect, LPCWSTR text, UINT count, const int*) {
+    const auto result = TextOutW(dc, x, y, text, static_cast<int>(count));
+    auto& call = okgdi::log().back();
+    call.kind = "celltext";
+    call.c = rect != nullptr ? rect->right - rect->left : 0;
+    if (options != ETO_CLIPPED) { call.c = -1; }
+    return result;
+}
+
 BOOL GetTextExtentPoint32W(HDC, LPCWSTR text, int count, SIZE* out) {
     if (out == nullptr) { return FALSE; }
     // Deterministic 7 px per character: enough for the alignment maths.
@@ -650,10 +672,11 @@ BOOL GetTextExtentPoint32W(HDC, LPCWSTR text, int count, SIZE* out) {
     return TRUE;
 }
 
-BOOL GetTextMetricsW(HDC, TEXTMETRICW* out) {
+BOOL GetTextMetricsW(HDC dc, TEXTMETRICW* out) {
     if (out == nullptr) { return FALSE; }
     *out = TEXTMETRICW{};
-    out->tmHeight = 16;
+    out->tmHeight = static_cast<int>(okgdi::handleColors()[reinterpret_cast<std::uintptr_t>(okgdi::dcStates()[dc].font)]);
+    if (out->tmHeight == 0) { out->tmHeight = 16; }
     out->tmAscent = 12;
     out->tmDescent = 4;
     return TRUE;

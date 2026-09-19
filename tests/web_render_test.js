@@ -98,6 +98,8 @@ elements.screen.getContext = () => theContext;
 const theContext = makeContext();
 
 let streamOpened = false;
+const keyHandlers = {};
+const requests = [];
 const sandbox = {
   console,
   performance: { now: () => 0 },
@@ -113,10 +115,10 @@ const sandbox = {
     addEventListener: () => {},
   },
   window: {
-    addEventListener: () => {},
+    addEventListener: (type, handler) => { keyHandlers[type] = handler; },
     KieeKeyLabs: undefined,
   },
-  fetch: async () => ({ ok: true, status: 200, json: async () => ({ ok: true, games: [] }) }),
+  fetch: async (url) => { requests.push(url); return { ok: true, status: 200, json: async () => ({ ok: true, games: [] }) }; },
   EventSource: function EventSource() { streamOpened = true; },
 };
 sandbox.globalThis = sandbox;
@@ -144,6 +146,20 @@ function testColorHelpers() {
 }
 
 //---------------------------------------------------------------------------
+function testExplicitPassageCells() {
+  calls.length = 0;
+  api.drawFrame({ w: 1000, h: 620, bg: '#000000FF', bg2: '#000000FF', cmds: [
+    [4, 40, 100, 30, '#FFFFFFFF', 0, false, true, 'á😀b', 18.6],
+    [4, 95.8, 100, 30, '#22C55EFF', 0, false, true, 'c', 18.6],
+  ] });
+  const glyphs = calls.filter(c => c.kind === 'fillText');
+  assert(glyphs.length === 4, 'one cell per Unicode code point, including supplementary text');
+  for (let i = 0; i < glyphs.length; i++) {
+    assert(Math.abs(glyphs[i].arg[1] - (40 + i * 18.6)) < 0.01, 'adjacent runs share explicit cell grid');
+    assert(glyphs[i].arg[3] === 18.6, 'font fallback cannot exceed cell width');
+  }
+}
+
 function testKeyMapping() {
   assert(api.virtualKeyFor({ key: 'ArrowLeft' }) === 0x25, 'arrow keys map to VK codes');
   assert(api.virtualKeyFor({ key: ' ' }) === 0x20, 'space maps to VK_SPACE');
@@ -151,6 +167,19 @@ function testKeyMapping() {
   assert(api.virtualKeyFor({ key: 'A' }) === 65, 'shifted letters map to the same VK');
   assert(api.virtualKeyFor({ key: 'F2' }) === 0x71, 'F2 maps to VK_F2');
   assert(api.virtualKeyFor({ key: 'Shift' }) === 0, 'modifiers are not forwarded');
+  requests.length = 0;
+  let prevented = false;
+  const event = { key: 'a', target: elements.bpm, preventDefault: () => { prevented = true; } };
+  keyHandlers.keydown(event);
+  keyHandlers.keyup(event);
+  assert(!prevented && !requests.includes('api/input'), 'settings controls never send game keys');
+  event.target = elements.screen;
+  event.isComposing = true;
+  keyHandlers.keydown(event);
+  assert(!requests.includes('api/input'), 'IME composition is not forwarded as a physical game key');
+  event.isComposing = false;
+  keyHandlers.keydown(event);
+  assert(prevented && requests.includes('api/input'), 'focused canvas receives game keys');
   section('Keyboard mapping (browser -> VK)');
 }
 
@@ -170,24 +199,27 @@ function testEveryGameDraws() {
     assert(frame.cmds.length === fixture.cmds, slug + ': fixture matches its command count');
     assert(drawCalls.find((c) => c.kind === 'setTransform') !== undefined,
            slug + ': the canvas transform is set (scaling to the CSS size)');
-    const transform = drawCalls.find((c) => c.kind === 'setTransform');
-    assert(transform && Math.abs(transform.arg[0] - 1280 / frame.w) < 1e-9,
-           slug + ': scale = canvas width / frame width');
+    const transform = drawCalls.filter((c) => c.kind === 'setTransform').at(-1);
+    assert(transform && Math.abs(transform.arg[0] - Math.min(1280 / frame.w, 720 / frame.h)) < 1e-9,
+           slug + ': scale fits both axes');
+    const [scale, , , , dx, dy] = transform.arg;
+    assert(dx >= 0 && dy >= 0 && dx + frame.w * scale <= 1280.001 &&
+      dy + frame.h * scale <= 720.001, slug + ': whole world is inside viewport');
     assert(drawCalls.find((c) => c.kind === 'clearRect') !== undefined,
            slug + ': the frame is cleared before drawing');
     // Every command kind maps onto draw calls: rects/circles/lines/polys/text.
     const shapeCalls = drawCalls.filter((c) => ['fillRect', 'arc', 'fill', 'stroke', 'fillText']
       .includes(c.kind)).length;
     assert(shapeCalls > 0, slug + ': something is actually painted');
-    // Text commands must produce fillText with the frame's own strings.
-    const texts = frame.cmds.filter((c) => c[0] === 4).map((c) => c[9]);
-    const drawnTexts = drawCalls.filter((c) => c.kind === 'fillText').map((c) => c.arg[0]);
-    for (const text of texts) {
-      if (!text) { continue; }
-      if (!drawnTexts.includes(text)) {
-        drawnAll = false;
-        console.error('    missing text in ' + slug + ': ' + JSON.stringify(text));
-      }
+    // Wire text is index 8; index 9 is the new optional cell advance.
+    // Compare the entire ordered draw stream, not membership (or undefined
+    // fields, which used to let this assertion pass without checking text).
+    const texts = frame.cmds.filter(c => c[0] === 4).flatMap(c =>
+      c[9] > 0 ? Array.from(c[8]) : [c[8]]);
+    const drawnTexts = drawCalls.filter(c => c.kind === 'fillText').map(c => c.arg[0]);
+    if (JSON.stringify(texts) !== JSON.stringify(drawnTexts)) {
+      drawnAll = false;
+      console.error('    text stream mismatch in ' + slug);
     }
   }
   assert(drawnAll, 'every TEXT command of every game reaches fillText');
@@ -259,6 +291,7 @@ console.log('=== Running Web Render (headless canvas) Suite ===');
 console.log('    fixtures captured from the C++ engine: ' + fixtures.captured_at);
 testColorHelpers();
 testKeyMapping();
+testExplicitPassageCells();
 testEveryGameDraws();
 testGradientAndBackground();
 testHudAndBanner();

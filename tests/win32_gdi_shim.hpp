@@ -213,6 +213,7 @@ struct PAINTSTRUCT {
 #define WM_KEYDOWN       0x0100
 #define WM_KEYUP         0x0101
 #define WM_CHAR          0x0102
+#define WM_HSCROLL       0x0114
 #define WM_SYSKEYDOWN    0x0104
 #define WM_SYSCHAR       0x0106
 #define WM_MOUSEMOVE     0x0200
@@ -335,6 +336,8 @@ LONG     GetWindowLongW(HWND, int);
 LONG     SetWindowLongW(HWND, int, LONG);
 #endif
 HWND  GetForegroundWindow(void);
+DWORD GetWindowThreadProcessId(HWND, DWORD*);
+DWORD GetCurrentProcessId(void);
 BOOL  SetForegroundWindow(HWND);
 HWND  SetFocus(HWND);
 HCURSOR LoadCursorW(HINSTANCE, LPCWSTR);
@@ -372,6 +375,8 @@ BOOL    Ellipse(HDC, int, int, int, int);
 BOOL    Polygon(HDC, const POINT*, int);
 BOOL    MoveToEx(HDC, int, int, POINT*);
 BOOL    LineTo(HDC, int, int);
+#define ETO_CLIPPED 0x0004
+BOOL    ExtTextOutW(HDC, int, int, UINT, const RECT*, LPCWSTR, UINT, const int*);
 BOOL    TextOutW(HDC, int, int, LPCWSTR, int);
 BOOL    GetTextExtentPoint32W(HDC, LPCWSTR, int, SIZE*);
 BOOL    GetTextMetricsW(HDC, TEXTMETRICW*);

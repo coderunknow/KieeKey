@@ -46,11 +46,11 @@ NativeWindowHandle ArcadeWindow::handle() const noexcept { return nullptr; }
 void ArcadeWindow::focus() {}
 int ArcadeWindow::hoverIndexForTest() const noexcept { return -1; }
 void ArcadeWindow::setHoverIndex(int) noexcept {}
+double ArcadeWindow::dpiScale() const noexcept { return 1.0; }
 void ArcadeWindow::pump(double) {}
 void ArcadeWindow::paintNow(NativeWindowHandle) {}
 
 bool launchArcadeHub(const char*) { return false; }
-bool launchChaosLab() { return false; }
 } // namespace ok::app
 
 #else  // _WIN32
@@ -146,7 +146,7 @@ public:
     }
 
     HFONT fontFor(int px, bool bold, bool mono) {
-        const int size = px < 8 ? 8 : (px > 200 ? 200 : px);
+        const int size = px < 1 ? 1 : (px > 200 ? 200 : px);
         const std::uint64_t key = (static_cast<std::uint64_t>(size) << 2) | (bold ? 2u : 0u) |
                                   (mono ? 1u : 0u);
         auto it = m_fonts.find(key);
@@ -270,7 +270,7 @@ void fillRectColor(HDC dc, GdiCache& cache, int x, int y, int w, int h, Color co
 // The world is letterboxed inside that rectangle, exactly like the canvas
 // client letterboxes it inside its own element.
 void drawRenderList(HDC dc, GdiCache& cache, const RenderList& list, int originX, int originY,
-                    int width, int height, double dpiScale) {
+                    int width, int height) {
     const Viewport view = computeViewport(list.worldW, list.worldH, static_cast<float>(width),
                                           static_cast<float>(height));
     const auto toX = [&](float x) {
@@ -281,7 +281,7 @@ void drawRenderList(HDC dc, GdiCache& cache, const RenderList& list, int originX
     };
     const auto toSize = [&](float units) { return static_cast<int>(std::lround(units * view.scale)); };
     const auto toPx = [&](float units, int minimum) {
-        const int px = static_cast<int>(std::lround(units * view.scale * dpiScale));
+        const int px = static_cast<int>(std::lround(units * view.scale));
         return px < minimum ? minimum : px;
     };
 
@@ -391,7 +391,7 @@ void drawRenderList(HDC dc, GdiCache& cache, const RenderList& list, int originX
                     break;
                 }
                 HGDIOBJ oldFont =
-                    ::SelectObject(dc, cache.fontFor(toPx(cmd.size, 8), cmd.bold, cmd.mono));
+                    ::SelectObject(dc, cache.fontFor(toPx(cmd.size, 1), cmd.bold, cmd.mono));
                 ::SetTextColor(dc, toColorRef(cmd.fill));
                 int x = toX(cmd.x);
                 const int y = toY(cmd.y);
@@ -407,8 +407,27 @@ void drawRenderList(HDC dc, GdiCache& cache, const RenderList& list, int originX
                 TEXTMETRICW metrics{};
                 ::GetTextMetricsW(dc, &metrics);
                 ::SetTextAlign(dc, TA_LEFT | TA_NOUPDATECP);
-                ::TextOutW(dc, x, y - metrics.tmHeight / 2, wide.c_str(),
-                           static_cast<int>(wide.size()));
+                if (cmd.advance > 0) {
+                    // Each colored run shares the exact same grid. Native font
+                    // metrics (or fallback fonts) must not move later runs.
+                    std::size_t cell = 0;
+                    for (std::size_t offset = 0; offset < wide.size(); ++cell) {
+                        const float cellX = cmd.x + static_cast<float>(cell) * cmd.advance;
+                        const int left = toX(cellX);
+                        const int right = toX(cellX + cmd.advance);
+                        RECT clip{left, y - metrics.tmHeight / 2, right,
+                                  y + metrics.tmHeight - metrics.tmHeight / 2};
+                        const bool pair = wide[offset] >= 0xD800 && wide[offset] <= 0xDBFF &&
+                            offset + 1 < wide.size() && wide[offset + 1] >= 0xDC00 && wide[offset + 1] <= 0xDFFF;
+                        const UINT units = pair ? 2u : 1u;
+                        ::ExtTextOutW(dc, left, clip.top, ETO_CLIPPED, &clip,
+                                      wide.data() + offset, units, nullptr);
+                        offset += units;
+                    }
+                } else {
+                    ::TextOutW(dc, x, y - metrics.tmHeight / 2, wide.c_str(),
+                               static_cast<int>(wide.size()));
+                }
                 ::SelectObject(dc, oldFont);
                 break;
             }
@@ -608,8 +627,12 @@ LRESULT CALLBACK arcadeWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
             }
             break;
         case WM_KEYDOWN:
-        case WM_SYSKEYDOWN:
             if (self != nullptr) {
+                BYTE state[256]{};
+                if (::GetKeyboardState(state) &&
+                    ((state[VK_CONTROL] | state[VK_MENU] | state[VK_LWIN] | state[VK_RWIN]) & 0x80)) {
+                    break;   // shortcuts belong to Windows, not the game
+                }
                 const int vk = static_cast<int>(wParam);
                 // Modifiers are not game input (the IME hook path drops them
                 // too) — Shift/Ctrl/Alt/Win must never reach a game.
@@ -628,7 +651,6 @@ LRESULT CALLBACK arcadeWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
             }
             return 0;
         case WM_CHAR:
-        case WM_SYSCHAR:
             // Already delivered together with its WM_KEYDOWN (see above).
             return 0;
         case WM_KEYUP:
@@ -647,7 +669,7 @@ LRESULT CALLBACK arcadeWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
                 RECT client{};
                 ::GetClientRect(hwnd, &client);
                 const int hover = hitTestCatalog(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam),
-                                                 client.right, client.bottom, 1.0);
+                                                 client.right, client.bottom, self->dpiScale());
                 if (hover != self->hoverIndexForTest()) {
                     self->setHoverIndex(hover);
                     ::InvalidateRect(hwnd, nullptr, FALSE);
@@ -661,7 +683,7 @@ LRESULT CALLBACK arcadeWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
             RECT client{};
             ::GetClientRect(hwnd, &client);
             const int index = hitTestCatalog(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam),
-                                             client.right, client.bottom, 1.0);
+                                             client.right, client.bottom, self->dpiScale());
             if (index >= 0) {
                 const auto& catalog = gameCatalog();
                 if (static_cast<std::size_t>(index) < catalog.size()) {
@@ -799,6 +821,10 @@ int ArcadeWindow::hoverIndexForTest() const noexcept {
     return (m_impl != nullptr) ? m_impl->hoverIndex : -1;
 }
 
+double ArcadeWindow::dpiScale() const noexcept {
+    return m_impl != nullptr ? m_impl->dpiScale : 1.0;
+}
+
 void ArcadeWindow::setHoverIndex(int index) noexcept {
     if (m_impl != nullptr) {
         m_impl->hoverIndex = index;
@@ -822,6 +848,9 @@ void ArcadeWindow::pump(double dtSeconds) {
         dt = std::chrono::duration<double>(now - m_impl->lastTick).count();
     }
     m_impl->lastTick = now;
+    // Only the focused surface advances the shared game. This also prevents
+    // the Hub and Lab timers from driving Flexing twice per frame.
+    if (::GetForegroundWindow() != m_impl->hwnd) { return; }
     if (dt < 0.0) {
         dt = 0.0;
     }
@@ -898,8 +927,7 @@ void ArcadeWindow::paintNow(NativeWindowHandle handle) {
             ::DeleteObject(clip);
         }
     }
-    drawRenderList(impl->memoryDc, impl->cache, impl->list, gameX, gameY, gameW, gameH,
-                   impl->dpiScale);
+    drawRenderList(impl->memoryDc, impl->cache, impl->list, gameX, gameY, gameW, gameH);
     ::SelectClipRgn(impl->memoryDc, nullptr);
     drawChrome(impl->memoryDc, impl->cache, impl->list, width, height, impl->dpiScale,
                impl->hoverIndex, static_cast<int>(manager.getCurrentGameType()));
@@ -924,15 +952,26 @@ void ArcadeWindow::paintNow(NativeWindowHandle handle) {
                    static_cast<int>(::wcslen(text)));
         ::SelectObject(impl->memoryDc, oldFont);
     }
-    if (!impl->toast.empty() && now < impl->toastUntil) {
-        ::SetTextColor(impl->memoryDc, RGB(0x51, 0xE8, 0x8A));
-        HGDIOBJ oldFont = ::SelectObject(impl->memoryDc, impl->cache.fontFor(20, true, false));
-        ::TextOutW(impl->memoryDc, 20, 12, impl->toast.c_str(),
-                   static_cast<int>(impl->toast.size()));
+    // Results/pause and toast share one opaque panel, never draw over the
+    // sidebar title (the old welcome toast literally covered "ARCADE HUB").
+    const std::wstring banner = !impl->list.banner.empty() ? utf8ToWide(impl->list.banner) :
+        (now < impl->toastUntil ? impl->toast : std::wstring{});
+    if (!banner.empty() && gameW > 48 && gameH > 80) {
+        const int panelX = gameX + 16;
+        const int panelY = !impl->list.banner.empty() ? gameH / 2 - 36 : gameH - 52;
+        const int panelW = gameW - 32;
+        fillRectColor(impl->memoryDc, impl->cache, panelX, panelY, panelW, 44, kSidebarBg);
+        HRGN clip = ::CreateRectRgn(panelX, panelY, panelX + panelW, panelY + 44);
+        ::SelectClipRgn(impl->memoryDc, clip);
+        HGDIOBJ oldFont = ::SelectObject(impl->memoryDc, impl->cache.fontFor(16, true, false));
+        ::SetTextColor(impl->memoryDc, toColorRef(kAccent));
+        ::TextOutW(impl->memoryDc, panelX + 10, panelY + 12, banner.c_str(),
+                   static_cast<int>(banner.size()));
         ::SelectObject(impl->memoryDc, oldFont);
-    } else if (!impl->toast.empty()) {
-        impl->toast.clear();
+        ::SelectClipRgn(impl->memoryDc, nullptr);
+        if (clip != nullptr) { ::DeleteObject(clip); }
     }
+    if (now >= impl->toastUntil) { impl->toast.clear(); }
 
     ::BitBlt(dc, 0, 0, width, height, impl->memoryDc, 0, 0, SRCCOPY);
     ::EndPaint(hwnd, &ps);

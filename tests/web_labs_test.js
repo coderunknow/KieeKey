@@ -192,6 +192,14 @@ async function testFlexingStage() {
   } });
   assert(elements.flexTarget.value === 'Xin chao', 'further output is appended, never replaced');
 
+  elements.flexSource.focus();
+  sandbox.window.KieeKeyLabs.onState({ slug: 'flexing', flex: { emitted: '', cursor: 8, total: 42 } });
+  assert(sandbox.document.activeElement === elements.flexSource,
+         'stream frames do not steal focus from passage editing');
+  sandbox.window.KieeKeyLabs.closeLabs();
+  sandbox.window.KieeKeyLabs.onState({ slug: 'flexing', flex: { emitted: '', cursor: 8, total: 42 } });
+  assert(elements.labFlexing.classList.contains('hidden'), 'stream does not reopen a dismissed lab');
+
   // A non-Flexing frame must not touch the control.
   sandbox.window.KieeKeyLabs.onState({ slug: 'snake', flex: { emitted: 'zzz', cursor: 0, total: 0 } });
   assert(elements.flexTarget.value === 'Xin chao', 'other games leave the flexing box alone');

@@ -63,7 +63,8 @@ import pathlib
 # word; the PE VERSIONINFO needs a 4-part number, the manifest needs 4 parts,
 # and the UI shows the 3-part form plus the channel.
 DEFAULT_EXPECT = "1.3.0"
-CHANNEL = "beta1"
+CHANNEL = "beta2"
+BUILD_REVISION = 3
 
 
 def _fail(msg: str) -> None:
@@ -78,7 +79,7 @@ def main() -> int:
 
     root = pathlib.Path(args.repo)
     want = args.expect
-    want4 = f"{want}.0"
+    want4 = f"{want}.{BUILD_REVISION}"
     want_ui = f"{want}-{CHANNEL}" if (CHANNEL and CHANNEL.startswith(("dev", "beta"))) else (f"{want} {CHANNEL}" if CHANNEL else want)
 
     problems: list[str] = []

@@ -113,7 +113,7 @@ bool Frame::addPoly(const PolyShape& p) {
 }
 
 bool Frame::addText(float x, float y, float size, Color color, TextAlign align,
-                    std::u32string_view text, bool bold, bool mono) {
+                    std::u32string_view text, bool bold, bool mono, float advance) {
     if (texts.size() >= kMaxTexts) {
         ++droppedShapes;
         return false;
@@ -126,6 +126,7 @@ bool Frame::addText(float x, float y, float size, Color color, TextAlign align,
     t.align = align;
     t.bold = bold;
     t.mono = mono;
+    t.advance = advance;
     // Own the string: a view into the caller's stack frame (or into a
     // temporary) must not outlive this call — see the note in the header.
     t.text = owns(text) ? text : intern(text);

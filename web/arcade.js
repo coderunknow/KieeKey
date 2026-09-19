@@ -86,8 +86,15 @@ function roundedRect(x, y, w, h, r) {
 }
 
 function drawFrame(frame) {
-  const scale = canvas.width / frame.w;
-  ctx.setTransform(scale, 0, 0, scale, 0, 0);
+  // Match the native viewport: fit BOTH axes and center the world. Width-only
+  // scaling cropped the bottom HUD of tall games on this 16:9 canvas.
+  const scale = Math.min(canvas.width / frame.w, canvas.height / frame.h);
+  const dx = (canvas.width - frame.w * scale) / 2;
+  const dy = (canvas.height - frame.h * scale) / 2;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = cssColor(frame.bg);
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.setTransform(scale, 0, 0, scale, dx, dy);
   ctx.clearRect(0, 0, frame.w, frame.h);
 
   if (frame.bg === frame.bg2) {
@@ -160,7 +167,7 @@ function drawFrame(frame) {
         break;
       }
       case KIND.TEXT: {
-        const [, x, y, size, color, align, bold, mono, text] = cmd;
+        const [, x, y, size, color, align, bold, mono, text, advance = 0] = cmd;
         if (!text) { break; }
         const weight = bold ? '700' : '400';
         const family = mono
@@ -169,7 +176,12 @@ function drawFrame(frame) {
         ctx.font = `${weight} ${size}px ${family}`;
         ctx.textAlign = align === 1 ? 'center' : (align === 2 ? 'right' : 'left');
         ctx.fillStyle = cssColor(color);
-        ctx.fillText(text, x, y);
+        if (advance > 0) {
+          // Explicit cells, not a browser-dependent monospace width estimate.
+          Array.from(text).forEach((ch, i) => ctx.fillText(ch, x + i * advance, y, advance));
+        } else {
+          ctx.fillText(text, x, y);
+        }
         break;
       }
       default:
@@ -318,7 +330,13 @@ function isNativeLabInput(event) {
   return !!(window.KieeKeyLabs && window.KieeKeyLabs.isNativeInput(event.target));
 }
 
+function gameInputHasFocus(event) {
+  return event.target === canvas ||
+    (activeSlug === 'flexing' && event.target === document.getElementById('flexTarget'));
+}
+
 window.addEventListener('keydown', (event) => {
+  if (!gameInputHasFocus(event) || event.isComposing) { return; }
   if (event.ctrlKey || event.metaKey || event.altKey) { return; }
   // Editing the prepared passage / chaos sample is normal text editing: the
   // keystroke belongs to the textarea, not to the game engine.
@@ -341,6 +359,7 @@ window.addEventListener('keydown', (event) => {
 });
 
 window.addEventListener('keyup', (event) => {
+  if (!gameInputHasFocus(event) || event.isComposing || event.ctrlKey || event.metaKey || event.altKey) { return; }
   if (isNativeLabInput(event)) { return; }
   const vk = virtualKeyFor(event);
   if (vk === 0) { return; }

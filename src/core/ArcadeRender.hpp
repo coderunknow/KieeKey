@@ -64,6 +64,7 @@ struct RenderCommand {
     TextAlign align = TextAlign::Left;
     bool bold = false;
     bool mono = false;
+    float advance = 0;
     std::string text;   // UTF-8, empty for non-text commands
 
     // Resets every field for reuse. Deliberately KEEPS the text buffer's
@@ -80,6 +81,7 @@ struct RenderCommand {
         align = TextAlign::Left;
         bold = false;
         mono = false;
+        advance = 0;
         text.clear();
     }
 };

@@ -316,6 +316,7 @@ void buildRenderList(const Frame& frame, RenderList& out) {
         c.align = t.align;
         c.bold = t.bold;
         c.mono = t.mono;
+        c.advance = t.advance;
         utf8FromUtf32(t.text, out.scratch);
         // Reuses the slot's buffer. A little slack on growth keeps a label that
         // changes length (a score, a fuel percentage) from reallocating every
@@ -480,6 +481,8 @@ void renderListToJson(const RenderList& list, std::string& out) {
                 appendBool(out, c.mono);
                 out += ',';
                 appendJsonString(out, c.text);
+                out += ',';
+                appendFloat(out, c.advance, kCoordDecimals);
                 break;
         }
         out += ']';

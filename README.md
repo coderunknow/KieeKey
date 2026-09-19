@@ -19,7 +19,7 @@ The project may still be paused again in the future if development no longer pro
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20ARM64-0078D6.svg)
 ![Build](https://img.shields.io/badge/build-CMake%20%3E%3D%203.28-064FAD.svg)
 
-**KieeKey v1.3.0-beta1** is a modern, low-latency Vietnamese input method
+**KieeKey v1.3.0-beta2** is a modern, low-latency Vietnamese input method
 engine (bộ gõ Tiếng Việt) for Windows, with a system-tray application, a TSF
 text-store composer and an optional WinUI 3 Fluent settings UI.
 
@@ -33,6 +33,28 @@ text-store composer and an optional WinUI 3 Fluent settings UI.
 ![KieeKey preview](src/app/KieeKeyApp-preview.png)
 
 ---
+
+## What's new in v1.3.0-beta2 — Input isolation & reliability
+
+Beta2 is a stabilization release. Arcade no longer captures keys from other
+applications. The revised candidate (Windows file version **1.3.0.3**) adds
+explicit, default-off **live external typing effects**: tray → **Hiệu ứng gõ
+bên ngoài**, or Settings → **Phòng Chaos**. Random casing and Unicode flipped
+glyphs apply to both literal characters and Vietnamese tone rewrites. Disable
+instantly with **Ctrl+Alt+F12**; the IME must be ON, using Unicode, and app
+exclusions still apply. This is separate from the Lab. Unsupported glyphs stay
+unchanged; arbitrary 90°/270° rotations are not plain-text output.
+
+Typing passages now use explicit clipped character cells, a scrolling caret
+window and one viewport scale (no double-DPI font scaling). Typing Race has
+correct Backspace/net-WPM and mistake feedback; Fishing has catch/escape/error
+feedback and F2 restart; No-Mistake ignores nonprinting controls and shows an
+accurate reserve meter. Native pause/result panels no longer overlap the Hub
+title. Regression tests cover these paths, not a claim of all-editor support. See [CHANGELOG.md](CHANGELOG.md) and the
+[Windows smoke-test checklist](docs/BETA2_TESTING.md).
+
+The beta2 PR is held for manual Windows x64 testing before merge. Automated
+checks do not establish compatibility with every editor or Windows version.
 
 ## What's new in v1.3.0-beta1 — Arcade Hub, Chaos Lab, AI Rival & Progression
 
@@ -348,7 +370,7 @@ original licenses — see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 ## Tóm tắt (Tiếng Việt)
 
-**KieeKey v1.3.0-beta1** là bộ gõ Tiếng Việt cho Windows, xây dựng dựa trên
+**KieeKey v1.3.0-beta2** là bộ gõ Tiếng Việt cho Windows, xây dựng dựa trên
 **[OpenKey](https://github.com/tuyenvm/OpenKey)** (GPL-3.0) của tác giả Tuyen
 Mai. Engine gốc đã được port sang C++ hiện đại: hook bất đồng bộ với hàng đợi
 lock-free, composer TSF (không backspace ảo), bảng âm tiết flat tối ưu cache,

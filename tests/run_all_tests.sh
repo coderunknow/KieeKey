@@ -212,9 +212,9 @@ build test_state_transitions -std=c++2b -O2 $INC tests/test_state_transitions.cp
 build soak_pipeline       -std=c++2b -O2 -pthread $INC tests/soak_pipeline.cpp         || rc=1
 
 # --- v1.3.0 Arcade, Chaos, AI & Progression additions -----------------------
-build test_arcade         -std=c++2b -O2 $INC tests/test_arcade.cpp src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ArcadeRender.cpp src/core/Progression.cpp || rc=1
-build test_arcade_render  -std=c++2b -O2 $INC tests/test_arcade_render.cpp src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ArcadeRender.cpp src/core/Progression.cpp || rc=1
-build test_arcade_server  -std=c++2b -O2 $INC tests/test_arcade_server.cpp src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ArcadeRender.cpp src/core/ArcadeServer.cpp src/core/Progression.cpp src/core/ChaosEngine.cpp src/core/AiRival.cpp src/core/TypingAnalytics.cpp || rc=1
+build test_arcade         -std=c++2b -O2 $INC tests/test_arcade.cpp src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ArcadeRender.cpp src/core/Progression.cpp $ENGINE23 || rc=1
+build test_arcade_render  -std=c++2b -O2 $INC tests/test_arcade_render.cpp src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ArcadeRender.cpp src/core/Progression.cpp $ENGINE23 || rc=1
+build test_arcade_server  -std=c++2b -O2 $INC tests/test_arcade_server.cpp src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ArcadeRender.cpp src/core/ArcadeServer.cpp src/core/Progression.cpp src/core/ChaosEngine.cpp src/core/AiRival.cpp src/core/TypingAnalytics.cpp $ENGINE23 || rc=1
 # The Win32 hub/lab windows are executed here through tests/win32_gdi_stub.cpp
 # (a recording USER32/GDI32 layer), so the graphical front-end is covered on a
 # host without the Windows SDK. -D_WIN32 selects the real window implementation.
@@ -222,15 +222,26 @@ build test_arcade_window  -std=c++2b -O2 $INC -Isrc/app -D_WIN32 -Itests/win32_h
                           tests/test_arcade_window.cpp tests/win32_gdi_stub.cpp \
                           src/app/ArcadeWindow.cpp src/app/ChaosLabWindow.cpp \
                           src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ArcadeRender.cpp \
-                          src/core/ChaosEngine.cpp src/core/Progression.cpp -pthread || rc=1
+                          src/core/ChaosEngine.cpp src/core/Progression.cpp $ENGINE23 -pthread || rc=1
 build test_live_effects   -std=c++2b -O2 -pthread $INC tests/test_live_effects.cpp $ENGINE23 src/core/ChaosEngine.cpp || rc=1
+# v1.3.0-beta3: shipped-path live-effects suite (drives the REAL planOutput()
+# decision extracted from main.cpp) + the foreground over-backspace regression.
+build test_live_output_plan -std=c++2b -O2 -pthread $INC tests/test_live_output_plan.cpp $ENGINE23 src/core/ChaosEngine.cpp || rc=1
+# v1.3.0-beta3: portable proof for the settings-dialog/Chaos-Lab layout solver
+# (bug #1) over the REAL authored rectangles copied from main.cpp.
+build test_dialog_layout  -std=c++2b -O2 -Isrc/app $INC tests/test_dialog_layout.cpp || rc=1
+# v1.3.0-beta3 (bug #2): in-window Vietnamese composition for the typing games —
+# VnComposer (Telex/VNI -> diacritics) and the real game objects driven with the
+# real keystrokes (VN default, EN fallback, arrow-steering in WasdRace).
+build test_vn_composer    -std=c++2b -O2 -pthread $INC tests/test_vn_composer.cpp src/core/TextEngine.cpp || rc=1
+build test_arcade_vn      -std=c++2b -O2 -pthread $INC tests/test_arcade_vn.cpp src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ArcadeRender.cpp src/core/Progression.cpp $ENGINE23 || rc=1
 build test_chaos          -std=c++2b -O2 $INC tests/test_chaos.cpp src/core/ChaosEngine.cpp || rc=1
 build test_ai_rival       -std=c++2b -O2 $INC tests/test_ai_rival.cpp src/core/AiRival.cpp || rc=1
 build test_progression    -std=c++2b -O2 $INC tests/test_progression.cpp src/core/Progression.cpp || rc=1
 build test_analytics      -std=c++2b -O2 $INC tests/test_analytics.cpp src/core/TypingAnalytics.cpp || rc=1
 build test_online_ghost   -std=c++2b -O2 $INC tests/test_online_ghost.cpp src/core/OnlineGhost.cpp || rc=1
-build arcade_cli          -std=c++2b -O2 $INC demo/arcade_cli.cpp src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ArcadeRender.cpp src/core/Progression.cpp src/core/ChaosEngine.cpp src/core/AiRival.cpp src/core/TypingAnalytics.cpp src/core/OnlineGhost.cpp -pthread || rc=1
-build test_soak_arcade    -std=c++2b -O2 $INC tests/test_soak_arcade.cpp src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ChaosEngine.cpp src/core/AiRival.cpp src/core/Progression.cpp src/core/TypingAnalytics.cpp || rc=1
+build arcade_cli          -std=c++2b -O2 $INC demo/arcade_cli.cpp src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ArcadeRender.cpp src/core/Progression.cpp src/core/ChaosEngine.cpp src/core/AiRival.cpp src/core/TypingAnalytics.cpp src/core/OnlineGhost.cpp $ENGINE23 -pthread || rc=1
+build test_soak_arcade    -std=c++2b -O2 $INC tests/test_soak_arcade.cpp src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ChaosEngine.cpp src/core/AiRival.cpp src/core/Progression.cpp src/core/TypingAnalytics.cpp $ENGINE23 || rc=1
 
 # --- version-identifier consistency (no mixed version strings) --------------
 if command -v python3 >/dev/null 2>&1; then
@@ -408,6 +419,10 @@ run test_arcade_render        60
 run test_arcade_server        60
 run test_arcade_window        60
 run test_live_effects        120
+run test_live_output_plan    120
+run test_dialog_layout       60
+run test_vn_composer         60
+run test_arcade_vn           60
 run test_chaos               60
 run test_ai_rival            60
 run test_progression         60

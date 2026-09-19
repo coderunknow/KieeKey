@@ -109,6 +109,7 @@ void TextEngine::resetForConfigurationChange() noexcept {
     spellingOK_ = spellingFlag_ = false;
     spellingVowelOK_ = true;
     spellingEndIndex_ = 0;
+    visibleAccount_ = 0;        // D2 clamp: a fresh context committed nothing
     result_ = EngineResult{};   // full result, not just the two counts
     useSpellingBefore_ = opts_.checkSpelling;
 }

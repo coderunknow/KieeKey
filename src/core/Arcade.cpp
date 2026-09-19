@@ -30,6 +30,7 @@
 #include "Arcade.hpp"
 
 #include "Progression.hpp"
+#include "VnComposer.hpp"   // v1.3.0-beta3 (bug #2): in-window Telex/VNI composition
 
 #include <algorithm>
 #include <cmath>
@@ -42,6 +43,20 @@ namespace {
 
 constexpr double kMaxFrameStepSec = 0.05;   // 20 FPS floor for physics stepping
 constexpr float kMonoCharWidthFactor = 0.62f;  // monospace advance / font size
+
+// v1.3.0-beta3 (bug #2): default typing passages. The Vietnamese targets bear full
+// diacritics and are produced by typing Telex/VNI through the in-window VnComposer;
+// the English targets are the legacy ASCII prompts matched one character at a time.
+// Each VN string was verified to be exactly what its Telex keystrokes compose to
+// (see tests/test_vn_composer.cpp and tests/test_arcade_vn.cpp).
+constexpr std::u32string_view kTypingRaceVn =
+    U"bộ gõ tiếng việt hiện đại tối ưu độ trễ và tốc độ gõ phím";
+constexpr std::u32string_view kTypingRaceEn =
+    U"KieeKey la bo go tieng Viet hien dai toi uu do tre va toc do go phim";
+constexpr std::u32string_view kWasdRaceVn =
+    U"lái xe vượt chướng ngại vật tốc độ cao";
+constexpr std::u32string_view kWasdRaceEn =
+    U"lai xe vuot chuong ngai vat toc do cao";
 
 double clampDt(double dt) noexcept {
     if (!(dt > 0.0)) {   // also filters NaN
@@ -1200,8 +1215,30 @@ std::string FishingGame::renderText() const {
 // 4. Typing Race
 //===========================================================================
 TypingRaceGame::TypingRaceGame() {
-    m_passage = U"KieeKey la bo go tieng Viet hien dai toi uu do tre va toc do go phim";
+    m_passage.assign(kTypingRaceEn.begin(), kTypingRaceEn.end());
     reset();
+}
+
+// Out-of-line: VnComposer is only forward-declared in Arcade.hpp, so the
+// unique_ptr member must be destroyed where the type is complete.
+TypingRaceGame::~TypingRaceGame() = default;
+
+void TypingRaceGame::setPassageLanguage(PassageLanguage lang, VnInputMethod method) {
+    const bool vn = (lang == PassageLanguage::Vietnamese);
+    m_vnMode = vn;
+    if (vn) {
+        if (!m_composer) { m_composer = std::make_unique<VnComposer>(); }
+        m_composer->setMethod(static_cast<ok::text::InputMethod>(method));
+        m_passage.assign(kTypingRaceVn.begin(), kTypingRaceVn.end());
+    } else {
+        m_composer.reset();
+        m_passage.assign(kTypingRaceEn.begin(), kTypingRaceEn.end());
+    }
+    reset();
+}
+
+std::u32string TypingRaceGame::composedText() const {
+    return (m_vnMode && m_composer) ? m_composer->text() : std::u32string{};
 }
 
 void TypingRaceGame::setPassage(std::u32string_view passage) {
@@ -1226,6 +1263,9 @@ void TypingRaceGame::reset() {
     m_totalKeys = 0;
     m_correctKeys = 0;
     m_errorKeys = 0;
+    m_vnWordsTotal = 0;
+    m_vnWordsWrong = 0;
+    if (m_composer) { m_composer->reset(); }   // v1.3.0-beta3 (bug #2)
     m_elapsedSec = 0.0;
     m_liveWpm = 0.0;
     m_accuracy = 100.0;
@@ -1253,7 +1293,15 @@ void TypingRaceGame::update(double dt) {
         const double minutes = m_elapsedSec / 60.0;
         m_liveWpm = (static_cast<double>(m_charIndex) / 5.0) / minutes;
     }
-    if (m_totalKeys > 0) {
+    if (m_vnMode) {
+        // v1.3.0-beta3 (bug #2): word-level accuracy. Telex needs several keystrokes
+        // per syllable, so keys-based accuracy would read <100% even for flawless
+        // play; committed-word accuracy is the meaningful metric.
+        if (m_vnWordsTotal > 0) {
+            m_accuracy = 100.0 * static_cast<double>(m_vnWordsTotal - m_vnWordsWrong) /
+                         static_cast<double>(m_vnWordsTotal);
+        }
+    } else if (m_totalKeys > 0) {
         m_accuracy = (static_cast<double>(m_correctKeys) / static_cast<double>(m_totalKeys)) * 100.0;
     }
     // Pacer car drives at a constant WPM along the same track.
@@ -1271,7 +1319,17 @@ void TypingRaceGame::finish() {
     }
     m_finished = true;
     m_resultPending = true;
-    m_accuracy = m_totalKeys > 0 ? 100.0 * static_cast<double>(m_correctKeys) / static_cast<double>(m_totalKeys) : 100.0;
+    if (m_vnMode) {
+        // Completing the passage means the terminating word (which has no trailing
+        // space) matched, so count it as one more correct committed word.
+        if (m_charIndex >= m_passage.size() && !m_passage.empty()) { ++m_vnWordsTotal; }
+        m_accuracy = m_vnWordsTotal > 0
+            ? 100.0 * static_cast<double>(m_vnWordsTotal - m_vnWordsWrong) /
+                  static_cast<double>(m_vnWordsTotal)
+            : 100.0;
+    } else {
+        m_accuracy = m_totalKeys > 0 ? 100.0 * static_cast<double>(m_correctKeys) / static_cast<double>(m_totalKeys) : 100.0;
+    }
     // Recompute the final WPM from the *actual* finish time: the old code read
     // the value cached by the previous update() tick, so finishing inside one
     // tick (or on the very first frame) scored literally 0.
@@ -1308,6 +1366,37 @@ InputResult TypingRaceGame::handleKey(const InputEvent& ev) {
         return InputResult::Consumed;
     }
     if (m_paused || m_finished) {
+        return InputResult::Consumed;
+    }
+
+    // v1.3.0-beta3 (bug #2): Vietnamese mode — compose Telex/VNI in-window and match
+    // the composed text against the diacritic-bearing target. Progress is the longest
+    // common prefix; a word is judged wrong only at a committed boundary (space), so
+    // the temporary mid-syllable divergence of Telex is never counted as a mistake.
+    if (m_vnMode && m_composer) {
+        if (ev.vk == 0x08 || ev.ch == U'\b') {
+            m_composer->feedBackspace();
+            m_charIndex = m_composer->matchLength(m_passage);
+            m_lastMistake = false;
+            return InputResult::Consumed;
+        }
+        if (ev.ch == U'\0') { return InputResult::Consumed; }
+        ++m_totalKeys;
+        const std::size_t before = m_charIndex;
+        const bool isSpace = (ev.ch == U' ');
+        if (isSpace) { m_composer->feedSpace(); } else { m_composer->feedProduced(ev.ch); }
+        const std::size_t after = m_composer->matchLength(m_passage);
+        m_charIndex = after;
+        if (after > before) {
+            m_correctKeys += static_cast<std::uint32_t>(after - before);
+            m_lastMistake = false;
+        }
+        if (isSpace) {
+            ++m_vnWordsTotal;
+            // composed must still be a prefix of the target at a word boundary
+            if (after < m_composer->length()) { ++m_vnWordsWrong; m_lastMistake = true; }
+        }
+        if (m_charIndex >= m_passage.size()) { finish(); }
         return InputResult::Consumed;
     }
 
@@ -1450,9 +1539,30 @@ std::string TypingRaceGame::renderText() const {
 // 5. WASD + Typing Racing
 //===========================================================================
 WasdRaceGame::WasdRaceGame() {
-    m_passage = U"lai xe vuot chuong ngai vat toc do cao";
+    m_passage.assign(kWasdRaceEn.begin(), kWasdRaceEn.end());
     m_obstacles.reserve(8);
     reset();
+}
+
+// Out-of-line: VnComposer is forward-declared in Arcade.hpp (see TypingRaceGame).
+WasdRaceGame::~WasdRaceGame() = default;
+
+void WasdRaceGame::setPassageLanguage(PassageLanguage lang, VnInputMethod method) {
+    const bool vn = (lang == PassageLanguage::Vietnamese);
+    m_vnMode = vn;
+    if (vn) {
+        if (!m_composer) { m_composer = std::make_unique<VnComposer>(); }
+        m_composer->setMethod(static_cast<ok::text::InputMethod>(method));
+        m_passage.assign(kWasdRaceVn.begin(), kWasdRaceVn.end());
+    } else {
+        m_composer.reset();
+        m_passage.assign(kWasdRaceEn.begin(), kWasdRaceEn.end());
+    }
+    reset();
+}
+
+std::u32string WasdRaceGame::composedText() const {
+    return (m_vnMode && m_composer) ? m_composer->text() : std::u32string{};
 }
 
 void WasdRaceGame::start() {
@@ -1465,6 +1575,7 @@ void WasdRaceGame::start() {
 
 void WasdRaceGame::reset() {
     m_textIndex = 0;
+    if (m_composer) { m_composer->reset(); }   // v1.3.0-beta3 (bug #2)
     m_playerLane = 1;
     m_carSpeed = 60.0;
     m_fuel = m_startFuel;
@@ -1590,26 +1701,49 @@ InputResult WasdRaceGame::handleKey(const InputEvent& ev) {
         return InputResult::Consumed;
     }
 
-    // WASD steering
-    if (ev.ch == U'a' || ev.ch == U'A' || ev.vk == vk::kLeft) {
+    // WASD steering. In Vietnamese mode the letters a/d/w/s ARE Telex/VNI keys, so
+    // steering falls back to the arrow keys only and every letter feeds the composer.
+    const bool letterSteer = !m_vnMode;
+    if ((letterSteer && (ev.ch == U'a' || ev.ch == U'A')) || ev.vk == vk::kLeft) {
         if (m_playerLane > 0) --m_playerLane;
         return InputResult::Consumed;
     }
-    if (ev.ch == U'd' || ev.ch == U'D' || ev.vk == vk::kRight) {
+    if ((letterSteer && (ev.ch == U'd' || ev.ch == U'D')) || ev.vk == vk::kRight) {
         if (m_playerLane < kLanes - 1) ++m_playerLane;
         return InputResult::Consumed;
     }
-    if (ev.ch == U'w' || ev.ch == U'W' || ev.vk == vk::kUp) {
+    if ((letterSteer && (ev.ch == U'w' || ev.ch == U'W')) || ev.vk == vk::kUp) {
         m_carSpeed = std::min(150.0, m_carSpeed + 12.0);
         return InputResult::Consumed;
     }
-    if (ev.ch == U's' || ev.ch == U'S' || ev.vk == vk::kDown) {
+    if ((letterSteer && (ev.ch == U's' || ev.ch == U'S')) || ev.vk == vk::kDown) {
         m_carSpeed = std::max(30.0, m_carSpeed - 12.0);
         return InputResult::Consumed;
     }
 
     // Typing fuels the engine
     if (ev.ch == U'\b') {
+        if (m_vnMode && m_composer) {
+            m_composer->feedBackspace();
+            m_textIndex = m_composer->matchLength(m_passage);
+        }
+        return InputResult::Consumed;
+    }
+    if (m_vnMode && m_composer) {
+        // v1.3.0-beta3 (bug #2): compose in-window; progress = LCP(composed, target).
+        if (ev.ch == U'\0') { return InputResult::Consumed; }
+        if (ev.ch == U' ') { m_composer->feedSpace(); } else { m_composer->feedProduced(ev.ch); }
+        const std::size_t idx = m_composer->matchLength(m_passage);
+        if (idx > m_textIndex) {
+            const std::size_t gained = idx - m_textIndex;
+            m_score += static_cast<int64_t>(20 * gained);
+            m_fuel = std::min(100.0, m_fuel + 5.0 * static_cast<double>(gained));
+        }
+        m_textIndex = idx;
+        if (m_textIndex >= m_passage.size()) {
+            m_composer->reset();   // loop the passage so the road game keeps going
+            m_textIndex = 0;
+        }
         return InputResult::Consumed;
     }
     if (m_textIndex < m_passage.size() && ev.ch == m_passage[m_textIndex]) {
@@ -2641,9 +2775,11 @@ void applyFullConfigToGame(IArcadeGame& game, const ArcadeConfig& config) {
         noMistake->setStartReserve(config.noMistakeStartReserve);
     } else if (auto* race = dynamic_cast<TypingRaceGame*>(&game)) {
         race->setPacerWpm(config.typingRacePacerWpm);
+        race->setPassageLanguage(config.passageLanguage, config.vnInputMethod);
     } else if (auto* wasd = dynamic_cast<WasdRaceGame*>(&game)) {
         wasd->setStartFuel(config.wasdStartFuel);
         wasd->setObstacleSpacing(config.wasdObstacleSpacingSec);
+        wasd->setPassageLanguage(config.passageLanguage, config.vnInputMethod);
     } else if (auto* fishing = dynamic_cast<FishingGame*>(&game)) {
         fishing->setAutomationMode(config.fishingAutomation);
     }

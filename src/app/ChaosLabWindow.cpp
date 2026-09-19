@@ -132,6 +132,13 @@ struct ChaosLabWindow::Impl {
     std::wstring pendingInjection;
     std::size_t injectionOffset = 0;
     HWND injectionTarget = nullptr;
+    // v1.3.0-beta3 (bug #1): the Lab created every control with NO font, so the
+    // EDIT boxes fell back to SYSTEM_FIXED_FONT — a raster face that cannot
+    // render Vietnamese diacritics and made the whole window hard to read. This
+    // is a DPI-scaled Segoe UI face applied to every child (matching the main
+    // settings dialog), recreated on WM_DPICHANGED and freed on WM_DESTROY.
+    HFONT uiFont = nullptr;
+    UINT  fontDpi = 0;
 };
 
 std::u32string ChaosLabWindow::transformForPreview(std::u32string_view input,
@@ -319,6 +326,74 @@ void syncChaosControls(ChaosLabWindow::Impl& impl) {
 
 namespace {
 
+// ---- v1.3.0-beta3 (bug #1): Chaos Lab font ---------------------------------
+// Per-monitor DPI of the Lab window (GetDpiForWindow when available; the classic
+// LOGPIXELSX fallback keeps MinGW/older SDKs compiling). Mirrors main.cpp.
+UINT labWindowDpi(HWND hwnd) noexcept {
+    if (const HMODULE user32 = ::GetModuleHandleW(L"user32.dll")) {
+        using GetDpiForWindowFn = UINT(WINAPI*)(HWND);
+        const auto fn = reinterpret_cast<GetDpiForWindowFn>(
+            ::GetProcAddress(user32, "GetDpiForWindow"));
+        if (fn != nullptr) {
+            const UINT d = fn(hwnd);
+            if (d != 0) { return d; }
+        }
+    }
+    HDC dc = ::GetDC(hwnd);
+    const UINT dpi = (dc != nullptr)
+        ? static_cast<UINT>(::GetDeviceCaps(dc, LOGPIXELSX)) : 96;
+    if (dc != nullptr) { ::ReleaseDC(hwnd, dc); }
+    return dpi ? dpi : 96;
+}
+
+// A DPI-scaled Segoe UI face — the same family/quality as the settings dialog.
+// Segoe UI is Unicode-complete, so Vietnamese precomposed syllables and combining
+// marks render correctly (SYSTEM_FIXED_FONT could not).
+HFONT makeLabFont(UINT dpi) noexcept {
+    const int px = -::MulDiv(13, static_cast<int>(dpi ? dpi : 96), 96);
+    return ::CreateFontW(px, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                         CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+}
+
+BOOL CALLBACK setChildFontProc(HWND child, LPARAM lp) noexcept {
+    ::SendMessageW(child, WM_SETFONT, static_cast<WPARAM>(lp), TRUE);
+    return TRUE;
+}
+
+// (Re)create the font for the current DPI and push it onto every child control.
+// dpiOverride lets WM_DPICHANGED pass the new DPI (GetDpiForWindow may still
+// report the old value while that message is being processed).
+void applyLabFont(ChaosLabWindow::Impl& impl, UINT dpiOverride = 0) {
+    if (impl.hwnd == nullptr) { return; }
+    const UINT dpi = dpiOverride ? dpiOverride : labWindowDpi(impl.hwnd);
+    if (impl.uiFont != nullptr && impl.fontDpi == dpi) {
+        // Same DPI: just re-assert (cheap) so newly created children get it too.
+        ::EnumChildWindows(impl.hwnd, setChildFontProc,
+                           reinterpret_cast<LPARAM>(impl.uiFont));
+        return;
+    }
+    HFONT next = makeLabFont(dpi);
+    if (next == nullptr) { next = impl.uiFont; }   // CreateFont failed: keep old
+    if (next == nullptr) { return; }                // nothing usable
+    HFONT old = impl.uiFont;
+    impl.uiFont = next;
+    impl.fontDpi = dpi;
+    ::EnumChildWindows(impl.hwnd, setChildFontProc, reinterpret_cast<LPARAM>(impl.uiFont));
+    // Delete the previous face only AFTER every child has switched to the new one
+    // (a font still selected into a control cannot be deleted). On DPI change this
+    // avoids leaking a GDI face per rescale.
+    if (old != nullptr && old != next) { ::DeleteObject(old); }
+}
+
+void destroyLabFont(ChaosLabWindow::Impl& impl) noexcept {
+    if (impl.uiFont != nullptr) {
+        ::DeleteObject(impl.uiFont);
+        impl.uiFont = nullptr;
+        impl.fontDpi = 0;
+    }
+}
+
 LRESULT CALLBACK labWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
     auto* impl = reinterpret_cast<ChaosLabWindow::Impl*>(
         ::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
@@ -436,11 +511,26 @@ LRESULT CALLBACK labWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
                 return 0;
             }
             break;
+        case WM_DPICHANGED: {
+            // v1.3.0-beta3 (bug #1): rescale the Segoe UI face to the new DPI,
+            // re-apply it to every child, then adopt the system-suggested rect so
+            // the window itself resizes on the new monitor.
+            if (impl != nullptr) { applyLabFont(*impl, static_cast<UINT>(HIWORD(wParam))); }
+            const RECT* suggested = reinterpret_cast<const RECT*>(lParam);
+            if (suggested != nullptr) {
+                ::SetWindowPos(hwnd, nullptr, suggested->left, suggested->top,
+                               suggested->right - suggested->left,
+                               suggested->bottom - suggested->top,
+                               SWP_NOZORDER | SWP_NOACTIVATE);
+            }
+            return 0;
+        }
         case WM_CLOSE:
             ChaosLabWindow::instance().close();
             return 0;
         case WM_DESTROY:
             ::KillTimer(hwnd, ChaosLabWindow::kTimerId);
+            if (impl != nullptr) { destroyLabFont(*impl); }
             return 0;
         default:
             break;
@@ -553,7 +643,7 @@ bool ChaosLabWindow::open(void* owner) {
                kIdSendOnce);
         create(L"STATIC",
                L"P / F1 tạm dừng game · F2 chơi lại · Esc thoát game (khi cửa sổ này đang focus)",
-               SS_LEFT, 300, 440, 430, 18, -1);
+               SS_LEFT, 300, 440, 430, 34, -1);
 
         //---- Flexing Mode page: type anything, the prepared text appears ----
         create(L"STATIC", L"🗿 FLEXING MODE — gõ gì cũng được, chữ chuẩn bị trước tự hiện ra:",
@@ -566,15 +656,15 @@ bool ChaosLabWindow::open(void* owner) {
         m_impl->flexLoad = create(L"BUTTON", L"Nạp văn bản", BS_PUSHBUTTON, 546, 520, 90, 26,
                                   kIdFlexLoad);
         m_impl->flexSend = create(L"BUTTON", L"Gõ chữ Flexing ra app", BS_PUSHBUTTON, 546, 552,
-                                  90, 26, kIdFlexSend);
-        create(L"STATIC", L"Mỗi phím sinh ra:", SS_LEFT, 646, 502, 92, 18, -1);
+                                  114, 26, kIdFlexSend);
+        create(L"STATIC", L"Mỗi phím sinh ra:", SS_LEFT, 610, 502, 128, 18, -1);
         m_impl->flexGran = create(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL, 646, 520, 92, 200,
                                   kIdFlexGran);
         for (const wchar_t* label : {L"1 ký tự", L"1 từ", L"N ký tự", L"Tự chảy"}) {
             ::SendMessageW(m_impl->flexGran, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label));
         }
         ::SendMessageW(m_impl->flexGran, CB_SETCURSEL, 0, 0);
-        m_impl->flexInject = create(L"BUTTON", L"Gõ từng nhịp", BS_AUTOCHECKBOX, 640, 552, 110, 22,
+        m_impl->flexInject = create(L"BUTTON", L"Gõ từng nhịp", BS_AUTOCHECKBOX, 660, 552, 78, 22,
                                     kIdFlexInject);
 
         create(L"STATIC", L"Chữ engine đã sinh ra (và đã gõ thật ra ngoài):", SS_LEFT, 14, 594, 720,
@@ -591,7 +681,12 @@ bool ChaosLabWindow::open(void* owner) {
         create(L"STATIC",
                L"Mẹo: gõ vài phím vào ô dưới, rồi bấm \"Gõ chữ Flexing ra app\" — chữ sẽ thật sự "
                L"được gõ vào ứng dụng bạn đang dùng (tick \"Gõ từng nhịp\" để gõ chậm như người thật).",
-               SS_LEFT, 14, 800, 720, 18, -1);
+               SS_LEFT, 14, 800, 720, 36, -1);
+
+        // v1.3.0-beta3 (bug #1): give every control the DPI-scaled Segoe UI face
+        // BEFORE the window is shown, so the EDIT boxes render Vietnamese instead
+        // of falling back to the raster SYSTEM_FIXED_FONT.
+        applyLabFont(*m_impl);
 
         ::SetTimer(m_impl->hwnd, kTimerId, kTimerIntervalMs, nullptr);
     }

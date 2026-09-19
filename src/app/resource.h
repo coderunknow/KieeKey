@@ -149,6 +149,8 @@
 
 #define IDC_STAT_FAILMODE         616   // tab 5: labels must hide with the controls
 #define IDC_STAT_RHYTHM_BPM       617
+#define IDC_STAT_PASSAGE_LANG     618   // tab 5: VN/EN typing-passage language label
+#define IDC_CMB_PASSAGE_LANG      619   // tab 5: Tiếng Việt (Telex/VNI) vs English (ASCII)
 
 // tab 6: Chaos & Lab
 #define IDC_GRP_CHAOS             590

@@ -330,10 +330,31 @@ public:
     // after setOptions() in any reconfiguration path; it leaves every
     // session-scoped field identical to a freshly constructed engine.
     // Consumer-side state is deliberately NOT reset: the resolvers stay
-    // installed, opts_ is whatever setOptions received, and the visible
-    // character account keeps mirroring the consumer document (which the
-    // settings dialog does not erase).
+    // installed and opts_ is whatever setOptions received.
+    //
+    // v1.3.0-beta3 — the visible character account (visibleAccount_, the D2
+    // over-backspace clamp) IS reset to 0 here. It used to be left untouched on
+    // the theory that "the settings dialog does not erase the document", but
+    // that broke the tier-6 FRESH contract (after this reset the engine must be
+    // decision-identical to a brand-new engine, which has visibleAccount_==0).
+    // Resetting is also the SAFE bound: this reset zeroes index_ (a fresh word),
+    // so the engine can never legitimately want to erase text it committed
+    // before the reset — every backspaceCount it emits afterwards is bounded by
+    // the post-reset word, which visibleAccount_ re-accumulates from 0. Leaving
+    // it stale instead let a later edit delete characters to the LEFT of the
+    // caret (the foreground-switch over-backspace bug fixed alongside this).
     void resetForConfigurationChange() noexcept;
+
+    // v1.3.0-beta3 — full reset for a NEW DOCUMENT/TYPING CONTEXT: a foreground
+    // window switch, a caret jump into a different field, or recovery after a
+    // producer fault. This is the same fresh-engine-parity reset as
+    // resetForConfigurationChange(), under a name that documents the intent at
+    // the call site. It MUST be used (instead of the partial startNewSession())
+    // whenever the engine begins committing into a different document: the
+    // previous context's visibleAccount_ would otherwise loosen the D2 clamp and
+    // let the first correction in the new window erase text the engine never
+    // committed there.
+    void resetForNewContext() noexcept { resetForConfigurationChange(); }
 
     // English-mode macro hook (mirror of vEnglishMode; macro table lives in
     // the consumer). Returns true when the key should be suppressed.

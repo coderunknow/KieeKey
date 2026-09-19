@@ -141,6 +141,14 @@ bool ModernKeyHook::start(EventHandler handler) {
 
     running_.store(true, std::memory_order_release);
     stats_.pushed.store(0, std::memory_order_relaxed);
+    // v1.3.0-beta3: a restart is a fresh measurement window for the
+    // diagnostics panel (the level/enabled switch is preserved on purpose —
+    // it is a user preference, not a statistic).
+    {
+        const bool keepEnabled = counters_.enabled.load(std::memory_order_relaxed);
+        counters_.reset();
+        counters_.enabled.store(keepEnabled, std::memory_order_relaxed);
+    }
     stats_.droppedOverflow.store(0, std::memory_order_relaxed);
     peakLatencyUs_.store(0, std::memory_order_relaxed);
     // v1.2.0 Stable: re-arm the handshake + callback-liveness flags. A
@@ -642,6 +650,7 @@ void ModernKeyHook::consumerThreadMain() noexcept {
             ::WaitForSingleObject(wakeEvent_.get(), INFINITE);
             consumerParked_.store(false, std::memory_order_release);
             ::ResetEvent(wakeEvent_.get());
+            counters_.add(counters_.consumerWakeups);
         }
     }
 
@@ -672,6 +681,7 @@ bool ModernKeyHook::enqueue(const KeyEvent& ev) noexcept {
         //     itself finds the item (unpark) ✓
         if (consumerParked_.load(std::memory_order_acquire)) {
             ::SetEvent(wakeEvent_.get());
+            counters_.add(counters_.setEventSyscalls);
         }
         return true;
     }
@@ -828,6 +838,9 @@ LRESULT CALLBACK ModernKeyHook::keyboardProc(int nCode, WPARAM wParam, LPARAM lP
 
     // Filter our own injected events FIRST (magic extra-info), as legacy did.
     if (kb->dwExtraInfo == kSelfInjectedExtraInfo) {
+        // v1.3.0-beta3: counted separately — our own SendInput is not a user
+        // keystroke and must never appear in a "keyboard events" total.
+        self->counters_.add(self->counters_.keySelfInjected);
         return ::CallNextHookEx(nullptr, nCode, wParam, lParam);
     }
 
@@ -849,6 +862,16 @@ LRESULT CALLBACK ModernKeyHook::keyboardProc(int nCode, WPARAM wParam, LPARAM lP
         case WM_SYSKEYUP:   ev.action = KeyAction::SysKeyUp;   break;
         default:
             return ::CallNextHookEx(nullptr, nCode, wParam, lParam);
+    }
+    // v1.3.0-beta3 diagnostics: the ONLY counters that may be summed into a
+    // "keyboard events processed" total (see HookCounters.hpp). One physical
+    // press is two events (down + up) — the UI shows both, plus the composed
+    // subset, so the number can never look like it moves on its own.
+    switch (ev.action) {
+        case KeyAction::KeyDown:    self->counters_.add(self->counters_.keyDown);    break;
+        case KeyAction::KeyUp:      self->counters_.add(self->counters_.keyUp);      break;
+        case KeyAction::SysKeyDown: self->counters_.add(self->counters_.sysKeyDown); break;
+        case KeyAction::SysKeyUp:   self->counters_.add(self->counters_.sysKeyUp);   break;
     }
 
     // Snapshot modifiers for the event BEFORE applying its own delta.
@@ -909,7 +932,11 @@ LRESULT CALLBACK ModernKeyHook::keyboardProc(int nCode, WPARAM wParam, LPARAM lP
     if (d.wakeConsumer) { self->enqueue(ev); }
     else               { self->countPassThrough(ev); }
 
-    if (d.suppressKey) { return 1; }         // key does not reach the app
+    if (d.suppressKey) {                     // key does not reach the app
+        self->counters_.add(self->counters_.keySuppressed);
+        return 1;
+    }
+    self->counters_.add(self->counters_.keyPassedThrough);
     return ::CallNextHookEx(nullptr, nCode, wParam, lParam);
 }
 
@@ -953,12 +980,22 @@ LRESULT CALLBACK ModernKeyHook::mouseProc(int nCode, WPARAM wParam, LPARAM lPara
             // must not silently degrade to pass-through-everything.
             // (ProducerDecision{} means "no consumer work" and is only
             // correct when a handler was actually consulted.)
+            const bool wheel = (wParam == WM_MOUSEWHEEL || wParam == WM_MOUSEHWHEEL);
+            // v1.3.0-beta3: mouse events are counted as MOUSE events. In beta2
+            // they were folded into the ring's `pushed` counter, which the UI
+            // labelled "keyboard events" — the reported "counter grows while I
+            // am not typing".
+            self->counters_.add(wheel ? self->counters_.mouseWheel
+                                      : self->counters_.mouseButton);
             const ProducerDecision d = self->runProducerHandler(ev);
             if (d.wakeConsumer) { self->enqueue(ev); }
             else               { self->countPassThrough(ev); }
             break;
         }
         default:
+            // Moves only refresh the watchdog heartbeat (above); they are
+            // counted for completeness and are part of NO total.
+            self->counters_.add(self->counters_.mouseMove);
             break;
     }
     return ::CallNextHookEx(nullptr, nCode, wParam, lParam);
@@ -985,6 +1022,9 @@ void CALLBACK ModernKeyHook::winEventProc(HWINEVENTHOOK, DWORD ev, HWND hwnd,
     // from this field.
     fg.wParam       = static_cast<std::uint32_t>(
         reinterpret_cast<std::uintptr_t>(hwnd) & 0xFFFF'FFFFu);   // foreground HWND
+    // v1.3.0-beta3: a foreground change is its own source. Clicking another
+    // window (or a balloon taking focus) moved the beta2 "keyboard" counter.
+    self->counters_.add(self->counters_.foregroundChanged);
     // No producer handler registered → consumer-callback contract: every
     // foreground change is delivered (see keyboardProc).
     const ProducerDecision d = self->runProducerHandler(fg);

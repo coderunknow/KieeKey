@@ -83,6 +83,22 @@ enum class GameType : std::uint8_t {
     Flexing = 8,
 };
 
+// v1.3.0-beta3 (bug #2): the typing games can show Vietnamese passages WITH
+// diacritics and compose the player's Telex/VNI keystrokes in-window. The IME
+// keyboard hook deliberately bypasses KieeKey's own windows (else every key would
+// be composed twice), so each game owns a VnComposer and does the composition
+// itself. English mode keeps the old ASCII prompt and 1:1 character matching.
+enum class PassageLanguage : std::uint8_t {
+    Vietnamese = 0,   // default: diacritic-bearing target + in-window composition
+    English    = 1,   // ASCII target, one typed char == one target char
+};
+
+// Mirrors ok::text::InputMethod's underlying values so ArcadeConfig stays free of
+// the (heavy) TextEngine header; Arcade.cpp casts across when building a composer.
+enum class VnInputMethod : std::uint8_t { Telex = 0, Vni = 1, SimpleTelex = 2 };
+
+class VnComposer;   // defined in VnComposer.hpp; the games hold one via unique_ptr
+
 //===========================================================================
 // Input plumbing
 //===========================================================================
@@ -198,6 +214,12 @@ struct ArcadeConfig {
     // Frame rate clamp for update(): protects slow frames from teleporting
     // game objects (a 1-second stall must not advance physics by 1 second).
     double maxFrameStepSec = 0.05;
+
+    // v1.3.0-beta3 (bug #2): typing-game passage language + composition method.
+    // Vietnamese is the DEFAULT (the user asked for diacritic-bearing prompts with
+    // in-window Telex/VNI composition); English keeps the legacy ASCII prompt.
+    PassageLanguage passageLanguage = PassageLanguage::Vietnamese;
+    VnInputMethod   vnInputMethod   = VnInputMethod::Telex;
 };
 
 //===========================================================================
@@ -529,6 +551,9 @@ public:
     static constexpr double kTrackLength = 100.0;   // world units, cars advance along it
 
     TypingRaceGame();
+    // Defined in Arcade.cpp: the unique_ptr<VnComposer> member needs the complete
+    // type at the point of destruction, and VnComposer is only forward-declared here.
+    ~TypingRaceGame() override;
 
     [[nodiscard]] GameType getType() const noexcept override { return GameType::TypingRace; }
 
@@ -553,6 +578,14 @@ public:
     [[nodiscard]] std::string renderText() const override;
 
     void setPassage(std::u32string_view passage);
+    // v1.3.0-beta3 (bug #2): choose the passage language. Vietnamese swaps in a
+    // diacritic-bearing target and routes keystrokes through an in-window VnComposer
+    // (Telex/VNI per `method`); English restores the ASCII target and 1:1 matching.
+    // Resets the run. The default passage for each language lives in Arcade.cpp.
+    void setPassageLanguage(PassageLanguage lang, VnInputMethod method);
+    [[nodiscard]] bool isVnMode() const noexcept { return m_vnMode; }
+    // Text composed so far in VN mode (empty in English mode) — for tests + the HUD.
+    [[nodiscard]] std::u32string composedText() const;   // defined in Arcade.cpp
     [[nodiscard]] std::u32string_view getPassage() const noexcept { return m_passage; }
     [[nodiscard]] std::size_t getCharIndex() const noexcept { return m_charIndex; }
     void setPacerWpm(double wpm) noexcept { m_pacerWpm = wpm; }
@@ -585,6 +618,14 @@ private:
     std::int64_t m_score = 0;
     std::int64_t m_highScore = 0;
     std::uint32_t m_seed = 0xABCDEF01u;
+
+    // v1.3.0-beta3 (bug #2): in-window Vietnamese composition. m_composer is null
+    // in English mode; in VN mode every keystroke is fed to it and m_charIndex is
+    // the longest common prefix of the composed text and the target passage.
+    bool m_vnMode = false;
+    std::unique_ptr<VnComposer> m_composer;
+    std::uint32_t m_vnWordsTotal = 0;   // words committed (spaces typed) in VN mode
+    std::uint32_t m_vnWordsWrong = 0;   // committed words that diverged from target
 };
 
 //===========================================================================
@@ -602,6 +643,7 @@ public:
     static constexpr double kRoadLength = 110.0;
 
     WasdRaceGame();
+    ~WasdRaceGame() override;   // defined in Arcade.cpp (VnComposer incomplete here)
 
     [[nodiscard]] GameType getType() const noexcept override { return GameType::WasdRace; }
 
@@ -627,6 +669,12 @@ public:
 
     void setStartFuel(double fuel) noexcept { m_startFuel = fuel; m_fuel = fuel; }
     void setObstacleSpacing(double sec) noexcept { m_obstacleSpacingSec = std::max(0.6, sec); }
+    // v1.3.0-beta3 (bug #2): Vietnamese passage + in-window composition. In VN mode
+    // the WASD letters become Telex/VNI input (they ARE composition keys), so steering
+    // moves to the ARROW keys only; letters feed the composer and fuel the engine.
+    void setPassageLanguage(PassageLanguage lang, VnInputMethod method);
+    [[nodiscard]] bool isVnMode() const noexcept { return m_vnMode; }
+    [[nodiscard]] std::u32string composedText() const;   // defined in Arcade.cpp
     [[nodiscard]] double getObstacleSpacing() const noexcept { return m_obstacleSpacingSec; }
     [[nodiscard]] std::u32string_view getPassage() const noexcept { return m_passage; }
     [[nodiscard]] std::size_t getTextIndex() const noexcept { return m_textIndex; }
@@ -643,6 +691,9 @@ private:
 
     std::u32string m_passage;
     std::size_t m_textIndex = 0;
+    // v1.3.0-beta3 (bug #2): in-window Vietnamese composition (null in English mode).
+    bool m_vnMode = false;
+    std::unique_ptr<VnComposer> m_composer;
     int m_playerLane = 1;
     double m_carSpeed = 60.0;
     double m_fuel = 100.0;

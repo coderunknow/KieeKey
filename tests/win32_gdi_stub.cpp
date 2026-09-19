@@ -547,6 +547,38 @@ HFONT CreateFontIndirectW(const LOGFONTW* lf) {
     return reinterpret_cast<HFONT>(handle);
 }
 
+// v1.3.0-beta3 (bug #1, Chaos Lab font): the Lab now builds a DPI-scaled Segoe UI
+// face and pushes it onto every child control. These faithful stand-ins let that
+// Windows-only code compile, link and run on a host without the Windows SDK.
+HFONT CreateFontW(int cHeight, int, int, int, int, DWORD, DWORD, DWORD, DWORD,
+                  DWORD, DWORD, DWORD, DWORD, LPCWSTR) {
+    const std::uintptr_t handle = okgdi::nextHandle(0x3000u);
+    okgdi::handleColors()[handle] = static_cast<COLORREF>(-cHeight);
+    return reinterpret_cast<HFONT>(handle);
+}
+
+BOOL EnumChildWindows(HWND hwndParent, WNDENUMPROC lpEnumFunc, LPARAM lParam) {
+    if (lpEnumFunc == nullptr) { return TRUE; }
+    for (okgdi::Window* window : okgdi::windowRegistry()) {
+        if (!window->destroyed && window->parent == hwndParent) {
+            if (!lpEnumFunc(reinterpret_cast<HWND>(window), lParam)) { return FALSE; }
+        }
+    }
+    return TRUE;
+}
+
+int MulDiv(int nNumber, int nNumerator, int nDenominator) {
+    if (nDenominator == 0) { return 0; }
+    return static_cast<int>((static_cast<long long>(nNumber) * nNumerator) / nDenominator);
+}
+
+// Returning null makes the app code take its classic GetDeviceCaps(LOGPIXELSX)
+// DPI fallback — exactly the path an older SDK / MinGW host would exercise.
+FARPROC GetProcAddress(HMODULE, const char*) { return nullptr; }
+
+// v1.3.0-beta3 (bug #1): the Lab adopts the system-suggested rect on WM_DPICHANGED.
+BOOL SetWindowPos(HWND, HWND, int, int, int, int, UINT) { return TRUE; }
+
 int GetDeviceCaps(HDC, int index) {
     return (index == LOGPIXELSX) ? okgdi::g_dpi : 0;
 }

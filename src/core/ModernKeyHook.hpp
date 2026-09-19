@@ -68,6 +68,7 @@
 #include <thread>
 #include <utility>
 
+#include "HookCounters.hpp"
 #include "LockFreeQueue.hpp"
 #include "Win32RAII.hpp"
 
@@ -203,6 +204,21 @@ public:
     // Diagnostics (zero-cost: a few atomics)
     [[nodiscard]] std::uint64_t pushed()    const noexcept { return stats_.pushed.load(std::memory_order_relaxed); }
     [[nodiscard]] std::uint64_t dropped()   const noexcept { return stats_.droppedOverflow.load(std::memory_order_relaxed); }
+    //-------------------------------------------------------------------------
+    // v1.3.0-beta3 — PER-SOURCE event counters (see HookCounters.hpp for the
+    // beta2 mislabel they replace: `pushed()` is a RING counter fed by keyboard
+    // AND mouse AND foreground events, so it must never be shown as "keyboard
+    // events processed"). `counters()` is the source-of-truth for the UI's
+    // event breakdown; `pushed()`/`dropped()` stay the ring's own numbers.
+    //
+    // The reference is exposed (not a copy) because the pump/consumer threads
+    // increment individual fields; the UI only reads. Set
+    // `counters().enabled = false` to make every increment a no-op
+    // (diagnostics level Off).
+    //-------------------------------------------------------------------------
+    [[nodiscard]] const HookCounters& counters() const noexcept { return counters_; }
+    [[nodiscard]] HookCounters& counters() noexcept { return counters_; }
+    void resetCounters() noexcept { counters_.reset(); }
     // Median-free worst-case hook-to-consumer latency watermark, microseconds.
     [[nodiscard]] std::int64_t  peakLatencyUs() const noexcept { return peakLatencyUs_.load(std::memory_order_relaxed); }
     // v1.1.0: clear the watermark (the settings dialog resets it when opened
@@ -377,6 +393,7 @@ private:
     std::atomic<bool> running_{false};
     std::atomic<OverflowPolicy> overflowPolicy_{OverflowPolicy::DropNewest};
     ok::lockfree::QueueStats stats_;
+    HookCounters counters_;   // v1.3.0-beta3: per-source event accounting
     std::atomic<std::int64_t> peakLatencyUs_{0};
     std::atomic<std::int64_t> avgLatencyUs_{0};
     // v3.4 (S4): consumer parked flag — see enqueue(). Set before the

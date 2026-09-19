@@ -6,6 +6,7 @@
 #include <atomic>
 #include <cstdint>
 #include <string>
+#include <utility>
 
 namespace ok::effects {
 
@@ -98,4 +99,99 @@ private:
     Config active_{};
     std::uint64_t position_ = 0;
 };
+//---------------------------------------------------------------------------
+// v1.3.0-beta3 — the app-level output decision, EXTRACTED.
+//
+// WHY: beta2 kept this logic inline in onHookEventImpl() (src/app/main.cpp),
+// i.e. inside a Windows-only translation unit that no test can execute. The
+// user-visible symptom was "bật random case rồi mà gõ bên ngoài vẫn bình
+// thường": either the channel was never reached (the settings page that
+// switches it on was one of the tab headers the crowded tab control clipped)
+// or the decision was wrong — and there was NO WAY to tell which from the
+// repository, because the only executable test (tests/test_live_effects.cpp)
+// re-implemented the decision instead of calling it.
+//
+// planOutput() is now the single implementation: the hook calls it, the tests
+// call it, and the two cannot drift. It is pure (no Win32, no globals): the
+// caller owns the scratch string and the LiveEffects cursor.
+//---------------------------------------------------------------------------
+enum class KeyKind : std::uint8_t { Char, Space, Backspace, WordBreak, Other };
+
+struct OutputPlan {
+    bool suppress = false;           // true => the raw key must NOT reach the app
+    std::size_t backspace = 0;       // characters to erase at the caret first
+    bool styled = false;             // live effects changed what is emitted
+    bool nativePassThrough = false;  // the app receives the raw key untouched
+};
+
+// The single implementation of the app-level output decision (v1.3.0-beta3).
+//
+// `text` is the hook's scratch buffer holding the engine's replacement for this
+// key (already resolved, including macro expansions and the restore re-issue).
+// It is styled IN PLACE — exactly as the shipped inline path did — so the hook
+// reuses one buffer with ZERO per-key allocation. On return `text` holds what
+// must be emitted (empty when the raw key passes through natively), and the
+// plan carries the suppress/backspace decision.
+//
+// `typed` is the character the user pressed (only used for KeyKind::Char /
+// Space). `active` is `liveEffects.enabled() && codeTable == Unicode` — the
+// shipped gate; when it is false this is a pure pass-through of the engine's
+// decision (the "feature isolation" contract).
+[[nodiscard]] inline OutputPlan planOutput(bool active,
+                                           bool engineSuppress,
+                                           std::size_t engineBackspace,
+                                           std::wstring& text,
+                                           KeyKind kind,
+                                           char32_t typed,
+                                           LiveEffects& fx) {
+    OutputPlan plan;
+    if (!active) {
+        // Effects off: the plan is exactly the engine's decision and `text` is
+        // left untouched. Nothing below can run.
+        plan.suppress = engineSuppress;
+        plan.backspace = engineBackspace;
+        plan.nativePassThrough = !plan.suppress;
+        return plan;
+    }
+    if (engineSuppress) {
+        // The engine already rewrites the word (tone mark, đ, macro…): style
+        // the replacement in place. The cursor rewinds by the erase count so a
+        // later correction of the same character makes the same visual choice.
+        plan.backspace = engineBackspace;
+        plan.styled = fx.rewrite(engineBackspace, text);
+        plan.suppress = true;
+        return plan;
+    }
+    if (kind == KeyKind::Char || kind == KeyKind::Space) {
+        const char32_t ch = (kind == KeyKind::Space) ? U' ' : typed;
+        // One BMP unit only: a supplementary/control event keeps its native
+        // delivery instead of being truncated into a surrogate half. The
+        // styling cursor is deliberately left UNTOUCHED here (matching the
+        // shipped inline path) — the character is delivered raw and the
+        // engine's word continues; only a word break starts a fresh context.
+        if (ch < 0x20 || ch > 0xFFFF) {
+            plan.nativePassThrough = true;
+            return plan;
+        }
+        text.assign(1, static_cast<wchar_t>(ch));
+        plan.styled = fx.rewrite(0, text);
+        if (plan.styled) {
+            plan.suppress = true;      // swallow the raw key, emit the styled one
+            plan.backspace = 0;
+        } else {
+            text.clear();              // unchanged: let the app take the raw key
+            plan.nativePassThrough = true;
+        }
+        return plan;
+    }
+    if (kind == KeyKind::Backspace) {
+        fx.backspace();                // keep the visual cursor in step
+        plan.nativePassThrough = true;
+        return plan;
+    }
+    fx.reset();                        // word break / navigation: new context
+    plan.nativePassThrough = true;
+    return plan;
+}
+
 } // namespace ok::effects

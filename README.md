@@ -19,7 +19,7 @@ The project may still be paused again in the future if development no longer pro
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20ARM64-0078D6.svg)
 ![Build](https://img.shields.io/badge/build-CMake%20%3E%3D%203.28-064FAD.svg)
 
-**KieeKey v1.3.0-beta2** is a modern, low-latency Vietnamese input method
+**KieeKey v1.3.0-beta3** is a modern, low-latency Vietnamese input method
 engine (bộ gõ Tiếng Việt) for Windows, with a system-tray application, a TSF
 text-store composer and an optional WinUI 3 Fluent settings UI.
 
@@ -33,6 +33,52 @@ text-store composer and an optional WinUI 3 Fluent settings UI.
 ![KieeKey preview](src/app/KieeKeyApp-preview.png)
 
 ---
+
+## What's new in v1.3.0-beta3 — Five reported defects fixed at the root
+
+Beta3 is a correctness release (Windows file version **1.3.0.4**) that fixes five
+user-reported defects, each at its root cause and each covered by a native
+regression test that runs on Linux (no Windows required to prove the logic):
+
+* **Typing games now speak Vietnamese (bug #2).** The Arcade typing games showed
+  ASCII-only prompts with no diacritics, and because they run inside KieeKey's own
+  window — which the keyboard hook deliberately bypasses — the IME never composed
+  there. Each game now owns a `VnComposer` (the same `TextEngine` the IME uses), so
+  **Vietnamese is the default**: prompts bear full diacritics and the player types
+  Telex/VNI exactly as configured while the game window composes and matches. An
+  English mode keeps the legacy ASCII prompt. WasdRace moves steering to the arrow
+  keys in VN mode (a/d/w/s are Telex letters). Settings → Arcade → *Ngôn ngữ đoạn
+  văn* toggles VN↔EN. Proven by `tests/test_vn_composer.cpp` and
+  `tests/test_arcade_vn.cpp` (real keystrokes → real composed Vietnamese).
+* **Live external typing effects work again (bug #3).** The output path was unified
+  into one allocation-free `planOutput()` contract (`LiveEffects.hpp`), proven by
+  `tests/test_live_output_plan.cpp` (incl. a 40k-iteration fuzz).
+* **Vietnamese can be typed in the in-app macro (*gõ tắt*) editor (bug #4).** The
+  own-window hook bypass now exempts the macro edit control (published race-free as
+  an atomic HWND from the UI thread), and live effects are force-disabled while it
+  has focus so the stored expansion is clean text.
+* **The "processed key events" counter no longer ticks on its own (bug #5).** A new
+  `HookCounters` model counts keyboard events only (key/sys-key down/up); mouse,
+  wheel and foreground changes are tracked separately (`tests/test_hook_counters.cpp`).
+* **Chaos Lab is readable (bug #1, part 1).** The Lab created every control with
+  **no font**, so its edit boxes fell back to the raster `SYSTEM_FIXED_FONT` and
+  could not render Vietnamese diacritics. It now uses a DPI-scaled **Segoe UI** face
+  applied to all children and rescaled on `WM_DPICHANGED`, and its clipped labels and
+  truncated button were re-sized.
+
+Also in this release: a portable dialog **layout solver** (`src/app/DialogLayout.hpp`)
+that measures labels, grows the ones whose text does not fit, reflows the controls
+below and grows the page — proven by `tests/test_dialog_layout.cpp` against the real
+authored rectangles of the settings dialog (it reproduces the reported clipping, then
+fixes it, idempotently). Wiring that solver into the settings dialog's `WM_CREATE`
+(the remaining half of bug #1) is the tracked follow-up. An engine over-erase defect
+(`visibleAccount_` not reset on a context change) was fixed, and the **Chẩn đoán**
+(diagnostics) tab was expanded into a real debug surface with all-on / all-off /
+basic modes and a rotating file log (`tests/test_diagnostics.cpp`).
+
+A complete, runnable Windows x64 build is cross-compiled with Zig and committed at
+`dist/KieeKeyApp.exe` for instant testing; the authoritative release binaries still
+come from CI (MSVC, `/W4 /WX`, x64 + ARM64 + ARM64EC).
 
 ## What's new in v1.3.0-beta2 — Input isolation & reliability
 
@@ -370,7 +416,7 @@ original licenses — see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 ## Tóm tắt (Tiếng Việt)
 
-**KieeKey v1.3.0-beta2** là bộ gõ Tiếng Việt cho Windows, xây dựng dựa trên
+**KieeKey v1.3.0-beta3** là bộ gõ Tiếng Việt cho Windows, xây dựng dựa trên
 **[OpenKey](https://github.com/tuyenvm/OpenKey)** (GPL-3.0) của tác giả Tuyen
 Mai. Engine gốc đã được port sang C++ hiện đại: hook bất đồng bộ với hàng đợi
 lock-free, composer TSF (không backspace ảo), bảng âm tiết flat tối ưu cache,

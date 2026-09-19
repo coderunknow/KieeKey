@@ -183,8 +183,8 @@ constexpr wchar_t kAppVersion[]     = L"1.3.0";           // numeric, 3-part
 // v1.2.2 RC1: [[maybe_unused]] — this is a documented VERSION CARRIER
 // (check_version.py reads it), not a code-level constant; the UI shows the
 // title/version forms. Keeping it zero-maintenance and warning-clean.
-[[maybe_unused]] constexpr wchar_t kAppVersionFull[] = L"1.3.0-beta2";  // with channel
-constexpr wchar_t kAppTitle[]       = L"KieeKey v1.3.0-beta2";  // sync with kAppVersionFull
+[[maybe_unused]] constexpr wchar_t kAppVersionFull[] = L"1.3.0-beta3";  // with channel
+constexpr wchar_t kAppTitle[]       = L"KieeKey v1.3.0-beta3";  // sync with kAppVersionFull
 
 //===========================================================================
 // Output item: what the consumer thread must emit (trivially copyable → can
@@ -206,6 +206,12 @@ struct AppState {
     HINSTANCE hInst      = nullptr;
     HWND      hMain      = nullptr;   // hidden message window
     HWND      hSettings  = nullptr;   // settings dialog (nullable)
+    // v1.3.0-beta3 (bug #4): race-free mirror of the macro ("Gõ tắt") editor's
+    // EDIT HWND, written on the UI thread at dialog create/destroy and read on
+    // the hook thread to decide whether the own-window bypass must stand aside
+    // so Vietnamese can be composed into a macro expansion. An atomic avoids
+    // reading the UI-thread hSettings on the hook thread (see ownWindowHasFocus).
+    std::atomic<HWND> macroEdit{nullptr};
     HICON     hIconOn    = nullptr;
     HICON     hIconOff   = nullptr;
 
@@ -1104,6 +1110,24 @@ bool ownWindowHasFocus() noexcept {
     return processId == ::GetCurrentProcessId();
 }
 
+// v1.3.0-beta3 (bug #4): true when the currently focused control is the macro
+// ("Gõ tắt") editor EDIT in our own settings dialog. The own-window bypass must
+// stand aside there so the engine composes Vietnamese into a macro expansion
+// (Telex "tieengs" -> "tiếng") instead of leaving the raw keystrokes. Reads only
+// the atomic mirror published on the UI thread — never the UI-thread hSettings —
+// and returns false on any doubt (so the safe default is always "keep bypassing").
+bool focusIsMacroEditor() noexcept {
+    const HWND macroEdit = g.macroEdit.load(std::memory_order_acquire);
+    if (macroEdit == nullptr) { return false; }
+    const HWND foreground = ::GetForegroundWindow();
+    if (foreground == nullptr) { return false; }
+    const DWORD tid = ::GetWindowThreadProcessId(foreground, nullptr);
+    GUITHREADINFO gui{};
+    gui.cbSize = sizeof(gui);
+    if (!::GetGUIThreadInfo(tid, &gui)) { return false; }
+    return gui.hwndFocus == macroEdit;
+}
+
 //---------------------------------------------------------------------------
 // v1.2.0 Stable — FAULT ISOLATION for the producer (hook) thread.
 //
@@ -1161,10 +1185,21 @@ PD onHookEventImpl(const KeyEvent& ev) {
     // Games accept input ONLY through their focused UI, never through this
     // system-wide hook. Background Arcade/Flexing must not eat another app's
     // keys or mutate a game concurrently with the UI timer.
+    // v1.3.0-beta3 (bug #4): macroEditorFocus is computed ONLY inside the
+    // own-window branch, so external typing (the hot path) pays nothing extra.
+    bool macroEditorFocus = false;
     if (ev.source == EventSource::Keyboard && ownWindowHasFocus()) {
-        g.liveEffects.reset();
-        g.engineResyncPending.store(true, std::memory_order_release);
-        return PD{};
+        macroEditorFocus = focusIsMacroEditor();
+        if (!macroEditorFocus) {
+            g.liveEffects.reset();
+            g.engineResyncPending.store(true, std::memory_order_release);
+            return PD{};
+        }
+        // Fall through: the focused control is the macro ("Gõ tắt") editor, a
+        // plain EDIT in our own dialog. Compose Vietnamese into it through the
+        // normal engine path (live effects are forced OFF below so the stored
+        // expansion is the clean text the user typed). The self-injected filter
+        // stops the composed keys from re-entering the hook.
     }
 
     // v1.2.0 Stable: repair after a producer-side fault (see onHookEvent).
@@ -1173,7 +1208,11 @@ PD onHookEventImpl(const KeyEvent& ev) {
     // the pending word is the only safe way back to a known-good state.
     if (g.engineResyncPending.exchange(false, std::memory_order_acq_rel)) {
         std::lock_guard<std::mutex> lk(g.engineMtx);
-        g.engine.startNewSession();
+        // The engine's buffer and the visible text disagree, so visibleAccount_
+        // (the D2 over-backspace clamp) is unreliable — take the engine fully
+        // back to fresh-engine state (v1.3.0-beta3) rather than the partial
+        // word drop, which left the stale account loosening the clamp.
+        g.engine.resetForNewContext();
         g.liveEffects.reset();
     }
 
@@ -1233,10 +1272,20 @@ PD onHookEventImpl(const KeyEvent& ev) {
 
     // ---- bookkeeping / environment events ----
     if (ev.source == EventSource::ForegroundChanged) {
-        if (g.liveEffects.enabled()) {
+        {
             std::lock_guard<std::mutex> lk(g.engineMtx);
-            g.engine.startNewSession();
-            g.liveEffects.reset();
+            // v1.3.0-beta3 over-backspace fix: a foreground switch is a NEW
+            // DOCUMENT context — the engine committed nothing in the new window,
+            // so every word-scoped field AND the D2 visible-account clamp must
+            // return to fresh-engine state. beta2 called the PARTIAL
+            // startNewSession() here (and only when live effects were on), which
+            // left visibleAccount_ holding the PREVIOUS window's committed
+            // length; the clamp `backspaceCount <= visibleAccount_` then failed
+            // to bound a correction in the new window, so the first tone mark /
+            // restore after Alt-Tab could erase text to the LEFT of the caret
+            // (silent data loss, reproduced by tests/test_live_output_plan.cpp).
+            g.engine.resetForNewContext();
+            if (g.liveEffects.enabled()) { g.liveEffects.reset(); }
         }
         // v1.1.3: refreshNow() is KEPT deliberately (correctness before
         // micro-optimization). The monitor's own WinEvent pump publishes the
@@ -1282,10 +1331,9 @@ PD onHookEventImpl(const KeyEvent& ev) {
                                reinterpret_cast<WPARAM>(fgSnap ? fgSnap->hwnd : nullptr), 0);
             }
         }
-        if (g.fgExcluded_.load(std::memory_order_relaxed)) {
-            std::lock_guard<std::mutex> lk(g.engineMtx);
-            g.engine.startNewSession();
-        }
+        // (The unconditional resetForNewContext() at the top of this branch
+        // already covers the excluded-foreground case — a second partial reset
+        // here would be redundant and would re-dirty nothing.)
         OutputItem it;
         it.kind = OutputItem::Kind::ForegroundChanged;
         static_cast<void>(g.outRing.try_push(it));
@@ -1459,7 +1507,10 @@ PD onHookEventImpl(const KeyEvent& ev) {
             waitPendingEditsDrained();
             return PD{false, false};   // disabled mid-stroke — pass through
         }
-        liveOutput = g.liveEffects.enabled() && g.options.codeTable == CodeTable::Unicode;
+        // bug #4: never style the macro editor — the stored expansion must be
+        // the clean Vietnamese the user typed, not a random-case/flip variant.
+        liveOutput = !macroEditorFocus &&
+                     g.liveEffects.enabled() && g.options.codeTable == CodeTable::Unicode;
         const EngineResult& r = g.engine.process(in);
         // v1.1.2-r3 NUMBER-SAFETY GUARD (defense in depth, the LAST layer
         // before output). The engine promise is: with digitsAreLiteral ON, a
@@ -1581,22 +1632,27 @@ PD onHookEventImpl(const KeyEvent& ev) {
     }
 
     if (liveOutput) {
-        if (suppress) {
-            g.liveEffects.rewrite(bs, g.repScratch);
-        } else if (in.kind == InputKind::Char || in.kind == InputKind::Space) {
-            const char32_t typed = in.kind == InputKind::Space ? U' ' : in.ch;
-            // layoutChar currently produces one BMP unit. Unknown/supplementary
-            // events keep the native delivery rather than truncating them.
-            if (typed >= 0x20 && typed <= 0xFFFF) {
-                g.repScratch.assign(1, static_cast<wchar_t>(typed));
-                suppress = g.liveEffects.rewrite(0, g.repScratch);
-                if (!suppress) { g.repScratch.clear(); }
-            }
-        } else if (in.kind == InputKind::Backspace) {
-            g.liveEffects.backspace();
-        } else {
-            g.liveEffects.reset();
-        }
+        // v1.3.0-beta3: the live-effects output decision now lives in ONE
+        // place — ok::effects::planOutput() — which tests/test_live_output_plan
+        // .cpp drives through the REAL TextEngine. Before beta3 this logic was
+        // inline here, inside a Windows-only TU no test could execute, so a
+        // wrong decision was invisible ("bật random case rồi mà gõ bên ngoài
+        // vẫn bình thường"). planOutput styles g.repScratch IN PLACE (the hook
+        // reuses one buffer — zero per-key allocation) and returns the
+        // suppress/backspace decision; it is behaviour-identical to the inline
+        // branch it replaces (verified by the shipped-path suite).
+        const ok::effects::KeyKind kind =
+            (in.kind == InputKind::Char)      ? ok::effects::KeyKind::Char :
+            (in.kind == InputKind::Space)     ? ok::effects::KeyKind::Space :
+            (in.kind == InputKind::Backspace) ? ok::effects::KeyKind::Backspace :
+            (in.kind == InputKind::WordBreak) ? ok::effects::KeyKind::WordBreak :
+                                                ok::effects::KeyKind::Other;
+        const char32_t typed = (in.kind == InputKind::Space) ? U' ' : in.ch;
+        const ok::effects::OutputPlan plan =
+            ok::effects::planOutput(true, suppress, bs, g.repScratch,
+                                    kind, typed, g.liveEffects);
+        suppress = plan.suppress;
+        bs         = plan.backspace;
     }
 #if KIEEKEY_PROFILE
     if (profOn) {
@@ -3164,6 +3220,9 @@ void settingsToControls() {
     ::SendMessageW(::GetDlgItem(g.hSettings, IDC_CMB_FAILMODE), CB_SETCURSEL,
                    arcade.rhythmFailMode == ok::arcade::FailMode::HealthBar ? 1 : 0, 0);
     ::SetDlgItemInt(g.hSettings, IDC_EDT_RHYTHM_BPM, static_cast<UINT>(arcade.rhythmBpm), FALSE);
+    // v1.3.0-beta3 (bug #2): reflect the saved passage language (VN is index 0).
+    ::SendMessageW(::GetDlgItem(g.hSettings, IDC_CMB_PASSAGE_LANG), CB_SETCURSEL,
+                   arcade.passageLanguage == ok::arcade::PassageLanguage::English ? 1 : 0, 0);
     updateHeaderStatus();
     showTab(g_settingsOpenTab);
 }
@@ -3219,7 +3278,8 @@ void showTab(int tab) {
         IDC_BTN_PLAY_TYPINGRACE, IDC_BTN_PLAY_WASDRACE, IDC_BTN_PLAY_RHYTHM,
         IDC_BTN_PLAY_NOMISTAKE, IDC_BTN_PLAY_FLEXING, IDC_STAT_ARCADE_STATUS,
         IDC_BTN_OPEN_CHAOS_LAB, IDC_CMB_FAILMODE, IDC_EDT_RHYTHM_BPM,
-        IDC_BTN_APPLY_ARCADE_CFG, IDC_STAT_FAILMODE, IDC_STAT_RHYTHM_BPM, 0
+        IDC_BTN_APPLY_ARCADE_CFG, IDC_STAT_FAILMODE, IDC_STAT_RHYTHM_BPM,
+        IDC_STAT_PASSAGE_LANG, IDC_CMB_PASSAGE_LANG, 0
     };
     static constexpr int kTab6[] = {
         IDC_GRP_CHAOS, IDC_CHK_CHAOS_MASTER, IDC_CHK_CHAOS_CASE,
@@ -3439,6 +3499,10 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                   ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN,
                   S(28), S(156), S(480), S(396),
                   reinterpret_cast<HMENU>(IDC_EDIT_MACRO));
+            // Publish the macro editor HWND for the hook thread's bypass
+            // exemption (bug #4). Cleared wherever the dialog is torn down.
+            g.macroEdit.store(::GetDlgItem(hwnd, IDC_EDIT_MACRO),
+                              std::memory_order_release);
 
             // ---- tab 3: Chẩn đoán ----
             mkCtl(hwnd, L"STATIC", L"Độ trễ đỉnh hook → xử lý (µs):", WS_CHILD | WS_VISIBLE,
@@ -3587,6 +3651,25 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                   WS_CHILD | WS_VISIBLE | WS_TABSTOP, S(44), S(362), S(220), S(28),
                   reinterpret_cast<HMENU>(IDC_BTN_APPLY_ARCADE_CFG));
 
+            // v1.3.0-beta3 (bug #2): typing-game passage language. Vietnamese (the
+            // default) shows diacritic-bearing prompts and composes Telex/VNI inside
+            // the game window (the hook bypasses our own windows); English keeps the
+            // legacy ASCII prompt with 1:1 matching. The composition method follows
+            // the IME method the user already configured (g.options.inputMethod).
+            mkCtl(hwnd, L"STATIC", L"Ngôn ngữ đoạn văn:",
+                  WS_CHILD | WS_VISIBLE | SS_LEFT, S(44), S(398), S(200), S(18),
+                  reinterpret_cast<HMENU>(IDC_STAT_PASSAGE_LANG));
+            HWND passageLang = mkCtl(hwnd, L"COMBOBOX", L"",
+                  WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL,
+                  S(250), S(396), S(250), S(140), reinterpret_cast<HMENU>(IDC_CMB_PASSAGE_LANG));
+            if (passageLang != nullptr) {
+                ::SendMessageW(passageLang, CB_ADDSTRING, 0,
+                               reinterpret_cast<LPARAM>(L"Tiếng Việt (Telex/VNI) — mặc định"));
+                ::SendMessageW(passageLang, CB_ADDSTRING, 0,
+                               reinterpret_cast<LPARAM>(L"English (ASCII)"));
+                ::SendMessageW(passageLang, CB_SETCURSEL, 0, 0);
+            }
+
             // ---- tab 6: Phòng Chaos (v1.3.0) ----
             mkCtl(hwnd, L"BUTTON", L"Phòng thí nghiệm Chaos & Thử nghiệm",
                   WS_CHILD | WS_VISIBLE | BS_GROUPBOX, S(24), S(100), S(494), S(196),
@@ -3697,10 +3780,10 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             ::SetTimer(hwnd, 1, 500, nullptr);   // live telemetry
             return 0;
             } catch (const std::bad_alloc&) {
-                g.hSettings = nullptr;
+                g.hSettings = nullptr; g.macroEdit.store(nullptr, std::memory_order_release);
                 return -1;
             } catch (...) {
-                g.hSettings = nullptr;
+                g.hSettings = nullptr; g.macroEdit.store(nullptr, std::memory_order_release);
                 return -1;
             }
         }
@@ -3953,10 +4036,23 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     if (bpm >= 60 && bpm <= 220) {
                         cfg.rhythmBpm = static_cast<double>(bpm);
                     }
+                    // v1.3.0-beta3 (bug #2): passage language (VN default) + the
+                    // composition method, which follows the IME method already
+                    // configured so the games compose Telex/VNI exactly like the IME.
+                    HWND langCombo = ::GetDlgItem(hwnd, IDC_CMB_PASSAGE_LANG);
+                    const int langSel = (langCombo != nullptr)
+                                            ? static_cast<int>(::SendMessageW(langCombo,
+                                                                              CB_GETCURSEL, 0, 0))
+                                            : 0;
+                    cfg.passageLanguage = (langSel == 1)
+                                              ? ok::arcade::PassageLanguage::English
+                                              : ok::arcade::PassageLanguage::Vietnamese;
+                    cfg.vnInputMethod =
+                        static_cast<ok::arcade::VnInputMethod>(g.options.inputMethod);
                     ok::arcade::ArcadeManager::instance().setConfig(cfg);
                     ::MessageBoxW(hwnd,
-                                  L"Đã áp dụng: chế độ "
-                                  L"Rhythm/No-Mistake và nhịp BPM cho các game tiếp theo.",
+                                  L"Đã áp dụng: chế độ Rhythm/No-Mistake, nhịp BPM và "
+                                  L"ngôn ngữ đoạn văn cho các game tiếp theo.",
                                   L"KieeKey Arcade", MB_OK | MB_ICONINFORMATION);
                     return 0;
                 }
@@ -4007,7 +4103,7 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 case IDCANCEL:
                     ::KillTimer(hwnd, 1);
                     ::DestroyWindow(hwnd);
-                    g.hSettings = nullptr;
+                    g.hSettings = nullptr; g.macroEdit.store(nullptr, std::memory_order_release);
                     return 0;
                 case IDC_BTN_APPLY:
                     settingsFromControls();
@@ -4028,11 +4124,11 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         case WM_CLOSE:
             ::KillTimer(hwnd, 1);
             ::DestroyWindow(hwnd);
-            g.hSettings = nullptr;
+            g.hSettings = nullptr; g.macroEdit.store(nullptr, std::memory_order_release);
             return 0;
 
         case WM_DESTROY:
-            g.hSettings = nullptr;
+            g.hSettings = nullptr; g.macroEdit.store(nullptr, std::memory_order_release);
             return 0;
     }
     return ::DefWindowProcW(hwnd, msg, wParam, lParam);

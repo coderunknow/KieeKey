@@ -69,6 +69,9 @@ using LPWSTR    = wchar_t*;
 #ifndef CALLBACK
 #  define CALLBACK
 #endif
+#ifndef WINAPI
+#  define WINAPI
+#endif
 
 struct HWND__;
 struct HDC__;
@@ -96,6 +99,9 @@ using HCURSOR   = HCURSOR__*;
 using HGDIOBJ   = void*;
 using LPVOID    = void*;
 using HANDLE    = void*;
+using HMODULE     = HINSTANCE;                       // GetModuleHandle/LoadLibrary module handle
+using FARPROC     = void (*)();                      // generic function pointer (GetProcAddress)
+using WNDENUMPROC = BOOL (CALLBACK*)(HWND, LPARAM);  // EnumChildWindows callback
 
 #ifndef TRUE
 #  define TRUE 1
@@ -210,6 +216,12 @@ struct PAINTSTRUCT {
 #define WM_ERASEBKGND    0x0014
 #define WM_SETCURSOR     0x0020
 #define WM_GETDLGCODE    0x0087
+#define WM_SETFONT       0x0030
+#define WM_DPICHANGED    0x02E0
+#define SWP_NOSIZE       0x0001
+#define SWP_NOMOVE       0x0002
+#define SWP_NOZORDER     0x0004
+#define SWP_NOACTIVATE   0x0010
 #define WM_KEYDOWN       0x0100
 #define WM_KEYUP         0x0101
 #define WM_CHAR          0x0102
@@ -258,6 +270,9 @@ struct PAINTSTRUCT {
 #define FW_BOLD          700
 #define DEFAULT_CHARSET  1
 #define CLEARTYPE_QUALITY 5
+#define OUT_DEFAULT_PRECIS  0
+#define CLIP_DEFAULT_PRECIS 0
+#define DEFAULT_PITCH       0
 #define FIXED_PITCH      1
 #define VARIABLE_PITCH   2
 #define LOGPIXELSX       88
@@ -324,6 +339,7 @@ BOOL  InvalidateRect(HWND, const RECT*, BOOL);
 BOOL  GetClientRect(HWND, RECT*);
 BOOL  AdjustWindowRectEx(RECT*, DWORD, BOOL, DWORD);
 BOOL  SetWindowTextW(HWND, LPCWSTR);
+BOOL  SetWindowPos(HWND, HWND, int, int, int, int, UINT);
 int   GetWindowTextW(HWND, LPWSTR, int);
 int   GetWindowTextLengthW(HWND);
 LRESULT CALLBACK DefWindowProcW(HWND, UINT, WPARAM, LPARAM);
@@ -347,6 +363,9 @@ BOOL  KillTimer(HWND, UINT_PTR);
 BOOL  GetKeyboardState(BYTE*);
 int   ToUnicode(UINT, UINT, const BYTE*, LPWSTR, int, UINT);
 HINSTANCE GetModuleHandleW(LPCWSTR);
+FARPROC GetProcAddress(HMODULE, const char*);
+int   MulDiv(int, int, int);
+BOOL  EnumChildWindows(HWND, WNDENUMPROC, LPARAM);
 DWORD GetLastError(void);
 void  SetLastError(DWORD);
 void  Sleep(DWORD);
@@ -366,6 +385,8 @@ HGDIOBJ GetStockObject(int);
 HBRUSH  CreateSolidBrush(COLORREF);
 HPEN    CreatePen(int, int, COLORREF);
 HFONT   CreateFontIndirectW(const LOGFONTW*);
+HFONT   CreateFontW(int, int, int, int, int, DWORD, DWORD, DWORD, DWORD, DWORD,
+                    DWORD, DWORD, DWORD, LPCWSTR);
 int     GetDeviceCaps(HDC, int);
 BOOL    BitBlt(HDC, int, int, int, int, HDC, int, int, DWORD);
 int     FillRect(HDC, const RECT*, HBRUSH);

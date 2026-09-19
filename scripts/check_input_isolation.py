@@ -42,9 +42,21 @@ def check(root):
         problems.append('own-window bypass must be limited to keyboard events; keep foreground bookkeeping')
     # Both literal and consumed engine output must reach the visual adapter;
     # reintroducing a replacement-only transform corrupts random-case continuity.
-    if 'g.liveEffects.rewrite(0, g.repScratch)' not in producer or 'g.liveEffects.rewrite(bs, g.repScratch)' not in producer:
+    #
+    # v1.3.0-beta3: that decision was EXTRACTED from this producer into
+    # ok::effects::planOutput() (src/core/LiveEffects.hpp) so the shipped hook
+    # and tests/test_live_output_plan.cpp drive ONE tested implementation
+    # instead of drifting copies. The gate now asserts (a) the producer routes
+    # live output through planOutput, (b) planOutput still covers BOTH literal
+    # insertion (rewrite(0, …)) and consumed engine rewrites
+    # (rewrite(engineBackspace, …)), and (c) the routing precedes the
+    # pass-through decision.
+    effects = (root / 'src/core/LiveEffects.hpp').read_text(encoding='utf-8')
+    if 'planOutput(' not in producer:
+        problems.append('producer must route live output through ok::effects::planOutput')
+    if 'fx.rewrite(0, text)' not in effects or 'fx.rewrite(engineBackspace, text)' not in effects:
         problems.append('live output adapter must cover literal insertion and engine rewrites')
-    if producer.rfind('g.liveEffects.rewrite(bs, g.repScratch)') > producer.find('if (!suppress)'):
+    if producer.rfind('planOutput(') > producer.find('if (!suppress)'):
         problems.append('live output must precede pass-through decision')
     ownership = function_body(source, r'bool ownWindowHasFocus\(\) noexcept')
     if 'GetWindowThreadProcessId' not in ownership or 'GetCurrentProcessId' not in ownership:

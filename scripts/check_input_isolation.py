@@ -64,11 +64,36 @@ def check(root):
     # Every control created in the optional settings pages must belong to
     # exactly one visibility list. Missing IDs/tab entries overlaid Arcade
     # widgets on the IME options and macro editor in beta1.
-    tabs = re.findall(r'static constexpr int kTab[0-8]\[\]\s*=\s*\{(.*?)\};', source, re.S)
+    #
+    # v1.3.0-beta4: the scan runs on a copy whose comments and string-literal
+    # BODIES are blanked at equal length (below). Vietnamese hint text may
+    # legitimately contain ");" (e.g. "…đổi ở tab Bàn phím); …"), and that
+    # truncated the non-greedy mkCtl() match mid-literal — misreporting a
+    # named, tab-registered control as anonymous. function_body() has always
+    # stripped literals for the same reason; the mkCtl scan now does too.
+    def blank_noncode(text):
+        # One pass, alternatives tried at each position: a "//" inside a
+        # string is consumed by the string match, a quote inside a comment by
+        # the comment match — so neither can swallow real code. Offsets are
+        # preserved so the '// ---- tab N:' page markers stay addressable;
+        # those marker comments are kept verbatim on purpose.
+        pattern = re.compile(
+            r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'', re.S)
+
+        def repl(m):
+            s = m.group(0)
+            if s.startswith('//') and ' ---- ' in s:
+                return s  # page/section markers remain findable
+            return ' ' * len(s)
+
+        return pattern.sub(repl, text)
+
+    scanned = blank_noncode(source)
+    tabs = re.findall(r'static constexpr int kTab[0-8]\[\]\s*=\s*\{(.*?)\};', scanned, re.S)
     tab_ids = re.findall(r'\bIDC_\w+', '\n'.join(tabs))
-    start = source.index('// ---- tab 5:')
-    end = source.index('// ---- buttons ----', start)
-    for control in re.findall(r'mkCtl\(.*?\);', source[start:end], re.S):
+    start = scanned.index('// ---- tab 5:')
+    end = scanned.index('// ---- buttons ----', start)
+    for control in re.findall(r'mkCtl\(.*?\);', scanned[start:end], re.S):
         match = re.search(r'reinterpret_cast<HMENU>\((IDC_\w+)\)', control)
         if match is None:
             problems.append('optional settings page has an anonymous control that cannot hide with its tab')

@@ -208,3 +208,12 @@
 #define IDC_CMB_LIVE_INTENSITY    625
 #define IDC_STAT_LIVE_INTENSITY   626
 #define IDC_STAT_LIVE_HINT        627
+
+// ---- v1.3.0-beta4: diagnostics tab (tab 3 "Chẩn đoán") self-check UI ----
+#define IDC_GRP_DIAG             630
+#define IDC_RAD_DIAG_OFF         631
+#define IDC_RAD_DIAG_BASIC       632
+#define IDC_RAD_DIAG_FULL        633
+#define IDC_BTN_DIAG_RUN         634
+#define IDC_BTN_DIAG_REPORT      635
+#define IDC_STAT_DIAG_RESULT     636

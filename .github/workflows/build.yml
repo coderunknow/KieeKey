@@ -51,6 +51,12 @@ on:
   pull_request:
     branches: [ main ]
   workflow_dispatch:
+    inputs:
+      base_tag:
+        description: 'Benchmark base tag (A/B against this tag)'
+        required: false
+        default: 'v1.3.0-beta5'
+        type: string
 
 jobs:
   native:
@@ -68,6 +74,78 @@ jobs:
           name: native-regression-logs
           path: build/test-run/logs/
           retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # v1.3.0-beta6 (G4 + V4): the FULL no-regression benchmark campaign, run on a
+  # CI runner instead of the shared dev sandbox (quieter host; closes the
+  # beta5-owed e2e re-check). MANUAL ONLY (workflow_dispatch): it is a
+  # campaign, not a per-push gate.
+  #
+  #   1. Feature isolation A/B (bench_v130_isolation): N alternating pairs,
+  #      medians, FNV digest comparison — tests/run_isolation_ab.sh.
+  #   2. Full bench suite A/B (engine micro, tone, e2e shim pipeline):
+  #      tests/run_bench_suite.sh --ab-base=<base-tag worktree>.
+  #
+  # The base tag must be an ancestor of the dispatched commit; the harness
+  # files are taken from the HEAD tree and compiled into BOTH sides, so the
+  # campaign can only measure the engine delta.
+  # ---------------------------------------------------------------------------
+  bench:
+    name: Benchmark A/B campaign (manual)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # the base tag must exist in this clone
+
+      - name: Resolve base tag
+        id: base
+        run: |
+          BASE_TAG="${{ inputs.base_tag || 'v1.3.0-beta5' }}"
+          git rev-parse -q --verify "refs/tags/$BASE_TAG^{commit}" \
+            || { echo "::error::base tag $BASE_TAG not found"; exit 1; }
+          git merge-base --is-ancestor "$BASE_TAG" HEAD \
+            || { echo "::error::$BASE_TAG is not an ancestor of HEAD"; exit 1; }
+          git worktree add --detach /tmp/kk-base "$BASE_TAG"
+          echo "tag=$BASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "Base: $BASE_TAG ($(git -C /tmp/kk-base rev-parse --short HEAD)) vs HEAD ($(git rev-parse --short HEAD))"
+
+      - name: Feature isolation A/B (15 alternating pairs, medians)
+        run: |
+          bash tests/run_isolation_ab.sh \
+            --base=/tmp/kk-base --side=beta6-vs-${{ steps.base.outputs.tag }} \
+            --rounds=15 --keys=300000 --out="$RUNNER_TEMP/iso"
+
+      - name: Full benchmark suite A/B (micro + tone + e2e shim)
+        run: |
+          bash tests/run_bench_suite.sh \
+            --ab-base=/tmp/kk-base --side=beta6-vs-${{ steps.base.outputs.tag }} \
+            --out="$RUNNER_TEMP/benchsuite"
+
+      - name: Campaign summary
+        if: always()
+        run: |
+          {
+            echo "## Benchmark A/B campaign (base: ${{ steps.base.outputs.tag }})"
+            echo
+            if [ -f "$RUNNER_TEMP/iso/iso_beta6-vs-${{ steps.base.outputs.tag }}_report.txt" ]; then
+              echo '```'
+              cat "$RUNNER_TEMP/iso/iso_beta6-vs-${{ steps.base.outputs.tag }}_report.txt"
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload benchmark artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: benchmark-ab-campaign
+          path: |
+            ${{ runner.temp }}/iso/
+            ${{ runner.temp }}/benchsuite/
+          retention-days: 90
 
   build:
     name: ${{ matrix.platform }}

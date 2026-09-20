@@ -547,6 +547,139 @@ void testFormatEventRecord() {
     std::cout << "  [PASS] trace line format (+ out-of-range enum safety)\n";
 }
 
+//---------------------------------------------------------------------------
+// v1.3.0-beta6 (V4): tester evidence — emit chain, process resolution,
+// display metrics. The formatting is the contract the tester greps.
+//---------------------------------------------------------------------------
+void testTesterEvidence() {
+    // --- the emit ring: order, monotonic seq, overwrite-oldest -------------
+    EmitTrace ring(4);
+    assert(ring.size() == 0);
+    for (int i = 1; i <= 6; ++i) {
+        EmitRecord rec{};
+        rec.channel = (i % 2 == 0) ? 1 : 0;
+        rec.pid = static_cast<std::uint32_t>(1000 + i);
+        rec.chars = static_cast<std::uint32_t>(i);
+        rec.processName = "app" + std::to_string(i) + ".exe";
+        rec.windowClass = "Class" + std::to_string(i);
+        const bool wrapped = ring.push(std::move(rec));
+        assert(wrapped == (i > 4));
+    }
+    assert(ring.size() == 4);
+    std::vector<EmitRecord> snap = ring.snapshot(100);
+    assert(snap.size() == 4);
+    // The oldest two were overwritten; survivors are 3..6, oldest first,
+    // with monotonic sequence numbers stamped by the ring.
+    for (std::size_t i = 0; i < 4; ++i) {
+        assert(snap[i].pid == 1003u + i);
+        assert(snap[i].seq == 3 + i);
+        assert(snap[i].processName == "app" + std::to_string(3 + i) + ".exe");
+    }
+    // Bounded snapshots honour the cap.
+    assert(ring.snapshot(2).size() == 2);
+    ring.clear();
+    assert(ring.size() == 0 && ring.snapshot(10).empty());
+
+    // --- the machine-readable line -----------------------------------------
+    EmitRecord rec{};
+    rec.seq = 42;
+    rec.tickMs = 555;
+    rec.channel = 0;                       // TSF
+    rec.gate = 0;                          // GateBlocker::None
+    rec.pid = 4711;
+    rec.chars = 3;
+    rec.processName = "chrome.exe";
+    rec.windowClass = "Chrome_WidgetWin_1";
+    const std::string line = formatEmitRecord(rec);
+    assert(line.rfind("emit-chain ", 0) == 0);
+    assert(line.find("seq=42") != std::string::npos);
+    assert(line.find("channel=TSF") != std::string::npos);
+    assert(line.find("gate=none") != std::string::npos);
+    assert(line.find("pid=4711") != std::string::npos);
+    assert(line.find("process=\"chrome.exe\"") != std::string::npos);
+    assert(line.find("class=\"Chrome_WidgetWin_1\"") != std::string::npos);
+    assert(line.find("chars=3") != std::string::npos);
+    // Gate tokens cover every veto so a blocked emit is self-explaining.
+    rec.gate = 1; assert(formatEmitRecord(rec).find("gate=ime-disabled") != std::string::npos);
+    rec.gate = 2; assert(formatEmitRecord(rec).find("gate=app-excluded") != std::string::npos);
+    rec.gate = 3; assert(formatEmitRecord(rec).find("gate=master-off") != std::string::npos);
+    rec.gate = 4; assert(formatEmitRecord(rec).find("gate=non-unicode-table") != std::string::npos);
+    rec.gate = 99; assert(formatEmitRecord(rec).find("gate=unknown") != std::string::npos);
+    rec.channel = 1; assert(formatEmitRecord(rec).find("channel=SendInput") != std::string::npos);
+    // Interior quotes are doubled, never left dangling (greppable lines).
+    rec.processName = "wei\"rd.exe";
+    assert(formatEmitRecord(rec).find("\"wei\"\"rd.exe\"") != std::string::npos);
+
+    // --- process resolution (B4) -------------------------------------------
+    ProcessResolution res{};
+    res.pid = 88;
+    res.api = static_cast<std::uint8_t>(ResolveApi::QueryFullProcessImageName);
+    res.error = 0;
+    res.elevated = false;
+    res.name = "Code.exe";
+    const std::string rline = formatProcessResolution(res);
+    assert(rline.rfind("process-resolution ", 0) == 0);
+    assert(rline.find("pid=88") != std::string::npos);
+    assert(rline.find("name=\"Code.exe\"") != std::string::npos);
+    assert(rline.find("api=QueryFullProcessImageNameW") != std::string::npos);
+    assert(rline.find("error=0") != std::string::npos);
+    assert(rline.find("elevated=off") != std::string::npos);
+    res.api = static_cast<std::uint8_t>(ResolveApi::AumidProperty);
+    assert(formatProcessResolution(res).find("api=UWP-AUMID") != std::string::npos);
+    res.api = static_cast<std::uint8_t>(ResolveApi::FallbackLabel);
+    res.elevated = true;
+    const std::string honest = formatProcessResolution(res);
+    assert(honest.find("api=fallback-label") != std::string::npos);
+    assert(honest.find("elevated=on") != std::string::npos);
+    res.api = 7;   // out of range degrades, never crashes
+    assert(formatProcessResolution(res).find("api=not-recorded") != std::string::npos);
+
+    // --- display metrics (B1) ------------------------------------------------
+    DisplayMetrics dm{};
+    dm.dpi = 144;
+    dm.systemDpi = 96;
+    dm.fontHeightPx = -17;
+    dm.dwmComposition = true;
+    dm.perMonitorAware = true;
+    dm.screenWidth = 2560;
+    dm.screenHeight = 1440;
+    dm.fontFace = "Segoe UI";
+    const std::string dline = formatDisplayMetrics(dm);
+    assert(dline.rfind("display-metrics ", 0) == 0);
+    assert(dline.find("dpi=144") != std::string::npos);
+    assert(dline.find("systemDpi=96") != std::string::npos);
+    assert(dline.find("font=\"Segoe UI\"") != std::string::npos);
+    assert(dline.find("fontHeightPx=-17") != std::string::npos);
+    assert(dline.find("dwm=on") != std::string::npos);
+    assert(dline.find("perMonitorAware=on") != std::string::npos);
+    assert(dline.find("screen=2560x1440") != std::string::npos);
+
+    // --- service wiring: record, report, reset ------------------------------
+    Diagnostics& d = Diagnostics::instance();
+    d.resetAll();
+    const std::string empty = d.report(0);
+    assert(empty.find("emit-chain") == std::string::npos);
+    assert(empty.find("(no deliveries recorded yet") != std::string::npos);
+    assert(empty.find("(no foreground resolution recorded yet)") != std::string::npos);
+    assert(empty.find("display-metrics dpi=96") != std::string::npos);
+
+    d.recordEmit(rec);
+    d.setProcessResolution(res);
+    d.setDisplayMetrics(dm);
+    const std::string filled = d.report(0);
+    assert(filled.find("emit-channel") == std::string::npos);   // no typo drift
+    assert(filled.find("emit-chain seq=1") != std::string::npos);
+    assert(filled.find("process-resolution pid=88") != std::string::npos);
+    assert(filled.find("display-metrics dpi=144") != std::string::npos);
+    assert(d.emits().size() == 1);
+
+    d.resetAll();
+    assert(d.emits().size() == 0);
+    assert(d.processResolution().pid == 0);
+    assert(d.displayMetrics().dpi == 96);
+    std::cout << "  [PASS] tester evidence (emit chain + B4 resolution + B1 display)\n";
+}
+
 } // namespace
 
 int main() {
@@ -562,6 +695,7 @@ int main() {
     testReportAndVerdict();
     testConcurrentCounters();
     testFormatEventRecord();
+    testTesterEvidence();
     std::cout << "=== ALL DIAGNOSTICS TESTS PASSED ===\n";
     return 0;
 }

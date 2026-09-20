@@ -90,9 +90,13 @@ function makeElement(id) {
 
 const ids = ['screen', 'title', 'score', 'best', 'level', 'combo', 'lives', 'wpm', 'acc',
              'banner', 'toast', 'connection', 'fps', 'catalog', 'subtitle', 'failMode',
-             'bpm', 'bpmOut', 'pacer', 'pacerOut', 'restart', 'pause', 'stop'];
+             'bpm', 'bpmOut', 'pacer', 'pacerOut', 'steering', 'restart', 'pause', 'stop'];
 const elements = {};
 for (const id of ids) { elements[id] = makeElement(id); }
+// v1.3.0-beta6 (V2/B7): the steering select boots with a real DOM value
+// (the default <option> is selected), and its change/input handlers are
+// exercised by testSteeringConfigPush below.
+elements.steering.value = '1';
 elements.screen.getContext = () => theContext;
 
 const theContext = makeContext();
@@ -100,6 +104,7 @@ const theContext = makeContext();
 let streamOpened = false;
 const keyHandlers = {};
 const requests = [];
+const requestBodies = [];
 const sandbox = {
   console,
   performance: { now: () => 0 },
@@ -118,7 +123,11 @@ const sandbox = {
     addEventListener: (type, handler) => { keyHandlers[type] = handler; },
     KieeKeyLabs: undefined,
   },
-  fetch: async (url) => { requests.push(url); return { ok: true, status: 200, json: async () => ({ ok: true, games: [] }) }; },
+  fetch: async (url, opts) => {
+    requests.push(url);
+    if (opts && opts.body) { requestBodies.push(String(opts.body)); }
+    return { ok: true, status: 200, json: async () => ({ ok: true, games: [] }) };
+  },
   EventSource: function EventSource() { streamOpened = true; },
 };
 sandbox.globalThis = sandbox;
@@ -255,7 +264,7 @@ function testHudAndBanner() {
   const state = {
     slug: 'snake',
     frame: Object.assign({}, fixtures.games.snake.frame, {
-      banner: 'Game Over', status: 'Nhấn F2 để chơi lại',
+      banner: 'Game Over', status: 'Nhấn F2 để chơi lại', hint: '',
       stats: fixtures.games.snake.frame.stats,
     }),
   };
@@ -263,13 +272,53 @@ function testHudAndBanner() {
   assert(elements.banner.textContent === 'Game Over', 'the banner text reaches the DOM');
   assert(!elements.banner.classList.contains('hidden'), 'the banner is shown while it has text');
   assert(elements.title.textContent === state.frame.title, 'the title is shown in the HUD');
-  assert(elements.subtitle.textContent === 'Nhấn F2 để chơi lại', 'the status line is shown');
+  assert(elements.subtitle.textContent === 'Nhấn F2 để chơi lại',
+         'with no hint, the status line is shown');
+
+  // v1.3.0-beta6 (V2): the win32 hub footer shows HINT first and falls back
+  // to status (ArcadeWindow.cpp). The web player must match: the B5 divergent
+  // hint ("Sai — nhấn Backspace N lần để sửa") rides frame.hint while the
+  // typing games keep their status line non-empty.
+  state.frame = Object.assign({}, state.frame, {
+    hint: 'Sai — nhấn Backspace 2 lần để sửa',
+    status: 'Đã gõ: 5 ký tự',
+  });
+  api.onState(state);
+  assert(elements.subtitle.textContent === 'Sai — nhấn Backspace 2 lần để sửa',
+         'the hint wins over the status line (win32 parity, bug B5 visibility)');
+  state.frame = Object.assign({}, state.frame, { hint: '' });
+  api.onState(state);
+  assert(elements.subtitle.textContent === 'Đã gõ: 5 ký tự',
+         'with no hint, the status line is shown again');
 
   delete state.frame.banner;
   state.frame = Object.assign({}, state.frame, { banner: '' });
   api.onState(state);
   assert(elements.banner.classList.contains('hidden'), 'an empty banner is hidden again');
   section('HUD / banner updates');
+}
+
+//---------------------------------------------------------------------------
+function testSteeringConfigPush() {
+  // v1.3.0-beta6 (V2/B7): the per-game steering choice reaches the bridge.
+  // Boot already pushed one config (ui.steering.value was '1'); changing the
+  // select must push again with the new value.
+  const configBodies = () => requestBodies.filter((b) => b.indexOf('rhythmFailMode') !== -1);
+  const bootBodies = configBodies();
+  assert(bootBodies.length >= 1, 'the boot pushConfig hits /api/config');
+  assert(bootBodies.some((b) => b.indexOf('"wasdSteering":1') !== -1),
+         'the boot config push carries the steering choice');
+
+  elements.steering.value = '2';
+  const handlers = elements.steering.handlers.change || [];
+  assert(handlers.length >= 1, 'the steering select has a change listener');
+  handlers.forEach((h) => h());
+  return Promise.resolve().then(() => {
+    const last = configBodies().slice(-1)[0] || '';
+    assert(last.indexOf('"wasdSteering":2') !== -1,
+           'changing the steering select pushes the new value to /api/config');
+    section('Steering choice reaches the bridge (B7 web parity)');
+  });
 }
 
 //---------------------------------------------------------------------------
@@ -295,6 +344,9 @@ testExplicitPassageCells();
 testEveryGameDraws();
 testGradientAndBackground();
 testHudAndBanner();
+testSteeringConfigPush().then(finish);
+
+function finish() {
 testLabsHook();
 if (failures === 0) {
   console.log('=== ALL WEB RENDER TESTS PASSED (' + checks + ' checks, ' +
@@ -303,3 +355,4 @@ if (failures === 0) {
 }
 console.error('=== WEB RENDER TESTS FAILED (' + failures + '/' + checks + ') ===');
 process.exit(1);
+}

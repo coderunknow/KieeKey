@@ -317,8 +317,11 @@ void syncChaosControls(ChaosLabWindow::Impl& impl) {
     ::SendMessageW(impl.master, BM_SETCHECK, cfg.masterEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
     ::SendMessageW(impl.caseBox, BM_SETCHECK, cfg.randomCaseEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
     ::SendMessageW(impl.glyphBox, BM_SETCHECK, cfg.glyphTransformEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
+    // v1.3.0-beta6 (V3): ROUND, don't truncate — float 0.57 is 0.5699999…,
+    // which truncated to 56 and visibly nudged the slider down on every
+    // Lab open / config sync (ArcadeServer's JSON echo already rounds).
     ::SendMessageW(impl.intensity, TBM_SETPOS, TRUE,
-                   static_cast<LPARAM>(cfg.randomCaseIntensity * 100.0f));
+                   static_cast<LPARAM>(cfg.randomCaseIntensity * 100.0f + 0.5f));
     ::SendMessageW(impl.mode, CB_SETCURSEL, static_cast<WPARAM>(cfg.glyphMode), 0);
 }
 

@@ -207,6 +207,9 @@ struct ArcadeConfig {
     // WASD race
     double wasdStartFuel = 100.0;
     double wasdObstacleSpacingSec = 2.2;
+    // v1.3.0-beta5 (bug B7): steering-key choice (see WasdSteering). Persisted
+    // with the rest of the run configuration; applied live to a running game.
+    WasdSteering wasdSteering = WasdSteering::Arrows;
 
     // Fishing automation ("Assisted" only drips progress, "Automated" is a demo)
     AutomationMode fishingAutomation = AutomationMode::Manual;
@@ -688,6 +691,10 @@ public:
 
     void setStartFuel(double fuel) noexcept { m_startFuel = fuel; m_fuel = fuel; }
     void setObstacleSpacing(double sec) noexcept { m_obstacleSpacingSec = std::max(0.6, sec); }
+    // v1.3.0-beta5 (bug B7): steering-key mode. Live-safe: it changes only how
+    // the NEXT key event is interpreted, never the run state.
+    void setSteeringMode(WasdSteering mode) noexcept { m_steering = mode; }
+    [[nodiscard]] WasdSteering steeringMode() const noexcept { return m_steering; }
     // v1.3.0-beta3 (bug #2): Vietnamese passage + in-window composition. In VN mode
     // the WASD letters become Telex/VNI input (they ARE composition keys), so steering
     // moves to the ARROW keys only; letters feed the composer and fuel the engine.
@@ -721,6 +728,7 @@ private:
     std::vector<Obstacle> m_obstacles;
     double m_spawnTimer = 0.0;
     double m_obstacleSpacingSec = 2.2;
+    WasdSteering m_steering = WasdSteering::Arrows;   // v1.3.0-beta5 (bug B7)
     std::uint32_t m_dodges = 0;
     std::uint32_t m_collisions = 0;
     bool m_paused = false;
@@ -933,6 +941,14 @@ private:
     std::unique_ptr<VnComposer> m_composer;
     std::uint32_t m_vnWordsTotal = 0;
     std::uint32_t m_vnWordsWrong = 0;
+    // v1.3.0-beta5 (bug B6): the VN wrong-word penalty ladder, shared by the
+    // space-boundary judgment and the end-of-run judgment (a diverged FINAL
+    // word — the stream has no trailing space — was never judged in beta4, so
+    // the run just sat there: "gõ sai từ mà không kết thúc").
+    void applyWrongWordVn();
+    // One-shot guard so the end-of-run judgment cannot re-fire (and drain the
+    // health bar) on every subsequent keystroke while the tail stays diverged.
+    bool m_vnEndJudged = false;
     std::uint32_t m_combo = 0;
     std::uint32_t m_maxCombo = 0;
     std::uint32_t m_level = 1;

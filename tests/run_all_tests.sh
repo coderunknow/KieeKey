@@ -187,6 +187,13 @@ build test_hotfix_asan    -std=c++2b -O1 -g -fsanitize=address,undefined \
 build ok_ring_tests       -std=c++2b -O2 $INC tests/test_ringbuffer.cpp             || rc=1
 build ok_wrap_tests       -std=c++2b -O2 $INC -DOK_WRAP_NO_WIN32 \
                           tests/test_win32wrapper.cpp src/core/win32_wrapper.cpp    || rc=1
+# v1.3.0-beta5 (bug B2): FULL-CHAIN live-effects transport — real TextEngine
+# → real planOutput → real OutputRing (SPSC) → consumer thread → real
+# InlineEmitter (shim-recorded SendInput) → decoded screen, compared against
+# a direct-apply reference + the pure gate model (liveGateBlocker).
+build test_live_effects_chain -std=c++2b -O2 -pthread $INC -DOK_WRAP_NO_WIN32 \
+                          tests/test_live_effects_chain.cpp src/core/win32_wrapper.cpp \
+                          src/core/ChaosEngine.cpp $ENGINE23                      || rc=1
 build test_outputitem     -std=c++2b -O2 $INC tests/test_outputitem.cpp   $ENGINE23   || rc=1
 build test_hotfix         -std=c++2b -O2 $INC tests/test_hotfix.cpp       $ENGINE23   || rc=1
 build test_v331_features  -std=c++2b -O2 $INC tests/test_v331_features.cpp $ENGINE23  || rc=1
@@ -230,13 +237,27 @@ build test_live_output_plan -std=c++2b -O2 -pthread $INC tests/test_live_output_
 # v1.3.0-beta3: portable proof for the settings-dialog/Chaos-Lab layout solver
 # (bug #1) over the REAL authored rectangles copied from main.cpp.
 build test_dialog_layout  -std=c++2b -O2 -Isrc/app $INC tests/test_dialog_layout.cpp || rc=1
+# v1.3.0-beta5: three suites that SHIPPED UNWIRED (found by the beta5 deep
+# sweep — a test nobody runs is a test that cannot fail): HookCounters
+# semantics (bug B3), the ok::diag module, and the ProcessMonitor pure models
+# (bug B4 — name fallbacks + elevation-probe decision table).
+build test_hook_counters  -std=c++2b -O2 -pthread $INC tests/test_hook_counters.cpp || rc=1
+build test_diagnostics    -std=c++2b -O2 -pthread $INC tests/test_diagnostics.cpp src/core/Diagnostics.cpp || rc=1
+build test_process_monitor -std=c++2b -O2 $INC tests/test_process_monitor.cpp || rc=1
 # v1.3.0-beta3 (bug #2): in-window Vietnamese composition for the typing games —
 # VnComposer (Telex/VNI -> diacritics) and the real game objects driven with the
 # real keystrokes (VN default, EN fallback, arrow-steering in WasdRace).
 build test_vn_composer    -std=c++2b -O2 -pthread $INC tests/test_vn_composer.cpp src/core/TextEngine.cpp || rc=1
+# v1.3.0-beta5 (bug B9): effect layer — every tab-0 option flip must change
+# the engine output (probe-verified A/B pairs).
+build test_settings_wiring -std=c++2b -O2 -pthread $INC tests/test_settings_wiring.cpp src/core/TextEngine.cpp || rc=1
 build test_arcade_vn      -std=c++2b -O2 -pthread $INC tests/test_arcade_vn.cpp src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ArcadeRender.cpp src/core/Progression.cpp $ENGINE23 || rc=1
 # v1.3.0-beta4: backspace-recovery / arcade-VN / manager-race regression suite.
 build test_arcade_recovery -std=c++2b -O2 -pthread $INC tests/test_arcade_recovery.cpp src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ArcadeRender.cpp src/core/Progression.cpp $ENGINE23 || rc=1
+# v1.3.0-beta5: pins for the tester's arcade clusters — B5 red divergent-tail
+# rendering + Backspace recovery fuzz, B6 NoMistake end-of-run verdict / live
+# stats / manager live-config, B7 selectable WASD steering (VN) fuzz.
+build test_arcade_beta5   -std=c++2b -O2 -pthread $INC tests/test_arcade_beta5.cpp src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ArcadeRender.cpp src/core/Progression.cpp $ENGINE23 || rc=1
 build test_chaos          -std=c++2b -O2 $INC tests/test_chaos.cpp src/core/ChaosEngine.cpp || rc=1
 build test_ai_rival       -std=c++2b -O2 $INC tests/test_ai_rival.cpp src/core/AiRival.cpp || rc=1
 build test_progression    -std=c++2b -O2 $INC tests/test_progression.cpp src/core/Progression.cpp || rc=1
@@ -261,6 +282,31 @@ if command -v python3 >/dev/null 2>&1; then
         printf ' ok\n'
     else
         printf ' FAILED — %s\n' "$OUT/logs/version.log"
+        rc=1
+    fi
+    # v1.3.0-beta5 (bug B3): source contract for the tab-3 telemetry rows —
+    # each row must display ITS OWN source counter (keyboard row never the
+    # ring counter again). main.cpp is Windows-only; this pins the binding.
+    printf '  [check] %-22s' "telemetry rows"
+    if ( cd "$REPO_ROOT" && python3 scripts/audit_telemetry_rows.py ) \
+            > "$OUT/logs/telemetry-rows.log" 2>&1; then
+        printf ' ok\n'
+    else
+        printf ' FAILED — %s\n' "$OUT/logs/telemetry-rows.log"
+        cat "$OUT/logs/telemetry-rows.log"
+        rc=1
+    fi
+    # v1.3.0-beta5 (bug B9): source contract for EVERY interactive settings
+    # control — created + read + reflected + live-applied + persisted +
+    # consumed by engine code. main.cpp is Windows-only; this pins the wiring
+    # layer (tests/test_settings_wiring.cpp pins the effect layer).
+    printf '  [check] %-22s' "settings wiring"
+    if ( cd "$REPO_ROOT" && python3 scripts/audit_settings_wiring.py ) \
+            > "$OUT/logs/settings-wiring.log" 2>&1; then
+        printf ' ok\n'
+    else
+        printf ' FAILED — %s\n' "$OUT/logs/settings-wiring.log"
+        cat "$OUT/logs/settings-wiring.log"
         rc=1
     fi
 fi
@@ -386,6 +432,7 @@ run stress_rc2           300
 run test_hotfix_asan     300
 run ok_ring_tests        120
 run ok_wrap_tests        120
+run test_live_effects_chain 300
 run test_outputitem      120
 run test_hotfix          120
 run test_v331_features   120
@@ -423,9 +470,14 @@ run test_arcade_window        60
 run test_live_effects        120
 run test_live_output_plan    120
 run test_dialog_layout       60
+run test_hook_counters       60
+run test_diagnostics         120
+run test_process_monitor     60
 run test_vn_composer         60
+run test_settings_wiring     60
 run test_arcade_vn           60
 run test_arcade_recovery     90
+run test_arcade_beta5        90
 run test_chaos               60
 run test_ai_rival            60
 run test_progression         60

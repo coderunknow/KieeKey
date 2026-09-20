@@ -5,6 +5,97 @@ Keep a Changelog; versioning: SemVer.
 
 ## [Unreleased]
 
+## [1.3.0-beta5] — 2026-09-20
+### All nine reported Windows defects fixed at the root, plus the performance-impact and discoverability asks (file build 1.3.0.6)
+Every fix below came from the beta4 Windows tester report and was reproduced
+first (a failing portable probe or a mechanical read of the source), then
+fixed at its root cause, then pinned by a native regression test that runs on
+Linux — no Windows required to prove the logic. Full evidence and the
+no-regression A/B benchmark campaign against tag `v1.3.0-beta4`:
+`docs/bench/beta5/BENCHMARK_REPORT.md`.
+
+* **B1 — the settings dialog no longer overlaps, clips, or hides controls at
+  any DPI/font.** Three root causes: (1) the beta3 `DialogLayout` solver
+  measured label text but never re-fit *page* children, so long labels still
+  collided at 125 % scaling; (2) `scrollChildRect()` clipped children to a
+  one-pixel sliver when the visible band was thin; (3) tab-page 6 (gate
+  controls) had no footer budget. The solver now re-fits page children with
+  the same grow→push→stretch→grow-window cascade, `scrollChildRect` keeps a
+  usable band, and pages 0-6 all fit their footers;
+  `tests/test_dialog_layout.cpp` grew static-clip and DPI-scale fixtures that
+  fail on the beta4 layout.
+* **B2 — "live effects never reach external apps" was a gate readout lying,
+  not a broken emit chain.** The full-chain portable test
+  (`tests/test_live_effects_chain.cpp`) proves the hook→ring→emitter path
+  delivers to a simulated external window with the gate on (tester confirmed
+  the checkbox, icon and IME were all on). What was broken was the
+  *diagnostic*: the status tab reported the process-level gate as if it were
+  the live-effects gate, and had no model of what can block it. New pure
+  `GateBlocker`/`liveGateBlocker()` model (`LiveEffects.hpp`) enumerates every
+  blocker (master off, app-excluded, session paused, …) with one human
+  sentence each, surfaced on the status tab and re-evaluated on a timer — so
+  a silently-blocked gate now *says why*. Off the hot path: consumed by UI
+  timers only (verified in the benchmark campaign).
+* **B3 — "keyboard events processed" no longer climbs on mouse drags.** The
+  status readout displayed `pushed()` — the ring counter incremented by
+  keyboard, mouse **and** foreground events — under a keyboard-only label.
+  The readout now uses `HookCounters::keyboardEvents()` only
+  (`tests/test_hook_counters.cpp` pins that a mouse-drag sequence leaves it
+  untouched while the ring counter moves).
+* **B4 — the Diagnostics tab no longer shows mostly zeros / "Ứng dụng hiện
+  tại: unknown".** Two generations of diagnostics confused: the legacy rows
+  read fields the current `ProcessMonitor` never populated. `ProcessMonitor`
+  now resolves the foreground process *name* (new `ProcessNameUtil.hpp`,
+  query-full-data retry with growth, locale-independent fallbacks) and feeds
+  the telemetry table the live values; `scripts/audit_telemetry_rows.py` +
+  `tests/test_process_monitor.cpp` pin every row to a producer that actually
+  writes it (the shipped audit rejects a zero-only row).
+* **B5 — Typing Race / Fishing: backspace after a wrong word now visibly
+  works.** The games compared the typed buffer against the target, but after
+  a divergence the *composed tail* was invisible — backspace repaired state
+  the player could not see, so it "didn't work". Per the tester's chosen
+  design: the divergent tail is now **rendered in red** with the hint
+  "Backspace để sửa" (no auto-rewind); `addComposedLine` fires only when
+  actually diverged. Pinned in `tests/test_arcade_beta5.cpp`.
+* **B6 — No-Mistake: a wrong word now always ends the run; WPM/accuracy
+  update.** The fail check ran before the word-final commit in some key
+  orders, and stats were only pushed on clean completion. Root-caused via
+  seeded wrong-word fuzz (survival requires `FailMode::HealthBar`); the run
+  now ends deterministically on the divergent word and stats update on every
+  accepted/rejected word (fuzz + tests in `test_arcade_beta5.cpp`).
+* **B7 — WasdRace steering keys are a per-game choice: Mũi tên (default) /
+  WASD / Cả hai.** In WASD-involving modes the keys steer **and** still feed
+  the composer; `W` always steers in VN mode but is never swallowed from the
+  IME; the option persists and applies live; EN mode unchanged
+  (`test_arcade_beta5.cpp` covers all three modes × both languages).
+* **B8 — Chaos Lab is now discoverable.** The hub renders a dedicated 🧪
+  **Chaos Lab** row (paint + hit-test) below the catalog, README gained a
+  3-spot tour, and a failed lab open now surfaces a message box with the
+  Win32 error code instead of failing silently. `tests/test_arcade_window.cpp`
+  pins: the row is painted, clickable, and can never start a game.
+* **B9 — the "Bàn phím" tab options that did nothing now do something.** A
+  systematic 3-layer audit (wiring → effect → live-apply) over all 37
+  interactive controls found the dead ones: missing `WM_COMMAND` live-apply
+  cases and effects not consumed by the engine. All fixed, and the audit is
+  now a CI gate — `scripts/audit_settings_wiring.py` runs in the test suite
+  and fails if any control loses a layer again.
+* **G1 — performance expectations are documented where they matter**:
+  `docs/PERFORMANCE.md` (per-feature hot-path costs from the beta4/beta5
+  campaigns) and the settings dialog's live-effect hint now names the cost of
+  what you enable.
+* **G4 — standardized apples-to-apples A/B against tag `v1.3.0-beta4`**
+  (same host, same flags, interleaved rounds, byte-identical control leg):
+  engine decision latency **identical** (43/56/45/54 ns p50 on
+  passthrough/vn-compose/delete/mixed, 0.0 % delta), all five isolation
+  configurations inside the control noise band, sink digests identical in
+  every round, differential gate PASS on both sides (2 059 419 events,
+  0 mismatches). Full numbers and the one honestly-flagged environmental
+  e2e leg: `docs/bench/beta5/BENCHMARK_REPORT.md`.
+* **Version** bumped to **1.3.0-beta5** everywhere (PE file version
+  **1.3.0.6**, `BUILD_REVISION=6`, manifest, core `VERSION_STRING`,
+  `check_version.py` channel, README EN/VN, About box) and
+  `dist/KieeKeyApp.exe` rebuilt through the zig cross-toolchain.
+
 ## [1.3.0-beta4] — 2026-09-19
 ### Six reported defects fixed at the root, plus one latent crash found by testing (file build 1.3.0.5)
 Every fix below was reproduced first (a failing probe or seeded fuzz), then

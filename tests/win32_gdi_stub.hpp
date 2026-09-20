@@ -40,6 +40,11 @@ struct DrawCall {
 
 std::vector<DrawCall>& log();
 void clearLog();
+
+// v1.3.0-beta5 (bug B8): every MessageBoxW call is recorded as
+// "<caption> | <text>" so tests can assert the failure surfacing fires.
+std::vector<std::wstring>& messageBoxes();
+void clearMessageBoxes();
 int framePresents();                                   // "bitblt" calls = painted frames
 bool logContainsText(const std::wstring& needle);
 int countCalls(const char* kind);

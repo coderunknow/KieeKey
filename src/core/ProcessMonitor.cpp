@@ -44,10 +44,21 @@
 
 #include <dwmapi.h>
 #include <psapi.h>
+// v1.3.0-beta5 (bug B4): UWP fallback — a foreground UWP window belongs to
+// ApplicationFrameHost.exe (or refuses the image-name query entirely); its
+// REAL identity is the window's AppUserModelID property store.
+// NB: SHGetPropertyStoreForWindow is declared in shellapi.h, which
+// WIN32_LEAN_AND_MEAN strips from windows.h — include it explicitly (the
+// MinGW cross-build compiles this TU lean; MSVC gets the same declaration).
+#include <shellapi.h>
+#include <shobjidl.h>
+#include <propidl.h>
 #ifdef _MSC_VER
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "psapi.lib")
 #endif
+
+#include "ProcessNameUtil.hpp"
 
 namespace ok::monitor {
 namespace {
@@ -88,26 +99,152 @@ bool isCloaked(HWND hwnd) noexcept {
     return false;
 }
 
-bool getImagePathAndStartTime(DWORD pid, std::wstring& path, FILETIME& start) noexcept {
-    path.clear();
+//---------------------------------------------------------------------------
+// v1.3.0-beta5 (bug B4) — foreground process NAME resolution, fallback chain.
+//
+// beta4 had ONE query path and displayed the literal "unknown" whenever ANY
+// step failed — including a GetProcessTimes failure AFTER the path query had
+// already succeeded (all-or-nothing), and every protected/elevated process
+// whose image name a standard-user IME may not read. "unknown" told the user
+// nothing and made the whole diagnostics tab look broken.
+//
+// The chain below tries, in order:
+//   1. QueryFullProcessImageNameW, Win32 format   (QUERY_LIMITED handle; the
+//      beta4 NULL-size probe is replaced by a proper 32K buffer — the probe
+//      form is undocumented for a NULL buffer and fails on some targets)
+//   2. QueryFullProcessImageNameW, NATIVE format  (succeeds for some
+//      protected processes where the Win32 format is refused)
+//   3. GetModuleFileNameExW                       (needs QUERY_INFORMATION|
+//      VM_READ — a different access mask that 32-bit targets and some
+//      security products treat differently)
+//   4. The window's AppUserModelID property store  (UWP: the frame window
+//      belongs to ApplicationFrameHost.exe; the AUMID names the REAL app)
+//   5. The honest label "pid N (lỗi X)"           (ProcessNameUtil.hpp —
+//      the PID still identifies the process for a bug report, the error says
+//      why the name is unavailable)
+// A failed name query NEVER excludes the app — exclusion is decided solely by
+// the elevation probe + classification (see treatAsElevated).
+//---------------------------------------------------------------------------
+struct NameQuery {
+    std::wstring path;        // full image path when resolved (may be native)
+    std::wstring aumidName;   // friendly UWP name when the AUMID resolved
+    DWORD        lastError = 0;   // error of the last failed image-name step
+    bool         resolved() const noexcept {
+        return !path.empty() || !aumidName.empty();
+    }
+};
+
+// Max path incl. long-path prefix; QueryFullProcessImageNameW documents
+// 32768 as the sufficient buffer for the Win32 format.
+constexpr DWORD kImagePathBufferChars = 32768;
+
+NameQuery queryProcessName(DWORD pid, HWND fg) noexcept {
+    NameQuery out;
     using ok::win32::ProcessHandle;
-    ProcessHandle h = ok::win32::ProcessHandle(
-        ::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid));
+
+    // Steps 1+2: one QUERY_LIMITED handle, both formats.
+    {
+        ProcessHandle h(::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid));
+        if (h) {
+            std::wstring buf(kImagePathBufferChars, L'\0');
+            DWORD len = static_cast<DWORD>(buf.size());
+            if (::QueryFullProcessImageNameW(h.get(), 0, buf.data(), &len) && len > 0) {
+                buf.resize(len);
+                out.path = std::move(buf);
+                return out;
+            }
+            out.lastError = ::GetLastError();
+            len = static_cast<DWORD>(buf.size());
+            if (::QueryFullProcessImageNameW(h.get(), PROCESS_NAME_NATIVE,
+                                             buf.data(), &len) && len > 0) {
+                buf.resize(len);
+                out.path = std::move(buf);
+                return out;
+            }
+            if (out.lastError == 0) { out.lastError = ::GetLastError(); }
+        } else {
+            out.lastError = ::GetLastError();
+        }
+    }
+
+    // Step 3: the classic psapi query under a different access mask.
+    {
+        ProcessHandle h(::OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
+                                      FALSE, pid));
+        if (h) {
+            std::wstring buf(MAX_PATH * 2, L'\0');
+            const DWORD n = ::GetModuleFileNameExW(h.get(), nullptr, buf.data(),
+                                                   static_cast<DWORD>(buf.size()));
+            if (n > 0) {
+                buf.resize(n);
+                out.path = std::move(buf);
+                return out;
+            }
+            if (out.lastError == 0) { out.lastError = ::GetLastError(); }
+        } else if (out.lastError == 0) {
+            out.lastError = ::GetLastError();
+        }
+    }
+
+    // Step 4: the window's AppUserModelID (UWP hosts + protected processes
+    // whose windows still expose the property store).
+    if (fg != nullptr) {
+        IPropertyStore* store = nullptr;
+        if (SUCCEEDED(::SHGetPropertyStoreForWindow(
+                fg, IID_IPropertyStore,
+                reinterpret_cast<void**>(&store))) && store != nullptr) {
+            // PKEY_AppUserModel_ID = {9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3}, 5
+            // (declared locally: propsys is not a link dependency of ok_core).
+            const PROPERTYKEY kAumid{
+                {0x9F4C2855, 0x9F79, 0x4B39,
+                 {0xA8, 0xD0, 0xE1, 0xD4, 0x2D, 0xE1, 0xD5, 0xF3}}, 5};
+            PROPVARIANT pv{};
+            if (SUCCEEDED(store->GetValue(kAumid, &pv))) {
+                if (pv.vt == VT_LPWSTR && pv.pwszVal != nullptr &&
+                    pv.pwszVal[0] != L'\0') {
+                    out.aumidName = friendlyNameFromAumid(pv.pwszVal);
+                }
+                ::PropVariantClear(&pv);
+            }
+            store->Release();
+        }
+    }
+    return out;
+}
+
+// The window's AUMID even when the image path DID resolve: a UWP foreground
+// window's owner process is ApplicationFrameHost.exe — displaying the frame
+// host instead of the app was part of the "diagnostics look broken" report.
+std::wstring queryWindowAumidName(HWND fg) noexcept {
+    if (fg == nullptr) { return {}; }
+    IPropertyStore* store = nullptr;
+    if (FAILED(::SHGetPropertyStoreForWindow(
+            fg, IID_IPropertyStore,
+            reinterpret_cast<void**>(&store))) || store == nullptr) {
+        return {};
+    }
+    const PROPERTYKEY kAumid{
+        {0x9F4C2855, 0x9F79, 0x4B39,
+         {0xA8, 0xD0, 0xE1, 0xD4, 0x2D, 0xE1, 0xD5, 0xF3}}, 5};
+    std::wstring friendly;
+    PROPVARIANT pv{};
+    if (SUCCEEDED(store->GetValue(kAumid, &pv))) {
+        if (pv.vt == VT_LPWSTR && pv.pwszVal != nullptr && pv.pwszVal[0] != L'\0') {
+            friendly = std::wstring(friendlyNameFromAumid(pv.pwszVal));
+        }
+        ::PropVariantClear(&pv);
+    }
+    store->Release();
+    return friendly;
+}
+
+// Creation time is a BEST-EFFORT side query now: beta4 folded it into the
+// name query and a GetProcessTimes failure discarded an already-resolved
+// path (the field is diagnostic-only — nothing in the codebase reads it).
+bool queryStartTime(DWORD pid, FILETIME& start) noexcept {
+    using ok::win32::ProcessHandle;
+    ProcessHandle h(::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid));
     if (!h) { return false; }
-
-    DWORD size = 0;
-    if (!::QueryFullProcessImageNameW(h.get(), 0, nullptr, &size) &&
-        ::GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
-        return false;
-    }
-    std::wstring buf(size + 8, L'\0');
-    DWORD bufLen = static_cast<DWORD>(buf.size());
-    if (!::QueryFullProcessImageNameW(h.get(), 0, buf.data(), &bufLen)) {
-        return false;
-    }
-    buf.resize(bufLen);
-    path = buf;
-
     FILETIME created{}, exited{}, kern{}, user{};
     if (!::GetProcessTimes(h.get(), &created, &exited, &kern, &user)) {
         return false;
@@ -306,20 +443,26 @@ static bool isElevatedProcess(DWORD pid) noexcept {
     if (pid == 0) { return false; }
     ok::win32::ProcessHandle proc(::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,
                                                 FALSE, pid));
-    if (!proc.get()) {
-        // Cannot even query: the target outranks us (or is protected).
-        return true;
-    }
+    const bool openProcessOk = (proc.get() != nullptr);
     HANDLE token = nullptr;
-    if (!::OpenProcessToken(proc.get(), TOKEN_QUERY, &token)) {
-        return true;   // same reasoning as above
-    }
+    const bool openTokenOk = openProcessOk &&
+                             ::OpenProcessToken(proc.get(), TOKEN_QUERY, &token);
     DWORD elevation = 0;
     DWORD retLen = 0;
-    const BOOL ok = ::GetTokenInformation(token, TokenElevation, &elevation,
-                                          sizeof(elevation), &retLen);
-    ::CloseHandle(token);
-    return ok && elevation != 0;
+    bool tokenInfoOk = false;
+    bool elevatedFlag = false;
+    if (openTokenOk) {
+        tokenInfoOk = ::GetTokenInformation(token, TokenElevation, &elevation,
+                                            sizeof(elevation), &retLen) != FALSE;
+        elevatedFlag = (elevation != 0);
+        ::CloseHandle(token);
+    }
+    // v1.3.0-beta5 (bug B4): the DECISION lives in the pure table
+    // (ProcessNameUtil.hpp, pinned by tests/test_process_monitor.cpp) — an
+    // ACCESS_DENIED on the process/token really means "outranks us" (UIPI
+    // blocks both output paths → pass through), while a token-READ failure
+    // with both handles open must NOT disable the IME.
+    return treatAsElevated(openProcessOk, openTokenOk, tokenInfoOk, elevatedFlag);
 }
 
 //===========================================================================
@@ -344,16 +487,11 @@ void ProcessMonitor::updateFromWindow(HWND fg) noexcept {
     info->cloaked    = isCloaked(fg);
     info->elevated   = isElevatedProcess(pid);
 
-    if (!getImagePathAndStartTime(pid, info->exePath, info->processStartTime)) {
-        info->exeNameUtf8 = "unknown";
-        info->exeNameLower = "unknown";
-        info->kind = ProcessClass::Normal;
-        {
-            std::unique_lock<std::shared_mutex> lk(snapshotMtx_);
-            snapshot_ = std::move(info);
-        }
-        return;
-    }
+    // v1.3.0-beta5 (bug B4): the name query is a fallback chain and NEVER
+    // all-or-nothing; the creation time is a separate best-effort side query.
+    const NameQuery name = queryProcessName(pid, fg);
+    (void)queryStartTime(pid, info->processStartTime);
+    info->nameQueryError = name.lastError;
 
     // v1.2.2 RC4 (P2-4): PID-reuse revalidation. The OpenProcess / image-name
     // / process-times / token queries above run while the window's owner
@@ -366,23 +504,85 @@ void ProcessMonitor::updateFromWindow(HWND fg) noexcept {
         return;
     }
 
-    // exe name from full path (last '\' segment).
-    const std::wstring_view path(info->exePath);
-    const std::size_t pos = path.find_last_of(L"\\/");
-    const std::wstring_view name = (pos == std::wstring_view::npos) ? path : path.substr(pos + 1);
+    // Display-name decision:
+    //   * image path resolved   → last path segment (exeNameFromPath), EXCEPT
+    //     for the UWP frame host: its AUMID names the REAL app, so prefer it.
+    //   * only the AUMID resolved → the friendly package name (Metro).
+    //   * nothing resolved → the honest "pid N (lỗi X)" label. The bare word
+    //     "unknown" (beta4) is gone: it named no process and stated no reason.
+    std::wstring_view nameW;
+    if (!name.path.empty()) {
+        info->exePath = name.path;
+        nameW = exeNameFromPath(name.path);
+        constexpr std::wstring_view kFrameHost = L"applicationframehost.exe";
+        const bool isFrameHost =
+            nameW.size() == kFrameHost.size() &&
+            ::_wcsnicmp(nameW.data(), kFrameHost.data(), kFrameHost.size()) == 0;
+        if (isFrameHost) {
+            const std::wstring friendly = queryWindowAumidName(fg);
+            if (!friendly.empty()) {
+                // Publish the friendly name but KEEP exePath (classification
+                // and any internal logic still see the real host binary).
+                info->exePath = name.path;
+                info->kind = ProcessClass::Metro;
+                const int needF = ::WideCharToMultiByte(
+                    CP_UTF8, 0, friendly.data(),
+                    static_cast<int>(friendly.size()), nullptr, 0, nullptr, nullptr);
+                std::string utf8F(static_cast<std::size_t>(std::max(0, needF)), '\0');
+                if (needF > 0) {
+                    ::WideCharToMultiByte(CP_UTF8, 0, friendly.data(),
+                                          static_cast<int>(friendly.size()),
+                                          utf8F.data(), needF, nullptr, nullptr);
+                }
+                info->exeNameUtf8 = utf8F;
+                info->exeNameLower = toLowerAscii(info->exeNameUtf8);
+                std::unique_lock<std::shared_mutex> lkAumid(snapshotMtx_);
+                snapshot_ = std::move(info);
+                return;
+            }
+        }
+    } else if (!name.aumidName.empty()) {
+        nameW = name.aumidName;
+        info->kind = ProcessClass::Metro;
+    } else {
+        const std::wstring label = unknownLabelW(pid, name.lastError);
+        const int needL = ::WideCharToMultiByte(
+            CP_UTF8, 0, label.data(), static_cast<int>(label.size()),
+            nullptr, 0, nullptr, nullptr);
+        std::string utf8L(static_cast<std::size_t>(std::max(0, needL)), '\0');
+        if (needL > 0) {
+            ::WideCharToMultiByte(CP_UTF8, 0, label.data(),
+                                  static_cast<int>(label.size()),
+                                  utf8L.data(), needL, nullptr, nullptr);
+        }
+        info->exeNameUtf8 = utf8L;
+        // Classification keys stay machine-readable: an unresolved name is
+        // never in any exclusion table.
+        info->exeNameLower = "unresolved";
+        info->kind = ProcessClass::Normal;
+        std::unique_lock<std::shared_mutex> lkUnk(snapshotMtx_);
+        snapshot_ = std::move(info);
+        return;
+    }
 
     // Convert to UTF-8 for the classification tables.
-    const int need = ::WideCharToMultiByte(CP_UTF8, 0, name.data(),
-                                           static_cast<int>(name.size()), nullptr, 0, nullptr, nullptr);
+    const int need = ::WideCharToMultiByte(CP_UTF8, 0, nameW.data(),
+                                           static_cast<int>(nameW.size()), nullptr, 0, nullptr, nullptr);
     std::string utf8(static_cast<std::size_t>(need), '\0');
     if (need > 0) {
-        ::WideCharToMultiByte(CP_UTF8, 0, name.data(), static_cast<int>(name.size()),
+        ::WideCharToMultiByte(CP_UTF8, 0, nameW.data(), static_cast<int>(nameW.size()),
                               utf8.data(), need, nullptr, nullptr);
     }
     info->exeNameUtf8 = utf8;
     info->exeNameLower = toLowerAscii(utf8);
-    info->kind = classify(info->exeNameLower, info->fullscreen,
-                          info->exeNameLower == "explorer.exe");
+    if (!name.path.empty()) {
+        // Classified ONLY from a real image name. The AUMID branch above is
+        // already Metro: a friendly package name is in no exe table, and
+        // running classify() on it could misfile a fullscreen UWP app as a
+        // Game and auto-exclude it.
+        info->kind = classify(info->exeNameLower, info->fullscreen,
+                              info->exeNameLower == "explorer.exe");
+    }
 
     {
         std::unique_lock<std::shared_mutex> lk(snapshotMtx_);

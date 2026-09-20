@@ -144,6 +144,56 @@ float addStyledLine(Frame& frame, float x, float y, std::u32string_view text,
     return cursorX - x;
 }
 
+//----------------------------------------------------------------------------
+// v1.3.0-beta5 (bug B5) — the composed-buffer line with its DIVERGENT TAIL.
+//
+// The typing games render the TARGET passage with a caret at the match
+// position (addStyledLine). In VN mode the player's actual composed text can
+// DIVERGE from the target (a wrong syllable, a stray tone key): the tail past
+// the match was invisible — the player pressed Backspace, saw the caret not
+// move the way they expected, and concluded "backspace doesn't work". This
+// line renders what they ACTUALLY typed: [0, matchLen) in the typed color,
+// [matchLen, end) in red, with the caret at the composed tail. Shown only
+// while diverged; the games pair it with a "nhấn Backspace N lần để sửa"
+// hint (N = composed.length() - matchLen). No auto-rewind (by design).
+//----------------------------------------------------------------------------
+float addComposedLine(Frame& frame, float x, float y, std::u32string_view label,
+                      std::u32string_view composed, std::size_t matchLen,
+                      const PassageStyle& style) {
+    const float advance = style.size * kMonoCharWidthFactor;
+    float cursorX = x;
+    if (!label.empty()) {
+        frame.addText(cursorX, y, style.size, palette::kTextDim, TextAlign::Left,
+                      label, false, true, advance);
+        cursorX += advance * static_cast<float>(label.size());
+    }
+    matchLen = std::min(matchLen, composed.size());
+    const auto slots = std::max<std::size_t>(1, static_cast<std::size_t>(style.width / advance));
+    const std::size_t focus = composed.size();
+    const std::size_t begin = focus >= slots ? focus - slots / 3 : 0;
+    const std::size_t end = std::min(composed.size(), begin + slots);
+    // Caret block at the composed tail (same visual language as addStyledLine).
+    if (!composed.empty()) {
+        const float caretX =
+            cursorX + static_cast<float>(composed.size() - begin) * advance;
+        frame.addRect(caretX, y - style.size * 0.65f, advance, style.size * 1.3f,
+                      rgba(0x33, 0x65, 0x85), 3);
+    }
+    // Two runs: matched prefix (typed color) + divergent tail (wrong color).
+    const std::size_t tail = std::max(matchLen, begin);
+    if (tail > begin) {
+        frame.addText(cursorX, y, style.size, style.typed, TextAlign::Left,
+                      composed.substr(begin, tail - begin), false, true, advance);
+        cursorX += advance * static_cast<float>(tail - begin);
+    }
+    if (end > tail) {
+        frame.addText(cursorX, y, style.size, style.wrong, TextAlign::Left,
+                      composed.substr(tail, end - tail), false, true, advance);
+        cursorX += advance * static_cast<float>(end - tail);
+    }
+    return cursorX - x;
+}
+
 const char* directionGlyph(Direction d) noexcept {
     switch (d) {
         case Direction::Up: return "Up";
@@ -1257,11 +1307,24 @@ void FishingGame::buildFrame(Frame& frame) const {
     frame.addRect(138, 480, 724, 52, palette::kPanelAlt, 10);
     addStyledLine(frame, 150, 505, m_prompt, m_promptIndex, m_prompt.size(), 0, style);
 
-    frame.addText(150, 544, 16, m_feedback < 0 ? palette::kBad : palette::kGood, TextAlign::Left,
-                  m_feedbackTime <= 0 ? U"Gõ ô được đánh dấu · chậm lại nếu dây quá căng" :
-                  m_feedback == 2 ? U"BẮT ĐƯỢC CÁ! Tiếp tục câu con tiếp theo" :
-                  m_feedback == -2 ? U"Cá đã thoát — thử lại với câu mồi mới" :
-                  m_feedback < 0 ? U"Sai ký tự — gõ lại ô đang sáng" : U"Chính xác! + lực kéo");
+    // v1.3.0-beta5 (bug B5): while the composed text diverges from the
+    // prompt, THIS slot shows what the player actually typed — matched prefix
+    // green, divergent tail red — instead of the generic feedback message.
+    const bool diverged = m_vnMode && m_composer &&
+                          m_composer->length() > m_promptIndex;
+    if (diverged) {
+        PassageStyle cs{};
+        cs.size = 16.0f;
+        cs.width = 700;
+        addComposedLine(frame, 150, 544, U"Bạn đã gõ: ", m_composer->text(),
+                        m_promptIndex, cs);
+    } else {
+        frame.addText(150, 544, 16, m_feedback < 0 ? palette::kBad : palette::kGood, TextAlign::Left,
+                      m_feedbackTime <= 0 ? U"Gõ ô được đánh dấu · chậm lại nếu dây quá căng" :
+                      m_feedback == 2 ? U"BẮT ĐƯỢC CÁ! Tiếp tục câu con tiếp theo" :
+                      m_feedback == -2 ? U"Cá đã thoát — thử lại với câu mồi mới" :
+                      m_feedback < 0 ? U"Sai ký tự — gõ lại ô đang sáng" : U"Chính xác! + lực kéo");
+    }
     frame.addText(150, 580, 20, palette::kTextDim, TextAlign::Left,
                   frame.intern(m_displayFish));
     frame.addText(850, 580, 20, fishColor, TextAlign::Right,
@@ -1275,6 +1338,14 @@ void FishingGame::buildFrame(Frame& frame) const {
     frame.stats.hint = m_vnMode
         ? U"Gõ Telex/VNI đúng câu mồi · Backspace xóa âm tiết · F1 tạm dừng · F2 chơi lại"
         : U"Gõ đúng câu mồi · F1 tạm dừng · F2 chơi lại · Esc thoát";
+    if (diverged) {
+        // v1.3.0-beta5 (bug B5): the exact repair instruction — N is the
+        // number of composed code points past the match (one Backspace each).
+        frame.stats.hint = frame.internNumber(
+            U"Sai — nhấn Backspace ",
+            static_cast<std::int64_t>(m_composer->length() - m_promptIndex),
+            U" lần để sửa");
+    }
     frame.stats.hasMeter = true;
     frame.stats.meter = m_lineTension;
     frame.stats.meterMax = 100.0;
@@ -1588,9 +1659,22 @@ void TypingRaceGame::buildFrame(Frame& frame) const {
     addStyledLine(frame, kTrackX + 12, 402, m_passage, m_charIndex,
                   m_passage.size(), 0, style);
 
-    frame.addText(92, 456, 20, m_lastMistake ? palette::kBad : palette::kTextDim,
-                  TextAlign::Left, m_lastMistake ? U"Sai ký tự — gõ lại ô đỏ, không bị mất tiến độ" :
-                  U"Gõ ô đang sáng · Backspace lùi một ký tự · Space cho khoảng trắng");
+    // v1.3.0-beta5 (bug B5): the composed buffer with its red divergent tail
+    // takes the feedback slot while the player's text diverges from the
+    // passage — Backspace repair becomes visible instead of mysterious.
+    const bool diverged = m_vnMode && m_composer &&
+                          m_composer->length() > m_charIndex;
+    if (diverged) {
+        PassageStyle cs{};
+        cs.size = 18.0f;
+        cs.width = kTrackW - 24;
+        addComposedLine(frame, 92, 456, U"Bạn đã gõ: ", m_composer->text(),
+                        m_charIndex, cs);
+    } else {
+        frame.addText(92, 456, 20, m_lastMistake ? palette::kBad : palette::kTextDim,
+                      TextAlign::Left, m_lastMistake ? U"Sai ký tự — gõ lại ô đỏ, không bị mất tiến độ" :
+                      U"Gõ ô đang sáng · Backspace lùi một ký tự · Space cho khoảng trắng");
+    }
     frame.addText(92, 495, 18, palette::kAccent, TextAlign::Left,
                   frame.internNumber(U"Tiến độ: ", static_cast<std::int64_t>(m_charIndex), U" ký tự"));
     frame.stats.title = U"🏎️ Đua xe theo tốc độ gõ";
@@ -1601,7 +1685,11 @@ void TypingRaceGame::buildFrame(Frame& frame) const {
     frame.stats.progress = progress;
     frame.stats.status = frame.internNumber(
         U"Đã gõ: ", static_cast<std::int64_t>(m_charIndex), U" ký tự");
-    frame.stats.hint = U"Gõ đúng đoạn văn để xe chạy · F1 tạm dừng · F2 chơi lại · Esc thoát";
+    frame.stats.hint = diverged
+        ? frame.internNumber(U"Sai — nhấn Backspace ",
+                             static_cast<std::int64_t>(m_composer->length() - m_charIndex),
+                             U" lần để sửa")
+        : std::u32string_view(U"Gõ đúng đoạn văn để xe chạy · F1 tạm dừng · F2 chơi lại · Esc thoát");
     frame.stats.finished = m_finished;
     frame.stats.gameOver = m_finished;
     frame.stats.paused = m_paused;
@@ -1791,23 +1879,42 @@ InputResult WasdRaceGame::handleKey(const InputEvent& ev) {
         return InputResult::Consumed;
     }
 
-    // WASD steering. In Vietnamese mode the letters a/d/w/s ARE Telex/VNI keys, so
-    // steering falls back to the arrow keys only and every letter feeds the composer.
+    // WASD steering. v1.3.0-beta5 (bug B7): the steering keys are a PLAYER
+    // CHOICE (Arrows / WASD / Both — ArcadeConfig::wasdSteering, persisted and
+    // live-applied). EN mode is unchanged: letters steer AND are the typing
+    // keys. VN mode, beta4 behavior (Arrows): the letters a/s/d/w ARE
+    // Telex/VNI keys, so arrows steer and every letter feeds the composer.
+    // VN mode with WASD involved (Wasd/Both): a/s/d/w steer the car AND fall
+    // through to the composer — the keystroke is NEVER swallowed (W is a core
+    // Telex diacritic key; swallowing it would break composition of half the
+    // language).
     const bool letterSteer = !m_vnMode;
-    if ((letterSteer && (ev.ch == U'a' || ev.ch == U'A')) || ev.vk == vk::kLeft) {
+    const bool vnWasd = m_vnMode && m_steering != WasdSteering::Arrows;
+    const bool chA = (ev.ch == U'a' || ev.ch == U'A');
+    const bool chD = (ev.ch == U'd' || ev.ch == U'D');
+    const bool chW = (ev.ch == U'w' || ev.ch == U'W');
+    const bool chS = (ev.ch == U's' || ev.ch == U'S');
+    bool steerConsumes = false;
+    if (ev.vk == vk::kLeft || (letterSteer && chA)) {
         if (m_playerLane > 0) --m_playerLane;
-        return InputResult::Consumed;
-    }
-    if ((letterSteer && (ev.ch == U'd' || ev.ch == U'D')) || ev.vk == vk::kRight) {
+        steerConsumes = true;
+    } else if (ev.vk == vk::kRight || (letterSteer && chD)) {
         if (m_playerLane < kLanes - 1) ++m_playerLane;
-        return InputResult::Consumed;
-    }
-    if ((letterSteer && (ev.ch == U'w' || ev.ch == U'W')) || ev.vk == vk::kUp) {
+        steerConsumes = true;
+    } else if (ev.vk == vk::kUp || (letterSteer && chW)) {
         m_carSpeed = std::min(150.0, m_carSpeed + 12.0);
-        return InputResult::Consumed;
-    }
-    if ((letterSteer && (ev.ch == U's' || ev.ch == U'S')) || ev.vk == vk::kDown) {
+        steerConsumes = true;
+    } else if (ev.vk == vk::kDown || (letterSteer && chS)) {
         m_carSpeed = std::max(30.0, m_carSpeed - 12.0);
+        steerConsumes = true;
+    } else if (vnWasd && (chA || chD || chW || chS)) {
+        // Steer WITHOUT consuming: the same press feeds the composer below.
+        if (chA) { if (m_playerLane > 0) --m_playerLane; }
+        else if (chD) { if (m_playerLane < kLanes - 1) ++m_playerLane; }
+        else if (chW) { m_carSpeed = std::min(150.0, m_carSpeed + 12.0); }
+        else { m_carSpeed = std::max(30.0, m_carSpeed - 12.0); }
+    }
+    if (steerConsumes) {
         return InputResult::Consumed;
     }
 
@@ -1941,12 +2048,38 @@ void WasdRaceGame::buildFrame(Frame& frame) const {
     style.width = frame.worldW - 152;
     addStyledLine(frame, 76, 596, m_passage, m_textIndex, m_passage.size(), 0, style);
 
+    // v1.3.0-beta5 (bug B5): the composed buffer with its red divergent tail,
+    // between the road (ends y=540) and the prompt panel (starts y=570).
+    const bool diverged = m_vnMode && m_composer &&
+                          m_composer->length() > m_textIndex;
+    if (diverged) {
+        PassageStyle cs{};
+        cs.size = 16.0f;
+        cs.width = frame.worldW - 152;
+        addComposedLine(frame, 76, 550, U"Bạn đã gõ: ", m_composer->text(),
+                        m_textIndex, cs);
+    }
+
     frame.stats.title = U"🛣️ Đua xe + gõ phím";
     frame.stats.score = m_score;
     frame.stats.highScore = m_highScore;
     frame.stats.level = 1 + static_cast<std::uint32_t>(m_distance / 500.0);
     frame.stats.status = frame.internDouble(U"Quãng đường ", m_distance, 0, U" m");
-    frame.stats.hint = U"A/D đổi làn · W tăng tốc · S phanh · Gõ để nạp nhiên liệu · Esc thoát";
+    // v1.3.0-beta5 (bug B7): the hint follows the chosen steering mode — in
+    // VN mode with WASD steering the letters do BOTH jobs (steer + compose).
+    if (m_vnMode) {
+        frame.stats.hint = (m_steering == WasdSteering::Arrows)
+            ? std::u32string_view(U"Mũi tên: lái xe · Gõ Telex/VNI nạp nhiên liệu · Backspace sửa · Esc thoát")
+            : std::u32string_view(U"A/S/D/W: lái xe VÀ nạp nhiên liệu · Mũi tên cũng lái · Backspace sửa · Esc thoát");
+    } else {
+        frame.stats.hint = U"A/D đổi làn · W tăng tốc · S phanh · Gõ để nạp nhiên liệu · Esc thoát";
+    }
+    if (diverged) {
+        frame.stats.hint = frame.internNumber(
+            U"Sai — nhấn Backspace ",
+            static_cast<std::int64_t>(m_composer->length() - m_textIndex),
+            U" lần để sửa");
+    }
     frame.stats.hasMeter = true;
     frame.stats.meter = m_fuel;
     frame.stats.meterMax = 100.0;
@@ -2522,6 +2655,79 @@ void NoMistakeGame::start() {
     m_resultPending = false;
 }
 
+// v1.3.0-beta5 (bug B6): the VN wrong-word penalty ladder — shared by the
+// space-boundary judgment and the end-of-run judgment so the two can never
+// drift apart (Hardcore: one wrong word ends the run; HealthBar: the soft
+// penalty drains the reserve).
+// v1.3.0-beta5 (bug B6): fold a precomposed Vietnamese letter to its
+// tone-less base letter (à/ă/â/ấ/… -> a, đ -> d, …). Used by the NoMistake
+// end-of-run verdict to tell a DEFINITIVELY wrong character (different base —
+// no keystroke can ever transform it into the target) from a mid-word state
+// that one more tone key still repairs ("phim" vs "phím").
+char32_t tonelessBase(char32_t c) noexcept {
+    if (c >= U'A' && c <= U'Z') { c = static_cast<char32_t>(c + 32); }
+    if (c < 0x80) { return c; }
+    static constexpr char32_t kA[] = {U'à', U'á', U'ả', U'ã', U'ạ',
+                                      U'ă', U'ằ', U'ắ', U'ẳ', U'ẵ', U'ặ',
+                                      U'â', U'ầ', U'ấ', U'ẩ', U'ẫ', U'ậ'};
+    static constexpr char32_t kE[] = {U'è', U'é', U'ẻ', U'ẽ', U'ẹ',
+                                      U'ê', U'ề', U'ế', U'ể', U'ễ', U'ệ'};
+    static constexpr char32_t kI[] = {U'ì', U'í', U'ỉ', U'ĩ', U'ị'};
+    static constexpr char32_t kO[] = {U'ò', U'ó', U'ỏ', U'õ', U'ọ',
+                                      U'ô', U'ồ', U'ố', U'ổ', U'ỗ', U'ộ',
+                                      U'ơ', U'ờ', U'ớ', U'ở', U'ỡ', U'ợ'};
+    static constexpr char32_t kU[] = {U'ù', U'ú', U'ủ', U'ũ', U'ụ',
+                                      U'ư', U'ừ', U'ứ', U'ử', U'ữ', U'ự'};
+    static constexpr char32_t kY[] = {U'ỳ', U'ý', U'ỷ', U'ỹ', U'ỵ'};
+    for (char32_t m : kA) { if (m == c) { return U'a'; } }
+    for (char32_t m : kE) { if (m == c) { return U'e'; } }
+    for (char32_t m : kI) { if (m == c) { return U'i'; } }
+    for (char32_t m : kO) { if (m == c) { return U'o'; } }
+    for (char32_t m : kU) { if (m == c) { return U'u'; } }
+    for (char32_t m : kY) { if (m == c) { return U'y'; } }
+    if (c == U'đ') { return U'd'; }
+    return c;
+}
+
+// True when the composed buffer can never become the stream with forward
+// keystrokes: it is strictly longer (extra code points — only Backspace can
+// shrink it), or the first mismatching position has a DIFFERENT tone-less
+// base letter (a tone key replaces marks on the same base vowel, it cannot
+// change 'a' into 'i'). A tone-only mismatch at full length ("phim" typed
+// where "phím" is expected, tone key still pending) is still repairable, so
+// the run waits — the red composed tail (bug B5) shows exactly what to fix.
+bool finalWordDefinitivelyWrong(const VnComposer& composer, const std::u32string& stream) {
+    const std::u32string& composed = composer.text();
+    if (composed.size() > stream.size()) { return true; }
+    const std::size_t idx = composer.matchLength(stream);
+    if (idx >= composed.size() || idx >= stream.size()) { return false; }
+    return tonelessBase(composed[idx]) != tonelessBase(stream[idx]);
+}
+
+void NoMistakeGame::applyWrongWordVn() {
+    ++m_vnWordsTotal;
+    ++m_vnWordsWrong;
+    ++m_mistakes;
+    if (m_failMode == FailMode::Hardcore) {
+        m_score -= m_scorePenalty;
+        if (m_score <= 0) { m_score = 0; }
+        m_combo = 0;
+        m_gameOver = true;
+        m_finished = false;
+        m_resultPending = true;
+        return;
+    }
+    if (m_combo > m_comboPenalty) { m_combo -= m_comboPenalty; }
+    else { m_combo = 0; }
+    m_score -= m_softPenalty;
+    if (m_score <= 0) {
+        m_score = 0;
+        m_gameOver = true;
+        m_finished = false;
+        m_resultPending = true;
+    }
+}
+
 void NoMistakeGame::reset() {
     m_currentIndex = 0;
     m_combo = 0;
@@ -2530,6 +2736,7 @@ void NoMistakeGame::reset() {
     m_mistakes = 0;
     m_vnWordsTotal = 0;
     m_vnWordsWrong = 0;
+    m_vnEndJudged = false;   // v1.3.0-beta5 (bug B6): re-arm the end verdict
     if (m_composer) { m_composer->reset(); }
     m_score = m_startReserve;   // score IS the life reserve in this mode
     m_elapsedSec = 0.0;
@@ -2604,27 +2811,7 @@ InputResult NoMistakeGame::handleKey(const InputEvent& ev) {
                 // A committed wrong word IS the mistake — the EN penalty
                 // ladder applies unchanged (Hardcore ends the run, the
                 // health-bar mode deducts the soft penalty).
-                ++m_vnWordsTotal;
-                ++m_vnWordsWrong;
-                ++m_mistakes;
-                if (m_failMode == FailMode::Hardcore) {
-                    m_score -= m_scorePenalty;
-                    if (m_score <= 0) { m_score = 0; }
-                    m_combo = 0;
-                    m_gameOver = true;
-                    m_finished = false;
-                    m_resultPending = true;
-                    return InputResult::Consumed;
-                }
-                if (m_combo > m_comboPenalty) { m_combo -= m_comboPenalty; }
-                else { m_combo = 0; }
-                m_score -= m_softPenalty;
-                if (m_score <= 0) {
-                    m_score = 0;
-                    m_gameOver = true;
-                    m_finished = false;
-                    m_resultPending = true;
-                }
+                applyWrongWordVn();
                 return InputResult::Consumed;
             }
             if (idx < m_textStream.size()) {
@@ -2645,6 +2832,25 @@ InputResult NoMistakeGame::handleKey(const InputEvent& ev) {
             m_gameOver = true;
             m_resultPending = true;
             if (m_score > m_highScore) { m_highScore = m_score; }
+        } else if (!m_finished && !m_vnEndJudged && !m_textStream.empty() &&
+                   m_composer->length() >= m_textStream.size() &&
+                   finalWordDefinitivelyWrong(*m_composer, m_textStream)) {
+            // v1.3.0-beta5 (bug B6): the end-of-run verdict for a diverged
+            // FINAL word. The stream ends without a trailing space, so beta4's
+            // space-boundary judgment could never fire for the last word: the
+            // player typed it wrong and the run just SAT THERE ("gõ sai từ mà
+            // không kết thúc"). Once the composed text has grown to the full
+            // stream length while the match stays short, the final word has
+            // definitively diverged — see finalWordDefinitivelyWrong(): the
+            // buffer overflows the stream, or the mismatching character has a
+            // different tone-less base, which no tone key can ever repair —
+            // so judge it with the same ladder, ONCE (m_vnEndJudged; Backspace
+            // repair afterwards can still reach the win condition). A tone-
+            // repairable tail ("phim" vs "phím") is NOT judged: the composer
+            // may still be mid-word, and judging it would end runs for
+            // correct typing whose tone key has not arrived yet.
+            m_vnEndJudged = true;
+            applyWrongWordVn();
         }
         return InputResult::Consumed;
     }
@@ -2752,6 +2958,18 @@ void NoMistakeGame::buildFrame(Frame& frame) const {
     style.width = 800;
     addStyledLine(frame, 80, 215, m_textStream, m_currentIndex, m_textStream.size(), 0, style);
 
+    // v1.3.0-beta5 (bug B5): the composed buffer with its red divergent tail,
+    // between the stream panel (ends y=250) and the stats row (y=290).
+    const bool diverged = m_vnMode && m_composer &&
+                          m_composer->length() > m_currentIndex;
+    if (diverged) {
+        PassageStyle cs{};
+        cs.size = 16.0f;
+        cs.width = 800;
+        addComposedLine(frame, 80, 262, U"Bạn đã gõ: ", m_composer->text(),
+                        m_currentIndex, cs);
+    }
+
     frame.addText(80, 290, 22, palette::kText, TextAlign::Left,
                   frame.internNumber(U"Combo: ", static_cast<std::int64_t>(m_combo)), true);
     frame.addText(300, 290, 22, palette::kText, TextAlign::Left,
@@ -2767,7 +2985,19 @@ void NoMistakeGame::buildFrame(Frame& frame) const {
     frame.stats.maxCombo = m_maxCombo;
     frame.stats.status = frame.internNumber(U"Ký tự: ",
                                             static_cast<std::int64_t>(m_currentIndex));
-    frame.stats.hint = U"Gõ đúng tững ký tự · F1 tạm dừng · F2 chơi lại · Esc thoát";
+    // v1.3.0-beta5 (bug B6): LIVE wpm + accuracy on the HUD — the run summary
+    // had both but the frame never carried them, so the player saw frozen/zero
+    // gauges for the whole run. Same formulas as pollRunResult().
+    frame.stats.wpm = m_elapsedSec > 0.0
+                          ? (static_cast<double>(m_currentIndex) / 5.0) / (m_elapsedSec / 60.0)
+                          : 0.0;
+    frame.stats.accuracy = 100.0 * static_cast<double>(m_currentIndex) /
+                           static_cast<double>(std::max<std::size_t>(1, m_currentIndex + m_mistakes));
+    frame.stats.hint = diverged
+        ? frame.internNumber(U"Sai — nhấn Backspace ",
+                             static_cast<std::int64_t>(m_composer->length() - m_currentIndex),
+                             U" lần để sửa")
+        : std::u32string_view(U"Gõ đúng tững ký tự · F1 tạm dừng · F2 chơi lại · Esc thoát");
     frame.stats.progress = m_textStream.empty()
                                ? 0.0
                                : static_cast<double>(m_currentIndex) /
@@ -3086,6 +3316,7 @@ void applyFullConfigToGame(IArcadeGame& game, const ArcadeConfig& config) {
     } else if (auto* wasd = dynamic_cast<WasdRaceGame*>(&game)) {
         wasd->setStartFuel(config.wasdStartFuel);
         wasd->setObstacleSpacing(config.wasdObstacleSpacingSec);
+        wasd->setSteeringMode(config.wasdSteering);   // v1.3.0-beta5 (bug B7)
         wasd->setPassageLanguage(config.passageLanguage, config.vnInputMethod);
     } else if (auto* fishing = dynamic_cast<FishingGame*>(&game)) {
         fishing->setAutomationMode(config.fishingAutomation);
@@ -3109,6 +3340,8 @@ void applyLiveConfigToGame(IArcadeGame& game, const ArcadeConfig& config) {
         race->setPacerWpm(config.typingRacePacerWpm);
     } else if (auto* wasd = dynamic_cast<WasdRaceGame*>(&game)) {
         wasd->setObstacleSpacing(config.wasdObstacleSpacingSec);
+        // v1.3.0-beta5 (bug B7): live-safe — reinterprets the NEXT key only.
+        wasd->setSteeringMode(config.wasdSteering);
     } else if (auto* fishing = dynamic_cast<FishingGame*>(&game)) {
         fishing->setAutomationMode(config.fishingAutomation);
     }
@@ -3431,15 +3664,26 @@ bool ArcadeManager::relaunchCurrentGame() {
 }
 
 void ArcadeManager::setConfig(const ArcadeConfig& config) {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    m_config = config;
+    std::shared_ptr<IArcadeGame> game;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_config = config;
+        game = m_game;
+    }
     // v1.3.0 FIX: the config used to be stored only, so changing the fail mode
     // (or the pacer / fishing automation) from the web bridge or the desktop
     // config row did nothing until the game was relaunched — the UI looked
     // broken. The live-safe subset is pushed to the running game right away;
     // the chart/run-resetting knobs still apply on the next launch.
-    if (m_game) {
-        applyLiveConfigToGame(*m_game, config);
+    // v1.3.0-beta5 (bug B6): the live push used to run WHILE HOLDING m_mutex —
+    // a lock-order inversion against every other path (collectResultFrom,
+    // update, handleKey…: m_gameMtx FIRST, m_mutex after) that could deadlock
+    // the UI thread against the game loop, and it mutated the game WITHOUT
+    // m_gameMtx, racing update()/handleKey(). Snapshot the config + game under
+    // m_mutex, then touch the game under m_gameMtx only.
+    if (game) {
+        std::lock_guard<std::mutex> glock(m_gameMtx);
+        applyLiveConfigToGame(*game, config);
     }
 }
 

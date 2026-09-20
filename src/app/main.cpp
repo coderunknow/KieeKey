@@ -185,8 +185,8 @@ constexpr wchar_t kAppVersion[]     = L"1.3.0";           // numeric, 3-part
 // v1.2.2 RC1: [[maybe_unused]] — this is a documented VERSION CARRIER
 // (check_version.py reads it), not a code-level constant; the UI shows the
 // title/version forms. Keeping it zero-maintenance and warning-clean.
-[[maybe_unused]] constexpr wchar_t kAppVersionFull[] = L"1.3.0-beta4";  // with channel
-constexpr wchar_t kAppTitle[]       = L"KieeKey v1.3.0-beta4";  // sync with kAppVersionFull
+[[maybe_unused]] constexpr wchar_t kAppVersionFull[] = L"1.3.0-beta5";  // with channel
+constexpr wchar_t kAppTitle[]       = L"KieeKey v1.3.0-beta5";  // sync with kAppVersionFull
 
 //===========================================================================
 // Output item: what the consumer thread must emit (trivially copyable → can
@@ -562,14 +562,19 @@ void applyMacrosText(const std::wstring& text) {
     parseMacroText(text);
 }
 
-void writeMacrosFile(const std::wstring& text) {
+// v1.3.0-beta5 (G2 sweep, same class as bug B8): returns whether the file was
+// actually written — the void version turned a failed write (read-only
+// %APPDATA%, full disk, policy) into a silent no-op: the user pressed OK, saw
+// no error, and the macros were gone after the next restart.
+bool writeMacrosFile(const std::wstring& text) {
     const std::wstring path = macroFilePath();
-    if (path.empty()) { return; }
+    if (path.empty()) { return false; }
     std::ofstream out(path.c_str(), std::ios::binary);
-    if (out) {
-        const std::string utf8 = utf16ToUtf8(text);
-        out << "\xEF\xBB\xBF" << utf8;
-    }
+    if (!out) { return false; }
+    const std::string utf8 = utf16ToUtf8(text);
+    out << "\xEF\xBB\xBF" << utf8;
+    out.flush();
+    return out.good();
 }
 
 //===========================================================================
@@ -621,6 +626,56 @@ void loadSettings() {
         } else {
             g.options.digitsAreLiteral     = key.getDword(L"DigitsLiteral", 1) != 0;
         }
+        // v1.3.0-beta5 (bug B6): the arcade run configuration is PERSISTED.
+        // Before this, "Áp dụng cấu hình game" wrote ArcadeManager's in-memory
+        // config only — every restart came back with the defaults while the
+        // dialog showed the user's last choices nowhere, so the button looked
+        // broken across sessions. Values are read back with the same ranges
+        // the apply button validates.
+        {
+            auto arcade = ok::arcade::ArcadeManager::instance().getConfig();
+            const DWORD fm = key.getDword(L"ArcadeFailMode", 0);
+            arcade.rhythmFailMode = (fm == 1) ? ok::arcade::FailMode::HealthBar
+                                              : ok::arcade::FailMode::Hardcore;
+            arcade.noMistakeFailMode = arcade.rhythmFailMode;
+            const DWORD bpm = key.getDword(L"ArcadeRhythmBpm", 112);
+            if (bpm >= 60 && bpm <= 220) { arcade.rhythmBpm = static_cast<double>(bpm); }
+            const DWORD lang = key.getDword(L"ArcadePassageLang", 0);
+            arcade.passageLanguage = (lang == 1) ? ok::arcade::PassageLanguage::English
+                                                 : ok::arcade::PassageLanguage::Vietnamese;
+            const DWORD steer = key.getDword(L"ArcadeSteering", 0);
+            arcade.wasdSteering = static_cast<ok::arcade::WasdSteering>(
+                std::clamp<DWORD>(steer, 0, 2));
+            // The composition method follows the IME method loaded above.
+            arcade.vnInputMethod =
+                static_cast<ok::arcade::VnInputMethod>(g.options.inputMethod);
+            ok::arcade::ArcadeManager::instance().setConfig(arcade);
+        }
+        // v1.3.0-beta5 (bug B9): the Live-effects / Chaos / AI-opt-in toggles
+        // (tabs 6-7) applied on click but were NEVER persisted — every restart
+        // silently reverted them to defaults, the same "I enabled it and it
+        // does not work" class as the arcade configuration above. Registry
+        // defaults mirror the in-code Config defaults (live: off, case on,
+        // glyph none, intensity 50; chaos: all off; AI: opt-in off).
+        {
+            ok::effects::Config live{};
+            live.enabled    = key.getDword(L"LiveEnabled", 0) != 0;
+            live.randomCase = key.getDword(L"LiveCase", 1) != 0;
+            const DWORD glyph = key.getDword(L"LiveGlyph", 0);
+            live.glyph      = static_cast<ok::effects::Glyph>(std::clamp<DWORD>(glyph, 0, 3));
+            const DWORD intensity = key.getDword(L"LiveIntensity", 50);
+            live.intensity  = (intensity == 25 || intensity == 50 ||
+                               intensity == 75 || intensity == 100) ? intensity : 50u;
+            g.liveEffects.configure(live);
+
+            auto chaos = ok::chaos::ChaosEngine::instance().getConfig();
+            chaos.masterEnabled         = key.getDword(L"ChaosMaster", 0) != 0;
+            chaos.randomCaseEnabled     = key.getDword(L"ChaosCase", 0) != 0;
+            chaos.glyphTransformEnabled = key.getDword(L"ChaosGlyph", 0) != 0;
+            ok::chaos::ChaosEngine::instance().setConfig(chaos);
+
+            ok::ai::AiRivalEngine::instance().setOptIn(key.getDword(L"AiOptIn", 0) != 0);
+        }
     }
 }
 
@@ -651,6 +706,32 @@ void saveSettings() {
         // migration in loadSettings() has always run first at startup; this
         // makes the marker explicit on every persist anyway).
         key.setDword(L"SettingsMigration", 2);
+        // v1.3.0-beta5 (bug B6): persist the applied arcade run configuration
+        // (fail mode, rhythm BPM, passage language, WASD steering choice).
+        {
+            const auto arcade = ok::arcade::ArcadeManager::instance().getConfig();
+            key.setDword(L"ArcadeFailMode",
+                         arcade.rhythmFailMode == ok::arcade::FailMode::HealthBar ? 1 : 0);
+            key.setDword(L"ArcadeRhythmBpm", static_cast<DWORD>(arcade.rhythmBpm));
+            key.setDword(L"ArcadePassageLang",
+                         arcade.passageLanguage == ok::arcade::PassageLanguage::English ? 1 : 0);
+            key.setDword(L"ArcadeSteering", static_cast<DWORD>(arcade.wasdSteering));
+        }
+        // v1.3.0-beta5 (bug B9): Live-effects / Chaos / AI-opt-in (mirror of
+        // the loadSettings() block; raw values, not combo indices).
+        {
+            const auto live = g.liveEffects.config();
+            key.setDword(L"LiveEnabled",   live.enabled ? 1 : 0);
+            key.setDword(L"LiveCase",      live.randomCase ? 1 : 0);
+            key.setDword(L"LiveGlyph",     static_cast<DWORD>(live.glyph));
+            key.setDword(L"LiveIntensity", live.intensity);
+            const auto chaos = ok::chaos::ChaosEngine::instance().getConfig();
+            key.setDword(L"ChaosMaster",   chaos.masterEnabled ? 1 : 0);
+            key.setDword(L"ChaosCase",     chaos.randomCaseEnabled ? 1 : 0);
+            key.setDword(L"ChaosGlyph",    chaos.glyphTransformEnabled ? 1 : 0);
+            key.setDword(L"AiOptIn",
+                         ok::ai::AiRivalEngine::instance().isOptIn() ? 1 : 0);
+        }
     }
 }
 
@@ -909,7 +990,20 @@ void sendUnicodeText(const std::wstring& text) noexcept;
 // paints the same RenderList the HTML5 client consumes.
 void openArcadeHub(const char* slug) {
     ok::app::ArcadeWindow& hub = ok::app::ArcadeWindow::instance();
-    hub.open(g.hMain, slug != nullptr ? std::string(slug) : std::string());
+    // v1.3.0-beta5 (G2 sweep, same class as bug B8): the bool was discarded —
+    // a failed hub creation (class registration / CreateWindowEx) left every
+    // arcade entry point silently dead. Surface the Win32 error instead.
+    if (!hub.open(g.hMain, slug != nullptr ? std::string(slug) : std::string())) {
+        const DWORD err = ::GetLastError();
+        wchar_t detail[256];
+        ::swprintf(detail, std::size(detail),
+                   L"Không mở được cửa sổ Arcade Hub (mã lỗi Win32: %lu).\n"
+                   L"Hãy thử khởi động lại KieeKeyApp.exe; nếu vẫn lỗi, gửi mã này "
+                   L"kèm báo cáo (tab Chẩn đoán).",
+                   err);
+        ::MessageBoxW(g.hMain, detail, L"KieeKey — Arcade Hub", MB_OK | MB_ICONERROR);
+        return;
+    }
     hub.focus();
 }
 
@@ -929,9 +1023,23 @@ std::size_t emitForChaosLab(const std::wstring& text) {
 }
 
 // Opens the Chaos / Flexing lab window (registers the emitter hook first).
+// v1.3.0-beta5 (bug B8): the bool was discarded — when the window failed to
+// open (class registration or CreateWindowEx), every entry point (tray menu,
+// tab-6 button, --chaos-lab) did NOTHING at all and the user had no idea the
+// click was even received. Surface the failure with the actual Win32 error so
+// a report can say more than "it doesn't open".
 void openChaosLab() {
     ok::app::ChaosLabWindow::setEmitCallback(&emitForChaosLab);
-    ok::app::ChaosLabWindow::instance().open(g.hMain);
+    if (!ok::app::ChaosLabWindow::instance().open(g.hMain)) {
+        const DWORD err = ::GetLastError();
+        wchar_t detail[256];
+        ::swprintf(detail, std::size(detail),
+                   L"Không mở được cửa sổ Chaos Lab (mã lỗi Win32: %lu).\n"
+                   L"Hãy thử khởi động lại KieeKeyApp.exe; nếu vẫn lỗi, gửi mã này "
+                   L"kèm báo cáo (tab Chẩn đoán).",
+                   err);
+        ::MessageBoxW(g.hMain, detail, L"KieeKey — Chaos Lab", MB_OK | MB_ICONERROR);
+    }
 }
 
 //===========================================================================
@@ -2195,6 +2303,33 @@ std::wstring infoDiagnosticsText() {
 // v1.1.0: shared tooltip builder — includes the version and, when the
 // foreground app is auto-excluded, WHICH app the engine is paused in (the
 // old tip gave no hint, so users reported "KieeKey suddenly stopped").
+// v1.3.0-beta5 (bug B2): the live-effects GATE readout — the FIRST veto in
+// the hook's evaluation chain (pure model: ok::effects::liveGateBlocker,
+// pinned by tests/test_live_effects_chain.cpp), worded for the user. Shown
+// on tab 6 (live, per timer tick), in the tray tooltip, and in the exported
+// diagnostics report, so "I enabled it but nothing happens" always has a
+// visible, exact answer.
+const wchar_t* liveGateStatusText() noexcept {
+    const bool ime = g.engineEnabled.load(std::memory_order_relaxed);
+    const bool excl = g.fgExcluded_.load(std::memory_order_relaxed);
+    const bool master = g.liveEffects.enabled();
+    const bool uni = g.options.codeTable == CodeTable::Unicode;
+    using ok::effects::GateBlocker;
+    switch (ok::effects::liveGateBlocker(ime, excl, master, uni)) {
+        case GateBlocker::None:
+            return L"Hiệu ứng: SẴN SÀNG (IME bật · Unicode · app không loại trừ)";
+        case GateBlocker::ImeDisabled:
+            return L"Hiệu ứng: TẮT — bộ gõ đang TẮT (bật lại ở nút trên cùng)";
+        case GateBlocker::AppExcluded:
+            return L"Hiệu ứng: TẮT — app này bị loại trừ (quyền cao / IDE / game)";
+        case GateBlocker::MasterOff:
+            return L"Hiệu ứng: TẮT — chưa bật ô 'Bật khi gõ bên ngoài' ở trên";
+        case GateBlocker::NonUnicodeTable:
+        default:
+            return L"Hiệu ứng: TẮT — cần bảng mã Unicode (đổi ở tab Bàn phím)";
+    }
+}
+
 std::wstring trayTipText() {
     std::wstring tip = L"KieeKey v";
     tip += kAppVersion;
@@ -2211,6 +2346,31 @@ std::wstring trayTipText() {
             std::wstring app = L" — tạm tắt trong ";
             app += utf8ToUtf16(snap->exeNameUtf8);
             tip += app;
+        }
+    }
+    // v1.3.0-beta5 (bug B2): when the live-effects channel is switched on,
+    // the tooltip says whether it can actually reach the foreground app —
+    // the state was invisible before, so a veto looked like a dead feature.
+    if (g.liveEffects.enabled()) {
+        using ok::effects::GateBlocker;
+        const GateBlocker blocker = ok::effects::liveGateBlocker(
+            g.engineEnabled.load(std::memory_order_relaxed),
+            g.fgExcluded_.load(std::memory_order_relaxed),
+            true,
+            g.options.codeTable == CodeTable::Unicode);
+        switch (blocker) {
+            case GateBlocker::None:
+                tip += L" — hiệu ứng: BẬT";
+                break;
+            case GateBlocker::ImeDisabled:
+                tip += L" — hiệu ứng: TẮT (bộ gõ tắt)";
+                break;
+            case GateBlocker::AppExcluded:
+                tip += L" — hiệu ứng: TẮT (app loại trừ)";
+                break;
+            default:
+                tip += L" — hiệu ứng: TẮT (cần bảng mã Unicode)";
+                break;
         }
     }
     return tip;
@@ -3217,8 +3377,15 @@ void settingsFromControls() {
     // Disk write OUTSIDE engineMtx: never let file I/O extend the window in
     // which the hook thread's keystroke path can be blocked.
     if (edit != nullptr) {
-        writeMacrosFile(macroText);
-        g_macroFileRaw = macroText;   // editor text is now the file content
+        if (writeMacrosFile(macroText)) {
+            g_macroFileRaw = macroText;   // editor text is now the file content
+        } else if (HWND hint = ::GetDlgItem(g.hSettings, IDC_STAT_MACRO_HINT)) {
+            // Keep the in-memory macros (they still work this session) but say
+            // out loud that they will NOT survive a restart.
+            ::SetWindowTextW(hint,
+                             L"⚠ Không ghi được %APPDATA%\\KieeKey\\macros.txt — gõ tắt chỉ "
+                             L"hoạt động trong phiên này (kiểm tra quyền thư mục / ổ đĩa).");
+        }
     }
 }
 
@@ -3283,6 +3450,9 @@ void settingsToControls() {
     // v1.3.0-beta3 (bug #2): reflect the saved passage language (VN is index 0).
     ::SendMessageW(::GetDlgItem(g.hSettings, IDC_CMB_PASSAGE_LANG), CB_SETCURSEL,
                    arcade.passageLanguage == ok::arcade::PassageLanguage::English ? 1 : 0, 0);
+    // v1.3.0-beta5 (bug B7): reflect the steering-key choice.
+    ::SendMessageW(::GetDlgItem(g.hSettings, IDC_CMB_STEERING), CB_SETCURSEL,
+                   static_cast<WPARAM>(arcade.wasdSteering), 0);
     updateHeaderStatus();
     showTab(g_settingsOpenTab);
 }
@@ -3312,6 +3482,8 @@ static constexpr int kTab2[] = {
 static constexpr int kTab3[] = {
     IDC_STAT_LATLAB, IDC_STAT_AVGLAB, IDC_STAT_PUSHLAB, IDC_STAT_DROPLAB,
     IDC_STAT_WPMLAB, IDC_STAT_DESC,
+    IDC_STAT_MOUSELAB, IDC_STAT_MOUSEV, IDC_STAT_FGLAB, IDC_STAT_FGV,
+    IDC_STAT_RINGLAB, IDC_STAT_RINGV,
     IDC_STAT_LATVAL, IDC_STAT_AVGVAL, IDC_STAT_PUSHV, IDC_STAT_DROPV,
     IDC_STAT_WPMVAL,
     IDC_STAT_BARRIERLAB, IDC_STAT_BARRIERV,
@@ -3334,14 +3506,15 @@ static constexpr int kTab5[] = {
     IDC_BTN_PLAY_NOMISTAKE, IDC_BTN_PLAY_FLEXING, IDC_STAT_ARCADE_STATUS,
     IDC_BTN_OPEN_CHAOS_LAB, IDC_CMB_FAILMODE, IDC_EDT_RHYTHM_BPM,
     IDC_BTN_APPLY_ARCADE_CFG, IDC_STAT_FAILMODE, IDC_STAT_RHYTHM_BPM,
-    IDC_STAT_PASSAGE_LANG, IDC_CMB_PASSAGE_LANG, 0
+    IDC_STAT_PASSAGE_LANG, IDC_CMB_PASSAGE_LANG,
+    IDC_STAT_STEERING, IDC_CMB_STEERING, 0
 };
 static constexpr int kTab6[] = {
     IDC_GRP_CHAOS, IDC_CHK_CHAOS_MASTER, IDC_CHK_CHAOS_CASE,
     IDC_CHK_GLYPH_TRANSFORM, IDC_STAT_CHAOS_WARN,
     IDC_GRP_LIVE, IDC_CHK_LIVE, IDC_CHK_LIVE_CASE, IDC_CMB_LIVE_GLYPH,
     IDC_STAT_LIVE_GLYPH, IDC_CMB_LIVE_INTENSITY, IDC_STAT_LIVE_INTENSITY,
-    IDC_STAT_LIVE_HINT, 0
+    IDC_STAT_LIVE_HINT, IDC_STAT_LIVE_GATE, 0
 };
 static constexpr int kTab7[] = {
     IDC_GRP_AI, IDC_CHK_AI_OPTIN, IDC_BTN_AI_RESET,
@@ -3351,6 +3524,50 @@ static constexpr int kTab8[] = {
     IDC_GRP_PROG, IDC_STAT_LEVEL_VAL, IDC_STAT_XP_VAL,
     IDC_STAT_KEYS_VAL, IDC_STAT_ACHIEVEMENTS, IDC_BTN_PROG_RESET, 0
 };
+
+//===========================================================================
+// v1.3.0-beta5 (bug B1) — settings dialog window refit + scroll fallback.
+//
+// The beta4 solver measured and reflowed the page children but applied the
+// window growth ALL-OR-NOTHING (`if (growth.unsatisfiedPx == 0)`): whenever
+// the monitor work area could not satisfy the full growth — the common case
+// at 125-150 % scaling on laptop screens — NOTHING was applied while the
+// page children had already moved to their solved rects. Result: labels
+// overlapping the unmoved button row, content clipped at the old window
+// bottom, and no way to reach it. The window also counted the always-visible
+// button row as page content, so it "wanted" ~42 px of growth on every open,
+// guaranteeing the unsatisfied branch on small screens.
+//
+// The fix keeps ok::layout pure (DialogLayout.hpp — pinned by
+// tests/test_dialog_layout.cpp) and applies its WindowRefit decision here:
+//   * grow OR shrink toward the solved content height, clamped to the work
+//     area (partial growth is applied, never skipped);
+//   * move the window fully on screen;
+//   * whatever still does not fit becomes a WS_VSCROLL range — the page
+//     scrolls (children move up and clip against the tab viewport) instead
+//     of being lost;
+//   * re-solve on WM_DPICHANGED after the child rescale, so a label that
+//     wraps taller at the new scale grows instead of clipping.
+//===========================================================================
+namespace {
+
+struct SettingsScrollState {
+    // Page children + their SOLVED rects (dialog-client px), captured by
+    // solveSettingsLayout(); scrolling re-positions from this baseline.
+    std::vector<std::pair<HWND, ok::layout::Rect>> solved;
+    ok::layout::Rect viewport{};          // tab display rect (client coords)
+    int  perTabContentBottom[9] = {};     // deepest solved bottom per tab
+    int  viewportBottom = 0;              // viewport.bottom after the refit
+    int  offset = 0;                      // current scroll offset (px)
+    int  range  = 0;                      // current tab's scroll range (px)
+    bool enabled = false;                 // WS_VSCROLL currently on
+};
+SettingsScrollState g_settingsScroll;
+
+void applySettingsScrollOffset(HWND hwnd);          // defined below showTab
+void settingsScrollSetTab(HWND hwnd, int tabIndex); // defined below showTab
+
+} // namespace
 
 void showTab(int tab) {
     // Every control (including static labels) belongs to exactly one tab;
@@ -3370,7 +3587,285 @@ void showTab(int tab) {
     for (const int* p = kTab6; *p; ++p) { ::ShowWindow(::GetDlgItem(g.hSettings, *p), tab == 6 ? SW_SHOW : SW_HIDE); }
     for (const int* p = kTab7; *p; ++p) { ::ShowWindow(::GetDlgItem(g.hSettings, *p), tab == 7 ? SW_SHOW : SW_HIDE); }
     for (const int* p = kTab8; *p; ++p) { ::ShowWindow(::GetDlgItem(g.hSettings, *p), tab == 8 ? SW_SHOW : SW_HIDE); }
+    // v1.3.0-beta5 (bug B1): each tab has its own content depth — recompute
+    // the scroll range and jump back to the top (no-op before the first
+    // solve, when WM_CREATE's settingsToControls() runs showTab early).
+    settingsScrollSetTab(g.hSettings, tab);
 }
+
+//===========================================================================
+// v1.3.0-beta5 (bug B1) — the solve/apply machinery (declared above).
+//===========================================================================
+namespace {
+
+// Re-position + clip every solved page child for the current scroll offset.
+// A child fully outside the viewport gets an EMPTY region (hidden without
+// touching SW_SHOW/SW_HIDE, so showTab()'s visibility contract survives);
+// a child straddling an edge is clipped to it; an unclipped child has its
+// region cleared. Always-visible chrome and the tab control are untouched.
+void applySettingsScrollOffset(HWND hwnd) {
+    if (hwnd == nullptr || g_settingsScroll.solved.empty()) { return; }
+    for (const auto& entry : g_settingsScroll.solved) {
+        const ok::layout::ScrolledChild sc = ok::layout::scrollChildRect(
+            entry.second, g_settingsScroll.offset, g_settingsScroll.viewport);
+        ::SetWindowPos(entry.first, nullptr, sc.rect.x, sc.rect.y,
+                       sc.rect.w, sc.rect.h, SWP_NOZORDER | SWP_NOACTIVATE);
+        if (!sc.visible) {
+            if (HRGN rgn = ::CreateRectRgn(0, 0, 0, 0)) {
+                ::SetWindowRgn(entry.first, rgn, TRUE);   // rgn ownership passes
+            }
+        } else if (sc.clipped) {
+            if (HRGN rgn = ::CreateRectRgn(sc.clip.x, sc.clip.y,
+                                           sc.clip.x + sc.clip.w,
+                                           sc.clip.y + sc.clip.h)) {
+                ::SetWindowRgn(entry.first, rgn, TRUE);
+            }
+        } else {
+            ::SetWindowRgn(entry.first, nullptr, TRUE);
+        }
+    }
+}
+
+// Per-tab scroll range from the stored content depths; resets to the top.
+void settingsScrollSetTab(HWND hwnd, int tabIndex) {
+    if (hwnd == nullptr || g_settingsScroll.solved.empty()) { return; }
+    if (tabIndex < 0 || tabIndex > 8) { tabIndex = 0; }
+    g_settingsScroll.range = std::max(
+        0, g_settingsScroll.perTabContentBottom[tabIndex] -
+               g_settingsScroll.viewportBottom);
+    g_settingsScroll.offset = 0;
+    const ok::layout::ScrollMetrics m = ok::layout::scrollMetrics(
+        g_settingsScroll.viewport.h, g_settingsScroll.range);
+    SCROLLINFO si{};
+    si.cbSize = sizeof(si);
+    si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
+    si.nMin = 0;
+    si.nMax = std::max(0, m.rangeMax - 1);   // Win32 range is inclusive
+    si.nPage = static_cast<UINT>(m.pagePx);
+    si.nPos = 0;
+    ::SetScrollInfo(hwnd, SB_VERT, &si, TRUE);
+    applySettingsScrollOffset(hwnd);
+}
+
+// Solve the dialog layout for the CURRENT state and apply the refit
+// decision atomically: page children to their solved rects, the window
+// grown/shrunk/moved per ok::layout::refitWindow, tab + bottom chrome
+// resized/shifted by the same client delta, and the residual exposed as a
+// scroll range. Runs at WM_CREATE and after every WM_DPICHANGED rescale;
+// idempotent (re-solving an already-solved dialog changes nothing).
+void solveSettingsLayout(HWND hwnd) {
+    if (hwnd == nullptr) { return; }
+    HWND tabCtl = ::GetDlgItem(hwnd, IDC_TAB);
+    if (tabCtl == nullptr) { return; }
+
+    const int dpi = static_cast<int>(g_settingsDpi != 0 ? g_settingsDpi : 96);
+    const auto S = [dpi](int px) { return ::MulDiv(px, dpi, 96); };
+
+    // -- 1a. Tab headers: measure + plan; multi-row if needed. The label
+    // texts come FROM the control (TCM_GETITEMW) so this can never drift
+    // from what WM_CREATE inserted.
+    RECT rcTab{};
+    ::GetWindowRect(tabCtl, &rcTab);
+    ::MapWindowPoints(nullptr, hwnd, reinterpret_cast<POINT*>(&rcTab), 2);
+    const int tabWidth = rcTab.right - rcTab.left;
+    HDC tdc = ::GetDC(tabCtl);
+    if (tdc != nullptr) {
+        HGDIOBJ oldFont = ::SelectObject(tdc, uiFont());
+        std::vector<int> labelW(9, 0);
+        wchar_t buf[64];
+        for (int i = 0; i < 9; ++i) {
+            TCITEMW ti{};
+            ti.mask = TCIF_TEXT;
+            ti.pszText = buf;
+            ti.cchTextMax = 64;
+            buf[0] = L'\0';
+            if (::SendMessageW(tabCtl, TCM_GETITEMW, static_cast<WPARAM>(i),
+                               reinterpret_cast<LPARAM>(&ti)) != 0) {
+                RECT r{0, 0, 0, 0};
+                ::DrawTextW(tdc, buf, -1, &r, DT_CALCRECT | DT_SINGLELINE);
+                labelW[static_cast<std::size_t>(i)] = r.right - r.left;
+            }
+        }
+        ::SelectObject(tdc, oldFont);
+        ::ReleaseDC(tabCtl, tdc);
+        const ok::layout::TabPlan tabPlan = ok::layout::planTabs(
+            labelW, labelW, tabWidth - S(16), S(18), S(22), S(6));
+        const LONG_PTR tabStyle = ::GetWindowLongPtrW(tabCtl, GWL_STYLE);
+        if (tabPlan.multiline && (tabStyle & TCS_MULTILINE) == 0) {
+            ::SetWindowLongPtrW(tabCtl, GWL_STYLE, tabStyle | TCS_MULTILINE);
+        }
+    }
+
+    // -- 1b. Pages: measure every label, autoFit. --
+    const int* pages[9] = {kTab0, kTab1, kTab2, kTab3,
+                           kTab4, kTab5, kTab6, kTab7, kTab8};
+    auto pageOf = [&pages](int id) {
+        for (int t = 0; t < 9; ++t) {
+            for (const int* p = pages[t]; *p; ++p) {
+                if (*p == id) { return t; }
+            }
+        }
+        return ok::layout::ControlSpec::kAlwaysVisible;
+    };
+    RECT disp = rcTab;
+    ::SendMessageW(tabCtl, TCM_ADJUSTRECT, FALSE, reinterpret_cast<LPARAM>(&disp));
+
+    std::vector<ok::layout::ControlSpec> specs;
+    specs.reserve(140);
+    std::vector<HWND> hwnds;
+    hwnds.reserve(140);
+    wchar_t cls[32];
+    wchar_t text[512];
+    for (HWND c = ::GetWindow(hwnd, GW_CHILD); c != nullptr;
+         c = ::GetWindow(c, GW_HWNDNEXT)) {
+        if (c == tabCtl) { continue; }
+        const int id = ::GetDlgCtrlID(c);
+        if (id == 0) { continue; }
+        RECT rc{};
+        ::GetWindowRect(c, &rc);
+        ::MapWindowPoints(nullptr, hwnd, reinterpret_cast<POINT*>(&rc), 2);
+        ok::layout::ControlSpec spec;
+        spec.id = id;
+        spec.rect = {rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top};
+        spec.tab = pageOf(id);
+        const int clsLen = ::GetClassNameW(c, cls, 32);
+        const bool isStatic = (clsLen == 6 && wcscmp(cls, L"STATIC") == 0);
+        const LONG_PTR style = ::GetWindowLongPtrW(c, GWL_STYLE);
+        const bool isGroupBox =
+            (clsLen == 6 && wcscmp(cls, L"BUTTON") == 0) &&
+            ((style & BS_GROUPBOX) == BS_GROUPBOX);
+        spec.groupBox = isGroupBox;
+        spec.growable = isStatic && !isGroupBox &&
+                        ((style & SS_TYPEMASK) != SS_ICON) &&
+                        ((style & SS_TYPEMASK) != SS_OWNERDRAW);
+        if (spec.growable) {
+            const int tLen = ::GetWindowTextW(c, text, 512);
+            if (tLen > 0) {
+                HDC dc = ::GetDC(hwnd);
+                if (dc != nullptr) {
+                    HGDIOBJ of = ::SelectObject(dc,
+                        reinterpret_cast<HGDIOBJ>(::SendMessageW(
+                            c, WM_GETFONT, 0, 0)));
+                    RECT calc{0, 0, spec.rect.w, 0};
+                    ::DrawTextW(dc, text, tLen, &calc,
+                                DT_CALCRECT | DT_WORDBREAK);
+                    ::SelectObject(dc, of);
+                    ::ReleaseDC(hwnd, dc);
+                    spec.requiredHeight = calc.bottom - calc.top;
+                }
+            }
+        }
+        specs.push_back(spec);
+        hwnds.push_back(c);
+    }
+    const ok::layout::LayoutPlan plan = ok::layout::autoFit(
+        specs, disp.top, disp.bottom);
+
+    // Per-tab content depths (page controls only — the always-visible button
+    // row lives below the viewport by design and must never drive growth).
+    for (int t = 0; t < 9; ++t) { g_settingsScroll.perTabContentBottom[t] = disp.top; }
+    for (std::size_t i = 0; i < specs.size(); ++i) {
+        if (specs[i].tab == ok::layout::ControlSpec::kAlwaysVisible) { continue; }
+        int& depth = g_settingsScroll.perTabContentBottom[specs[i].tab];
+        depth = std::max(depth, plan.rects[i].bottom());
+    }
+    int deepest = disp.bottom;
+    for (int t = 0; t < 9; ++t) {
+        deepest = std::max(deepest, g_settingsScroll.perTabContentBottom[t]);
+    }
+
+    // -- 2. Window refit decision (pure model; work area of OUR monitor). --
+    RECT rcDlg{};
+    ::GetWindowRect(hwnd, &rcDlg);
+    RECT rcCli{};
+    ::GetClientRect(hwnd, &rcCli);
+    RECT rcWork{};
+    if (!::SystemParametersInfoW(SPI_GETWORKAREA, 0, &rcWork, 0)) {
+        rcWork = rcDlg;   // never leave the model without a bound
+    }
+    const HMONITOR mon = ::MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+    if (mon != nullptr) {
+        MONITORINFO mi{};
+        mi.cbSize = sizeof(mi);
+        if (::GetMonitorInfoW(mon, &mi)) { rcWork = mi.rcWork; }
+    }
+    const ok::layout::WindowRefit fit = ok::layout::refitWindow(
+        ok::layout::Rect{rcDlg.left, rcDlg.top,
+                         rcDlg.right - rcDlg.left, rcDlg.bottom - rcDlg.top},
+        rcCli.bottom - rcCli.top, disp.bottom, deepest,
+        ok::layout::Rect{rcWork.left, rcWork.top,
+                         rcWork.right - rcWork.left, rcWork.bottom - rcWork.top});
+
+    // Any tab overflowing after the refit => keep WS_VSCROLL available.
+    const int newViewportBottom = disp.bottom + fit.clientDelta;
+    bool anyScroll = false;
+    for (int t = 0; t < 9; ++t) {
+        if (g_settingsScroll.perTabContentBottom[t] > newViewportBottom) {
+            anyScroll = true;
+        }
+    }
+    const LONG_PTR dlgStyle = ::GetWindowLongPtrW(hwnd, GWL_STYLE);
+    const bool haveScroll = (dlgStyle & WS_VSCROLL) != 0;
+    if (anyScroll != haveScroll) {
+        ::SetWindowLongPtrW(hwnd, GWL_STYLE,
+                            anyScroll ? (dlgStyle | WS_VSCROLL)
+                                      : (dlgStyle & ~static_cast<LONG_PTR>(WS_VSCROLL)));
+    }
+    g_settingsScroll.enabled = anyScroll;
+
+    // -- 3. Apply: window rect, then tab + bottom chrome by clientDelta. --
+    ::SetWindowPos(hwnd, nullptr, fit.windowRect.x, fit.windowRect.y,
+                   fit.windowRect.w, fit.windowRect.h,
+                   SWP_NOZORDER | SWP_NOACTIVATE |
+                       (anyScroll != haveScroll ? SWP_FRAMECHANGED : 0));
+    if (anyScroll != haveScroll) {
+        // The scrollbar changed the client width — re-read it.
+        ::GetClientRect(hwnd, &rcCli);
+    }
+    {
+        const int vsw = anyScroll ? ::GetSystemMetrics(SM_CXVSCROLL) : 0;
+        const int newTabW = std::max(S(200),
+            static_cast<int>(rcCli.right - rcCli.left) - S(24) - vsw);
+        ::SetWindowPos(tabCtl, nullptr, S(12), S(66), newTabW,
+                       (rcTab.bottom - rcTab.top) + fit.clientDelta,
+                       SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+    if (fit.clientDelta != 0) {
+        for (HWND c = ::GetWindow(hwnd, GW_CHILD); c != nullptr;
+             c = ::GetWindow(c, GW_HWNDNEXT)) {
+            if (c == tabCtl) { continue; }
+            if (pageOf(::GetDlgCtrlID(c)) != ok::layout::ControlSpec::kAlwaysVisible) {
+                continue;   // page content keeps its solved rect (applied below)
+            }
+            RECT rc{};
+            ::GetWindowRect(c, &rc);
+            ::MapWindowPoints(nullptr, hwnd, reinterpret_cast<POINT*>(&rc), 2);
+            if (rc.top >= rcTab.bottom - S(4)) {   // the bottom button row
+                ::SetWindowPos(c, nullptr, 0, rc.top + fit.clientDelta,
+                               0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+            }
+        }
+    }
+
+    // -- 4. Store the solved baseline + viewport; scroll to the top. --
+    RECT disp2{};
+    ::GetWindowRect(tabCtl, &disp2);
+    ::MapWindowPoints(nullptr, hwnd, reinterpret_cast<POINT*>(&disp2), 2);
+    ::SendMessageW(tabCtl, TCM_ADJUSTRECT, FALSE, reinterpret_cast<LPARAM>(&disp2));
+    g_settingsScroll.viewport = ok::layout::Rect{
+        disp2.left, disp2.top, disp2.right - disp2.left, disp2.bottom - disp2.top};
+    g_settingsScroll.viewportBottom = g_settingsScroll.viewport.bottom();
+    g_settingsScroll.solved.clear();
+    for (std::size_t i = 0; i < specs.size(); ++i) {
+        if (specs[i].tab == ok::layout::ControlSpec::kAlwaysVisible) { continue; }
+        g_settingsScroll.solved.emplace_back(hwnds[i], plan.rects[i]);
+    }
+    int curTab = static_cast<int>(::SendMessageW(tabCtl, TCM_GETCURSEL, 0, 0));
+    if (curTab < 0 || curTab > 8) { curTab = 0; }
+    settingsScrollSetTab(hwnd, curTab);   // applies solved rects at offset 0
+}
+
+} // namespace
 
 //===========================================================================
 // v1.3.0-beta4 — Diagnostics control panel (tab 3 "Chẩn đoán")
@@ -3426,7 +3921,7 @@ void saveDiagLevel(ok::diag::Level level) {
 // that the machine is fast.
 int runDiagQuickCheck(std::string& failDetail) {
     int passed = 0;
-    const int total = 5;
+    const int total = 6;
     failDetail.clear();
 
     // 1. Engine composition round-trip on the default configuration.
@@ -3477,6 +3972,27 @@ int runDiagQuickCheck(std::string& failDetail) {
         if (!v.empty() && rep.size() > 100) { ++passed; } else { failDetail += "report;"; }
     } catch (...) { failDetail += "report-throw;"; }
 
+    // 6. v1.3.0-beta5 (bug B2): the live-effects DECISION chain answers —
+    //    the same planOutput() the hook runs, exercised in-process with the
+    //    gate held open (active=true): a styled replacement must come back.
+    //    (tests/test_live_effects_chain.cpp pins the transport behind it.)
+    try {
+        ok::effects::LiveEffects fx;
+        ok::effects::Config cfg;
+        cfg.enabled = true;
+        cfg.randomCase = true;
+        cfg.glyph = ok::effects::Glyph::None;
+        cfg.intensity = 100;
+        fx.configure(cfg);
+        fx.sync();
+        std::wstring text = L"aaaa";
+        const ok::effects::OutputPlan plan = ok::effects::planOutput(
+            /*active=*/true, /*engineSuppress=*/true, /*engineBackspace=*/0,
+            text, ok::effects::KeyKind::Char, U'a', fx);
+        if (plan.suppress && text.size() == 4 && text != L"aaaa") { ++passed; }
+        else { failDetail += "livefx;"; }
+    } catch (...) { failDetail += "livefx-throw;"; }
+
     (void)total;
     return passed;
 }
@@ -3496,6 +4012,10 @@ bool exportDiagReport(std::wstring& outPath) {
     if (!out) { return false; }
     out << "\xEF\xBB\xBF";
     out << ok::diag::Diagnostics::instance().report(40);
+    // v1.3.0-beta5 (bug B2): the live-effects gate verdict belongs in the
+    // exported report — a tester mailing this file answers "why do I see no
+    // effects?" without another round trip.
+    out << "\n[live-effects gate] " << utf16ToUtf8(liveGateStatusText()) << "\n";
     return true;
 }
 
@@ -3708,50 +4228,68 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                               std::memory_order_release);
 
             // ---- tab 3: Chẩn đoán ----
+            // v1.3.0-beta5 (bug B3+B4): ONE coherent telemetry panel, one row
+            // per SOURCE. The beta4 row "Sự kiện bàn phím đã xử lý" was fed by
+            // pushed() — the SPSC ring counter that keyboard events AND mouse
+            // button/wheel events AND foreground changes ALL increment — so it
+            // climbed while the user merely dragged the mouse. Each number now
+            // says exactly what it counts (HookCounters.hpp is the owner);
+            // failure counters carry an explicit "0 = tốt" annotation so a
+            // healthy zero is not mistaken for a broken/never-run diagnostic.
             mkCtl(hwnd, L"STATIC", L"Độ trễ đỉnh hook → xử lý (µs):", WS_CHILD | WS_VISIBLE,
-                  S(28), S(110), S(230), S(18), reinterpret_cast<HMENU>(IDC_STAT_LATLAB));
-            mkCtl(hwnd, L"STATIC", L"—", WS_CHILD | WS_VISIBLE, S(270), S(110), S(230), S(18),
+                  S(28), S(110), S(250), S(18), reinterpret_cast<HMENU>(IDC_STAT_LATLAB));
+            mkCtl(hwnd, L"STATIC", L"—", WS_CHILD | WS_VISIBLE, S(290), S(110), S(210), S(18),
                   reinterpret_cast<HMENU>(IDC_STAT_LATVAL));
             mkCtl(hwnd, L"STATIC", L"Độ trễ trung bình (µs):", WS_CHILD | WS_VISIBLE,
-                  S(28), S(136), S(230), S(18), reinterpret_cast<HMENU>(IDC_STAT_AVGLAB));
-            mkCtl(hwnd, L"STATIC", L"—", WS_CHILD | WS_VISIBLE, S(270), S(136), S(230), S(18),
+                  S(28), S(134), S(250), S(18), reinterpret_cast<HMENU>(IDC_STAT_AVGLAB));
+            mkCtl(hwnd, L"STATIC", L"—", WS_CHILD | WS_VISIBLE, S(290), S(134), S(210), S(18),
                   reinterpret_cast<HMENU>(IDC_STAT_AVGVAL));
-            mkCtl(hwnd, L"STATIC", L"Sự kiện bàn phím đã xử lý:", WS_CHILD | WS_VISIBLE,
-                  S(28), S(162), S(230), S(18), reinterpret_cast<HMENU>(IDC_STAT_PUSHLAB));
-            mkCtl(hwnd, L"STATIC", L"0", WS_CHILD | WS_VISIBLE, S(270), S(162), S(230), S(18),
+            mkCtl(hwnd, L"STATIC", L"Sự kiện bàn phím (xuống + thả):", WS_CHILD | WS_VISIBLE,
+                  S(28), S(158), S(250), S(18), reinterpret_cast<HMENU>(IDC_STAT_PUSHLAB));
+            mkCtl(hwnd, L"STATIC", L"0", WS_CHILD | WS_VISIBLE, S(290), S(158), S(210), S(18),
                   reinterpret_cast<HMENU>(IDC_STAT_PUSHV));
-            mkCtl(hwnd, L"STATIC", L"Sự kiện bị bỏ (hàng đợi đầy):", WS_CHILD | WS_VISIBLE,
-                  S(28), S(188), S(230), S(18), reinterpret_cast<HMENU>(IDC_STAT_DROPLAB));
-            mkCtl(hwnd, L"STATIC", L"0", WS_CHILD | WS_VISIBLE, S(270), S(188), S(230), S(18),
+            mkCtl(hwnd, L"STATIC", L"Sự kiện chuột (nút + cuộn, ngắt từ):", WS_CHILD | WS_VISIBLE,
+                  S(28), S(182), S(250), S(18), reinterpret_cast<HMENU>(IDC_STAT_MOUSELAB));
+            mkCtl(hwnd, L"STATIC", L"0", WS_CHILD | WS_VISIBLE, S(290), S(182), S(210), S(18),
+                  reinterpret_cast<HMENU>(IDC_STAT_MOUSEV));
+            mkCtl(hwnd, L"STATIC", L"Lần đổi cửa sổ (foreground):", WS_CHILD | WS_VISIBLE,
+                  S(28), S(206), S(250), S(18), reinterpret_cast<HMENU>(IDC_STAT_FGLAB));
+            mkCtl(hwnd, L"STATIC", L"0", WS_CHILD | WS_VISIBLE, S(290), S(206), S(210), S(18),
+                  reinterpret_cast<HMENU>(IDC_STAT_FGV));
+            mkCtl(hwnd, L"STATIC", L"Đã đẩy vào hàng đợi (mọi nguồn):", WS_CHILD | WS_VISIBLE,
+                  S(28), S(230), S(250), S(18), reinterpret_cast<HMENU>(IDC_STAT_RINGLAB));
+            mkCtl(hwnd, L"STATIC", L"0", WS_CHILD | WS_VISIBLE, S(290), S(230), S(210), S(18),
+                  reinterpret_cast<HMENU>(IDC_STAT_RINGV));
+            mkCtl(hwnd, L"STATIC", L"Bị bỏ (hàng đợi đầy) — 0 = tốt:", WS_CHILD | WS_VISIBLE,
+                  S(28), S(254), S(250), S(18), reinterpret_cast<HMENU>(IDC_STAT_DROPLAB));
+            mkCtl(hwnd, L"STATIC", L"0", WS_CHILD | WS_VISIBLE, S(290), S(254), S(210), S(18),
                   reinterpret_cast<HMENU>(IDC_STAT_DROPV));
             mkCtl(hwnd, L"STATIC", L"Tốc độ gõ (ký tự/phút, ≈ WPM × 5):", WS_CHILD | WS_VISIBLE,
-                  S(28), S(214), S(240), S(18), reinterpret_cast<HMENU>(IDC_STAT_WPMLAB));
-            mkCtl(hwnd, L"STATIC", L"—", WS_CHILD | WS_VISIBLE, S(270), S(214), S(230), S(18),
+                  S(28), S(278), S(250), S(18), reinterpret_cast<HMENU>(IDC_STAT_WPMLAB));
+            mkCtl(hwnd, L"STATIC", L"—", WS_CHILD | WS_VISIBLE, S(290), S(278), S(210), S(18),
                   reinterpret_cast<HMENU>(IDC_STAT_WPMVAL));
             // v1.1.0 telemetry: barrier timeouts, self-healing reinstalls, TSF
             // slow commits, and the live per-app state.
-            mkCtl(hwnd, L"STATIC", L"Chờ hàng đợi quá hạn (barrier):", WS_CHILD | WS_VISIBLE,
-                  S(28), S(240), S(230), S(18), reinterpret_cast<HMENU>(IDC_STAT_BARRIERLAB));
-            mkCtl(hwnd, L"STATIC", L"0", WS_CHILD | WS_VISIBLE, S(270), S(240), S(230), S(18),
+            mkCtl(hwnd, L"STATIC", L"Chờ quá hạn (barrier) — 0 = tốt:", WS_CHILD | WS_VISIBLE,
+                  S(28), S(302), S(250), S(18), reinterpret_cast<HMENU>(IDC_STAT_BARRIERLAB));
+            mkCtl(hwnd, L"STATIC", L"0", WS_CHILD | WS_VISIBLE, S(290), S(302), S(210), S(18),
                   reinterpret_cast<HMENU>(IDC_STAT_BARRIERV));
-            mkCtl(hwnd, L"STATIC", L"Lần tự phục hồi hook:", WS_CHILD | WS_VISIBLE,
-                  S(28), S(266), S(230), S(18), reinterpret_cast<HMENU>(IDC_STAT_REINSTLAB));
-            mkCtl(hwnd, L"STATIC", L"0", WS_CHILD | WS_VISIBLE, S(270), S(266), S(230), S(18),
+            mkCtl(hwnd, L"STATIC", L"Tự phục hồi hook — 0 = tốt:", WS_CHILD | WS_VISIBLE,
+                  S(28), S(326), S(250), S(18), reinterpret_cast<HMENU>(IDC_STAT_REINSTLAB));
+            mkCtl(hwnd, L"STATIC", L"0", WS_CHILD | WS_VISIBLE, S(290), S(326), S(210), S(18),
                   reinterpret_cast<HMENU>(IDC_STAT_REINSTV));
-            mkCtl(hwnd, L"STATIC", L"Commit TSF chậm (đã hạ cấp):", WS_CHILD | WS_VISIBLE,
-                  S(28), S(292), S(230), S(18), reinterpret_cast<HMENU>(IDC_STAT_TSFLAB));
-            mkCtl(hwnd, L"STATIC", L"0", WS_CHILD | WS_VISIBLE, S(270), S(292), S(230), S(18),
+            mkCtl(hwnd, L"STATIC", L"Commit TSF chậm — 0 = tốt:", WS_CHILD | WS_VISIBLE,
+                  S(28), S(350), S(250), S(18), reinterpret_cast<HMENU>(IDC_STAT_TSFLAB));
+            mkCtl(hwnd, L"STATIC", L"0", WS_CHILD | WS_VISIBLE, S(290), S(350), S(210), S(18),
                   reinterpret_cast<HMENU>(IDC_STAT_TSFV));
             mkCtl(hwnd, L"STATIC", L"Ứng dụng hiện tại:", WS_CHILD | WS_VISIBLE,
-                  S(28), S(318), S(230), S(18), reinterpret_cast<HMENU>(IDC_STAT_APPLAB));
-            mkCtl(hwnd, L"STATIC", L"—", WS_CHILD | WS_VISIBLE, S(270), S(318), S(230), S(18),
+                  S(28), S(374), S(250), S(18), reinterpret_cast<HMENU>(IDC_STAT_APPLAB));
+            mkCtl(hwnd, L"STATIC", L"—", WS_CHILD | WS_VISIBLE, S(290), S(374), S(210), S(18),
                   reinterpret_cast<HMENU>(IDC_STAT_APPV));
             mkCtl(hwnd, L"STATIC",
-                  L"Kiến trúc: hàng đợi lock-free SPSC; hook thread không bao giờ bị chặn; "
-                  L"quyết định bộ gõ chạy ngay trên hook thread; xuất qua TSF hoặc SendInput "
-                  L"trực tiếp (không Backspace giả, không clipboard). Đỉnh độ trễ tính từ "
-                  L"lúc mở hộp thoại.",
-                  WS_CHILD | WS_VISIBLE, S(28), S(352), S(480), S(90),
+                  L"Hàng đợi lock-free SPSC; quyết định gõ chạy trên hook thread; xuất "
+                  L"TSF/SendInput trực tiếp. Số đếm THEO NGUỒN: chuột không tăng số phím.",
+                  WS_CHILD | WS_VISIBLE, S(28), S(398), S(480), S(48),
                   reinterpret_cast<HMENU>(IDC_STAT_DESC));
 
             // v1.3.0-beta4: the diagnostics module (ok::diag) shipped in
@@ -3896,6 +4434,28 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 ::SendMessageW(passageLang, CB_SETCURSEL, 0, 0);
             }
 
+            // v1.3.0-beta5 (bug B7): steering-key choice for the WASD race.
+            // In VN mode the letters a/s/d/w are Telex/VNI composition keys,
+            // so beta4 forced steering onto the arrows — players who drive
+            // with WASD asked for it back. The modes (see WasdSteering):
+            // arrows only (default), WASD steer + compose, or both. The
+            // choice persists and applies live to a running game.
+            mkCtl(hwnd, L"STATIC", L"Phím lái (đua xe WASD):",
+                  WS_CHILD | WS_VISIBLE | SS_LEFT, S(44), S(430), S(200), S(18),
+                  reinterpret_cast<HMENU>(IDC_STAT_STEERING));
+            HWND steering = mkCtl(hwnd, L"COMBOBOX", L"",
+                  WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL,
+                  S(250), S(428), S(250), S(140), reinterpret_cast<HMENU>(IDC_CMB_STEERING));
+            if (steering != nullptr) {
+                ::SendMessageW(steering, CB_ADDSTRING, 0,
+                               reinterpret_cast<LPARAM>(L"Mũi tên (mặc định)"));
+                ::SendMessageW(steering, CB_ADDSTRING, 0,
+                               reinterpret_cast<LPARAM>(L"WASD — lái VÀ gõ Telex/VNI"));
+                ::SendMessageW(steering, CB_ADDSTRING, 0,
+                               reinterpret_cast<LPARAM>(L"Cả hai (mũi tên + WASD)"));
+                ::SendMessageW(steering, CB_SETCURSEL, 0, 0);
+            }
+
             // ---- tab 6: Phòng Chaos (v1.3.0) ----
             mkCtl(hwnd, L"BUTTON", L"Phòng thí nghiệm Chaos & Thử nghiệm",
                   WS_CHILD | WS_VISIBLE | BS_GROUPBOX, S(24), S(100), S(494), S(196),
@@ -3911,8 +4471,11 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                   reinterpret_cast<HMENU>(IDC_CHK_GLYPH_TRANSFORM));
             mkCtl(hwnd, L"STATIC",
                   L"Các tùy chọn ở trên chỉ dành cho Lab. Để đổi chữ khi gõ trong ứng dụng khác, "
-                  L"dùng nhóm Hiệu ứng gõ trực tiếp ở dưới. Hai chế độ độc lập.",
-                  WS_CHILD | WS_VISIBLE, S(44), S(214), S(450), S(72),
+                  L"dùng nhóm Hiệu ứng gõ trực tiếp ở dưới. Hai chế độ độc lập. "
+                  // v1.3.0-beta5 (G1): measured per-key cost of the active lab
+                  // engine, next to the toggle it belongs to.
+                  L"Chi phí khi Chaos bật: ≈ +21 ns/phím (p50 64→85, bench beta4 — docs/PERFORMANCE.md).",
+                  WS_CHILD | WS_VISIBLE, S(44), S(214), S(450), S(88),
                   reinterpret_cast<HMENU>(IDC_STAT_CHAOS_WARN));
 
             mkCtl(hwnd, L"BUTTON", L"Hiệu ứng gõ trực tiếp — ứng dụng bên ngoài",
@@ -3946,9 +4509,25 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                   L"đổi ở tab Bàn phím); không tác động app bị loại trừ. Nguyên âm tiếng Việt "
                   L"có dấu được lật theo dấu: sắc↔huyền, hỏi↔ngã; chữ không có bản lật giữ "
                   L"nguyên. Không dùng khi nhập mật khẩu; không xoay hình học 90°/270°. "
-                  L"Mặc định TẮT, không lưu qua lần chạy.",
-                  WS_CHILD | WS_VISIBLE, S(44), S(464), S(450), S(80),
+                  // v1.3.0-beta5: B9 made these toggles persist (beta4 reverted
+                  // them every restart); G1 documents the measured cost.
+                  L"Mặc định TẮT; bật/tắt ĐƯỢC lưu qua lần chạy (từ beta5). "
+                  L"Chi phí khi bật: lật glyph ≈ +1,8 ns/ký tự (bench beta4 — docs/PERFORMANCE.md).",
+                  // v1.3.0-beta5 (G1): grew two clauses (persistence + measured
+                  // cost) — the rect moves up into the 12px slack under the
+                  // intensity label and grows to 92px (bottom S(546), still
+                  // above the gate readout at S(550)); audit_layout verifies.
+                  WS_CHILD | WS_VISIBLE, S(44), S(454), S(450), S(92),
                   reinterpret_cast<HMENU>(IDC_STAT_LIVE_HINT));
+            // v1.3.0-beta5 (bug B2): the GATE READOUT — one line that always
+            // tells the truth about whether live effects can reach external
+            // apps right now, and if not, WHICH condition vetoes them (the
+            // pure model behind it is ok::effects::liveGateBlocker). Updated
+            // every timer tick (IME toggle, foreground exclusion, code-table
+            // changes all reflect within 500 ms).
+            mkCtl(hwnd, L"STATIC", liveGateStatusText(), WS_CHILD | WS_VISIBLE,
+                  S(28), S(550), S(490), S(17),
+                  reinterpret_cast<HMENU>(IDC_STAT_LIVE_GATE));
 
             // ---- tab 7: AI Rival & Coaching (v1.3.0) ----
             mkCtl(hwnd, L"BUTTON", L"Personal AI Typing Rival & Huấn luyện viên",
@@ -4001,159 +4580,21 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             mkCtl(hwnd, L"BUTTON", L"Áp dụng", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
                   S(468), S(580), S(80), S(30), reinterpret_cast<HMENU>(IDC_BTN_APPLY));
 
-            // ---- v1.3.0-beta4: runtime layout solve (ok::layout) ----
+            // ---- v1.3.0-beta4/beta5: runtime layout solve (ok::layout) ----
             // The authored rectangles above are the 96-dpi design, gated
             // statically by scripts/audit_layout.py. Here the app MEASURES
             // the real font on the real monitor (DrawTextW + DT_CALCRECT)
             // and lets the solver reflow: every wrapping label grows to its
             // measured height, the controls below shift down, group boxes
-            // stretch to keep containing their children, and the window
-            // grows if the deepest page needs it. This is the durable fix
-            // for the "chữ bị đè / chữ bị mất" bug class — no future string
-            // edit or DPI change can silently clip text again.
-            {
-                HWND tabCtl = ::GetDlgItem(hwnd, IDC_TAB);
-                if (tabCtl != nullptr) {
-                    // -- 1a. Tab headers: measure + plan; multi-row if needed. --
-                    const wchar_t* kTabTexts[9] = {t0, t1, t2, t3, t4, t5, t6, t7, t8};
-                    RECT rcTab{};
-                    ::GetWindowRect(tabCtl, &rcTab);
-                    ::MapWindowPoints(nullptr, hwnd, reinterpret_cast<POINT*>(&rcTab), 2);
-                    const int tabWidth = rcTab.right - rcTab.left;
-                    HDC tdc = ::GetDC(tabCtl);
-                    if (tdc != nullptr) {
-                        HGDIOBJ oldFont = ::SelectObject(tdc, uiFont());
-                        std::vector<int> labelW(9, 0);
-                        for (int i = 0; i < 9; ++i) {
-                            RECT r{0, 0, 0, 0};
-                            ::DrawTextW(tdc, kTabTexts[i], -1, &r,
-                                        DT_CALCRECT | DT_SINGLELINE);
-                            labelW[static_cast<std::size_t>(i)] = r.right - r.left;
-                        }
-                        ::SelectObject(tdc, oldFont);
-                        ::ReleaseDC(tabCtl, tdc);
-                        const ok::layout::TabPlan tabPlan = ok::layout::planTabs(
-                            labelW, labelW, tabWidth - S(16), S(18), S(22), S(6));
-                        if (tabPlan.multiline) {
-                            ::SetWindowLongPtrW(tabCtl, GWL_STYLE,
-                                ::GetWindowLongPtrW(tabCtl, GWL_STYLE) | TCS_MULTILINE);
-                        }
-                    }
-
-                    // -- 1b. Pages: measure every label, autoFit, apply. --
-                    const int* pages[9] = {kTab0, kTab1, kTab2, kTab3,
-                                           kTab4, kTab5, kTab6, kTab7, kTab8};
-                    auto pageOf = [&pages](int id) {
-                        for (int t = 0; t < 9; ++t) {
-                            for (const int* p = pages[t]; *p; ++p) {
-                                if (*p == id) { return t; }
-                            }
-                        }
-                        return ok::layout::ControlSpec::kAlwaysVisible;
-                    };
-                    // The tab control's DISPLAY rect, in dialog-client coords.
-                    RECT disp = rcTab;
-                    ::SendMessageW(tabCtl, TCM_ADJUSTRECT, FALSE,
-                                   reinterpret_cast<LPARAM>(&disp));
-
-                    std::vector<ok::layout::ControlSpec> specs;
-                    specs.reserve(140);
-                    std::vector<HWND> hwnds;
-                    hwnds.reserve(140);
-                    wchar_t cls[32];
-                    wchar_t text[512];
-                    for (HWND c = ::GetWindow(hwnd, GW_CHILD); c != nullptr;
-                         c = ::GetWindow(c, GW_HWNDNEXT)) {
-                        if (c == tabCtl) { continue; }
-                        const int id = ::GetDlgCtrlID(c);
-                        if (id == 0) { continue; }
-                        RECT rc{};
-                        ::GetWindowRect(c, &rc);
-                        ::MapWindowPoints(nullptr, hwnd, reinterpret_cast<POINT*>(&rc), 2);
-                        ok::layout::ControlSpec spec;
-                        spec.id = id;
-                        spec.rect = {rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top};
-                        spec.tab = pageOf(id);
-                        const int clsLen = ::GetClassNameW(c, cls, 32);
-                        const bool isStatic = (clsLen == 6 && wcscmp(cls, L"STATIC") == 0);
-                        const LONG_PTR style = ::GetWindowLongPtrW(c, GWL_STYLE);
-                        const bool isGroupBox =
-                            (clsLen == 6 && wcscmp(cls, L"BUTTON") == 0) &&
-                            ((style & BS_GROUPBOX) == BS_GROUPBOX);
-                        spec.groupBox = isGroupBox;
-                        spec.growable = isStatic && !isGroupBox &&
-                                        ((style & SS_TYPEMASK) != SS_ICON) &&
-                                        ((style & SS_TYPEMASK) != SS_OWNERDRAW);
-                        if (spec.growable) {
-                            const int tLen = ::GetWindowTextW(c, text, 512);
-                            if (tLen > 0) {
-                                HDC dc = ::GetDC(hwnd);
-                                if (dc != nullptr) {
-                                    HGDIOBJ of = ::SelectObject(dc,
-                                        reinterpret_cast<HGDIOBJ>(::SendMessageW(
-                                            c, WM_GETFONT, 0, 0)));
-                                    RECT calc{0, 0, spec.rect.w, 0};
-                                    ::DrawTextW(dc, text, tLen, &calc,
-                                                DT_CALCRECT | DT_WORDBREAK);
-                                    ::SelectObject(dc, of);
-                                    ::ReleaseDC(hwnd, dc);
-                                    spec.requiredHeight = calc.bottom - calc.top;
-                                }
-                            }
-                        }
-                        specs.push_back(spec);
-                        hwnds.push_back(c);
-                    }
-                    const ok::layout::LayoutPlan plan = ok::layout::autoFit(
-                        specs, disp.top, disp.bottom);
-                    for (std::size_t i = 0; i < specs.size(); ++i) {
-                        const ok::layout::Rect& want = plan.rects[i];
-                        const ok::layout::Rect& was = specs[i].rect;
-                        if (want.x != was.x || want.y != was.y ||
-                            want.w != was.w || want.h != was.h) {
-                            ::SetWindowPos(hwnds[i], nullptr, want.x, want.y, want.w, want.h,
-                                           SWP_NOZORDER | SWP_NOACTIVATE);
-                        }
-                    }
-                    if (plan.extraHeightPx > 0) {
-                        // Grow the window (capped by the monitor work area),
-                        // the tab control, and shift the always-visible
-                        // button row down to stay at the bottom.
-                        RECT rcWork{};
-                        ::SystemParametersInfoW(SPI_GETWORKAREA, 0, &rcWork, 0);
-                        RECT rcDlg{};
-                        ::GetWindowRect(hwnd, &rcDlg);
-                        const ok::layout::WindowGrowth growth = ok::layout::growWindow(
-                            rcDlg.bottom - rcDlg.top, plan.extraHeightPx,
-                            rcWork.bottom - rcWork.top);
-                        if (growth.unsatisfiedPx == 0) {
-                            ::SetWindowPos(hwnd, nullptr, 0, 0,
-                                           rcDlg.right - rcDlg.left, growth.newClientHeight,
-                                           SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
-                            ::SetWindowPos(tab, nullptr, 0, 0, tabWidth,
-                                           (rcTab.bottom - rcTab.top) + plan.extraHeightPx,
-                                           SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
-                            for (HWND c = ::GetWindow(hwnd, GW_CHILD); c != nullptr;
-                                 c = ::GetWindow(c, GW_HWNDNEXT)) {
-                                if (c == tab) { continue; }
-                                const int id = ::GetDlgCtrlID(c);
-                                if (pageOf(id) != ok::layout::ControlSpec::kAlwaysVisible) {
-                                    continue;   // page content keeps its solved rect
-                                }
-                                RECT rc{};
-                                ::GetWindowRect(c, &rc);
-                                ::MapWindowPoints(nullptr, hwnd,
-                                                  reinterpret_cast<POINT*>(&rc), 2);
-                                if (rc.top >= rcTab.bottom) {   // the bottom button row
-                                    ::SetWindowPos(c, nullptr, 0, rc.top + plan.extraHeightPx,
-                                                   0, 0, SWP_NOSIZE | SWP_NOZORDER);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
+            // stretch to keep containing their children, and the WINDOW is
+            // refit (v1.3.0-beta5, bug B1): grown OR shrunk toward the
+            // solved content height clamped to the monitor work area —
+            // partial growth is applied instead of skipped — moved fully on
+            // screen, and whatever still does not fit becomes a WS_VSCROLL
+            // range, so no content can overlap the button row or clip
+            // silently again. See solveSettingsLayout() + the pure model in
+            // DialogLayout.hpp (tests/test_dialog_layout.cpp).
+            solveSettingsLayout(hwnd);
             settingsToControls();
             // v1.3.0-beta4: reflect the persisted diagnostics level in the
             // tab-3 radios (the level itself was applied at boot).
@@ -4209,6 +4650,45 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                                SWP_NOZORDER | SWP_NOACTIVATE);
             }
             refreshSettingsDpi();
+            // v1.3.0-beta5 (bug B1): re-measure + re-solve at the new scale
+            // (refreshSettingsDpi only rescales rects/fonts in place; a label
+            // that wraps taller at the new DPI must GROW, and the window must
+            // refit against the new monitor's work area — including the
+            // scroll fallback when the new scale no longer fits).
+            solveSettingsLayout(hwnd);
+            return 0;
+        }
+
+        case WM_VSCROLL: {
+            // v1.3.0-beta5 (bug B1): scroll fallback — the page children
+            // move up and clip against the tab viewport (pure model:
+            // ok::layout::scrollChildRect, pinned by tests). The always-
+            // visible header/button chrome never scrolls.
+            if (!g_settingsScroll.enabled) { return 0; }
+            SCROLLINFO si{};
+            si.cbSize = sizeof(si);
+            si.fMask = SIF_ALL;
+            if (!::GetScrollInfo(hwnd, SB_VERT, &si)) { return 0; }
+            int pos = g_settingsScroll.offset;
+            const int linePx = ::MulDiv(16, static_cast<int>(g_settingsDpi), 96);
+            switch (LOWORD(wParam)) {
+                case SB_LINEUP:        pos -= linePx; break;
+                case SB_LINEDOWN:      pos += linePx; break;
+                case SB_PAGEUP:        pos -= static_cast<int>(si.nPage); break;
+                case SB_PAGEDOWN:      pos += static_cast<int>(si.nPage); break;
+                case SB_THUMBPOSITION:
+                case SB_THUMBTRACK:    pos = si.nTrackPos; break;
+                case SB_TOP:           pos = 0; break;
+                case SB_BOTTOM:        pos = si.nMax; break;
+                default: return 0;
+            }
+            pos = std::clamp(pos, 0, std::max(0, si.nMax));
+            if (pos == g_settingsScroll.offset) { return 0; }
+            g_settingsScroll.offset = pos;
+            si.fMask = SIF_POS;
+            si.nPos = pos;
+            ::SetScrollInfo(hwnd, SB_VERT, &si, TRUE);
+            applySettingsScrollOffset(hwnd);
             return 0;
         }
 
@@ -4250,10 +4730,27 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             std::swprintf(buf, std::size(buf), L"%lld", static_cast<long long>(g.hook.avgLatencyUs()));
             ::SetWindowTextW(::GetDlgItem(hwnd, IDC_STAT_AVGVAL), buf);
 
-            // Counters.
+            // Counters — v1.3.0-beta5 (bug B3): ONE ROW PER SOURCE.
+            // PUSHV shows keyboardEvents() (KeyDown+KeyUp+SysKeyDown+SysKeyUp),
+            // NEVER pushed() again: the ring counter also climbs on mouse
+            // buttons/wheel and foreground changes, which is exactly the
+            // "counter moves while I only drag the mouse" report.
+            {
+                const ok::hook::HookCounters& hc = g.hook.counters();
+                std::swprintf(buf, std::size(buf), L"%llu",
+                              static_cast<unsigned long long>(hc.keyboardEvents()));
+                ::SetWindowTextW(::GetDlgItem(hwnd, IDC_STAT_PUSHV), buf);
+                std::swprintf(buf, std::size(buf), L"%llu",
+                              static_cast<unsigned long long>(hc.mouseEvents()));
+                ::SetWindowTextW(::GetDlgItem(hwnd, IDC_STAT_MOUSEV), buf);
+                std::swprintf(buf, std::size(buf), L"%llu",
+                              static_cast<unsigned long long>(
+                                  hc.foregroundChanged.load(std::memory_order_relaxed)));
+                ::SetWindowTextW(::GetDlgItem(hwnd, IDC_STAT_FGV), buf);
+            }
             std::swprintf(buf, std::size(buf), L"%llu",
                           static_cast<unsigned long long>(g.hook.pushed()));
-            ::SetWindowTextW(::GetDlgItem(hwnd, IDC_STAT_PUSHV), buf);
+            ::SetWindowTextW(::GetDlgItem(hwnd, IDC_STAT_RINGV), buf);
             std::swprintf(buf, std::size(buf), L"%llu",
                           static_cast<unsigned long long>(g.hook.dropped()));
             ::SetWindowTextW(::GetDlgItem(hwnd, IDC_STAT_DROPV), buf);
@@ -4269,15 +4766,30 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                           static_cast<unsigned long long>(g.tsfSlowCount.load(std::memory_order_relaxed)));
             ::SetWindowTextW(::GetDlgItem(hwnd, IDC_STAT_TSFV), buf);
             {
+                // v1.3.0-beta5 (bug B4): the row now says WHY the IME is off
+                // for this app — "elevated" (UIPI pass-through) and "auto-
+                // excluded" (IDE/game policy) are different facts with
+                // different remedies, and an unresolved process name arrives
+                // here as the honest "pid N (lỗi X)" label instead of the
+                // beta4 bare "unknown".
                 const auto snap = g.monitor.snapshot();
                 const bool excl = g.fgExcluded_.load(std::memory_order_relaxed);
                 std::wstring app = snap ? utf8ToUtf16(snap->exeNameUtf8) : std::wstring(L"—");
                 if (snap) {
-                    app += excl ? L"  —  đang TẮT (loại trừ tự động)"
-                                : L"  —  đang gõ";
+                    if (excl) {
+                        app += g.monitor.currentAppElevated()
+                                   ? L"  —  TẮT: app chạy quyền cao hơn KieeKey (gõ thô)"
+                                   : L"  —  TẮT: loại trừ tự động (IDE/game)";
+                    } else {
+                        app += L"  —  đang gõ";
+                    }
                 }
                 ::SetWindowTextW(::GetDlgItem(hwnd, IDC_STAT_APPV), app.c_str());
             }
+            // v1.3.0-beta5 (bug B2): the tab-6 gate readout follows the IME
+            // state, the foreground exclusion and the code table live.
+            ::SetWindowTextW(::GetDlgItem(hwnd, IDC_STAT_LIVE_GATE),
+                             liveGateStatusText());
 
             // WPM gauge: EMA of printable-characters-per-minute.
             // v1.1.0: decays to 0 after ~2 s of silence — the old gauge froze
@@ -4327,7 +4839,11 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 } else {
                     ::SetWindowTextW(::GetDlgItem(hwnd, IDC_STAT_ARCADE_STATUS),
                                      L"Chưa có game nào đang chạy.\r\n"
-                                     L"Nhấn một nút game để mở cửa sổ Arcade Hub.");
+                                     L"Nhấn một nút game để mở cửa sổ Arcade Hub.\r\n"
+                                     // v1.3.0-beta5 (G1): measured standby cost,
+                                     // so the idle hook overhead is documented
+                                     // where the feature lives.
+                                     L"Chi phí khi không chơi: ≈ +2 ns/phím (p50 64→66, bench beta4 — docs/PERFORMANCE.md).");
                 }
             }
 
@@ -4355,7 +4871,10 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 ok::ai::AiRivalEngine::instance().trainBatch();
                 auto aiprof = ok::ai::AiRivalEngine::instance().getProfile();
                 wchar_t aibuf[256];
-                std::swprintf(aibuf, std::size(aibuf), L"AI: Mean IKI %.1f ms | Lỗi tự nhiên %.1f%% | Trễ phím dấu %.1f ms",
+                // v1.3.0-beta5 (G1): the opt-in's measured hot-path cost rides
+                // along with the stats it produces.
+                std::swprintf(aibuf, std::size(aibuf),
+                              L"AI: Mean IKI %.1f ms | Lỗi tự nhiên %.1f%% | Trễ phím dấu %.1f ms | Chi phí: ≈ +11 ns/phím (bench beta4)",
                               aiprof.meanIkiMs, aiprof.errorRate * 100.0, aiprof.toneDelayMs);
                 ::SetWindowTextW(::GetDlgItem(hwnd, IDC_STAT_AI_STATS), aibuf);
 
@@ -4439,10 +4958,23 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                                               : ok::arcade::PassageLanguage::Vietnamese;
                     cfg.vnInputMethod =
                         static_cast<ok::arcade::VnInputMethod>(g.options.inputMethod);
+                    // v1.3.0-beta5 (bug B7): steering-key choice (clamped —
+                    // CB_ERR/-1 from an untouched combo falls back to Arrows).
+                    HWND steerCombo = ::GetDlgItem(hwnd, IDC_CMB_STEERING);
+                    const int steerSel = (steerCombo != nullptr)
+                                             ? static_cast<int>(::SendMessageW(steerCombo,
+                                                                               CB_GETCURSEL, 0, 0))
+                                             : 0;
+                    cfg.wasdSteering = static_cast<ok::arcade::WasdSteering>(
+                        std::clamp(steerSel, 0, 2));
                     ok::arcade::ArcadeManager::instance().setConfig(cfg);
+                    // v1.3.0-beta5 (bug B6): PERSIST right away — before this,
+                    // the applied config lived only in memory and vanished on
+                    // restart unless the user also pressed OK on the dialog.
+                    saveSettings();
                     ::MessageBoxW(hwnd,
-                                  L"Đã áp dụng: chế độ Rhythm/No-Mistake, nhịp BPM và "
-                                  L"ngôn ngữ đoạn văn cho các game tiếp theo.",
+                                  L"Đã áp dụng + lưu: chế độ Rhythm/No-Mistake, nhịp BPM, "
+                                  L"ngôn ngữ đoạn văn và phím lái cho các game.",
                                   L"KieeKey Arcade", MB_OK | MB_ICONINFORMATION);
                     return 0;
                 }
@@ -4462,6 +4994,7 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                                      (intensity == 0 ? 25u : 50u));
                     g.liveEffects.configure(config);
                     g.engineResyncPending.store(true, std::memory_order_release);
+                    saveSettings();   // v1.3.0-beta5 (bug B9): persist on toggle
                     return 0;
                 }
                 case IDC_CHK_CHAOS_MASTER:
@@ -4473,11 +5006,13 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     cfg.randomCaseEnabled = (::IsDlgButtonChecked(hwnd, IDC_CHK_CHAOS_CASE) == BST_CHECKED);
                     cfg.glyphTransformEnabled = (::IsDlgButtonChecked(hwnd, IDC_CHK_GLYPH_TRANSFORM) == BST_CHECKED);
                     chaos.setConfig(cfg);
+                    saveSettings();   // v1.3.0-beta5 (bug B9): persist on toggle
                     return 0;
                 }
                 case IDC_CHK_AI_OPTIN: {
                     bool opt = (::IsDlgButtonChecked(hwnd, IDC_CHK_AI_OPTIN) == BST_CHECKED);
                     ok::ai::AiRivalEngine::instance().setOptIn(opt);
+                    saveSettings();   // v1.3.0-beta5 (bug B9): persist on toggle
                     return 0;
                 }
                 case IDC_BTN_AI_RESET:
@@ -4499,8 +5034,10 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                         ::SetWindowTextW(r, lvl == ok::diag::Level::Off
                             ? L"Chẩn đoán: TẮT — mọi bộ đếm ngừng (chi phí ~0)"
                             : lvl == ok::diag::Level::Full
-                                ? L"Chẩn đoán: ĐẦY ĐỦ — bộ đếm + độ trễ + ghi từng phím"
-                                : L"Chẩn đoán: CƠ BẢN — bộ đếm + độ trễ");
+                                ? L"Chẩn đoán: ĐẦY ĐỦ — bộ đếm + độ trễ + ghi từng phím "
+                                  L"(chi phí: docs/PERFORMANCE.md)"
+                                : L"Chẩn đoán: CƠ BẢN — bộ đếm + độ trễ "
+                                  L"(chi phí: docs/PERFORMANCE.md)");
                     }
                     return 0;
                 }
@@ -4509,10 +5046,10 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     const int passed = runDiagQuickCheck(failDetail);
                     if (HWND r = ::GetDlgItem(hwnd, IDC_STAT_DIAG_RESULT)) {
                         wchar_t buf[160]{};
-                        if (passed == 5) {
-                            swprintf_s(buf, L"Kiểm tra nhanh: ĐẠT 5/5 hạng mục ✓");
+                        if (passed == 6) {
+                            swprintf_s(buf, L"Kiểm tra nhanh: ĐẠT 6/6 hạng mục ✓");
                         } else {
-                            swprintf_s(buf, L"Kiểm tra nhanh: %d/5 — lỗi: %hs",
+                            swprintf_s(buf, L"Kiểm tra nhanh: %d/6 — lỗi: %hs",
                                        passed, failDetail.c_str());
                         }
                         ::SetWindowTextW(r, buf);
@@ -4529,6 +5066,49 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     } else if (HWND r = ::GetDlgItem(hwnd, IDC_STAT_DIAG_RESULT)) {
                         ::SetWindowTextW(r, L"Không ghi được báo cáo (thư mục %APPDATA%?)");
                     }
+                    return 0;
+                }
+                // v1.3.0-beta5 (bug B9): the "Bàn phím" tab live-applies on
+                // click. Before this, tab-0 controls only took effect through
+                // OK/Apply — a tester who flipped a checkbox and closed the
+                // dialog with X (or simply expected the instant feedback the
+                // tab-6/7 toggles give) saw "the option does nothing". Same
+                // fail-safe read path as OK (dlgChecked fallbacks), same
+                // apply-under-lock, plus an immediate persist so what the
+                // dialog shows is what restarts.
+                case IDC_RADIO_TELEX:
+                case IDC_RADIO_VNI:
+                case IDC_RADIO_SIMPLETELEX:
+                case IDC_CHK_DIGITS:
+                case IDC_CHK_SPELL:
+                case IDC_CHK_RESTORE:
+                case IDC_CHK_QUICK:
+                case IDC_CHK_MODERN:
+                case IDC_CHK_UPPER:
+                case IDC_CHK_MACRO:
+                case IDC_RADIO_OUT_AUTO:
+                case IDC_RADIO_OUT_TSF:
+                case IDC_RADIO_OUT_SEND:
+                case IDC_CHK_PERF_LOWCPU:
+                case IDC_CHK_PERF_DICT:
+                case IDC_CHK_NOTIFY:
+                case IDC_CHK_EXCLUDE_IDE:
+                case IDC_CHK_EXCLUDE_GAME:
+                case IDC_CHK_EXCLUDE_SHELL: {
+                    if (HIWORD(wParam) != BN_CLICKED) { return 0; }
+                    settingsFromControls();
+                    saveSettings();
+                    updateTrayIcon();
+                    updateHeaderStatus();
+                    return 0;
+                }
+                case IDC_COMBO_CODETABLE:
+                case IDC_COMBO_PERF: {
+                    if (HIWORD(wParam) != CBN_SELCHANGE) { return 0; }
+                    settingsFromControls();
+                    saveSettings();
+                    updateTrayIcon();
+                    updateHeaderStatus();
                     return 0;
                 }
                 case IDOK:
@@ -4565,6 +5145,14 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
         case WM_DESTROY:
             g.hSettings = nullptr; g.macroEdit.store(nullptr, std::memory_order_release);
+            // v1.3.0-beta5 (bug B1): drop the scroll/solve baseline — the
+            // child HWNDs are dead and the next dialog re-solves from scratch.
+            g_settingsScroll.solved.clear();
+            g_settingsScroll.viewport = ok::layout::Rect{};
+            g_settingsScroll.viewportBottom = 0;
+            g_settingsScroll.offset = 0;
+            g_settingsScroll.range = 0;
+            g_settingsScroll.enabled = false;
             return 0;
     }
     return ::DefWindowProcW(hwnd, msg, wParam, lParam);
@@ -4757,6 +5345,13 @@ LRESULT CALLBACK mainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     // v3.5: shell restart notification for tray-icon resurrection.
     g_msgTaskbarCreated = ::RegisterWindowMessageW(L"TaskbarCreated");
+
+    // v1.3.0-beta5 (bug B8): register the Chaos Lab emitter once at boot. The
+    // Arcade Hub sidebar entry opens the lab through the launchChaosLab()
+    // façade (src/core/ArcadeHubLaunch.hpp), which does not pass through this
+    // translation unit — without a boot-time registration its "gõ thật vào
+    // app" button would have no emitter when the lab was opened from the hub.
+    ok::app::ChaosLabWindow::setEmitCallback(&emitForChaosLab);
 
     // Single instance — WITH a takeover path for a hung earlier process.
     // History: an earlier build could leave a zombie holding this mutex (a

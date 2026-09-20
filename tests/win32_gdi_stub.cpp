@@ -45,6 +45,13 @@ std::vector<DrawCall>& log() {
 
 void clearLog() { log().clear(); }
 
+std::vector<std::wstring>& messageBoxes() {
+    static std::vector<std::wstring> boxes;
+    return boxes;
+}
+
+void clearMessageBoxes() { messageBoxes().clear(); }
+
 int framePresents() {
     int count = 0;
     for (const DrawCall& call : log()) {
@@ -302,6 +309,16 @@ BOOL AdjustWindowRectEx(RECT* rect, DWORD, BOOL, DWORD) {
     // layout assertions do not depend on the window manager.
     (void)rect;
     return TRUE;
+}
+
+int MessageBoxW(HWND hwnd, LPCWSTR text, LPCWSTR caption, UINT type) {
+    (void)hwnd;
+    (void)type;
+    std::wstring entry = (caption != nullptr) ? caption : L"";
+    entry += L" | ";
+    entry += (text != nullptr) ? text : L"";
+    okgdi::messageBoxes().push_back(entry);
+    return IDOK;
 }
 
 BOOL SetWindowTextW(HWND hwnd, LPCWSTR text) {

@@ -466,6 +466,15 @@ int hitTestCatalog(int x, int y, int width, int height, double dpiScale) {
             return static_cast<int>(i);
         }
     }
+    // v1.3.0-beta5 (bug B8): one extra row BELOW the eight games opens the
+    // Chaos Lab. The tester never found the lab's existing entry points (tray
+    // menu, tab-6 button, --chaos-lab) — "the UI was too cluttered" — so the
+    // hub itself now links to it. Index == catalog.size() means "the lab row".
+    const int labTop = firstRow + static_cast<int>(catalog.size()) * rowHeight +
+                       rowHeight / 2;
+    if (y >= labTop && y < labTop + rowHeight - 4) {
+        return static_cast<int>(catalog.size());
+    }
     (void)width;
     return -1;
 }
@@ -540,6 +549,39 @@ void drawChrome(HDC dc, GdiCache& cache, const RenderList& list, int width, int 
         ::SetTextColor(dc, toColorRef(kAccent));
         const std::wstring kind = info.typingDriven ? L"gõ phím" : L"điều khiển";
         ::TextOutW(dc, px(48), top + px(30), kind.c_str(), static_cast<int>(kind.size()));
+        ::SelectObject(dc, oldFont);
+    }
+
+    // ---- Chaos Lab row (v1.3.0-beta5, bug B8) ----
+    // A divider plus one clickable row under the catalogue: the lab is not a
+    // game, so it never joins gameCatalog() (that list is in lock-step with
+    // GameType and the web renderer); it is chrome, drawn and hit-tested here.
+    {
+        const int labTop = px(kFirstRowY) + static_cast<int>(catalog.size()) * rowHeight +
+                           rowHeight / 2;
+        fillRectColor(dc, cache, px(16), labTop - rowHeight / 4, sidebar - px(32), 1,
+                      0x2C3546FFu);
+        const bool labHovered = (hoverIndex == static_cast<int>(catalog.size()));
+        if (labHovered) {
+            fillRectColor(dc, cache, px(4), labTop, sidebar - px(4), rowHeight - px(4),
+                          kRowHover);
+        }
+        oldFont = ::SelectObject(dc, cache.fontFor(px(18), false, false));
+        ::SetTextColor(dc, toColorRef(kTextPrimary));
+        const wchar_t* labEmoji = L"🧪";   // surrogate pair: 2 UTF-16 units
+        ::TextOutW(dc, px(16), labTop + px(12), labEmoji, 2);
+        ::SelectObject(dc, oldFont);
+
+        oldFont = ::SelectObject(dc, cache.fontFor(px(15), labHovered, false));
+        ::SetTextColor(dc, toColorRef(labHovered ? kTextPrimary : kTextMuted));
+        const wchar_t* labName = L"Chaos Lab";
+        ::TextOutW(dc, px(48), labTop + px(14), labName, static_cast<int>(::wcslen(labName)));
+        ::SelectObject(dc, oldFont);
+
+        oldFont = ::SelectObject(dc, cache.fontFor(px(11), false, false));
+        ::SetTextColor(dc, toColorRef(kAccent));
+        const wchar_t* labKind = L"hiệu ứng chữ · cửa sổ riêng";
+        ::TextOutW(dc, px(48), labTop + px(30), labKind, static_cast<int>(::wcslen(labKind)));
         ::SelectObject(dc, oldFont);
     }
 
@@ -691,6 +733,16 @@ LRESULT CALLBACK arcadeWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
                         static_cast<GameType>(catalog[static_cast<std::size_t>(index)].id));
                     ::SetFocus(hwnd);
                     ::InvalidateRect(hwnd, nullptr, FALSE);
+                } else if (static_cast<std::size_t>(index) == catalog.size()) {
+                    // v1.3.0-beta5 (bug B8): the Chaos Lab row. The façade
+                    // returns false only when the window cannot open; say so
+                    // instead of swallowing the click like beta4 did.
+                    if (!ok::app::launchChaosLab()) {
+                        ::MessageBoxW(hwnd,
+                                      L"Không mở được Chaos Lab (xem mã lỗi trong menu "
+                                      L"khay → 🌀 Phòng Chaos Lab…).",
+                                      L"KieeKey Arcade Hub", MB_OK | MB_ICONERROR);
+                    }
                 }
             }
             return 0;

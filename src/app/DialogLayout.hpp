@@ -230,8 +230,20 @@ inline constexpr int kGroupBoxBottomPadPx = 10;
     }
 
     // Content bounds + the clip verdict.
+    //
+    // v1.3.0-beta5 (bug B1): the page bottom is measured over the PAGE
+    // controls ONLY. The always-visible chrome (header ABOVE the viewport,
+    // button row BELOW it) is not page content: the button row is authored
+    // below `pageBottom` by design, so including it made extraHeightPx
+    // permanently non-zero (~42 px at 96 dpi) — the window grew on EVERY
+    // open even when nothing was clipped, and on small work areas the
+    // all-or-nothing growth application then skipped the growth ENTIRELY
+    // while the page children had already moved to their solved rects:
+    // guaranteed overlap + clipping. The caller anchors the button row via
+    // refitWindow() below, which is where the chrome now participates.
     plan.contentBottom = pageTop;
     for (std::size_t i = 0; i < controls.size(); ++i) {
+        if (controls[i].tab == ControlSpec::kAlwaysVisible) { continue; }
         plan.contentBottom = std::max(plan.contentBottom, plan.rects[i].bottom());
     }
     if (plan.contentBottom > pageBottom) { plan.extraHeightPx = plan.contentBottom - pageBottom; }
@@ -393,6 +405,134 @@ struct WindowGrowth {
     }
     result.newClientHeight = wanted;
     return result;
+}
+
+//---------------------------------------------------------------------------
+// v1.3.0-beta5 (bug B1) — window refit model.
+//
+// growWindow() answers "how tall would the window like to be"; refitWindow()
+// is the DECISION the caller must apply atomically: grow (or shrink) toward
+// that wish, clamp to the monitor work area, keep the window fully on
+// screen, and report what is left over as a SCROLL RANGE instead of silently
+// skipping the whole adjustment (the beta4 all-or-nothing bug: when the
+// growth did not fit, NOTHING was applied — the page children had already
+// moved to their solved rects, so they overlapped the unmoved button row and
+// clipped at the old window bottom, with no way to scroll to them).
+//
+// Coordinates: `window` is the FULL window rect in screen pixels (borders and
+// caption included); `clientHeightPx` is its current client height; the
+// viewport/content pair is in CLIENT pixels (the page viewport bottom edge
+// and the solved page content bottom edge). `workArea` is the monitor work
+// area in screen pixels. The model is pure — the Win32 layer applies it.
+//---------------------------------------------------------------------------
+
+// Move/resize `r` so it is fully inside `work`, shrinking it only when it is
+// larger than the work area itself. Prefers the minimal movement: a window
+// already on screen does not jump.
+[[nodiscard]] inline Rect fitRectToWorkArea(const Rect& r, const Rect& work) noexcept {
+    Rect out = r;
+    if (work.w <= 0 || work.h <= 0) { return out; }
+    if (out.w > work.w) { out.w = work.w; }
+    if (out.h > work.h) { out.h = work.h; }
+    if (out.x < work.x) { out.x = work.x; }
+    if (out.right() > work.right()) { out.x = work.right() - out.w; }
+    if (out.y < work.y) { out.y = work.y; }
+    if (out.bottom() > work.bottom()) { out.y = work.bottom() - out.h; }
+    return out;
+}
+
+struct WindowRefit {
+    Rect  windowRect   {};   // new full-window rect (fitted into the work area)
+    int   clientDelta  = 0;  // client height change: grow the tab + shift the
+                             // bottom chrome row by exactly this (may be < 0
+                             // when the authored window exceeded the work area)
+    int   scrollRange  = 0;  // page content px below the new viewport bottom
+    bool  scrollNeeded = false;
+};
+
+[[nodiscard]] inline WindowRefit refitWindow(const Rect& window,
+                                             int clientHeightPx,
+                                             int viewportBottomPx,
+                                             int contentBottomPx,
+                                             const Rect& workArea) noexcept {
+    WindowRefit out;
+    const int chromePx = std::max(0, window.h - clientHeightPx);
+    // 1. The client the CONTENT wants: grown to the solved page bottom.
+    int wantedClient = clientHeightPx;
+    if (contentBottomPx > viewportBottomPx) {
+        wantedClient = clientHeightPx + (contentBottomPx - viewportBottomPx);
+    }
+    // 2. Clamp to what the work area can show (shrink included: an authored
+    //    window taller than a small screen must still be fully reachable).
+    int maxClient = workArea.h > 0 ? workArea.h - chromePx : wantedClient;
+    if (maxClient < 120) { maxClient = 120; }   // never collapse to nothing
+    const int newClient = std::min(wantedClient, maxClient);
+    out.clientDelta = newClient - clientHeightPx;
+    // 3. Whatever the viewport still cannot show becomes scroll range — the
+    //    content is reachable instead of clipped (WS_VSCROLL fallback).
+    const int newViewportBottom = viewportBottomPx + out.clientDelta;
+    out.scrollRange = std::max(0, contentBottomPx - newViewportBottom);
+    out.scrollNeeded = out.scrollRange > 0;
+    // 4. New window rect, fully inside the work area (minimal movement).
+    out.windowRect = fitRectToWorkArea(
+        Rect{window.x, window.y, window.w, chromePx + newClient}, workArea);
+    return out;
+}
+
+//---------------------------------------------------------------------------
+// v1.3.0-beta5 (bug B1) — scroll fallback model for the settings dialog.
+//
+// The dialog's page children are direct children of the dialog (GetDlgItem
+// must keep working), so "scrolling" = moving the solved page rects up by the
+// scroll offset and CLIPPING them to the tab viewport. A child entirely
+// outside the viewport gets an empty region (hidden without SW_HIDE, so the
+// showTab() visibility contract is untouched); a child straddling an edge is
+// clipped to it. All maths here; the Win32 layer only applies rects+regions.
+//---------------------------------------------------------------------------
+struct ScrolledChild {
+    bool     visible  = true;   // false => fully outside the viewport
+    Rect     rect     {};       // new position (solved rect shifted by -offset)
+    bool     clipped  = false;  // true => a clip region must be applied
+    Rect     clip     {};       // clip rect in CHILD-LOCAL coordinates
+};
+
+[[nodiscard]] inline ScrolledChild scrollChildRect(const Rect& solved,
+                                                   int offset,
+                                                   const Rect& viewport) noexcept {
+    ScrolledChild out;
+    out.rect = Rect{solved.x, solved.y - offset, solved.w, solved.h};
+    const Rect& r = out.rect;
+    if (r.bottom() <= viewport.y || r.y >= viewport.bottom() ||
+        r.right() <= viewport.x || r.x >= viewport.right()) {
+        out.visible = false;
+        out.clipped = true;
+        out.clip = Rect{0, 0, 0, 0};
+        return out;
+    }
+    Rect c = r;
+    if (c.x < viewport.x) { c.w -= viewport.x - c.x; c.x = viewport.x; }
+    if (c.y < viewport.y) { c.h -= viewport.y - c.y; c.y = viewport.y; }
+    if (c.right() > viewport.right())   { c.w = viewport.right() - c.x; }
+    if (c.bottom() > viewport.bottom()) { c.h = viewport.bottom() - c.y; }
+    out.clipped = (c.x != r.x || c.y != r.y || c.w != r.w || c.h != r.h);
+    out.clip = Rect{c.x - r.x, c.y - r.y, c.w, c.h};   // child-local
+    return out;
+}
+
+// Standard scrollbar metrics for the fallback: range = the pixels of content
+// below the viewport, page = 90 % of the viewport (one "page" of scroll).
+struct ScrollMetrics {
+    int rangeMax = 0;
+    int pagePx   = 0;
+    int linePx   = 16;
+};
+
+[[nodiscard]] inline ScrollMetrics scrollMetrics(int viewportHeightPx,
+                                                 int scrollRangePx) noexcept {
+    ScrollMetrics m;
+    m.rangeMax = std::max(0, scrollRangePx);
+    m.pagePx = std::max(1, viewportHeightPx * 9 / 10);
+    return m;
 }
 
 } // namespace ok::layout

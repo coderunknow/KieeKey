@@ -775,6 +775,13 @@ public:
     }
 
     // ---- diagnostics ----
+    // v1.3.0-beta5 (bug B3): per-SOURCE event counters. pushed() is the ring
+    // counter — keyboard, mouse and foreground events ALL increment it, so it
+    // must never be displayed under a keyboard label again. keyboardEvents()
+    // (HookCounters) is the only quantity that may carry that label.
+    [[nodiscard]] const ok::hook::HookCounters& counters() const noexcept {
+        return hook_.counters();
+    }
     [[nodiscard]] std::uint64_t pushed()  const noexcept { return hook_.pushed(); }
     [[nodiscard]] std::uint64_t dropped() const noexcept { return hook_.dropped(); }
     [[nodiscard]] std::int64_t  peakLatencyUs() const noexcept { return hook_.peakLatencyUs(); }

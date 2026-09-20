@@ -110,6 +110,15 @@ struct ForegroundInfo {
     // an engine-buffer reset, so keystrokes are NEVER lost.
     bool               elevated  = false;
 
+    // v1.3.0-beta5 (bug B4): 0 when the display name was resolved; otherwise
+    // the Win32 error of the LAST failed name query. The display never shows
+    // a bare "unknown" again — the honest fallback label is
+    // "pid N (lỗi X)" (ProcessNameUtil.hpp), and this field lets the UI add
+    // the reason even when the label was already computed. A failed NAME
+    // query is diagnostic-only: it NEVER excludes the app (the elevation
+    // probe is a separate concern — see treatAsElevated).
+    std::uint32_t      nameQueryError = 0;
+
     // Auto-bypass set: IDEs/editors and immersive (fullscreen) game titles.
     // Shell (Explorer, Terminal…) is intentionally NOT auto-excluded —
     // legacy OpenKey kept processing there (Vietnamese filenames, etc.).

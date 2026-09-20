@@ -304,10 +304,18 @@ fi
 # STEP 7: v1.3.0 Subsystem Isolation & Apples-to-Apples In-System Benchmark
 # ---------------------------------------------------------------------------
 echo -e "\n[Step 7/7] Compiling & Running v1.3.0 Feature Isolation Benchmark..."
-"$CXX" -std=c++2b -O3 -DNDEBUG -Isrc/core \
+# v1.3.0-beta4: ArcadeFrame.cpp/ArcadeRender.cpp were factored out of
+# Arcade.cpp as separate translation units after this script was written;
+# without them Step 7 failed to link with 144 undefined references (broken
+# on the beta3 tree already — found while running the beta4 A/B campaign).
+# -pthread matches the suite's Arcade link lines (ArcadeManager now owns a
+# mutex; hammer tests exercise it threaded).
+"$CXX" -std=c++2b -O3 -DNDEBUG -pthread -Isrc/core \
     tests/bench_v130_isolation.cpp \
     src/core/TextEngine.cpp \
     src/core/Arcade.cpp \
+    src/core/ArcadeFrame.cpp \
+    src/core/ArcadeRender.cpp \
     src/core/ChaosEngine.cpp \
     src/core/AiRival.cpp \
     src/core/Progression.cpp \

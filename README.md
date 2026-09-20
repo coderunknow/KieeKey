@@ -19,7 +19,7 @@ The project may still be paused again in the future if development no longer pro
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20ARM64-0078D6.svg)
 ![Build](https://img.shields.io/badge/build-CMake%20%3E%3D%203.28-064FAD.svg)
 
-**KieeKey v1.3.0-beta3** is a modern, low-latency Vietnamese input method
+**KieeKey v1.3.0-beta4** is a modern, low-latency Vietnamese input method
 engine (bộ gõ Tiếng Việt) for Windows, with a system-tray application, a TSF
 text-store composer and an optional WinUI 3 Fluent settings UI.
 
@@ -33,6 +33,63 @@ text-store composer and an optional WinUI 3 Fluent settings UI.
 ![KieeKey preview](src/app/KieeKeyApp-preview.png)
 
 ---
+
+## What's new in v1.3.0-beta4 — Six reported defects fixed at the root
+
+Beta4 is a correctness + completeness release (Windows file version **1.3.0.5**).
+Every fix below was reproduced first, then fixed, then pinned by a native
+regression test (`tests/test_arcade_recovery.cpp` and friends — no Windows
+required to prove the logic):
+
+* **Backspace no longer wedges a game (the reported "sai rồi backspace thì
+  không gõ tiếp được").** The in-window composer mirrored the IME's
+  raw-key/visible-buffer split, so after a wrong tone key one Backspace left the
+  engine composing against invisible state forever (500/500 seeded fuzz runs
+  failed before the fix). `VnComposer::feedBackspace()` now pops one *composed*
+  code point — exactly what the screen shows — and returns the engine to a fresh
+  word state, so its raw-key history can never disagree with the visible text.
+  Proven deterministically and by a 300-seed recovery fuzz that must complete
+  every run.
+* **WasdRace ignored Backspace.** Real front-ends deliver it as `vk=0x08, ch=0`;
+  the game only matched `ch == '\b'`. Both shapes now rewind, in VN and EN mode.
+* **Every typing arcade speaks Vietnamese now.** Fishing and No-Mistake were
+  deliberately ASCII-only; both gained `setPassageLanguage()` with full-diacritic
+  prompts/streams composed through `VnComposer` (No-Mistake judges *words*, not
+  raw keys — mid-syllable Telex is not a mistake; Backspace repairs a syllable
+  before it is committed). Rhythm's lane keys moved to the **arrow cluster** in
+  VN mode (d/f/j/k stay as aliases) and its notes show Vietnamese syllables.
+* **A real concurrency race in the Arcade manager is closed.** Two front-end
+  threads (hub timer vs web bridge tick) could run `update()`/`handleKey()` on
+  the same game simultaneously — the concurrency test segfaulted ~15% of runs on
+  unmodified main. All game calls are now serialized by a dedicated
+  `m_gameMtx` (the IME hot path still takes no lock); TSAN-clean, 300-run
+  hammer passes.
+* **The settings dialog cannot clip text anymore.** The authored rectangles were
+  re-fit (three clipped labels, one out-of-page group, two near-page controls,
+  and the nine squeezed tab headers — "Phòng Chaos"/"AI Rival"/"Tiến trình"
+  were unreadable) and — closing beta3's tracked follow-up — the beta3 layout
+  solver (`DialogLayout.hpp`) is now WIRED INTO `WM_CREATE`: labels are measured
+  with `DrawTextW(DT_CALCRECT)` on the real font/monitor and reflowed
+  (grow → push down → stretch group boxes → grow the window) at any DPI.
+* **Live external effects visibly transform Vietnamese.** The glyph tables had
+  no mappings for precomposed Vietnamese vowels, so typing Vietnamese showed no
+  change at any intensity — the reported "mode không hoạt động khi gõ ở ngoài".
+  All accented vowels now mirror by tone (sắc↔huyền, hỏi↔ngã, nặng→hỏi),
+  1:1 with the input so the erase accounting stays exact. The intensity selector
+  gains 75%, and the hint now states the Unicode-table requirement up front.
+* **The diagnostics module is actually used.** `ok::diag` shipped in beta3 with
+  zero call sites. The Chẩn đoán tab now has the missing control panel —
+  Off/Basic/Full level (persisted), a real quick self-check, and report export
+  to `%APPDATA%\KieeKey` — and the hot path records keyboard counters,
+  hook→decision, engine-decision, TSF-commit and SendInput latencies, all gated
+  to one relaxed load when Off.
+
+The committed `dist/KieeKeyApp.exe` convenience build is refreshed to this
+release (PE **1.3.0.5**) — building it compiles every Windows translation unit
+and caught three Windows-only compile errors in the new diagnostics code before
+tagging. The no-regression benchmark campaign against the beta3 tag (paired,
+interleaved, with a byte-identical noise-control leg) is documented in
+`docs/bench/beta4/BENCHMARK_REPORT.md`.
 
 ## What's new in v1.3.0-beta3 — Five reported defects fixed at the root
 
@@ -416,7 +473,7 @@ original licenses — see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 ## Tóm tắt (Tiếng Việt)
 
-**KieeKey v1.3.0-beta3** là bộ gõ Tiếng Việt cho Windows, xây dựng dựa trên
+**KieeKey v1.3.0-beta4** là bộ gõ Tiếng Việt cho Windows, xây dựng dựa trên
 **[OpenKey](https://github.com/tuyenvm/OpenKey)** (GPL-3.0) của tác giả Tuyen
 Mai. Engine gốc đã được port sang C++ hiện đại: hook bất đồng bộ với hàng đợi
 lock-free, composer TSF (không backspace ảo), bảng âm tiết flat tối ưu cache,

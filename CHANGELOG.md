@@ -5,6 +5,170 @@ Keep a Changelog; versioning: SemVer.
 
 ## [Unreleased]
 
+## [1.3.0-beta4] — 2026-09-19
+### Six reported defects fixed at the root, plus one latent crash found by testing (file build 1.3.0.5)
+Every fix below was reproduced first (a failing probe or seeded fuzz), then
+fixed at its root cause, then pinned by a portable native regression test that
+runs on Linux — no Windows required to prove the logic. Full evidence and the
+no-regression benchmark campaign: `docs/bench/beta4/BENCHMARK_REPORT.md`.
+
+* **Backspace no longer wedges a Vietnamese typing game** (the reported "sai
+  rồi backspace thì không gõ tiếp được"). The in-window `VnComposer` mirrored
+  the IME's raw-key/visible-buffer split: after a wrong tone key, one
+  Backspace left the engine composing against invisible state forever — a
+  500-run seeded recovery fuzz failed **100 %** before the fix.
+  `VnComposer::feedBackspace()` now pops exactly one *composed* code point —
+  what the screen shows — and returns the engine to a fresh word state
+  (`resetForNewContext`), so raw-key history can never disagree with the
+  visible text. After the fix, **2 500/2 500** seeded recovery runs complete.
+* **WasdRace ignored Backspace.** Native and web front-ends deliver it as
+  `vk=0x08, ch=0`; the game only matched `ch == '\b'`. Both shapes now rewind,
+  in Vietnamese and English mode.
+* **Every typing arcade speaks Vietnamese.** Fishing and No-Mistake were
+  ASCII-only; both gained `setPassageLanguage()` with full-diacritic
+  prompts/streams composed through `VnComposer` (No-Mistake judges whole
+  *words*, so mid-syllable Telex is not a mistake, and Backspace repairs a
+  syllable before it is committed). Rhythm's lane keys move to the **arrow
+  cluster** in VN mode (d/f/j/k remain aliases) and its notes show Vietnamese
+  syllables. Live and full config application now carry the language to all
+  five games (Rhythm first — setting the language regenerates its chart).
+* **A latent concurrency race in the Arcade manager is closed** (pre-existing
+  on main, found by this release's hammer tests: the concurrency probe
+  segfaulted ~15 % of runs on unmodified beta3). Two front-end threads (hub
+  timer vs web bridge tick) could run `update()`/`handleKey()` on the same
+  game simultaneously. All game-object calls are now serialized by a dedicated
+  `m_gameMtx` with a documented lock order (manager mutex before state mutex,
+  never reversed); the IME hot path still takes **no** lock — 0/300 crashes
+  after the fix and ThreadSanitizer reports zero warnings.
+* **The settings dialog cannot clip text anymore.** Authored rectangles were
+  re-fit (three clipped labels, one out-of-page group box, two near-page
+  controls, and nine squeezed tab headers — "Phòng Chaos"/"AI Rival"/"Tiến
+  trình" were unreadable), and — closing beta3's tracked follow-up — the
+  beta3 layout solver (`DialogLayout.hpp`) is now **wired into `WM_CREATE`**:
+  labels are measured with `DrawTextW(DT_CALCRECT)` on the real font/monitor
+  and reflowed (grow → push down → stretch group boxes → grow the window,
+  switching to multi-row tabs when the headers need it) at any DPI.
+* **Live external effects visibly transform Vietnamese** (the reported "mode
+  không hoạt động khi gõ ở ngoài": the glyph tables had **no** mappings for
+  precomposed Vietnamese vowels, so typing Vietnamese showed no change at any
+  intensity). All accented vowels now flip by tone — sắc↔huyền, hỏi↔ngã,
+  nặng→hỏi — while shape marks are preserved and tone-less vowels pass
+  through; the mapping is strictly 1:1 with the input so the erase accounting
+  stays exact, and NFC canonical ordering of heavy-dot vowels (ộ/ậ/ệ/ợ/ự) is
+  handled. 116 glyph pairs, pinned by `test_chaos`'s new
+  `testVietnameseGlyphFlips`. The intensity selector gains **75 %**, and the
+  hint now states the Unicode-code-table requirement up front.
+
+### Added
+* **The diagnostics module is actually used.** `ok::diag` shipped in beta3
+  with zero call sites. The Chẩn đoán tab now has its missing control panel —
+  Off/Basic/Full level (persisted to `%APPDATA%\KieeKey\diag-level.txt`), a
+  quick self-check (five checks, including an engine "booj"→"bộ" round-trip
+  and the fresh-engine-backspace-unconsumed contract), and report export to
+  `%APPDATA%\KieeKey`. The hook, engine and consumer paths record counters
+  (key events, suppression, engine decisions/edits, TSF commits,
+  SendInput calls) — gated to **one relaxed atomic load + branch** when Off,
+  so the hot path stays lock-free and allocation-free.
+* `tests/test_arcade_recovery.cpp` — 43 checks: minimal desync repro, a
+  300-seed recovery fuzz (wrong keys + stray Backspaces must always be
+  recoverable by holding Backspace to a word boundary and retyping), WasdRace
+  Backspace in both wire shapes, Fishing VN composition with pull/tension
+  scaling, No-Mistake word-strict judging and Backspace repair, Rhythm arrow
+  lanes + VN note glyphs, and a two-thread manager hammer. Registered in the
+  standard suite.
+* Chaos glyph-flip coverage for every precomposed Vietnamese vowel in
+  `tests/test_chaos.cpp`.
+
+### Changed
+* `scripts/check_input_isolation.py` no longer false-positives on Vietnamese
+  hint text: the settings-page control scan now blanks comments and
+  string-literal bodies (same length, markers preserved) before matching
+  `mkCtl()` calls, because a literal `");"` inside a hint truncated the
+  non-greedy match and misreported a named, tab-registered control as
+  anonymous. The gate was proven still-catching real violations (deregistered
+  id, anonymous control, anonymous control adjacent to a stray in-comment
+  quote) before the fix was accepted.
+* `tests/run_extreme_bench.sh` Step 7 links again: the isolation-benchmark
+  build line predated the `ArcadeFrame`/`ArcadeRender` translation-unit split
+  and failed with 144 undefined references on the unmodified beta3 tree;
+  the unit list (and `-pthread`) now match the suite's Arcade link lines.
+* Version carriers: UI/`kieekey_core.hpp` **1.3.0-beta4**, PE/manifest
+  **1.3.0.5** (`check_version.py` BUILD_REVISION 5); CMake project version
+  stays 1.3.0.
+
+### Benchmarks — no regression (paired, interleaved, vs the v1.3.0-beta3 tag)
+* Correctness gate: 2 059 419 differential events, **PASS on both sides**.
+* Core IME decision p50 (2 M keys × 3 interleaved runs): vn-compose 63=63 ns,
+  mixed 63=63, delete 57=57, passthrough 53→54 ns.
+* Feature isolation (15 alternating 300 k-key rounds, changed Arcade +
+  ChaosEngine compiled in): every median within ±1.3 % of base, inside the
+  ±0.7 % noise floor measured on the byte-identical control leg; sink digests
+  identical on all five configurations. A first 5-round pass that *looked*
+  like +9–26 % tail regressions is dissected in the report — whole-round host
+  interference, not code.
+* Glyph-flip micro-probe: with flips **enabled**, Vietnamese transforms at
+  ~+1.8 ns/char vs beta3's pass-through (and finally transforms at all);
+  disabled, the path is not taken.
+* Full evidence: `docs/bench/beta4/BENCHMARK_REPORT.md`.
+
+### Release verification
+* `dist/KieeKeyApp.exe` rebuilt from this tree (Zig cross-build, PE version
+  **1.3.0.5** — the beta3 artifact would otherwise have shipped stale inside a
+  beta4 tag). Building it compiles **every** Windows translation unit
+  including `src/app/main.cpp`, which the portable Linux suite never
+  compiles — and that full-TU compile caught **three Windows-only compile
+  errors** in the new diagnostics code (a wrong `ProducerDecision` member
+  name, a `std::u16string` passed where the engine API takes `std::wstring`,
+  and a call to nonexistent `Histogram::count()` — `total()` is the API).
+  All three fixed before tagging; the cross-build now compiles all 18 TUs,
+  the resources, and links a runnable PE32+ (static runtime).
+* MSVC CI then surfaced two more classes the local cross-build could not:
+  three `/W4 /WX` shadowing/discard warnings in the new code (now clean —
+  verified locally by compiling every Windows TU with
+  `-Wall -Wextra -Wshadow -Wunused-result -Werror`), and **LNK2019 on every
+  `ok::diag` symbol: the CMake `ok_core` target never listed
+  `Diagnostics.cpp`** — invisible in beta3 precisely because beta3 had zero
+  `ok::diag` call sites. Fixed by adding the TU to `ok_core`; the Linux CI
+  never saw it because the portable suite compiles sources directly.
+
+## [1.3.0-beta3] — 2026-09-18
+### Five reported defects fixed at the root (file build 1.3.0.4)
+*(Retroactively recorded here — the beta3 release documented these in the
+README but missed this changelog; content unchanged, see the v1.3.0-beta3 tag
+and `docs/bench/beta3/BENCHMARK_REPORT.md`.)*
+
+* **Typing games speak Vietnamese:** each Arcade typing game owns a
+  `VnComposer` (the same `TextEngine` the IME uses), so Vietnamese is the
+  default with full-diacritic prompts composed and matched in the game window;
+  an English mode keeps the legacy ASCII prompts, and WasdRace moves steering
+  to the arrow keys in VN mode. Proven by `tests/test_vn_composer.cpp` and
+  `tests/test_arcade_vn.cpp`.
+* **Live external typing effects work again:** the output path is unified into
+  one allocation-free `planOutput()` contract (`LiveEffects.hpp`), proven by
+  `tests/test_live_output_plan.cpp` including a 40 k-iteration fuzz.
+* **Vietnamese can be typed in the in-app macro (*gõ tắt*) editor:** the
+  own-window hook bypass exempts the macro edit control (published race-free
+  as an atomic HWND from the UI thread), and live effects are force-disabled
+  while it has focus so the stored expansion is clean text.
+* **The "processed key events" counter no longer ticks on its own:** a new
+  `HookCounters` model counts keyboard events only; mouse, wheel and
+  foreground changes are tracked separately (`tests/test_hook_counters.cpp`).
+* **Chaos Lab is readable:** the Lab created controls with no font (raster
+  `SYSTEM_FIXED_FONT`, no Vietnamese diacritics); it now uses a DPI-scaled
+  Segoe UI face applied to all children and rescaled on `WM_DPICHANGED`, and
+  its clipped labels and truncated button were re-sized.
+* Also: the portable dialog **layout solver** (`src/app/DialogLayout.hpp`,
+  `tests/test_dialog_layout.cpp`) — wiring it into the settings dialog was
+  beta4's tracked follow-up; an engine over-erase defect (`visibleAccount_`
+  not reset on context change) was fixed; the **Chẩn đoán** tab became a real
+  debug surface with level modes and a rotating file log
+  (`tests/test_diagnostics.cpp`); and a Zig cross-compiled Windows x64 build
+  is committed at `dist/KieeKeyApp.exe` for instant testing (authoritative
+  binaries still come from CI).
+* Benchmarks: core IME p50 **55 ns on both sides** (median of 5 interleaved
+  300 k-key rounds vs the branch-point baseline), feature-isolation table and
+  methodology in `docs/bench/beta3/BENCHMARK_REPORT.md`.
+
 ## [1.3.0-beta2] — 2026-09-18
 ### Follow-up after Windows feedback (file build 1.3.0.3)
 * Fix passage text overlap: explicit clipped character-cell advances across

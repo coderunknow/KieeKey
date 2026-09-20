@@ -190,8 +190,12 @@ if(WIN32)
         src/core/Progression.cpp
         src/core/TypingAnalytics.hpp   # v1.3.0: Typing metrics & intelligent coach
         src/core/TypingAnalytics.cpp
-        src/core/OnlineGhost.hpp       # v1.3.0: Solo ghost, replay & leaderboard abstraction
+        src/core/OnlineGhost.hpp      # v1.3.0: Solo ghost, replay & leaderboard abstraction
         src/core/OnlineGhost.cpp
+        src/core/Diagnostics.hpp      # v1.3.0-beta3: level-gated counters/histograms/trace
+        src/core/Diagnostics.cpp      #  (beta3 shipped it with zero call sites, so the CMake
+                                      #   target never noticed it was missing until beta4's
+                                      #   app-side recorders LNK2019'd in MSVC CI)
     )
     target_include_directories(ok_core PUBLIC src/core)
     target_compile_features(ok_core PUBLIC cxx_std_23)

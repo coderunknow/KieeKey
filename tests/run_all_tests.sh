@@ -235,6 +235,8 @@ build test_dialog_layout  -std=c++2b -O2 -Isrc/app $INC tests/test_dialog_layout
 # real keystrokes (VN default, EN fallback, arrow-steering in WasdRace).
 build test_vn_composer    -std=c++2b -O2 -pthread $INC tests/test_vn_composer.cpp src/core/TextEngine.cpp || rc=1
 build test_arcade_vn      -std=c++2b -O2 -pthread $INC tests/test_arcade_vn.cpp src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ArcadeRender.cpp src/core/Progression.cpp $ENGINE23 || rc=1
+# v1.3.0-beta4: backspace-recovery / arcade-VN / manager-race regression suite.
+build test_arcade_recovery -std=c++2b -O2 -pthread $INC tests/test_arcade_recovery.cpp src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ArcadeRender.cpp src/core/Progression.cpp $ENGINE23 || rc=1
 build test_chaos          -std=c++2b -O2 $INC tests/test_chaos.cpp src/core/ChaosEngine.cpp || rc=1
 build test_ai_rival       -std=c++2b -O2 $INC tests/test_ai_rival.cpp src/core/AiRival.cpp || rc=1
 build test_progression    -std=c++2b -O2 $INC tests/test_progression.cpp src/core/Progression.cpp || rc=1
@@ -423,6 +425,7 @@ run test_live_output_plan    120
 run test_dialog_layout       60
 run test_vn_composer         60
 run test_arcade_vn           60
+run test_arcade_recovery     90
 run test_chaos               60
 run test_ai_rival            60
 run test_progression         60

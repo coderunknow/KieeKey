@@ -170,6 +170,48 @@ void testHubHoverAndClickStartAGame() {
 }
 
 //---------------------------------------------------------------------------
+//---------------------------------------------------------------------------
+// v1.3.0-beta5 (bug B8): the Chaos Lab row under the eight catalog games —
+// painted with its description, hoverable, and clicking it opens the lab (or
+// surfaces a message box when the lab cannot open). It must NEVER launch a
+// game, and a successful open must not pop a spurious error.
+// Runs right AFTER testHubTimerEscAndClose (which leaves the hub closed via
+// hub.close(), the canonical teardown) and hands the same clean state to the
+// lab tests that follow.
+void testHubChaosLabRow() {
+    using ok::app::ChaosLabWindow;
+    ok::app::ArcadeWindow& hub = ok::app::ArcadeWindow::instance();
+    ArcadeManager& manager = ArcadeManager::instance();
+    okgdi::clearMessageBoxes();
+
+    assert(hub.open(nullptr, "snake"));
+    HWND hwnd = static_cast<HWND>(hub.handle());
+    paint(hwnd);
+    assert(okgdi::logContainsText(L"Chaos Lab"));        // the entry is discoverable
+    assert(okgdi::logContainsText(L"hiệu ứng chữ"));     // with its description
+
+    const int n = static_cast<int>(gameCatalog().size());
+    const int labTop = kHubFirstRowY + n * kHubRowHeight + kHubRowHeight / 2;
+    const int labY = labTop + kHubRowHeight / 2 - 2;     // centre of the row band
+
+    ::SendMessageW(hwnd, WM_MOUSEMOVE, 0, MAKELPARAM(100, labY));
+    assert(hub.hoverIndexForTest() == n);                // the lab row is a hover target
+    paint(hwnd);                                          // hover redraw: no crash
+
+    const GameType before = manager.getCurrentGameType();
+    ::SendMessageW(hwnd, WM_LBUTTONDOWN, 0, MAKELPARAM(100, labY));
+    assert(manager.getCurrentGameType() == before);      // a lab click never swaps the game
+    assert(ChaosLabWindow::instance().isOpen() || !okgdi::messageBoxes().empty());
+    if (ChaosLabWindow::instance().isOpen()) {
+        assert(okgdi::messageBoxes().empty());           // success stays silent
+        ChaosLabWindow::instance().close();
+    }
+
+    hub.close();
+    manager.stopGame();
+    std::cout << "  [PASS] Hub Chaos Lab row (B8: painted, clickable, never a game)\n";
+}
+
 void testHubKeyboardDrivesTheGame() {
     ok::app::ArcadeWindow& hub = ok::app::ArcadeWindow::instance();
     HWND hwnd = static_cast<HWND>(hub.handle());
@@ -556,6 +598,7 @@ int main() {
     testHubHoverAndClickStartAGame();
     testHubKeyboardDrivesTheGame();
     testHubTimerEscAndClose();
+    testHubChaosLabRow();
     testChaosLabPreviewAndInjection();
     testUnicodeLabText();
     testHubDpiAndShortcuts();

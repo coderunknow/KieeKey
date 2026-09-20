@@ -327,11 +327,24 @@ static_assert(sizeof(LONG) == 4, "Win32 LONG must be 32-bit");
 #define TOOLTIPS_CLASSW L"tooltips_class32"
 
 // ---- functions (signatures follow the Windows SDK) ------------------------
+// v1.3.0-beta5 (bug B8): MessageBoxW joins the recording USER32 layer so the
+// hub/lab failure surfacing compiles (and is assertable) off-Windows.
+#ifndef MB_OK
+#define MB_OK          0x00000000L
+#endif
+#ifndef MB_ICONERROR
+#define MB_ICONERROR   0x00000010L
+#endif
+#ifndef IDOK
+#define IDOK           1
+#endif
+
 extern "C" {
 
 // user32
 HWND  CreateWindowExW(DWORD, LPCWSTR, LPCWSTR, DWORD, int, int, int, int, HWND, HMENU, HINSTANCE,
                       LPVOID);
+int   MessageBoxW(HWND, LPCWSTR, LPCWSTR, UINT);
 BOOL  DestroyWindow(HWND);
 BOOL  ShowWindow(HWND, int);
 BOOL  IsWindow(HWND);

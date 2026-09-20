@@ -79,6 +79,38 @@ void testKeyboardTotalIsKeyboardOnly() {
     std::cout << "  [PASS] keyboard total counts keyboard events only\n";
 }
 
+// v1.3.0-beta5 (bug B3): the four DISPLAYED rows must partition the totals
+// exactly the way the UI shows them — and the tester's scenario (dragging the
+// mouse without touching the keyboard) must move ONLY the mouse row. This is
+// the semantic half of the contract; scripts/audit_telemetry_rows.py pins the
+// binding half (which counter each row in main.cpp actually displays).
+void testDisplayRowPartition() {
+    HookCounters c;
+
+    // The tester's repro: press-drag-release + wheel, zero keystrokes.
+    c.add(c.mouseButton, 2);     // press + release
+    c.add(c.mouseMove, 500);     // the drag itself (heartbeat-only)
+    c.add(c.mouseWheel, 3);
+    c.add(c.foregroundChanged, 1);
+    assert(c.keyboardEvents() == 0);                 // THE regression guard
+    assert(c.mouseEvents() == 5);
+    assert(c.foregroundChanged.load() == 1);
+
+    // The displayed rows partition allSources with no double counting:
+    // keyboard + mouse + foreground == allSources, mouseMove in nothing.
+    assert(c.keyboardEvents() + c.mouseEvents() +
+               c.foregroundChanged.load() == c.allSources());
+
+    // Now type one physical key: only the keyboard row moves.
+    c.add(c.keyDown);
+    c.add(c.keyUp);
+    assert(c.keyboardEvents() == 2);
+    assert(c.mouseEvents() == 5);
+    assert(c.allSources() == 8);
+    std::cout << "  [PASS] displayed rows partition the totals; mouse-only"
+                 " activity never moves the keyboard row\n";
+}
+
 void testResetAndMasterSwitch() {
     HookCounters c;
     c.add(c.keyDown, 10);
@@ -147,6 +179,7 @@ void testBypassAccounting() {
 int main() {
     std::cout << "=== Running HookCounters Suite ===\n";
     testKeyboardTotalIsKeyboardOnly();
+    testDisplayRowPartition();
     testResetAndMasterSwitch();
     testConcurrentProducers();
     testBypassAccounting();

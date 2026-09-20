@@ -19,7 +19,7 @@ The project may still be paused again in the future if development no longer pro
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20ARM64-0078D6.svg)
 ![Build](https://img.shields.io/badge/build-CMake%20%3E%3D%203.28-064FAD.svg)
 
-**KieeKey v1.3.0-beta4** is a modern, low-latency Vietnamese input method
+**KieeKey v1.3.0-beta5** is a modern, low-latency Vietnamese input method
 engine (bộ gõ Tiếng Việt) for Windows, with a system-tray application, a TSF
 text-store composer and an optional WinUI 3 Fluent settings UI.
 
@@ -33,6 +33,72 @@ text-store composer and an optional WinUI 3 Fluent settings UI.
 ![KieeKey preview](src/app/KieeKeyApp-preview.png)
 
 ---
+
+## What's new in v1.3.0-beta5 — Nine reported bug clusters fixed at the root
+
+Beta5 is the tester-report release (Windows file version **1.3.0.6**). Every
+one of the nine bug clusters from the beta4 Windows test report was
+reproduced, root-caused, fixed, and pinned by portable tests; the honest
+per-bug dossier (root cause → evidence → fix → test, with the Windows-only
+residuals called out) lives in `docs/release-notes-v1.3.0-beta5.md`.
+
+* **B1 — Settings dialog overlap/clip, no scroll.** The runtime layout solver
+  now reflows and rescales every one of the nine tabs against the real DPI
+  metrics and the actual work-area height, with page scrolling where content
+  still does not fit; pinned by `tests/test_dialog_layout.cpp`.
+* **B2 — Live effects did not reach external apps.** The full producer→ring→
+  consumer output chain is now proven lossless by a portable full-chain test
+  (2 400 styled edits, zero loss, byte-identical output), and the dialog shows
+  a LIVE GATE readout naming the exact condition that vetoes effects (IME
+  off, excluded foreground app, non-Unicode code table…) in the tab-6 footer,
+  the tray tooltip and the diagnostics quick-check.
+* **B3 — "Sự kiện bàn phím đã xử lý" climbed on mouse drag.** The row was fed
+  by the shared ring counter that keyboard, mouse and foreground events all
+  increment; every tab-3 row now displays its own per-source counter, pinned
+  by a source-contract audit plus the display-row partition test.
+* **B4 — Chẩn đoán mostly zeros + "Ứng dụng hiện tại: unknown".** Process
+  identity now resolves through a four-step fallback chain (query → module
+  path → AUMID → window title) and the diagnostics recorders were wired to
+  the counters they display.
+* **B5 — Typing games: backspace-after-a-wrong-word "didn't work".** It did —
+  it was invisible. All four typing games now render the composed buffer with
+  the divergent tail in red plus the exact repair hint ("Sai — nhấn Backspace
+  N lần để sửa"), pinned by frame-level assertions and a 1 000-seed recovery
+  fuzz.
+* **B6 — No-Mistake: a wrong FINAL word never ended the run; WPM/accuracy
+  stayed 0; the apply button did not persist.** An end-of-run verdict now
+  judges the final word through the same penalty ladder (one-shot; a
+  tone-pending tail still waits for its repair key), the HUD shows live
+  WPM/accuracy, "Áp dụng cấu hình game" persists to the registry (and is
+  restored at boot), and the manager's config lock order was fixed.
+* **B7 — WASD Race wanted WASD steering in Vietnamese mode.** New per-game
+  "Phím lái" choice: *Mũi tên* (default), *WASD — lái VÀ gõ Telex/VNI*, or
+  *Cả hai*. In the WASD-involving modes a/s/d/w steer the car AND feed the
+  composer — W is never swallowed — persisted and live-applied, pinned by a
+  1 000-seed steering fuzz across all three modes.
+* **B8 — Chaos Lab was undiscoverable.** A 🧪 Chaos Lab row now sits under the
+  eight games in the Arcade Hub sidebar, the README documents every entry
+  point, and each of them reports a failed open with its Win32 error code
+  instead of silently doing nothing (same for the Arcade Hub itself).
+* **B9 — "Bàn phím" tab options "didn't work".** A systematic three-layer
+  audit (`scripts/audit_settings_wiring.py`: 37 interactive controls ×
+  created / read / reflected / live-apply / persisted / consumed) found the
+  real breaks: tab-0 and tab-1 controls only applied via OK/Apply (toggling
+  one and closing with X silently discarded it) and the Live-effects / Chaos
+  / AI-opt-in toggles applied on click but were never persisted, so every
+  restart reverted them. Every interactive control now applies on click and
+  persists, and `tests/test_settings_wiring.cpp` pins probe-verified engine
+  output deltas for every tab-0 option (most are conditional by design —
+  digits only matter in VNI, quickTelex only on doubled consonants, etc.).
+* **G1 — performance transparency.** New `docs/PERFORMANCE.md` publishes the
+  measured hot-path cost of every opt-in feature (noise-floor-controlled
+  medians), and each toggle's dialog text now carries its own measured cost.
+
+The committed `dist/KieeKeyApp.exe` convenience build is refreshed to this
+release (PE **1.3.0.6**) — building it compiles every Windows translation
+unit and links the real PE32+ executable. The no-regression benchmark
+campaign against the beta4 tag (paired, interleaved, byte-identical
+noise-control leg) is documented in `docs/bench/beta5/BENCHMARK_REPORT.md`.
 
 ## What's new in v1.3.0-beta4 — Six reported defects fixed at the root
 
@@ -177,9 +243,9 @@ Everything below is one release; the full history of v1.2.x and v1.1.x lives in
 
 | surface | what it is | how to open it |
 |---|---|---|
-| **Arcade Hub window** | Win32/GDI window (1180×760, double-buffered, 60 FPS) with a game-catalogue sidebar, click-to-play, live score/WPM footer and a level-up toast | `KieeKeyApp.exe --arcade[=slug]`, the tray menu, or the settings dialog buttons |
+| **Arcade Hub window** | Win32/GDI window (1180×760, double-buffered, 60 FPS) with a game-catalogue sidebar, click-to-play, live score/WPM footer, a level-up toast and — since beta5 — a 🧪 Chaos Lab shortcut under the eight games | `KieeKeyApp.exe --arcade[=slug]`, the tray menu, or the settings dialog buttons |
 | **Web player** | HTML5 canvas client driving *the same C++ engine* over HTTP + SSE (`tools/arcade_serve`, `web/`) | `arcade_serve --port 8765 --host 0.0.0.0 --web web` then open `http://localhost:8765/` |
-| **Chaos Lab window** | Dedicated test UI: type text, see the exact bytes KieeKey would emit, and (optionally) write them into the application you were working in | `KieeKeyApp.exe --chaos-lab` or the tray menu |
+| **Chaos Lab window** | Dedicated test UI: type text, see the exact bytes KieeKey would emit, and (optionally) write them into the application you were working in | 🧪 **Chaos Lab row at the bottom of the Arcade Hub sidebar** (beta5), the tray menu → 🌀 Phòng Chaos Lab…, the Live-effects tab button, or `KieeKeyApp.exe --chaos-lab` — and if it ever fails to open, a message box now shows the Win32 error code instead of silently doing nothing |
 | **Flexing page** | Its own surface inside the lab: prepared passage in, engine text out (WPM / efficiency / cursor), then really typed into the app you came from — one paste or chunk by chunk | Lab window → 🗿 Flexing Mode |
 | **Web labs** | The same two surfaces in the browser: `POST /api/preload` + `flex.emitted` for the Flexing stage, `GET|POST /api/chaos` + `POST /api/chaos/preview` for the Chaos lab (the transformation runs in C++, never in JavaScript) | Buttons in the side panel of the web player |
 | **Web progression & AI** | Level, XP bar, streak, achievements and minigame records from `ProgressionEngine`, plus the opt-in AI rival with the pace it learned and the finish time it would get on the passage you are racing — a level-up toasts in the page | Side panel of the web player |
@@ -207,6 +273,11 @@ Everything below is one release; the full history of v1.2.x and v1.1.x lives in
 * Both can **type the result into the focused application** through the same
   `InlineEmitter` the IME uses, and the Chaos Lab window is the dedicated UI
   for testing exactly that (type, compare, inject).
+* **Where to find it (beta5):** the 🧪 row under the eight games in the Arcade
+  Hub sidebar, tray menu → *🌀 Phòng Chaos Lab…*, Live-effects tab →
+  *Mở Chaos Lab*, or `KieeKeyApp.exe --chaos-lab`. Every entry point now
+  reports a failure with its Win32 error code instead of silently doing
+  nothing.
 
 ### AI rival, progression, analytics, ghost
 
@@ -473,7 +544,7 @@ original licenses — see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 ## Tóm tắt (Tiếng Việt)
 
-**KieeKey v1.3.0-beta4** là bộ gõ Tiếng Việt cho Windows, xây dựng dựa trên
+**KieeKey v1.3.0-beta5** là bộ gõ Tiếng Việt cho Windows, xây dựng dựa trên
 **[OpenKey](https://github.com/tuyenvm/OpenKey)** (GPL-3.0) của tác giả Tuyen
 Mai. Engine gốc đã được port sang C++ hiện đại: hook bất đồng bộ với hàng đợi
 lock-free, composer TSF (không backspace ảo), bảng âm tiết flat tối ưu cache,
@@ -488,6 +559,16 @@ nhịp gõ của bạn rồi đua lại; **tiến trình** cấp độ/XP/thành
 huấn luyện viên** theo thời gian thực; và **ghost/online** dạng pluggable chạy
 hoàn toàn cục bộ. Mọi tính năng mới đều ở ngoài đường găng: khi không dùng,
 độ trễ gõ không đổi.
+
+Điểm mới của v1.3.0-beta5: sửa tận gốc **cả 9 nhóm lỗi** trong báo cáo thử
+nghiệm beta4 — hộp thoại cài đặt chồng lấn (tự dàn trang + cuộn), hiệu ứng gõ
+trực tiếp kèm chỉ báo cổng chặn, bộ đếm chẩn đoán đúng từng nguồn, tên ứng
+dụng hết "unknown", game hiện đuôi gõ sai màu đỏ + gợi ý Backspace,
+No-Mistake kết thúc đúng khi sai từ cuối + WPM trực tiếp, chọn **phím lái
+WASD khi gõ tiếng Việt**, Chaos Lab có lối vào ngay trong Arcade Hub, và mọi
+tùy chọn cài đặt **áp dụng ngay khi bấm + được lưu**. Thêm tài liệu hiệu năng
+`docs/PERFORMANCE.md` (chi phí ns/phím của từng tính năng opt-in). Chi tiết:
+`docs/release-notes-v1.3.0-beta5.md`.
 
 Chạy toàn bộ kiểm thử: `tests/run_all_tests.sh` (Linux/mac) hoặc `ctest`
 (Windows). Bật/tắt bộ gõ nằm hoàn toàn trong ứng dụng (trình đơn khay + Cài

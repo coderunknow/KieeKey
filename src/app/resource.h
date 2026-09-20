@@ -217,3 +217,22 @@
 #define IDC_BTN_DIAG_RUN         634
 #define IDC_BTN_DIAG_REPORT      635
 #define IDC_STAT_DIAG_RESULT     636
+
+// ---- v1.3.0-beta5 (bug B3): per-source telemetry rows (tab 3) ----
+// "Sự kiện bàn phím đã xử lý" was fed by pushed() — the ring counter that
+// keyboard AND mouse AND foreground events all increment. These rows give
+// each source its own honest number (HookCounters.hpp).
+#define IDC_STAT_MOUSELAB        640
+#define IDC_STAT_MOUSEV          641
+#define IDC_STAT_FGLAB           642
+#define IDC_STAT_FGV             643
+#define IDC_STAT_RINGLAB         644
+#define IDC_STAT_RINGV           645
+// ---- v1.3.0-beta5 (bug B2): live-effects gate visibility ----
+// The tester could not tell WHICH condition vetoed the effects. Tab 6 now
+// carries a status line driven by ok::effects::liveGateBlocker() — the same
+// pure decision the hook evaluates.
+#define IDC_STAT_LIVE_GATE       646
+// ---- v1.3.0-beta5 (bug B7): WASD-race steering-key choice (tab 5) ----
+#define IDC_STAT_STEERING        647
+#define IDC_CMB_STEERING         648

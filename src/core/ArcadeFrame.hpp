@@ -261,6 +261,23 @@ enum class FailMode : std::uint8_t {
     HealthBar = 1,  // bad inputs drain a bar; the run ends when it is empty
 };
 
+// v1.3.0-beta5 (bug B7): WASD-race steering keys are a PLAYER CHOICE. In VN
+// mode the letters a/s/d/w ARE Telex/VNI composition keys, so beta4 hard-wired
+// steering to the arrows and players who keep their hands on WASD had to
+// reach for the arrow cluster mid-race. Now:
+//   Arrows — arrow keys steer; every letter feeds the composer (beta4
+//            behavior, still the default: composition never loses a key),
+//   Wasd   — a/s/d/w steer the car AND feed the composer (the keystroke is
+//            never swallowed — W remains a core Telex diacritic key),
+//   Both   — arrows steer AND a/s/d/w steer+compose.
+// English mode is unchanged by this setting (letters always steer there —
+// they are not composition keys).
+enum class WasdSteering : std::uint8_t {
+    Arrows = 0,
+    Wasd   = 1,
+    Both   = 2,
+};
+
 //===========================================================================
 // Game catalog metadata (single source of truth for both front-ends)
 //===========================================================================

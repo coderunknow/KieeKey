@@ -115,6 +115,56 @@ private:
 // call it, and the two cannot drift. It is pure (no Win32, no globals): the
 // caller owns the scratch string and the LiveEffects cursor.
 //---------------------------------------------------------------------------
+//---------------------------------------------------------------------------
+// v1.3.0-beta5 (bug B2) — the LIVE-EFFECTS GATE, made visible and testable.
+//
+// The tester saw NO effects in external apps while every checkbox looked ON,
+// and the app offered no way to tell which condition silently vetoed the
+// output. The hook's gate is a fixed chain of early exits in main.cpp:
+//
+//   1. IME master off           (onHookEventImpl returns before the engine)
+//   2. foreground app excluded  (elevated / IDE / fullscreen-game policy)
+//   3. live-effects master off  (g.liveEffects.enabled() — the tab-6 switch,
+//                                also killed by the Ctrl+Alt+F12 panic key)
+//   4. code table not Unicode   (TCVN3/VNI fonts cannot render flipped
+//                                glyphs — planOutput's `active` input)
+//
+// liveGateBlocker() is that chain as a PURE function: the UI readouts (tab-6
+// status line, tray tooltip, diagnostics report) and the chain test evaluate
+// the SAME decision the hook does, so the displayed reason can never drift
+// from the real veto. The order matters: it is the order the hook evaluates,
+// so the readout names the FIRST veto — the one the user must clear next.
+//---------------------------------------------------------------------------
+enum class GateBlocker : std::uint8_t {
+    None,              // gate open: effects reach external apps
+    ImeDisabled,       // the whole IME is switched off
+    AppExcluded,       // foreground is elevated / IDE / fullscreen game
+    MasterOff,         // the live-effects channel itself is off
+    NonUnicodeTable,   // flipped glyphs need the Unicode code table
+};
+
+[[nodiscard]] constexpr GateBlocker liveGateBlocker(bool imeEnabled,
+                                                    bool appExcluded,
+                                                    bool effectsMasterOn,
+                                                    bool unicodeTable) noexcept {
+    if (!imeEnabled)      { return GateBlocker::ImeDisabled; }
+    if (appExcluded)      { return GateBlocker::AppExcluded; }
+    if (!effectsMasterOn) { return GateBlocker::MasterOff; }
+    if (!unicodeTable)    { return GateBlocker::NonUnicodeTable; }
+    return GateBlocker::None;
+}
+
+// Exactly the boolean main.cpp passes to planOutput() as `active` (for an
+// external app: the macro-editor focus exemption only applies to our own
+// dialog and never gates external output).
+[[nodiscard]] constexpr bool gateActive(bool imeEnabled,
+                                        bool appExcluded,
+                                        bool effectsMasterOn,
+                                        bool unicodeTable) noexcept {
+    return liveGateBlocker(imeEnabled, appExcluded, effectsMasterOn,
+                           unicodeTable) == GateBlocker::None;
+}
+
 enum class KeyKind : std::uint8_t { Char, Space, Backspace, WordBreak, Other };
 
 struct OutputPlan {

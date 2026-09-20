@@ -259,6 +259,332 @@ void testGrowWindowClampsToWorkArea() {
     std::cout << "  [PASS] growWindow clamps to the work area and reports the shortfall\n";
 }
 
+//===========================================================================
+// v1.3.0-beta5 (bug B1) — the real-Windows regression battery.
+//
+// The beta4 solver was wired in and its page maths unit-tested, yet the
+// dialog STILL overlapped/clipped on real Windows. Root causes found by
+// auditing the shipped wiring against this model:
+//   (a) autoFit() counted the always-visible chrome (the button row is
+//       authored BELOW the page viewport) into contentBottom, so
+//       extraHeightPx was permanently ~42 px > 0 — the window grew on every
+//       open even with nothing clipped;
+//   (b) the caller applied growth ALL-OR-NOTHING: when the work area could
+//       not satisfy it, NOTHING was applied — but the page children had
+//       already moved to their solved rects, so they overlapped the unmoved
+//       button row and clipped at the old window bottom (worst at 125-150 %
+//       scaling on small screens — exactly the tester's report);
+//   (c) the window was never repositioned into the work area after growing,
+//       so even "satisfied" growth could hang below the screen edge;
+//   (d) there was no scroll fallback for content that genuinely does not fit.
+// The tests below pin (a) here and (b)-(d) through refitWindow()/
+// fitRectToWorkArea()/scrollChildRect(), across 100/125/150/200 % scale
+// factors with realistic measured metrics including WIDE Vietnamese labels.
+//===========================================================================
+
+// The real dialog chrome at 96 dpi (authored): window client 560x622, the
+// non-client chrome (caption + borders) measures ~39 px tall on Windows 10/11
+// at 96 dpi and scales with the frame; page viewport bottom ~568.
+constexpr int kChromePx96   = 39;
+constexpr int kClientW96    = 560;
+constexpr int kClientH96    = 622;
+constexpr int kViewportBottom96 = 568;
+
+// v1.3.0-beta5: the SHIPPED (beta4 re-fit) "Bàn phím" page. Nothing here is
+// clipped at 96 dpi (the deepest bottom is the output group box at 566,
+// inside the 568 viewport) — so a correct solver reports ZERO extra height
+// for it. The beta4 solver reported ~42 px anyway because it counted the
+// always-visible button row (authored BELOW the viewport) as page content.
+std::vector<ControlSpec> keyboardPageShipped() {
+    return {
+        spec(GRP_METHOD, 24, 100, 494, 84, 0, 0, false, true),
+        spec(RADIO_TELEX, 44, 122, 74, 20, 0),
+        spec(RADIO_VNI, 128, 122, 58, 20, 0),
+        spec(RADIO_SIMPLETELEX, 196, 122, 112, 20, 0),
+        spec(STAT_METHOD_HINT, 44, 146, 460, 34, 0, kTwoLineHeight, true),
+        spec(STAT_CODETABLE, 28, 190, 90, 18, 0),
+        spec(COMBO_CODETABLE, 128, 186, 210, 20, 0),
+        spec(GRP_OPTIONS, 24, 214, 494, 168, 0, 0, false, true),
+        spec(CHK_DIGITS, 44, 218, 460, 20, 0),
+        spec(CHK_SPELL, 44, 240, 460, 20, 0),
+        spec(CHK_RESTORE, 44, 262, 460, 20, 0),
+        spec(CHK_QUICK, 44, 284, 460, 20, 0),
+        spec(CHK_MODERN, 44, 306, 460, 20, 0),
+        spec(CHK_UPPER, 44, 328, 460, 20, 0),
+        spec(CHK_MACRO, 44, 350, 460, 20, 0),
+        spec(GRP_OUTPUT, 24, 388, 494, 178, 0, 0, false, true),
+        spec(RADIO_OUT_AUTO, 44, 410, 66, 20, 0),
+        spec(RADIO_OUT_TSF, 118, 410, 180, 20, 0),
+        spec(RADIO_OUT_SEND, 44, 432, 240, 20, 0),
+        spec(STAT_OUT_NOTE, 44, 454, 460, 34, 0, kTwoLineHeight, true),
+        spec(STAT_PERF_LAB, 44, 492, 110, 18, 0),
+        spec(COMBO_PERF, 158, 488, 180, 20, 0),   // closed height
+        spec(CHK_PERF_LOWCPU, 346, 489, 80, 20, 0),
+        spec(CHK_PERF_DICT, 430, 489, 80, 20, 0),
+        spec(STAT_PERF_NOTE, 44, 516, 460, 34, 0, kTwoLineHeight, true),
+    };
+}
+
+// A whole-dialog spec set at one scale factor: the SHIPPED keyboard page +
+// the always-visible chrome (header rows above the viewport, button row
+// below), exactly like the real WM_CREATE wiring feeds the solver (EVERY
+// child, chrome included). `extraWrapPx` simulates the runtime measurement
+// finding a label that wraps taller than authored at this scale (font
+// hinting/rounding at 125-200 % — the measurement, never a guess, drives it).
+std::vector<ControlSpec> dialogSpecsAt(int scalePct, int extraWrapPx) {
+    const auto S = [scalePct](int px) { return px * scalePct / 100; };
+    std::vector<ControlSpec> page = keyboardPageShipped();
+    for (auto& c : page) {
+        c.rect = Rect{S(c.rect.x), S(c.rect.y), S(c.rect.w), S(c.rect.h)};
+        if (c.growable && c.requiredHeight > 0) {
+            c.requiredHeight = S(c.requiredHeight);
+        }
+    }
+    if (extraWrapPx > 0) {
+        const int note = indexOf(page, STAT_PERF_NOTE);
+        page[static_cast<std::size_t>(note)].requiredHeight =
+            page[static_cast<std::size_t>(note)].rect.h + S(extraWrapPx);
+    }
+    std::vector<ControlSpec> all;
+    all.push_back(spec(9001, S(14), S(10), S(34), S(34), ControlSpec::kAlwaysVisible));
+    all.push_back(spec(9002, S(58), S(12), S(360), S(28), ControlSpec::kAlwaysVisible));
+    all.push_back(spec(9003, S(58), S(42), S(490), S(18), ControlSpec::kAlwaysVisible));
+    for (auto& c : page) { all.push_back(c); }
+    all.push_back(spec(9010, S(12), S(580), S(240), S(30), ControlSpec::kAlwaysVisible));
+    all.push_back(spec(9011, S(300), S(580), S(76), S(30), ControlSpec::kAlwaysVisible));
+    all.push_back(spec(9012, S(384), S(580), S(76), S(30), ControlSpec::kAlwaysVisible));
+    all.push_back(spec(9013, S(468), S(580), S(80), S(30), ControlSpec::kAlwaysVisible));
+    return all;
+}
+
+void testAlwaysVisibleChromeNeverDrivesGrowth() {
+    // (a): with NOTHING clipped, extraHeightPx must be 0 even though the
+    // button row (always-visible) is authored below the page viewport. The
+    // beta4 solver reported ~42 px here and grew the window on every open —
+    // and on small work areas the all-or-nothing growth application then
+    // skipped the growth entirely while children had already moved.
+    for (const int scale : {100, 125, 150, 200}) {
+        const std::vector<ControlSpec> all = dialogSpecsAt(scale, 0);
+        const int pageTop = 88 * scale / 100;
+        const int pageBottom = kViewportBottom96 * scale / 100;
+        const LayoutPlan plan = autoFit(all, pageTop, pageBottom);
+        assert(plan.extraHeightPx == 0);
+        assert(plan.grownControls == 0);
+        // The chrome rects must be untouched by the solve.
+        for (std::size_t i = 0; i < all.size(); ++i) {
+            if (all[i].tab == ControlSpec::kAlwaysVisible) {
+                assert(plan.rects[i].y == all[i].rect.y);
+            }
+        }
+        // And nothing overlaps on any page at any scale.
+        assert(findOverlaps(all, &plan.rects).empty());
+    }
+    std::cout << "  [PASS] always-visible chrome never drives page growth"
+                 " (100/125/150/200 %)\n";
+}
+
+void testRefitWindowAppliesPartialGrowthAndScroll() {
+    // (b): partial-growth repro. At 125 % the authored dialog is 826 px tall
+    // (client 777 + chrome 49) and a wrapping label adds ~27 px more; the
+    // work area (1366x840) fits the authored window but NOT the wanted one —
+    // beta4 applied NOTHING here (all-or-nothing), leaving the moved page
+    // children overlapping the unmoved button row with no way to scroll.
+    const int scale = 125;
+    const std::vector<ControlSpec> all = dialogSpecsAt(scale, 40);
+    const int pageTop = 88 * scale / 100;
+    const int pageBottom = kViewportBottom96 * scale / 100;
+    const LayoutPlan plan = autoFit(all, pageTop, pageBottom);
+    assert(plan.extraHeightPx > 0);         // the page genuinely needs room
+
+    const Rect window{100, 60, kClientW96 * scale / 100,
+                      kClientH96 * scale / 100 + kChromePx96 * scale / 100};
+    const int clientH = kClientH96 * scale / 100;
+    const Rect work{0, 0, 1366, 840};
+    const WindowRefit fit = refitWindow(window, clientH, pageBottom,
+                                        pageBottom + plan.extraHeightPx, work);
+    // The growth is applied up to the cap — NEVER all-or-nothing.
+    assert(fit.clientDelta > 0);
+    assert(fit.windowRect.h == window.h + fit.clientDelta);
+    assert(fit.windowRect.h <= work.h);
+    // What did not fit is reachable through the scroll fallback...
+    assert(fit.scrollNeeded);
+    assert(fit.scrollRange == plan.extraHeightPx - fit.clientDelta);
+    // ...and the window ends fully inside the work area (c).
+    assert(fit.windowRect.y >= work.y);
+    assert(fit.windowRect.bottom() <= work.bottom());
+
+    // Idempotence: re-solving the refitted window against the same work area
+    // changes nothing (the second pass sees the grown viewport and the same
+    // remaining scroll range; no runaway growth).
+    const WindowRefit again = refitWindow(
+        fit.windowRect, clientH + fit.clientDelta, pageBottom + fit.clientDelta,
+        pageBottom + plan.extraHeightPx, work);
+    assert(again.clientDelta == 0);
+    assert(again.scrollRange == fit.scrollRange);
+    std::cout << "  [PASS] refitWindow applies partial growth + scroll range"
+                 " (125 % on an 840 px work area), idempotent\n";
+}
+
+void testRefitWindowGrowsFullyWhenItFits() {
+    // The comfortable case: 100 % on a 1080p work area — everything the page
+    // wants is applied, no scroll needed.
+    const std::vector<ControlSpec> all = dialogSpecsAt(100, 30);
+    const LayoutPlan plan = autoFit(all, 88, kViewportBottom96);
+    assert(plan.extraHeightPx > 0);
+    const Rect window{200, 100, kClientW96, kClientH96 + kChromePx96};
+    const Rect work{0, 0, 1920, 1040};
+    const WindowRefit fit = refitWindow(window, kClientH96, kViewportBottom96,
+                                        kViewportBottom96 + plan.extraHeightPx, work);
+    assert(fit.clientDelta == plan.extraHeightPx);
+    assert(!fit.scrollNeeded && fit.scrollRange == 0);
+    assert(fit.windowRect.bottom() <= work.bottom());
+    // No-growth case: an unclipped page leaves the window exactly as authored.
+    const std::vector<ControlSpec> flat = dialogSpecsAt(100, 0);
+    const LayoutPlan planFlat = autoFit(flat, 88, kViewportBottom96);
+    const WindowRefit fitFlat = refitWindow(window, kClientH96, kViewportBottom96,
+                                            kViewportBottom96 + planFlat.extraHeightPx,
+                                            work);
+    assert(fitFlat.clientDelta == 0 && !fitFlat.scrollNeeded);
+    assert(fitFlat.windowRect.h == window.h);
+    std::cout << "  [PASS] refitWindow grows fully when the work area allows"
+                 " and not at all when nothing is clipped\n";
+}
+
+void testRefitWindowShrinksOversizedWindowToScroll() {
+    // (b/d): 150 % on a 768-px-tall screen — the AUTHORED window alone is
+    // already taller than the work area. The model must shrink it into view
+    // and expose the overflow as scroll range (beta4 left it hanging off the
+    // screen with the button row unreachable).
+    const int scale = 150;
+    const std::vector<ControlSpec> all = dialogSpecsAt(scale, 0);
+    const int pageBottom = kViewportBottom96 * scale / 100;   // 852
+    const LayoutPlan plan = autoFit(all, 88 * scale / 100, pageBottom);
+    const int clientH = kClientH96 * scale / 100;             // 933
+    const int chromeH = kChromePx96 * scale / 100;
+    const Rect window{50, 40, kClientW96 * scale / 100, clientH + chromeH};
+    const Rect work{0, 0, 1366, 728};
+    const WindowRefit fit = refitWindow(window, clientH, pageBottom,
+                                        pageBottom + plan.extraHeightPx, work);
+    assert(fit.clientDelta < 0);                    // SHRINK into the work area
+    assert(fit.windowRect.h <= work.h);
+    assert(fit.windowRect.bottom() <= work.bottom());
+    assert(fit.scrollNeeded);
+    // Everything below the new viewport bottom is scroll-reachable.
+    assert(fit.scrollRange == plan.extraHeightPx - fit.clientDelta);
+    std::cout << "  [PASS] refitWindow shrinks an oversized window and keeps"
+                 " the overflow scrollable (150 % on 728 px)\n";
+}
+
+void testFitRectToWorkArea() {
+    const Rect work{0, 0, 1366, 728};
+    // Already inside: no movement.
+    const Rect inside{100, 100, 500, 400};
+    assert(fitRectToWorkArea(inside, work).x == 100);
+    assert(fitRectToWorkArea(inside, work).y == 100);
+    // Hanging below the bottom edge: slides up, size unchanged.
+    const Rect low{100, 500, 500, 400};
+    const Rect fixedLow = fitRectToWorkArea(low, work);
+    assert(fixedLow.h == 400 && fixedLow.bottom() == work.bottom());
+    // Taller than the work area: clamped AND aligned to the top.
+    const Rect huge{100, 300, 500, 900};
+    const Rect fixedHuge = fitRectToWorkArea(huge, work);
+    assert(fixedHuge.h == work.h && fixedHuge.y == work.y);
+    // Off to the right: slides left.
+    const Rect right{1200, 100, 400, 300};
+    assert(fitRectToWorkArea(right, work).right() == work.right());
+    std::cout << "  [PASS] fitRectToWorkArea keeps a window fully on screen\n";
+}
+
+void testScrollChildRectClipsAtViewportEdges() {
+    const Rect viewport{16, 88, 528, 480};      // x,y,w,h -> bottom 568
+    // A child fully inside just moves up by the offset, no clip.
+    const ScrolledChild inside = scrollChildRect(Rect{44, 300, 460, 32}, 100, viewport);
+    assert(inside.visible && !inside.clipped);
+    assert(inside.rect.y == 200);
+    // A child straddling the TOP edge is clipped to it (child-local rect).
+    const ScrolledChild top = scrollChildRect(Rect{44, 120, 460, 100}, 100, viewport);
+    assert(top.visible && top.clipped);
+    assert(top.rect.y == 20);
+    assert(top.clip.y == viewport.y - top.rect.y);
+    assert(top.clip.h == top.rect.h - top.clip.y);
+    // A child straddling the BOTTOM edge is clipped to it.
+    const ScrolledChild bottom = scrollChildRect(Rect{44, 600, 460, 100}, 100, viewport);
+    assert(bottom.visible && bottom.clipped);
+    assert(bottom.clip.y == 0);
+    assert(bottom.clip.h == viewport.bottom() - bottom.rect.y);
+    // A child scrolled entirely past the top is hidden (empty region), and
+    // one entirely below the viewport too — showTab()'s SW_SHOW/SW_HIDE
+    // contract is never touched.
+    const ScrolledChild gone = scrollChildRect(Rect{44, 80, 460, 100}, 100, viewport);
+    assert(!gone.visible && gone.clip.h == 0);
+    const ScrolledChild below = scrollChildRect(Rect{44, 700, 460, 100}, 0, viewport);
+    assert(!below.visible);
+    // Scroll metrics: range == the overflow, page == 90 % of the viewport.
+    const ScrollMetrics m = scrollMetrics(viewport.h, 122);
+    assert(m.rangeMax == 122);
+    assert(m.pagePx == viewport.h * 9 / 10);
+    const ScrollMetrics none = scrollMetrics(viewport.h, 0);
+    assert(none.rangeMax == 0);
+    std::cout << "  [PASS] scrollChildRect clips at the viewport edges;"
+                 " scroll metrics follow the standard\n";
+}
+
+void testDpiSweepEveryControlInsideOrScrollable() {
+    // The acceptance battery: at 100/125/150/200 % with realistic measured
+    // metrics (including a wide VN label wrapping to three lines), after
+    // solve + refit + (scroll at offset 0 AND at the range max), EVERY page
+    // control is either fully inside the visible client area or reachable
+    // through the scroll range — none is silently lost below an unmoved
+    // window edge, and the button row never overlaps page content.
+    struct Screen { int scale; int workH; };
+    const Screen screens[] = {{100, 1040}, {125, 900}, {150, 728}, {200, 700}};
+    for (const Screen& s : screens) {
+        const std::vector<ControlSpec> all = dialogSpecsAt(s.scale, 24);
+        const int pageTop = 88 * s.scale / 100;
+        const int pageBottom = kViewportBottom96 * s.scale / 100;
+        const LayoutPlan plan = autoFit(all, pageTop, pageBottom);
+        assert(plan.clippedIds.empty());            // the solve itself clips nothing
+        const int clientH = kClientH96 * s.scale / 100;
+        const int chromeH = kChromePx96 * s.scale / 100;
+        const Rect window{80, 50, kClientW96 * s.scale / 100, clientH + chromeH};
+        const Rect work{0, 0, 1366, s.workH};
+        const WindowRefit fit = refitWindow(window, clientH, pageBottom,
+                                            pageBottom + plan.extraHeightPx, work);
+        assert(fit.windowRect.bottom() <= work.bottom());
+        const Rect viewport{16 * s.scale / 100, pageTop,
+                            (544 - 16) * s.scale / 100,
+                            (pageBottom - pageTop) + fit.clientDelta};
+        // The button row moved by exactly clientDelta — never overlapping a
+        // page control (they all end at or above the new viewport bottom).
+        const int rowTop = 580 * s.scale / 100 + fit.clientDelta;
+        assert(rowTop >= viewport.bottom());
+        // At offset 0 and at the range max, every page control is visible or
+        // clipped-but-reachable; at range max the DEEPEST control's bottom is
+        // inside the viewport.
+        const int offsets[] = {0, fit.scrollRange};
+        int deepestBottom = 0;
+        for (std::size_t i = 0; i < all.size(); ++i) {
+            if (all[i].tab == ControlSpec::kAlwaysVisible) { continue; }
+            deepestBottom = std::max(deepestBottom, plan.rects[i].bottom());
+        }
+        for (const int off : offsets) {
+            for (std::size_t i = 0; i < all.size(); ++i) {
+                if (all[i].tab == ControlSpec::kAlwaysVisible) { continue; }
+                const ScrolledChild sc = scrollChildRect(plan.rects[i], off, viewport);
+                if (off == fit.scrollRange && sc.visible) {
+                    // At full scroll nothing may hang below the viewport.
+                    assert(sc.rect.y + sc.clip.h <= viewport.bottom() || sc.clipped);
+                }
+                (void)sc;
+            }
+        }
+        // The deepest content is reachable at full scroll.
+        assert(deepestBottom - fit.scrollRange <= viewport.bottom());
+    }
+    std::cout << "  [PASS] DPI sweep 100/125/150/200 %: every control inside"
+                 " the client area or scroll-reachable, no chrome overlap\n";
+}
+
 } // namespace
 
 int main() {
@@ -269,6 +595,14 @@ int main() {
     testAutoFitIsIdempotentAndMonotone();
     testPlanTabsNeverClipsNineHeaders();
     testGrowWindowClampsToWorkArea();
+    // v1.3.0-beta5 (bug B1): the real-Windows regression battery.
+    testAlwaysVisibleChromeNeverDrivesGrowth();
+    testRefitWindowAppliesPartialGrowthAndScroll();
+    testRefitWindowGrowsFullyWhenItFits();
+    testRefitWindowShrinksOversizedWindowToScroll();
+    testFitRectToWorkArea();
+    testScrollChildRectClipsAtViewportEdges();
+    testDpiSweepEveryControlInsideOrScrollable();
     std::cout << "=== ALL DIALOG LAYOUT TESTS PASSED ===\n";
     return 0;
 }

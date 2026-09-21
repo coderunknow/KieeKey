@@ -96,6 +96,13 @@ if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
 fi
 
 generate() {
+    # Avoid per-file Git/MSYS process startup on CI (especially Windows).
+    # Keep the original implementation for local checkouts without Python.
+    if command -v python3 >/dev/null 2>&1; then
+        python3 "$REPO_ROOT/scripts/gen_sha256sums.py" "$MANIFEST" "$PREFIX"
+        return $?
+    fi
+
     # Generate manifest with platform-independent hashing.
     # Uses `git show :file` (the STAGED content) to hash the Git-normalized
     # content, not the file as checked out on disk. This ensures:

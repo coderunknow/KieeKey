@@ -53,6 +53,7 @@
 # Usage:
 #   tests/run_all_tests.sh [--cxx=g++] [--out=DIR] [--jobs=N] [--quick]
 #
+#   CXX_LAUNCHER=sccache optionally caches individual compilation commands.
 #   --quick   reduced iteration counts (local iteration; NOT the release gate)
 #
 # Exit: 0 = every layer passed, 1 = at least one failure.
@@ -76,6 +77,12 @@ for arg in "$@"; do
     esac
 done
 
+# A launcher is one executable, not an eval'd shell command.
+COMPILER=("$CXX")
+if [ -n "${CXX_LAUNCHER:-}" ]; then
+    COMPILER=("$CXX_LAUNCHER" "$CXX")
+fi
+
 mkdir -p "$OUT/bin" "$OUT/logs"
 BUILD_LOG="$OUT/logs/build.log"
 : > "$BUILD_LOG"
@@ -95,9 +102,6 @@ INC="-Isrc/core -Itests"
 say()  { printf '%s\n' "$*"; }
 fail() { printf 'FAIL: %s\n' "$*" >&2; }
 
-# Quote a value so it survives being embedded in a generated script.
-q() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\''/g")"; }
-
 # Build jobs are RECORDED, not executed, then dispatched with xargs -P "$JOBS".
 # (Before v1.2.0 Stable the builds ran strictly sequentially and the --jobs
 # flag was parsed but never used, so a 16-target run serialised ~45 s of
@@ -109,13 +113,43 @@ build() { # $1 = target name, rest = sources+flags
     local name="$1"; shift
     BJOBS+=("$name")
     {
-        printf '#!/bin/bash\nset -u\ncd %s\n' "$(q "$REPO_ROOT")"
-        printf 'if %s ' "$(q "$CXX")"
-        local a
-        for a in "$@"; do printf '%s ' "$(q "$a")"; done
-        printf -- '-o %s >> %s 2>&1\n' "$(q "$OUT/bin/$name")" "$(q "$BUILD_LOG")"
-        printf 'then printf 0 > %s\nelse printf 1 > %s\nfi\n' \
-            "$(q "$JOBS_DIR/$name.rc")" "$(q "$JOBS_DIR/$name.rc")"
+        # Bash builtin quoting avoids a sed process/subshell chain per argument.
+        printf '#!/bin/bash\nset -u\ncd %q\n' "$REPO_ROOT"
+        if [ -n "${CXX_LAUNCHER:-}" ]; then
+            # Caches cannot reuse a multi-source compile+link command. Preserve
+            # all flags and input ordering, but compile each TU independently.
+            # Per-target object paths avoid writes racing between build jobs.
+            local -a flags=() sources=() objects=() inputs=()
+            local arg obj i value=0
+            for arg in "$@"; do
+                if [ "$value" -eq 1 ]; then
+                    flags+=("$arg"); value=0; continue
+                fi
+                case "$arg" in
+                    -include|-imacros|-I|-isystem|-iquote|-idirafter|-x)
+                        flags+=("$arg"); value=1 ;;
+                    *.cpp)
+                        obj="$OBJ_DIR/$name-${#sources[@]}.o"
+                        sources+=("$arg"); objects+=("$obj"); inputs+=("$obj") ;;
+                    *.o) inputs+=("$arg") ;;
+                    *) flags+=("$arg") ;;
+                esac
+            done
+            printf 'if {\n'
+            for i in "${!sources[@]}"; do
+                printf '%q ' "${COMPILER[@]}" "${flags[@]}" -c "${sources[$i]}" -o "${objects[$i]}"
+                printf '&&\n'
+            done
+            # Link normally: linking is not cacheable and must always run.
+            printf '%q ' "$CXX" "${flags[@]}" "${inputs[@]}" -o "$OUT/bin/$name"
+            printf '\n} >> %q 2>&1\n' "$BUILD_LOG"
+        else
+            printf 'if %q ' "$CXX"
+            printf '%q ' "$@"
+            printf -- '-o %q >> %q 2>&1\n' "$OUT/bin/$name" "$BUILD_LOG"
+        fi
+        printf 'then printf 0 > %q\nelse printf 1 > %q\nfi\n' \
+            "$JOBS_DIR/$name.rc" "$JOBS_DIR/$name.rc"
     } > "$JOBS_DIR/$name.sh"
 }
 
@@ -151,16 +185,16 @@ rc=0
 # used, so every target links the same code it always did.
 OBJ_DIR="$OUT/obj"
 mkdir -p "$OBJ_DIR"
-"$CXX" -std=c++2b -O2 $INC -c src/core/TextEngine.cpp -o "$OBJ_DIR/te23.o" \
+"${COMPILER[@]}" -std=c++2b -O2 $INC -c src/core/TextEngine.cpp -o "$OBJ_DIR/te23.o" \
     >> "$BUILD_LOG" 2>&1 || { fail "TextEngine.cpp (C++23) failed to compile"; exit 1; }
-"$CXX" -std=c++17 -O2 $INC -c src/core/TextEngine.cpp -o "$OBJ_DIR/te17.o" \
+"${COMPILER[@]}" -std=c++17 -O2 $INC -c src/core/TextEngine.cpp -o "$OBJ_DIR/te17.o" \
     >> "$BUILD_LOG" 2>&1 || { fail "TextEngine.cpp (C++17) failed to compile"; exit 1; }
 ENGINE23="$OBJ_DIR/te23.o"
 ENGINE17="$OBJ_DIR/te17.o"
 
 # v1.2.1 RC2: frozen RC1 engine (tests/reference/kieekey-1.2.1-rc1) compiled
 # under a renamed namespace for the lockstep A/B differential.
-"$CXX" -std=c++2b -O2 -Dok=ok_rc1 -Itests/reference/kieekey-1.2.1-rc1 \
+"${COMPILER[@]}" -std=c++2b -O2 -Dok=ok_rc1 -Itests/reference/kieekey-1.2.1-rc1 \
     -c tests/reference/kieekey-1.2.1-rc1/TextEngine.cpp -o "$OBJ_DIR/te_rc1.o" \
     >> "$BUILD_LOG" 2>&1 || { fail "frozen RC1 TextEngine.cpp failed to compile"; exit 1; }
 ENGINE_RC1="$OBJ_DIR/te_rc1.o"
@@ -168,7 +202,7 @@ ENGINE_RC1="$OBJ_DIR/te_rc1.o"
 # (FlatTables.hpp codeTableFor: external-linkage inline referencing
 # internal-linkage tables) that only surfaced as a LINK failure at -O1 with
 # ASan; -O2 inlined it away. Keep one such build in the gate forever.
-"$CXX" -std=c++2b -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer $INC \
+"${COMPILER[@]}" -std=c++2b -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer $INC \
     -c src/core/TextEngine.cpp -o "$OBJ_DIR/te_asan.o" \
     >> "$BUILD_LOG" 2>&1 || { fail "TextEngine.cpp (-O1 sanitizers) failed to compile"; exit 1; }
 ENGINE_ASAN="$OBJ_DIR/te_asan.o"
@@ -375,20 +409,33 @@ if command -v node >/dev/null 2>&1; then
     fi
     # Pixel evidence for the HTML5 player: the frames above are rasterized
     # through the real web/arcade.js with a real Canvas2D implementation
-    # (@napi-rs/canvas — the optional dependency is absent in most checkouts,
-    # in which case the script exits 0 with a SKIPPED notice rather than
-    # failing the gate; docs/bench/arcade-130/frames/ holds the committed PNGs).
+    # @napi-rs/canvas remains optional locally. CI sets REQUIRE_WEB_FRAMES=1:
+    # a zero exit with SKIPPED (or no render-completion evidence) must fail.
     printf '  [check] %-22s' "web frames (node)"
     if ( cd "$REPO_ROOT" && node tests/render_web_frames.js "$OUT/web-frames" ) > "$OUT/logs/web_frames.log" 2>&1; then
         if grep -q 'SKIPPED' "$OUT/logs/web_frames.log"; then
-            printf ' skipped (no canvas module)\n'
+            if [ "${REQUIRE_WEB_FRAMES:-0}" = "1" ]; then
+                printf ' FAILED — web frames are required; see %s\n' "$OUT/logs/web_frames.log"
+                rc=1
+            else
+                printf ' skipped (no canvas module)\n'
+            fi
+        elif ! grep -Eq '^=== rendered [1-9][0-9]* game frames \+ a contact sheet ===$' "$OUT/logs/web_frames.log"; then
+            printf ' FAILED — missing render-completion evidence; see %s\n' "$OUT/logs/web_frames.log"
+            rc=1
         else
             printf ' ok\n'
+            if [ "${REQUIRE_WEB_FRAMES:-0}" = "1" ]; then
+                cat "$OUT/logs/web_frames.log"
+            fi
         fi
     else
         printf ' FAILED — %s\n' "$OUT/logs/web_frames.log"
         rc=1
     fi
+elif [ "${REQUIRE_WEB_FRAMES:-0}" = "1" ]; then
+    printf '  [check] %-22s FAILED — Node.js is required\n' "web frames (node)"
+    rc=1
 fi
 
 # --- release manifest matches the tracked tree ------------------------------
@@ -428,12 +475,11 @@ run() {
         printf '#!/bin/bash\nset -u\nstart=$(date +%%s)\n'
         # The differential harnesses write their .md report into the CWD and
         # read tests/data relative to it — always run from the repository root.
-        printf 'cd %s\n' "$(q "$REPO_ROOT")"
-        printf 'timeout %s %s ' "$(q "$tmo")" "$(q "$OUT/bin/$name")"
-        local a
-        for a in "$@"; do printf '%s ' "$(q "$a")"; done
-        printf -- '> %s 2>&1\nrc=$?\nend=$(date +%%s)\n' "$(q "$OUT/logs/$name.log")"
-        printf 'printf "%%s %%s" "$rc" "$((end-start))" > %s\n' "$(q "$JOBS_DIR/run_$name.res")"
+        printf 'cd %q\n' "$REPO_ROOT"
+        printf 'timeout %q %q ' "$tmo" "$OUT/bin/$name"
+        if [ "$#" -gt 0 ]; then printf '%q ' "$@"; fi
+        printf -- '> %q 2>&1\nrc=$?\nend=$(date +%%s)\n' "$OUT/logs/$name.log"
+        printf 'printf "%%s %%s" "$rc" "$((end-start))" > %q\n' "$JOBS_DIR/run_$name.res"
     } > "$JOBS_DIR/run_$name.sh"
 }
 

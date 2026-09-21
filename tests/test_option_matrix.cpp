@@ -197,6 +197,63 @@ inline std::uint64_t digestText(const std::wstring& s) noexcept {
     for (wchar_t c : s) h = fnvMix(h, static_cast<std::uint64_t>(static_cast<char32_t>(c)));
     return h;
 }
+// The consumer model only appends or erases a suffix. Keep the hash of each
+// prefix so every event retains EXACTLY digestText(document), without scanning
+// the unchanged prefix again (quadratic work over a long input stream).
+struct DigestDocument {
+    std::wstring text;
+    std::vector<std::uint64_t> prefixes{0xCBF29CE484222325ULL};
+
+    void eraseTail(std::size_t n) {
+        text.resize(text.size() - std::min(n, text.size()));
+        prefixes.resize(text.size() + 1);
+    }
+    void operator+=(wchar_t c) {
+        text += c;
+        prefixes.push_back(fnvMix(prefixes.back(),
+            static_cast<std::uint64_t>(static_cast<char32_t>(c))));
+    }
+    void operator+=(const std::wstring& s) {
+        for (wchar_t c : s) *this += c;
+    }
+    std::uint64_t digest() const {
+#ifdef KIEEKEY_VERIFY_DOCUMENT_DIGEST
+        // Opt-in equivalence audit: recompute the original hash at EVERY event.
+        OM_CHECK(prefixes.back() == digestText(text));
+#endif
+        return prefixes.back();
+    }
+};
+
+void checkDocumentDigest() {
+    // Independent full-string model, including empty/overlong erases, NULs,
+    // BMP characters and UTF-16 surrogate code units on both wchar_t widths.
+    DigestDocument doc;
+    std::wstring expected;
+    std::mt19937_64 rng(0xD16E57ULL);
+    const wchar_t chars[] = {L'a', L' ', L'\0', L'\u1EBF',
+                            static_cast<wchar_t>(0xD83D), static_cast<wchar_t>(0xDE00)};
+    OM_CHECK(doc.digest() == digestText(expected));
+    for (int i = 0; i < 4096; ++i) {
+        if (i % 3 == 0) {
+            const std::size_t n = static_cast<std::size_t>(rng() % (expected.size() + 2));
+            doc.eraseTail(n);
+            expected.erase(expected.size() - std::min(n, expected.size()));
+        } else {
+            std::wstring add;
+            const std::size_t n = static_cast<std::size_t>(rng() % 17);
+            for (std::size_t j = 0; j < n; ++j) add += chars[rng() % 6];
+            doc += add;
+            expected += add;
+        }
+        OM_CHECK(doc.text == expected);
+        OM_CHECK(doc.digest() == digestText(expected));
+    }
+    doc.eraseTail(doc.text.size() + 1);
+    OM_CHECK(doc.text.empty());
+    OM_CHECK(doc.digest() == digestText(L""));
+}
+
 inline std::uint64_t packTuple(std::uint32_t code, std::uint32_t bs, std::uint32_t n,
                                std::uint32_t consumed) noexcept {
     return (static_cast<std::uint64_t>(code & 0xFFu) << 24) |
@@ -530,7 +587,7 @@ struct Runner {
     TextEngine eng;
     const bool hasOracle;
     orel::Oracle ora{orel::Options{}};
-    std::wstring et, ot;
+    DigestDocument et, ot;
     std::uint64_t evCount = 0, mism = 0, overBs = 0, tupleMismatch = 0;
     std::uint64_t traceE = 0, traceO = 0, docE = 0, docO = 0;
 
@@ -551,6 +608,9 @@ struct Runner {
     static void eraseTail(std::wstring& doc, std::size_t n) {
         n = std::min<std::size_t>(n, doc.size());
         doc.erase(doc.size() - n, n);
+    }
+    static void eraseTail(DigestDocument& doc, std::size_t n) {
+        doc.eraseTail(n);
     }
 
     void feed(const Ev& e, bool viqrMode) {
@@ -588,7 +648,7 @@ struct Runner {
         }
         traceE = fnvMix(traceE, packTuple(static_cast<std::uint32_t>(r.code), r.backspaceCount,
                                           r.newCharCount, r.consumed() ? 1 : 0));
-        docE = fnvMix(docE, digestText(et));
+        docE = fnvMix(docE, et.digest());
 
         if (!hasOracle) return;
         const orel::Result& o = ora.process(toOracleEvent(e));
@@ -609,7 +669,7 @@ struct Runner {
         }
         traceO = fnvMix(traceO, packTuple(static_cast<std::uint32_t>(o.code), o.backspaceCount,
                                           o.newCharCount, o.consumed() ? 1 : 0));
-        docO = fnvMix(docO, digestText(ot));
+        docO = fnvMix(docO, ot.digest());
 
         const std::uint64_t eTuple = packTuple(static_cast<std::uint32_t>(r.code), r.backspaceCount,
                                                r.newCharCount, 0);
@@ -2004,6 +2064,7 @@ void runIndexStaleness(std::size_t eventsN, JsonRow& row) {
 // main
 //----------------------------------------------------------------------------
 int main(int argc, char** argv) {
+    checkDocumentDigest();
     std::string tier = "all";
     std::string jsonPath;
     std::size_t eventsN = 20000;

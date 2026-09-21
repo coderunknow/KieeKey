@@ -2623,6 +2623,14 @@ void toggleEngineFromUi() {
         drainPendingEditsForLifecycle();
     }
     updateTrayIcon();
+    // v1.3.0-beta7 audit: immediate toggle-button label + header status
+    // so the user sees feedback instantly, not after the 500 ms timer tick.
+    if (g.hSettings) {
+        ::SetWindowTextW(::GetDlgItem(g.hSettings, IDC_BTN_TOGGLE),
+                         enable ? L"Bộ gõ: ĐANG BẬT — bấm để TẮT"
+                                : L"Bộ gõ: ĐANG TẮT — bấm để BẬT");
+        updateHeaderStatus();
+    }
     saveSettings();   // persist at every change point (restart-proof)
     if (enable) {
         showTrayBalloon(L"KieeKey — Bật",
@@ -5398,9 +5406,18 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     cfg.rhythmFailMode = mode;
                     cfg.noMistakeFailMode = mode;
                     wchar_t bpmText[16]{};
-                    ::GetDlgItemTextW(hwnd, IDC_EDT_RHYTHM_BPM, bpmText, 16);
-                    const long bpm = std::wcstol(bpmText, nullptr, 10);
-                    if (bpm >= 60 && bpm <= 220) {
+                    const int bpmLen = ::GetDlgItemTextW(hwnd, IDC_EDT_RHYTHM_BPM, bpmText, 16);
+                    if (bpmLen > 0) {
+                        wchar_t* endPtr = nullptr;
+                        const long bpm = std::wcstol(bpmText, &endPtr, 10);
+                        const bool fullyParsed = (endPtr != nullptr && *endPtr == L'\0');
+                        if (!fullyParsed || bpm < 60 || bpm > 220) {
+                            ::MessageBoxW(hwnd,
+                                          L"BPM không hợp lệ — nhập số nguyên từ 60 đến 220, "
+                                          L"hoặc để trống để giữ nguyên.",
+                                          L"KieeKey Arcade", MB_OK | MB_ICONWARNING);
+                            return 0;
+                        }
                         cfg.rhythmBpm = static_cast<double>(bpm);
                     }
                     // v1.3.0-beta3 (bug #2): passage language (VN default) + the
@@ -5666,6 +5683,9 @@ void openSettingsDialog(int tab) {
         g.conflictWarning = cs.warning;
         g.conflictDetail  = cs.detail;
     }
+    // v1.3.0-beta7 audit: clamp tab to valid range (0..8) so --settings=99
+    // does not show an empty dialog (all tabs hidden).
+    if (tab < 0 || tab > 8) { tab = 0; }
     if (g.hSettings) {
         // Already open: just bring it up on the requested tab.
         g_settingsOpenTab = tab;
@@ -6108,6 +6128,17 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     BOOL gmRet = 0;
     while ((gmRet = ::GetMessageW(&msg, nullptr, 0, 0)) > 0) {
         if (g.hSettings && ::IsDialogMessageW(g.hSettings, &msg)) { continue; }
+        // v1.3.0-beta7 audit: Chaos Lab has many child controls with
+        // WS_TABSTOP but previously lacked IsDialogMessageW, so Tab
+        // navigation was broken. Give it the same dialog-message handling
+        // as the settings dialog.
+        {
+            HWND labHwnd = static_cast<HWND>(ok::app::ChaosLabWindow::instance().handle());
+            if (labHwnd != nullptr && ::IsWindow(labHwnd) &&
+                ::IsDialogMessageW(labHwnd, &msg)) {
+                continue;
+            }
+        }
         ::TranslateMessage(&msg);
         ::DispatchMessageW(&msg);
     }

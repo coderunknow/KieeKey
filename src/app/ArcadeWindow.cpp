@@ -716,6 +716,18 @@ LRESULT CALLBACK arcadeWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
                     self->setHoverIndex(hover);
                     ::InvalidateRect(hwnd, nullptr, FALSE);
                 }
+                // Track mouse leave so hover highlight clears when cursor exits.
+                TRACKMOUSEEVENT tme{};
+                tme.cbSize = sizeof(tme);
+                tme.dwFlags = TME_LEAVE;
+                tme.hwndTrack = hwnd;
+                ::TrackMouseEvent(&tme);
+            }
+            return 0;
+        case WM_MOUSELEAVE:
+            if (self != nullptr && self->hoverIndexForTest() != -1) {
+                self->setHoverIndex(-1);
+                ::InvalidateRect(hwnd, nullptr, FALSE);
             }
             return 0;
         case WM_LBUTTONDOWN: {
@@ -758,6 +770,21 @@ LRESULT CALLBACK arcadeWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
         case WM_SIZE:
             ::InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
+        case WM_DPICHANGED: {
+            if (self != nullptr) {
+                const UINT newDpi = HIWORD(wParam);
+                self->m_impl->dpiScale = (newDpi > 0) ? (static_cast<double>(newDpi) / 96.0) : 1.0;
+                const RECT* suggested = reinterpret_cast<const RECT*>(lParam);
+                if (suggested != nullptr) {
+                    ::SetWindowPos(hwnd, nullptr, suggested->left, suggested->top,
+                                   suggested->right - suggested->left,
+                                   suggested->bottom - suggested->top,
+                                   SWP_NOZORDER | SWP_NOACTIVATE);
+                }
+                ::InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            return 0;
+        }
         case WM_CLOSE:
             if (self != nullptr) {
                 self->close();

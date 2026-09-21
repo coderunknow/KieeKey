@@ -28,6 +28,7 @@ bool ChaosLabWindow::open(void*) { return false; }
 void ChaosLabWindow::close() {}
 bool ChaosLabWindow::isOpen() const noexcept { return false; }
 void* ChaosLabWindow::handle() const noexcept { return nullptr; }
+bool ChaosLabWindow::ownsFlexingGame() const noexcept { return false; }
 bool launchChaosLab() { return false; }
 std::u32string ChaosLabWindow::transformForPreview(std::u32string_view, std::uint32_t) {
     return {};
@@ -232,13 +233,22 @@ std::size_t ensureFlexingGame(ChaosLabWindow::Impl& impl) {
 
 // One pump of the flexing game: advance the engine, take whatever text it
 // produced, log it and (when armed) really type it into the focus application.
+// v1.3.0-beta7 (B3): cap flexProduced to 8k chars to avoid unbounded growth
+// when the user holds a key in the flex input; clear ownsFlexing when the
+// current game is no longer Flexing (hub replaced it) so stale state cannot
+// leak into the next Flexing session.
 void pumpFlexing(ChaosLabWindow::Impl& impl, bool alsoOnTimer) {
     auto& manager = ok::arcade::ArcadeManager::instance();
-    if (!impl.ownsFlexing || manager.getCurrentGameType() != ok::arcade::GameType::Flexing) {
+    if (!impl.ownsFlexing) {
+        return;
+    }
+    if (manager.getCurrentGameType() != ok::arcade::GameType::Flexing) {
+        impl.ownsFlexing = false;
         return;
     }
     auto* game = dynamic_cast<ok::arcade::FlexingGame*>(manager.getCurrentGame());
     if (game == nullptr) {
+        impl.ownsFlexing = false;
         return;
     }
     if (alsoOnTimer) {
@@ -250,6 +260,20 @@ void pumpFlexing(ChaosLabWindow::Impl& impl, bool alsoOnTimer) {
         return;
     }
     const std::wstring wide = widen(ok::arcade::utf8FromUtf32(produced));
+    // Cap to 8192 chars — keep the tail so the user still sees recent output.
+    constexpr std::size_t kCap = 8192;
+    if (impl.flexProduced.size() + wide.size() > kCap) {
+        const std::size_t overflow = (impl.flexProduced.size() + wide.size()) - kCap;
+        if (overflow >= impl.flexProduced.size()) {
+            impl.flexProduced.clear();
+        } else {
+            impl.flexProduced.erase(0, overflow);
+        }
+        // Also truncate the EDIT control — otherwise it grows without bound.
+        if (impl.flexOutput != nullptr) {
+            ::SetWindowTextW(impl.flexOutput, impl.flexProduced.c_str());
+        }
+    }
     impl.flexProduced += wide;
     appendToEdit(impl.flexOutput, wide);
 
@@ -663,7 +687,7 @@ bool ChaosLabWindow::open(void* owner) {
         create(L"STATIC", L"Mỗi phím sinh ra:", SS_LEFT, 610, 502, 128, 18, -1);
         m_impl->flexGran = create(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL, 646, 520, 92, 200,
                                   kIdFlexGran);
-        for (const wchar_t* label : {L"1 ký tự", L"1 từ", L"N ký tự", L"Tự chảy"}) {
+        for (const wchar_t* label : {L"1 ký tự", L"1 từ", L"3 ký tự (N=3)", L"Tự chảy"}) {
             ::SendMessageW(m_impl->flexGran, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label));
         }
         ::SendMessageW(m_impl->flexGran, CB_SETCURSEL, 0, 0);
@@ -727,6 +751,11 @@ bool ChaosLabWindow::isOpen() const noexcept {
 
 void* ChaosLabWindow::handle() const noexcept {
     return (m_impl != nullptr) ? static_cast<void*>(m_impl->hwnd) : nullptr;
+}
+
+bool ChaosLabWindow::ownsFlexingGame() const noexcept {
+    return m_impl != nullptr && m_impl->ownsFlexing &&
+           m_impl->hwnd != nullptr && ::IsWindow(m_impl->hwnd) != FALSE;
 }
 
 bool launchChaosLab() {

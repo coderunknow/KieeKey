@@ -3641,7 +3641,9 @@ bool ArcadeManager::configNeedsRelaunch(const ArcadeConfig& config) const {
            config.rhythmNoteCount != m_config.rhythmNoteCount ||
            config.rhythmApproachSec != m_config.rhythmApproachSec ||
            config.noMistakeStartReserve != m_config.noMistakeStartReserve ||
-           config.wasdStartFuel != m_config.wasdStartFuel;
+           config.wasdStartFuel != m_config.wasdStartFuel ||
+           config.passageLanguage != m_config.passageLanguage ||
+           config.vnInputMethod != m_config.vnInputMethod;
 }
 
 bool ArcadeManager::relaunchCurrentGame() {

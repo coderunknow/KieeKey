@@ -34,6 +34,7 @@ const ui = {
   pacer: document.getElementById('pacer'),
   pacerOut: document.getElementById('pacerOut'),
   steering: document.getElementById('steering'),
+  passageLang: document.getElementById('passageLang'),
 };
 
 const KIND = { RECT: 0, CIRCLE: 1, LINE: 2, POLY: 3, TEXT: 4 };
@@ -459,14 +460,21 @@ async function pushConfig(opts) {
     typingRacePacerWpm: parseInt(ui.pacer.value, 10),
     // v1.3.0-beta6 (V2/B7): steering-key choice (0 Arrows / 1 WASD / 2 Both).
     wasdSteering: parseInt(ui.steering.value, 10),
+    // v1.3.0-beta7: passage language (0 VN / 1 EN) — needs relaunch.
+    passageLanguage: ui.passageLang ? parseInt(ui.passageLang.value, 10) : 0,
     applyNow: (opts && opts.applyNow) ? 1 : 0,
   });
   if (!result || !result.ok) {
     return;
   }
   // Reflect what actually landed (the bridge echoes the applied config).
-  if (result.config && Number.isInteger(result.config.wasdSteering) && ui.steering) {
-    ui.steering.value = String(result.config.wasdSteering);
+  if (result.config) {
+    if (Number.isInteger(result.config.wasdSteering) && ui.steering) {
+      ui.steering.value = String(result.config.wasdSteering);
+    }
+    if (Number.isInteger(result.config.passageLanguage) && ui.passageLang) {
+      ui.passageLang.value = String(result.config.passageLanguage);
+    }
   }
   if (result.restartApplied) {
     showToast('Đã áp dụng cấu hình mới — ván chơi được bắt đầu lại');
@@ -477,8 +485,8 @@ async function pushConfig(opts) {
 
 // While the slider moves: live push only (no restart on every pixel).
 // On release: one relaunch so the new tempo is audible immediately.
-for (const el of [ui.failMode, ui.pacer, ui.steering]) {
-  el.addEventListener('change', () => pushConfig());
+for (const el of [ui.failMode, ui.pacer, ui.steering, ui.passageLang].filter(Boolean)) {
+  el.addEventListener('change', () => pushConfig({ applyNow: true }));
   el.addEventListener('input', () => pushConfig());
 }
 ui.bpm.addEventListener('input', () => pushConfig());

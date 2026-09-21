@@ -3733,6 +3733,71 @@ bool dlgChecked(HWND h, int id, bool fallback) noexcept {
                : fallback;
 }
 
+// v1.3.0-beta7 (B2 follow-up): shared arcade-config reader for the desktop UI.
+// Reads the arcade tab controls (fail mode, BPM, passage language, steering)
+// and fills `out`. Returns true on success; on BPM parse error shows the
+// same warning the dedicated Apply button shows and returns false. When the
+// controls do not exist (half-built dialog) it leaves `out` untouched and
+// returns true so the caller can keep the persisted config.
+bool tryReadArcadeConfigFromDialog(HWND hwnd, ok::arcade::ArcadeConfig& out) {
+    if (hwnd == nullptr) { return true; }
+    const HWND failCtl = ::GetDlgItem(hwnd, IDC_CMB_FAILMODE);
+    const HWND bpmCtl  = ::GetDlgItem(hwnd, IDC_EDT_RHYTHM_BPM);
+    const HWND langCtl = ::GetDlgItem(hwnd, IDC_CMB_PASSAGE_LANG);
+    const HWND steerCtl = ::GetDlgItem(hwnd, IDC_CMB_STEERING);
+    if (failCtl == nullptr && bpmCtl == nullptr && langCtl == nullptr && steerCtl == nullptr) {
+        return true;
+    }
+    if (failCtl != nullptr) {
+        const int selection = static_cast<int>(::SendMessageW(failCtl, CB_GETCURSEL, 0, 0));
+        const auto mode = (selection == 1) ? ok::arcade::FailMode::HealthBar
+                                           : ok::arcade::FailMode::Hardcore;
+        out.rhythmFailMode = mode;
+        out.noMistakeFailMode = mode;
+    }
+    if (bpmCtl != nullptr) {
+        wchar_t bpmText[16]{};
+        const int bpmLen = ::GetDlgItemTextW(hwnd, IDC_EDT_RHYTHM_BPM, bpmText, 16);
+        if (bpmLen > 0) {
+            wchar_t* endPtr = nullptr;
+            const long bpm = std::wcstol(bpmText, &endPtr, 10);
+            const bool fullyParsed = (endPtr != nullptr && *endPtr == L'\0');
+            if (!fullyParsed || bpm < 60 || bpm > 220) {
+                ::MessageBoxW(hwnd,
+                              L"BPM không hợp lệ — nhập số nguyên từ 60 đến 220, "
+                              L"hoặc để trống để giữ nguyên.",
+                              L"KieeKey Arcade", MB_OK | MB_ICONWARNING);
+                return false;
+            }
+            out.rhythmBpm = static_cast<double>(bpm);
+        }
+    }
+    if (langCtl != nullptr) {
+        const int langSel = static_cast<int>(::SendMessageW(langCtl, CB_GETCURSEL, 0, 0));
+        out.passageLanguage = (langSel == 1) ? ok::arcade::PassageLanguage::English
+                                             : ok::arcade::PassageLanguage::Vietnamese;
+    }
+    // Composition method follows the IME method already chosen on tab 0.
+    // When the Telex radio exists we use its state; otherwise keep g.options.
+    {
+        const HWND telexCtl = ::GetDlgItem(hwnd, IDC_RADIO_TELEX);
+        const HWND vniCtl   = ::GetDlgItem(hwnd, IDC_RADIO_VNI);
+        if (telexCtl != nullptr && vniCtl != nullptr) {
+            const bool telex = (::SendMessageW(telexCtl, BM_GETCHECK, 0, 0) == BST_CHECKED);
+            const bool vni   = (::SendMessageW(vniCtl,   BM_GETCHECK, 0, 0) == BST_CHECKED);
+            const int method = telex ? 0 : (vni ? 1 : 2);
+            out.vnInputMethod = static_cast<ok::arcade::VnInputMethod>(method);
+        } else {
+            out.vnInputMethod = static_cast<ok::arcade::VnInputMethod>(g.options.inputMethod);
+        }
+    }
+    if (steerCtl != nullptr) {
+        const int steerSel = static_cast<int>(::SendMessageW(steerCtl, CB_GETCURSEL, 0, 0));
+        out.wasdSteering = static_cast<ok::arcade::WasdSteering>(std::clamp(steerSel, 0, 2));
+    }
+    return true;
+}
+
 void settingsFromControls() {
     const bool telex = (::SendMessageW(::GetDlgItem(g.hSettings, IDC_RADIO_TELEX),
                                        BM_GETCHECK, 0, 0) == BST_CHECKED);
@@ -3781,6 +3846,12 @@ void settingsFromControls() {
     const bool hybLowCpu   = dlgChecked(g.hSettings, IDC_CHK_PERF_LOWCPU, (curHyb & ok::perf::kHybridLowCpu) != 0);
     const bool hybDict     = dlgChecked(g.hSettings, IDC_CHK_PERF_DICT,   (curHyb & ok::perf::kHybridExtraCorrect) != 0);
     const bool notifyOn    = dlgChecked(g.hSettings, IDC_CHK_NOTIFY, !g.notify.sessionMuted());
+    // v1.3.0-beta7: arcade tab controls (fail mode, BPM, passage language,
+    // steering) must also be read on OK/Apply — otherwise changing them and
+    // pressing OK loses the change unless the dedicated arcade button was
+    // pressed first. Read above the lock, same as the other controls.
+    auto arcadeCfg = ok::arcade::ArcadeManager::instance().getConfig();
+    const bool arcadeOk = tryReadArcadeConfigFromDialog(g.hSettings, arcadeCfg);
     // v1.1.0 (race fix): parse + swap the table UNDER engineMtx — the
     // hook thread reads g_macros through the resolver inside
     // engine.process(), which always runs under this lock. The FILE WRITE
@@ -3832,6 +3903,19 @@ void settingsFromControls() {
         g.monitor.setExcludeShell(g.exclShell);
         updateExclusionCache();
         updateForegroundPolicy();   // output mode affects the TSF-vs-inline decision
+    }
+    // v1.3.0-beta7: apply arcade config that was read above the lock (if the
+    // BPM field was valid). The ArcadeManager owns its own mutex. If the new
+    // config needs a chart rebuild (passage language, BPM, …) and a game is
+    // running, relaunch it now — same behaviour as the web /api/config with
+    // applyNow.
+    if (arcadeOk) {
+        auto& mgr = ok::arcade::ArcadeManager::instance();
+        const bool needsRelaunch = mgr.configNeedsRelaunch(arcadeCfg);
+        mgr.setConfig(arcadeCfg);
+        if (needsRelaunch) {
+            (void)mgr.relaunchCurrentGame();
+        }
     }
     // Disk write OUTSIDE engineMtx: never let file I/O extend the window in
     // which the hook thread's keystroke path can be blocked.
@@ -5396,61 +5480,47 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     return 0;
                 case IDC_BTN_APPLY_ARCADE_CFG: {
                     auto cfg = ok::arcade::ArcadeManager::instance().getConfig();
-                    HWND combo = ::GetDlgItem(hwnd, IDC_CMB_FAILMODE);
-                    const int selection = (combo != nullptr)
-                                              ? static_cast<int>(::SendMessageW(combo, CB_GETCURSEL,
-                                                                               0, 0))
-                                              : 0;
-                    const auto mode = (selection == 1) ? ok::arcade::FailMode::HealthBar
-                                                       : ok::arcade::FailMode::Hardcore;
-                    cfg.rhythmFailMode = mode;
-                    cfg.noMistakeFailMode = mode;
-                    wchar_t bpmText[16]{};
-                    const int bpmLen = ::GetDlgItemTextW(hwnd, IDC_EDT_RHYTHM_BPM, bpmText, 16);
-                    if (bpmLen > 0) {
-                        wchar_t* endPtr = nullptr;
-                        const long bpm = std::wcstol(bpmText, &endPtr, 10);
-                        const bool fullyParsed = (endPtr != nullptr && *endPtr == L'\0');
-                        if (!fullyParsed || bpm < 60 || bpm > 220) {
-                            ::MessageBoxW(hwnd,
-                                          L"BPM không hợp lệ — nhập số nguyên từ 60 đến 220, "
-                                          L"hoặc để trống để giữ nguyên.",
-                                          L"KieeKey Arcade", MB_OK | MB_ICONWARNING);
-                            return 0;
-                        }
-                        cfg.rhythmBpm = static_cast<double>(bpm);
+                    if (!tryReadArcadeConfigFromDialog(hwnd, cfg)) {
+                        return 0;
                     }
-                    // v1.3.0-beta3 (bug #2): passage language (VN default) + the
-                    // composition method, which follows the IME method already
-                    // configured so the games compose Telex/VNI exactly like the IME.
-                    HWND langCombo = ::GetDlgItem(hwnd, IDC_CMB_PASSAGE_LANG);
-                    const int langSel = (langCombo != nullptr)
-                                            ? static_cast<int>(::SendMessageW(langCombo,
-                                                                              CB_GETCURSEL, 0, 0))
-                                            : 0;
-                    cfg.passageLanguage = (langSel == 1)
-                                              ? ok::arcade::PassageLanguage::English
-                                              : ok::arcade::PassageLanguage::Vietnamese;
-                    cfg.vnInputMethod =
-                        static_cast<ok::arcade::VnInputMethod>(g.options.inputMethod);
-                    // v1.3.0-beta5 (bug B7): steering-key choice (clamped —
-                    // CB_ERR/-1 from an untouched combo falls back to Arrows).
-                    HWND steerCombo = ::GetDlgItem(hwnd, IDC_CMB_STEERING);
-                    const int steerSel = (steerCombo != nullptr)
-                                             ? static_cast<int>(::SendMessageW(steerCombo,
-                                                                               CB_GETCURSEL, 0, 0))
-                                             : 0;
-                    cfg.wasdSteering = static_cast<ok::arcade::WasdSteering>(
-                        std::clamp(steerSel, 0, 2));
-                    ok::arcade::ArcadeManager::instance().setConfig(cfg);
+                    auto& mgr = ok::arcade::ArcadeManager::instance();
+                    const bool needsRelaunch = mgr.configNeedsRelaunch(cfg);
+                    const bool hasGame = mgr.hasActiveGame();
+                    mgr.setConfig(cfg);
+                    bool relaunched = false;
+                    if (needsRelaunch && hasGame) {
+                        relaunched = mgr.relaunchCurrentGame();
+                    }
                     // v1.3.0-beta5 (bug B6): PERSIST right away — before this,
                     // the applied config lived only in memory and vanished on
                     // restart unless the user also pressed OK on the dialog.
                     saveSettings();
-                    ::MessageBoxW(hwnd,
-                                  L"Đã áp dụng + lưu: chế độ Rhythm/No-Mistake, nhịp BPM, "
-                                  L"ngôn ngữ đoạn văn và phím lái cho các game.",
-                                  L"KieeKey Arcade", MB_OK | MB_ICONINFORMATION);
+                    updateHeaderStatus();
+                    if (needsRelaunch) {
+                        if (relaunched) {
+                            ::MessageBoxW(hwnd,
+                                          L"Đã áp dụng + lưu và khởi động lại game: chế độ "
+                                          L"Rhythm/No-Mistake, nhịp BPM, ngôn ngữ đoạn văn và "
+                                          L"phím lái.",
+                                          L"KieeKey Arcade", MB_OK | MB_ICONINFORMATION);
+                        } else if (hasGame) {
+                            ::MessageBoxW(hwnd,
+                                          L"Đã áp dụng + lưu, nhưng không khởi động lại được game "
+                                          L"(thử mở lại từ Arcade Hub).",
+                                          L"KieeKey Arcade", MB_OK | MB_ICONWARNING);
+                        } else {
+                            ::MessageBoxW(hwnd,
+                                          L"Đã áp dụng + lưu: chế độ Rhythm/No-Mistake, nhịp BPM, "
+                                          L"ngôn ngữ đoạn văn và phím lái. Thay đổi sẽ có hiệu lực "
+                                          L"khi mở game tiếp theo (cần khởi động lại run).",
+                                          L"KieeKey Arcade", MB_OK | MB_ICONINFORMATION);
+                        }
+                    } else {
+                        ::MessageBoxW(hwnd,
+                                      L"Đã áp dụng + lưu: chế độ Rhythm/No-Mistake, nhịp BPM, "
+                                      L"ngôn ngữ đoạn văn và phím lái cho các game.",
+                                      L"KieeKey Arcade", MB_OK | MB_ICONINFORMATION);
+                    }
                     return 0;
                 }
                 case IDC_CHK_LIVE:
@@ -5625,6 +5695,7 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     settingsFromControls();
                     saveSettings();
                     updateTrayIcon();
+                    updateHeaderStatus();
                     [[fallthrough]];
                 case IDCANCEL:
                     ::KillTimer(hwnd, 1);
@@ -5635,6 +5706,7 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     settingsFromControls();
                     saveSettings();
                     updateTrayIcon();
+                    updateHeaderStatus();
                     return 0;
                 default: break;
             }

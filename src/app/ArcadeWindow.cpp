@@ -86,6 +86,7 @@ bool launchArcadeHub(const char*) { return false; }
 
 #include "Arcade.hpp"
 #include "ArcadeRender.hpp"
+#include "ChaosLabWindow.hpp"
 #include "Progression.hpp"
 
 using namespace ok::arcade;
@@ -877,7 +878,19 @@ void ArcadeWindow::close() {
         return;
     }
     // stopGame() reports the finished/abandoned run to the progression engine.
-    ArcadeManager::instance().stopGame();
+    // v1.3.0-beta7 (B4): don't kill Flexing owned by Chaos Lab — the lab's own
+    // close() stops it. Without this, closing the hub while the lab is open
+    // aborts the lab's Flexing session and leaves ownsFlexing true with no game.
+    {
+        auto& mgr = ArcadeManager::instance();
+        bool labOwnsFlexing = false;
+        if (mgr.getCurrentGameType() == GameType::Flexing) {
+            labOwnsFlexing = ChaosLabWindow::instance().ownsFlexingGame();
+        }
+        if (!labOwnsFlexing) {
+            mgr.stopGame();
+        }
+    }
     if (m_impl->hwnd != nullptr) {
         HWND hwnd = m_impl->hwnd;
         m_impl->hwnd = nullptr;

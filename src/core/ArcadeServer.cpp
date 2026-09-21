@@ -773,8 +773,13 @@ HttpResponse ArcadeServer::handleRequest(const std::string& method, const std::s
             config.noMistakeFailMode = (value == 0) ? FailMode::Hardcore : FailMode::HealthBar;
             changed = true;
         }
-        if (jsonFindInt(body, "rhythmBpm", value) && value >= 40 && value <= 400) {
+        if (jsonFindInt(body, "rhythmBpm", value) && value >= 60 && value <= 220) {
             config.rhythmBpm = static_cast<double>(value);
+            changed = true;
+        }
+        if (jsonFindInt(body, "passageLanguage", value) && value >= 0 && value <= 1) {
+            config.passageLanguage = (value == 1) ? PassageLanguage::English
+                                                  : PassageLanguage::Vietnamese;
             changed = true;
         }
         if (jsonFindInt(body, "typingRacePacerWpm", value) && value >= 0 && value <= 300) {
@@ -820,12 +825,15 @@ HttpResponse ArcadeServer::handleRequest(const std::string& method, const std::s
                         (restartApplied ? "true" : "false") +
                         ",\"restartRequired\":" + (needsRelaunch ? "true" : "false") +
                         ",\"restartRequiredKeys\":\"rhythmBpm,rhythmNoteCount,"
-                        "rhythmApproachSec,noMistakeStartReserve,wasdStartFuel\"" +
+                        "rhythmApproachSec,noMistakeStartReserve,wasdStartFuel,"
+                        "passageLanguage\"" +
                         ",\"config\":{\"rhythmFailMode\":" +
                         (now.rhythmFailMode == FailMode::Hardcore ? "0" : "1") +
                         ",\"noMistakeFailMode\":" +
                         (now.noMistakeFailMode == FailMode::Hardcore ? "0" : "1") +
                         ",\"rhythmBpm\":" + std::to_string(static_cast<int>(now.rhythmBpm)) +
+                        ",\"passageLanguage\":" +
+                        std::to_string(now.passageLanguage == PassageLanguage::English ? 1 : 0) +
                         ",\"typingRacePacerWpm\":" +
                         std::to_string(static_cast<int>(now.typingRacePacerWpm)) +
                         // v1.3.0-beta6 (V2/B7): echo the applied steering mode

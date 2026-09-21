@@ -330,6 +330,41 @@ if command -v python3 >/dev/null 2>&1; then
         cat "$OUT/logs/telemetry-rows.log"
         rc=1
     fi
+    # v1.3.0-beta6 (V1): the two dialog audits used to pass only because a
+    # human remembered to run them by hand — a gate that is not in the suite
+    # protects nothing. audit_layout --strict = authored rectangles cannot
+    # clip/overlap/escape their page; audit_controls = every settings control
+    # id that is READ is also CREATED in WM_CREATE.
+    printf '  [check] %-22s' "layout (strict)"
+    if ( cd "$REPO_ROOT" && python3 scripts/audit_layout.py --strict ) \
+            > "$OUT/logs/layout-strict.log" 2>&1; then
+        printf ' ok\n'
+    else
+        printf ' FAILED — %s\n' "$OUT/logs/layout-strict.log"
+        cat "$OUT/logs/layout-strict.log"
+        rc=1
+    fi
+    printf '  [check] %-22s' "dialog controls"
+    if ( cd "$REPO_ROOT" && python3 scripts/audit_controls.py ) \
+            > "$OUT/logs/dialog-controls.log" 2>&1; then
+        printf ' ok\n'
+    else
+        printf ' FAILED — %s\n' "$OUT/logs/dialog-controls.log"
+        cat "$OUT/logs/dialog-controls.log"
+        rc=1
+    fi
+    # v1.3.0-beta6 (V3): the Chaos Lab window is a SECOND interactive surface
+    # driving the engine singletons — same 3-layer contract as the settings
+    # dialog: created + consumed + engine-connected + persisted.
+    printf '  [check] %-22s' "chaos lab wiring"
+    if ( cd "$REPO_ROOT" && python3 scripts/audit_chaos_lab.py ) \
+            > "$OUT/logs/chaos-lab.log" 2>&1; then
+        printf ' ok\n'
+    else
+        printf ' FAILED — %s\n' "$OUT/logs/chaos-lab.log"
+        cat "$OUT/logs/chaos-lab.log"
+        rc=1
+    fi
     # v1.3.0-beta5 (bug B9): source contract for EVERY interactive settings
     # control — created + read + reflected + live-applied + persisted +
     # consumed by engine code. main.cpp is Windows-only; this pins the wiring

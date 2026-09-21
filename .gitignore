@@ -81,3 +81,8 @@ Desktop.ini
 
 # Local Python build/test tools
 .venv/
+
+# ---------- Node (optional canvas dep for web-frames check) ----------
+node_modules/
+package.json
+package-lock.json

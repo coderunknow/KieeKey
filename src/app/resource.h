@@ -217,6 +217,7 @@
 #define IDC_BTN_DIAG_RUN         634
 #define IDC_BTN_DIAG_REPORT      635
 #define IDC_STAT_DIAG_RESULT     636
+#define IDC_BTN_DIAG_COPY        637   /* v1.3.0-beta6 (V4): copy report to clipboard */
 
 // ---- v1.3.0-beta5 (bug B3): per-source telemetry rows (tab 3) ----
 // "Sự kiện bàn phím đã xử lý" was fed by pushed() — the ring counter that

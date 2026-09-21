@@ -29,6 +29,8 @@
 //============================================================================
 #include "Diagnostics.hpp"
 
+#include "LiveEffects.hpp"   // GateBlocker — the emit-chain gate token names
+
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -306,6 +308,137 @@ void EventTrace::clear() noexcept {
 }
 
 //---------------------------------------------------------------------------
+// EmitTrace — v1.3.0-beta6 (V4): last-N output deliveries (tester evidence)
+//---------------------------------------------------------------------------
+EmitTrace::EmitTrace(std::size_t capacity) noexcept {
+    if (capacity == 0) { capacity = 1; }
+    records_.resize(capacity);
+}
+
+bool EmitTrace::push(EmitRecord record) noexcept {
+    std::lock_guard<std::mutex> lock(mutex_);
+    record.seq = ++seq_;
+    if (record.tickMs == 0) { record.tickMs = Diagnostics::nowMs(); }
+    records_[head_] = std::move(record);
+    head_ = (head_ + 1) % records_.size();
+    if (count_ < records_.size()) {
+        ++count_;
+        return false;
+    }
+    return true;
+}
+
+std::vector<EmitRecord> EmitTrace::snapshot(std::size_t cap) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const std::size_t take = std::min(cap, count_);
+    std::vector<EmitRecord> out;
+    out.reserve(take);
+    std::size_t index = (head_ + records_.size() - take) % records_.size();
+    for (std::size_t i = 0; i < take; ++i) {
+        out.push_back(records_[index]);
+        index = (index + 1) % records_.size();
+    }
+    return out;
+}
+
+std::size_t EmitTrace::size() const noexcept {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return count_;
+}
+
+void EmitTrace::clear() noexcept {
+    std::lock_guard<std::mutex> lock(mutex_);
+    head_ = 0;
+    count_ = 0;
+}
+
+namespace {
+
+// The gate verdict token must never drift from the enum order, so it is
+// derived from the enumeration itself (LiveEffects.hpp).
+const char* gateToken(std::uint8_t gate) noexcept {
+    using ok::effects::GateBlocker;
+    switch (static_cast<GateBlocker>(gate)) {
+        case GateBlocker::None:           return "none";
+        case GateBlocker::ImeDisabled:    return "ime-disabled";
+        case GateBlocker::AppExcluded:    return "app-excluded";
+        case GateBlocker::MasterOff:      return "master-off";
+        case GateBlocker::NonUnicodeTable: return "non-unicode-table";
+    }
+    return "unknown";
+}
+
+// Quotes a value for the machine-readable lines; interior quotes are doubled
+// (the lines are greppable, not JSON).
+void appendQuoted(std::string& out, const std::string& value) {
+    out += '"';
+    for (const char c : value) {
+        out += c;
+        if (c == '"') { out += '"'; }
+    }
+    out += '"';
+}
+
+} // namespace
+
+std::string formatEmitRecord(const EmitRecord& record) {
+    std::string line = "emit-chain seq=";
+    line += std::to_string(record.seq);
+    line += " t=";
+    line += std::to_string(record.tickMs);
+    line += "ms channel=";
+    line += emitChannelName(record.channel);
+    line += " gate=";
+    line += gateToken(record.gate);
+    line += " pid=";
+    line += std::to_string(record.pid);
+    line += " process=";
+    appendQuoted(line, record.processName);
+    line += " class=";
+    appendQuoted(line, record.windowClass);
+    line += " chars=";
+    line += std::to_string(record.chars);
+    line += "\n";
+    return line;
+}
+
+std::string formatProcessResolution(const ProcessResolution& r) {
+    std::string line = "process-resolution pid=";
+    line += std::to_string(r.pid);
+    line += " name=";
+    appendQuoted(line, r.name);
+    line += " api=";
+    line += resolveApiName(static_cast<ResolveApi>(r.api));
+    line += " error=";
+    line += std::to_string(r.error);
+    line += " elevated=";
+    line += r.elevated ? "on" : "off";
+    line += "\n";
+    return line;
+}
+
+std::string formatDisplayMetrics(const DisplayMetrics& m) {
+    std::string line = "display-metrics dpi=";
+    line += std::to_string(m.dpi);
+    line += " systemDpi=";
+    line += std::to_string(m.systemDpi);
+    line += " font=";
+    appendQuoted(line, m.fontFace);
+    line += " fontHeightPx=";
+    line += std::to_string(m.fontHeightPx);
+    line += " dwm=";
+    line += m.dwmComposition ? "on" : "off";
+    line += " perMonitorAware=";
+    line += m.perMonitorAware ? "on" : "off";
+    line += " screen=";
+    line += std::to_string(m.screenWidth);
+    line += "x";
+    line += std::to_string(m.screenHeight);
+    line += "\n";
+    return line;
+}
+
+//---------------------------------------------------------------------------
 // FileLog
 //---------------------------------------------------------------------------
 FileLog::~FileLog() { close(); }
@@ -535,6 +668,44 @@ void Diagnostics::resetAll() noexcept {
     for (auto& counter : counters_) { counter.store(0, std::memory_order_relaxed); }
     for (auto& stage : stages_) { stage.reset(); }
     trace_.clear();
+    emits_.clear();
+    {
+        std::lock_guard<std::mutex> lock(evidenceMutex_);
+        resolution_ = ProcessResolution{};
+        displayMetrics_ = DisplayMetrics{};
+    }
+}
+
+//---------------------------------------------------------------------------
+// v1.3.0-beta6 (V4): tester-evidence accessors
+//---------------------------------------------------------------------------
+void Diagnostics::recordEmit(EmitRecord record) noexcept {
+    try {
+        emits_.push(std::move(record));
+    } catch (...) {
+        // Evidence collection must never take the IME down with it.
+    }
+}
+
+void Diagnostics::setProcessResolution(ProcessResolution resolution) noexcept {
+    std::lock_guard<std::mutex> lock(evidenceMutex_);
+    if (resolution.tickMs == 0) { resolution.tickMs = nowMs(); }
+    resolution_ = std::move(resolution);
+}
+
+ProcessResolution Diagnostics::processResolution() const noexcept {
+    std::lock_guard<std::mutex> lock(evidenceMutex_);
+    return resolution_;
+}
+
+void Diagnostics::setDisplayMetrics(DisplayMetrics metrics) noexcept {
+    std::lock_guard<std::mutex> lock(evidenceMutex_);
+    displayMetrics_ = std::move(metrics);
+}
+
+DisplayMetrics Diagnostics::displayMetrics() const noexcept {
+    std::lock_guard<std::mutex> lock(evidenceMutex_);
+    return displayMetrics_;
 }
 
 namespace {
@@ -642,6 +813,35 @@ std::string Diagnostics::report(std::size_t traceLines) const {
     out += "live effects : "; out += sys.liveEffectsEnabled ? "ON" : "OFF"; out += "\n";
     out += "diag level   : "; out += levelName(level()); out += "\n";
     out += "verdict      : "; out += verdict(); out += "\n\n";
+
+    // v1.3.0-beta6 (V4): machine-readable tester evidence. These blocks are
+    // the hard-data answer to the Windows-only residuals: B2 (did output
+    // really reach an external window, and was the gate open?), B4 (which
+    // Win32 API resolved the foreground process name?) and B1 (the real
+    // DPI / font / DWM numbers at the moment of the report).
+    out += "-- emit chain (last deliveries to external windows) --\n";
+    {
+        const std::vector<EmitRecord> deliveries = emits_.snapshot(emits_.capacity());
+        if (deliveries.empty()) {
+            out += "  (no deliveries recorded yet — type into an external app)\n";
+        } else {
+            for (const EmitRecord& record : deliveries) {
+                out += formatEmitRecord(record);
+            }
+        }
+    }
+    out += "-- foreground resolution (B4) --\n";
+    {
+        const ProcessResolution resolution = processResolution();
+        if (resolution.pid == 0 && resolution.name.empty()) {
+            out += "  (no foreground resolution recorded yet)\n";
+        } else {
+            out += formatProcessResolution(resolution);
+        }
+    }
+    out += "-- display (B1) --\n";
+    out += formatDisplayMetrics(displayMetrics());
+    out += "\n";
 
     out += "-- keyboard (chỉ phím thật, không tính chuột/cửa sổ) --\n";
     for (const Counter id : {Counter::KeyDown, Counter::KeyUp, Counter::KeySuppressed,

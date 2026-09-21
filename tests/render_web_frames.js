@@ -110,7 +110,7 @@ function makeElement(id) {
 
 const ids = ['screen', 'title', 'score', 'best', 'level', 'combo', 'lives', 'wpm', 'acc',
              'banner', 'toast', 'connection', 'fps', 'catalog', 'subtitle', 'failMode',
-             'bpm', 'bpmOut', 'pacer', 'pacerOut', 'restart', 'pause', 'stop'];
+             'bpm', 'bpmOut', 'pacer', 'pacerOut', 'steering', 'restart', 'pause', 'stop'];
 const elements = {};
 for (const id of ids) { elements[id] = makeElement(id); }
 elements.screen.getContext = () => ctx;

@@ -337,6 +337,108 @@ struct SystemSnapshot {
 };
 
 //---------------------------------------------------------------------------
+// v1.3.0-beta6 (V4) — TESTER EVIDENCE for the Windows-only residuals.
+//
+// beta5's open questions (B2: do live effects really reach external apps?
+// B4: is the foreground process name really resolved? B1: what are the real
+// DPI/font/DWM numbers?) cannot be answered from a Linux sandbox — only the
+// tester's machine can. These three structures give that machine something
+// HARD to send back: machine-readable lines in the exported report.
+//
+// All three are pure data + portable formatting; the Win32 plumbing that
+// FILLS them lives in src/app/main.cpp and compiles only under the zig
+// full-TU gate. Nothing here may include windows.h.
+//---------------------------------------------------------------------------
+
+// One output delivery observed at the END of the emit chain — recorded only
+// after the delivery actually happened, so a line here is proof that text
+// left KieeKey toward an external window (the B2 question).
+struct EmitRecord {
+    std::uint64_t tickMs = 0;      // wall clock, like EventRecord::tickMs
+    std::uint64_t seq    = 0;      // monotonic per-process delivery id
+    std::uint8_t  channel = 0;     // 0 = TSF commit, 1 = SendInput
+    std::uint8_t  gate = 0;        // ok::effects::GateBlocker at emit time
+    std::uint32_t pid = 0;         // target process (0 = unknown)
+    std::uint32_t chars = 0;       // UTF-16 units delivered
+    std::string windowClass;       // UTF-8, bounded (e.g. "Chrome_WidgetWin_1")
+    std::string processName;       // UTF-8, bounded (e.g. "chrome.exe")
+};
+
+[[nodiscard]] constexpr const char* emitChannelName(std::uint8_t channel) noexcept {
+    return channel == 1 ? "SendInput" : "TSF";
+}
+
+class EmitTrace {
+public:
+    explicit EmitTrace(std::size_t capacity = 32) noexcept;
+
+    // Oldest overwritten when full (same discipline as EventTrace). Returns
+    // true when the ring wrapped.
+    bool push(EmitRecord record) noexcept;
+    // Most recent `cap` records, oldest first.
+    [[nodiscard]] std::vector<EmitRecord> snapshot(std::size_t cap) const;
+    [[nodiscard]] std::size_t size() const noexcept;
+    [[nodiscard]] std::size_t capacity() const noexcept { return records_.size(); }
+    void clear() noexcept;
+
+private:
+    mutable std::mutex mutex_;
+    std::vector<EmitRecord> records_;
+    std::size_t head_ = 0;
+    std::size_t count_ = 0;
+    std::uint64_t seq_ = 0;
+};
+
+// Machine-readable line for the report / file log (single source of truth so
+// the two never disagree about the columns).
+[[nodiscard]] std::string formatEmitRecord(const EmitRecord& record);
+
+// How the foreground process name was resolved (bug B4 evidence). The app
+// records the LAST resolution together with the Win32 API that produced it
+// and the error of the last failed step, so "unknown" is never unexplained.
+struct ProcessResolution {
+    std::uint64_t tickMs = 0;
+    std::uint32_t pid = 0;
+    std::uint8_t  api = 0;         // ResolveApi below
+    std::uint32_t error = 0;       // GetLastError of the failed step (0 = ok)
+    bool          elevated = false;
+    std::string   name;            // resolved display name, UTF-8
+};
+
+enum class ResolveApi : std::uint8_t {
+    NotRecorded = 0,
+    QueryFullProcessImageName = 1,  // plain exe path -> exeNameFromPath
+    AumidProperty = 2,              // UWP package family (IAQIV in main.cpp)
+    FallbackLabel = 3,              // "pid N (lỗi X)" honest label
+};
+
+[[nodiscard]] constexpr const char* resolveApiName(ResolveApi api) noexcept {
+    switch (api) {
+        case ResolveApi::QueryFullProcessImageName: return "QueryFullProcessImageNameW";
+        case ResolveApi::AumidProperty:             return "UWP-AUMID";
+        case ResolveApi::FallbackLabel:             return "fallback-label";
+        case ResolveApi::NotRecorded: break;
+    }
+    return "not-recorded";
+}
+
+// Display / composition metrics relevant to bug B1 (layout at exotic DPI).
+// Filled by the app right before a report is generated/exported.
+struct DisplayMetrics {
+    std::uint32_t dpi = 96;          // monitor DPI the dialog measures
+    std::uint32_t systemDpi = 96;    // GetDpiForSystem (scaling baseline)
+    int fontHeightPx = 0;            // created face height (negative = pixels)
+    bool dwmComposition = false;     // DwmIsCompositionEnabled
+    bool perMonitorAware = false;    // process DPI awareness context
+    std::uint32_t screenWidth = 0;
+    std::uint32_t screenHeight = 0;
+    std::string fontFace;            // e.g. "Segoe UI"
+};
+
+[[nodiscard]] std::string formatDisplayMetrics(const DisplayMetrics& m);
+[[nodiscard]] std::string formatProcessResolution(const ProcessResolution& r);
+
+//---------------------------------------------------------------------------
 // The process-wide diagnostics service.
 //---------------------------------------------------------------------------
 class Diagnostics {
@@ -397,6 +499,18 @@ public:
     // (UI-thread call, e.g. every 500 ms). Returns the number of lines.
     std::size_t flushTraceToFileLog() noexcept;
 
+    // --- tester evidence (V4) ---------------------------------------------
+    // The service itself records unconditionally; the APP gates the calls on
+    // Level::Basic (main.cpp recordEmitEvidence), so an Off profile keeps its
+    // one-relaxed-load budget while the default configuration collects the
+    // evidence a tester report needs.
+    EmitTrace& emits() noexcept { return emits_; }
+    void recordEmit(EmitRecord record) noexcept;
+    void setProcessResolution(ProcessResolution resolution) noexcept;
+    [[nodiscard]] ProcessResolution processResolution() const noexcept;
+    void setDisplayMetrics(DisplayMetrics metrics) noexcept;
+    [[nodiscard]] DisplayMetrics displayMetrics() const noexcept;
+
     // --- report -----------------------------------------------------------
     void setSystemSnapshot(const SystemSnapshot& snapshot) noexcept;
     [[nodiscard]] SystemSnapshot systemSnapshot() const noexcept;
@@ -430,6 +544,12 @@ private:
 
     EventTrace trace_;
     FileLog fileLog_;
+
+    // v1.3.0-beta6 (V4)
+    EmitTrace emits_;
+    mutable std::mutex evidenceMutex_;
+    ProcessResolution resolution_;
+    DisplayMetrics displayMetrics_;
 };
 
 // Format one trace record as a log/report line (shared by the file log and

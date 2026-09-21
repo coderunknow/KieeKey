@@ -58,8 +58,6 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
-      CXX_LAUNCHER: ${{ runner.temp }}/sccache-tool/bin/sccache
-      SCCACHE_DIR: ${{ runner.temp }}/sccache-data
       SCCACHE_CACHE_SIZE: 300M
     steps:
       - uses: actions/checkout@v7
@@ -67,10 +65,12 @@ jobs:
         run: |
           python3 -m venv "$RUNNER_TEMP/sccache-tool"
           "$RUNNER_TEMP/sccache-tool/bin/pip" install --disable-pip-version-check sccache==0.10.0
+          echo "CXX_LAUNCHER=$RUNNER_TEMP/sccache-tool/bin/sccache" >> "$GITHUB_ENV"
+          echo "SCCACHE_DIR=$RUNNER_TEMP/sccache-data" >> "$GITHUB_ENV"
       - name: Restore compiler cache
         uses: actions/cache@v6
         with:
-          path: ${{ env.SCCACHE_DIR }}
+          path: ${{ runner.temp }}/sccache-data
           # The outer key allows updates on new commits; sccache validates the
           # compiler, flags and preprocessed source/headers for every object.
           key: native-${{ runner.os }}-${{ runner.arch }}-sccache-0.10-v1-${{ github.sha }}

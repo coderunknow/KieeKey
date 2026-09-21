@@ -277,6 +277,7 @@ build test_dialog_layout  -std=c++2b -O2 -Isrc/app $INC tests/test_dialog_layout
 # (bug B4 — name fallbacks + elevation-probe decision table).
 build test_hook_counters  -std=c++2b -O2 -pthread $INC tests/test_hook_counters.cpp || rc=1
 build test_diagnostics    -std=c++2b -O2 -pthread $INC tests/test_diagnostics.cpp src/core/Diagnostics.cpp || rc=1
+build test_diagnostics_beta7_repro -std=c++2b -O2 -pthread $INC tests/test_diagnostics_beta7_repro.cpp src/core/Diagnostics.cpp || rc=1
 build test_process_monitor -std=c++2b -O2 $INC tests/test_process_monitor.cpp || rc=1
 # v1.3.0-beta3 (bug #2): in-window Vietnamese composition for the typing games —
 # VnComposer (Telex/VNI -> diacritics) and the real game objects driven with the
@@ -553,6 +554,7 @@ run test_live_output_plan    120
 run test_dialog_layout       60
 run test_hook_counters       60
 run test_diagnostics         120
+run test_diagnostics_beta7_repro  60
 run test_process_monitor     60
 run test_vn_composer         60
 run test_settings_wiring     60

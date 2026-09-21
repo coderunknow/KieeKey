@@ -19,7 +19,7 @@ The project may still be paused again in the future if development no longer pro
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20ARM64-0078D6.svg)
 ![Build](https://img.shields.io/badge/build-CMake%20%3E%3D%203.28-064FAD.svg)
 
-**KieeKey v1.3.0-beta6** is a modern, low-latency Vietnamese input method
+**KieeKey v1.3.0-beta7** is a modern, low-latency Vietnamese input method
 engine (bộ gõ Tiếng Việt) for Windows, with a system-tray application, a TSF
 text-store composer and an optional WinUI 3 Fluent settings UI.
 
@@ -33,6 +33,30 @@ text-store composer and an optional WinUI 3 Fluent settings UI.
 ![KieeKey preview](src/app/KieeKeyApp-preview.png)
 
 ---
+
+## What's new in v1.3.0-beta7 — Diagnostics & snapshot truth fix
+
+Beta7 is the diagnostics-truth release (Windows file version **1.3.0.8**): the beta6
+report was trusted as fact and found to contradict itself — `dpi: 96` in the snapshot
+vs `display-metrics dpi=144`, `SendInputCalls: 0` vs 13 deliveries in the emit-chain
+trace, and every runtime field (uptime, workingSet, os, arch, foreground) stuck at
+`0`/empty. Root cause: `SystemSnapshot` was never refreshed (only the B1/B4 evidence
+blocks were), the inline `SendInput` path never incremented `SendInputCalls`, and hook
+counters (`pushed`/`dropped`/`wakes`/`SetEvent`) lived only in the wrapper. This release
+fixes all three at the source, labels the provenance (`dpi (snapshot, monitor): 96
+(default = not refreshed / should match display-metrics …)` and `uptime: 0 s (0 = snapshot
+not refreshed; should be >0 when keyboard events >0)`), syncs live counters into
+`Diagnostics::set()` before every export/copy/quick-check and on startup, and adds a
+portable regression `tests/test_diagnostics_beta7_repro.cpp`. See `docs/release-notes-v1.3.0-beta7.md`.
+
+* **Snapshot fully refreshed**: `refreshSystemSnapshot()` now fills OS, arch, app version,
+  uptime, workingSet/peak, kernel/user CPU, foreground app, keyboard layout, output/input
+  mode, codeTable, DPI and flags from live Win32 probes on every report/export/copy.
+* **Counters synced**: `SendInputCalls` increments on the hot inline path; `syncDiagnosticsCounters()`
+  mirrors `pushed`/`dropped`/`consumerWakes`/`SetEventSyscalls` and keyboard totals from the
+  live `HookCounters` into the report before export.
+* **Labels honest**: DPI and uptime rows now state when `96`/`0` means "not refreshed" and what
+  they should match, so a future mismatch is a clue, not a silent lie.
 
 ## What's new in v1.3.0-beta6 — Self-audit hardening (preparing v1.3.0-rc1)
 
@@ -572,7 +596,7 @@ original licenses — see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 ## Tóm tắt (Tiếng Việt)
 
-**KieeKey v1.3.0-beta6** là bộ gõ Tiếng Việt cho Windows, xây dựng dựa trên
+**KieeKey v1.3.0-beta7** là bộ gõ Tiếng Việt cho Windows, xây dựng dựa trên
 **[OpenKey](https://github.com/tuyenvm/OpenKey)** (GPL-3.0) của tác giả Tuyen
 Mai. Engine gốc đã được port sang C++ hiện đại: hook bất đồng bộ với hàng đợi
 lock-free, composer TSF (không backspace ảo), bảng âm tiết flat tối ưu cache,
@@ -597,6 +621,8 @@ WASD khi gõ tiếng Việt**, Chaos Lab có lối vào ngay trong Arcade Hub, v
 tùy chọn cài đặt **áp dụng ngay khi bấm + được lưu**. Thêm tài liệu hiệu năng
 `docs/PERFORMANCE.md` (chi phí ns/phím của từng tính năng opt-in). Chi tiết:
 `docs/release-notes-v1.3.0-beta5.md`.
+
+Điểm mới của v1.3.0-beta7 — bản sửa tính đúng đắn của chẩn đoán (Windows **1.3.0.8**): báo cáo beta6 tự mâu thuẫn — `dpi: 96` vs `display-metrics 144`, `SendInputCalls: 0` vs 13 dòng emit-chain, mọi trường runtime kẹt ở `0`/trống — vì `SystemSnapshot` chưa từng được làm tươi, nhánh inline chưa đếm `SendInputCalls`, và các đếm vòng/đánh thức chỉ nằm trong wrapper. Bản này làm tươi toàn bộ snapshot, đồng bộ đếm sống vào báo cáo trước mọi xuất/sao chép/kiểm tra nhanh, và ghi chú nguồn gốc cho `96`/`0`. Chi tiết: `docs/release-notes-v1.3.0-beta7.md`.
 
 Điểm mới của v1.3.0-beta6 — bản tự kiểm tra, chuẩn bị cho **v1.3.0-rc1**
 (không có báo cáo thử nghiệm mới — KieeKey tự tìm lỗi của chính mình, mọi kết

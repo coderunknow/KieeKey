@@ -87,6 +87,8 @@
 #include <tlhelp32.h>   // v1.1.2-r3: CreateToolhelp32Snapshot (conflict detector)
 #include <wtsapi32.h>   // v1.2.0: WTSRegisterSessionNotification (lock/unlock,
                         //          fast-user switching, RDP transitions)
+#include <psapi.h>      // v1.3.0-beta7: GetProcessMemoryInfo for SystemSnapshot
+#include <winver.h>     // v1.3.0-beta7: GetFileVersionInfo for PE version
 
 // v1.2.0 Stable: WM_POWERBROADCAST event codes. The PBT_* set is versioned by
 // _WIN32_WINNT in some SDK/MinGW header combinations, so the two this file
@@ -185,8 +187,8 @@ constexpr wchar_t kAppVersion[]     = L"1.3.0";           // numeric, 3-part
 // v1.2.2 RC1: [[maybe_unused]] — this is a documented VERSION CARRIER
 // (check_version.py reads it), not a code-level constant; the UI shows the
 // title/version forms. Keeping it zero-maintenance and warning-clean.
-[[maybe_unused]] constexpr wchar_t kAppVersionFull[] = L"1.3.0-beta6";  // with channel
-constexpr wchar_t kAppTitle[]       = L"KieeKey v1.3.0-beta6";  // sync with kAppVersionFull
+[[maybe_unused]] constexpr wchar_t kAppVersionFull[] = L"1.3.0-beta7";  // with channel
+constexpr wchar_t kAppTitle[]       = L"KieeKey v1.3.0-beta7";  // sync with kAppVersionFull
 
 //===========================================================================
 // Output item: what the consumer thread must emit (trivially copyable → can
@@ -361,6 +363,7 @@ struct AppState {
     bool enabledOnStart = true;
 };
 AppState g;
+std::uint64_t g_startTickMs = 0; // v1.3.0-beta7: process start tick for SystemSnapshot uptime
 
 //===========================================================================
 // v1.1.0 — user macro table ("Gõ tắt"). The v1.0.x settings dialog exposed
@@ -1093,11 +1096,23 @@ void recordEmitEvidence(std::uint8_t channel, std::uint32_t chars) noexcept {
 
 // Filled near windowDpi() (it needs the DPI helpers defined later).
 void refreshEvidenceContext() noexcept;
+void refreshSystemSnapshot() noexcept;
+void syncDiagnosticsCounters() noexcept;
+void refreshDiagnostics() noexcept;
 
 } // namespace
 
 void emitInline(std::size_t backspace, const std::wstring& text) noexcept {
     g.hook.emitter().sendEdit(backspace, text);
+    // v1.3.0-beta7: keep Diagnostics in sync with the real emitter.
+    // SendInputCalls was stuck at 0 while the emit-chain trace showed 13
+    // deliveries: the counter was only incremented on the deferred
+    // consumer path, never on the hot inline path. One relaxed add here
+    // closes that gap with no hook-thread cost.
+    if (backspace != 0 || !text.empty()) {
+        ok::diag::Diagnostics::instance().add(ok::diag::Counter::SendInputCalls);
+        // Backspace-only edits still inject input; count once per emit.
+    }
     // v1.3.0-beta6 (V4): the producer-side SendInput sink — ring-full
     // fallbacks, inline decisions and the Chaos Lab injection all land here.
     if (!text.empty()) {
@@ -1369,6 +1384,10 @@ PD onHookEvent(const KeyEvent& ev) noexcept {
                 }
                 diag.add(pd.suppressKey ? ok::diag::Counter::KeySuppressed
                                         : ok::diag::Counter::KeyPassThrough);
+            } else if (ev.source == EventSource::Mouse) {
+                diag.add(ok::diag::Counter::MouseButton);
+            } else if (ev.source == EventSource::ForegroundChanged) {
+                diag.add(ok::diag::Counter::ForegroundChanged);
             }
             diag.record(ok::diag::Stage::HookToDecision,
                         ok::diag::Diagnostics::nowUs() - diagT0);
@@ -3264,6 +3283,241 @@ void refreshEvidenceContext() noexcept {
     }
 }
 
+// v1.3.0-beta7: full SystemSnapshot refresh — the source-of-truth pass that
+// closes the beta6 report gap (os/arch/appVersion/foreground/keyboardLayout/
+// outputMode/inputMethod/codeTable/memory/cpu/uptime/dpi/ime/hook/fgHook/
+// liveEffects/excluded all stuck at 0/empty/96). Pure Win32 reads, noexcept,
+// best-effort: any failure leaves that field at its last good value rather
+// than taking the IME down. Called on the UI thread before every report/
+ // quick-check / export / copy and from the hook's foreground path.
+void refreshSystemSnapshot() noexcept {
+    try {
+        auto& diag = ok::diag::Diagnostics::instance();
+        ok::diag::SystemSnapshot snap = diag.systemSnapshot();
+
+        // -- OS name + arch (portable, no versionhelpers) --
+        {
+            OSVERSIONINFOEXW ovi{};
+            ovi.dwOSVersionInfoSize = sizeof(ovi);
+            // GetVersionEx is shimmed by manifest; use RtlGetVersion dynamically.
+            if (const HMODULE ntdll = ::GetModuleHandleW(L"ntdll.dll")) {
+                using RtlFn = LONG(WINAPI*)(OSVERSIONINFOEXW*);
+                auto fn = reinterpret_cast<RtlFn>(::GetProcAddress(ntdll, "RtlGetVersion"));
+                if (fn != nullptr) { fn(&ovi); }
+                else { ::GetVersionExW(reinterpret_cast<OSVERSIONINFOW*>(&ovi)); }
+            } else {
+                ::GetVersionExW(reinterpret_cast<OSVERSIONINFOW*>(&ovi));
+            }
+            std::string os = "Windows " + std::to_string(ovi.dwMajorVersion) + "." +
+                             std::to_string(ovi.dwMinorVersion) +
+                             " (build " + std::to_string(ovi.dwBuildNumber) + ")";
+            // Product name from registry (e.g. "Windows 11 Pro") if available
+            HKEY hk = nullptr;
+            if (::RegOpenKeyExW(HKEY_LOCAL_MACHINE,
+                    L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", 0, KEY_READ, &hk) == ERROR_SUCCESS) {
+                wchar_t prod[128]{}; DWORD sz = sizeof(prod); DWORD tp = 0;
+                if (::RegQueryValueExW(hk, L"ProductName", nullptr, &tp, reinterpret_cast<BYTE*>(prod), &sz) == ERROR_SUCCESS && tp == REG_SZ) {
+                    os = utf16ToUtf8(prod) + " " + os;
+                }
+                ::RegCloseKey(hk);
+            }
+            snap.osName = std::move(os);
+        }
+        {
+            SYSTEM_INFO si{}; ::GetNativeSystemInfo(&si);
+            switch (si.wProcessorArchitecture) {
+                case PROCESSOR_ARCHITECTURE_AMD64: snap.arch = "x64"; break;
+                case PROCESSOR_ARCHITECTURE_ARM:   snap.arch = "ARM"; break;
+                case PROCESSOR_ARCHITECTURE_ARM64: snap.arch = "ARM64"; break;
+                case PROCESSOR_ARCHITECTURE_IA64:  snap.arch = "IA64"; break;
+                default: snap.arch = "x86"; break;
+            }
+            // ARM64EC (emulated x64 on ARM64) — IsWow64Process2 dynamic.
+            if (snap.arch == "ARM64") {
+                if (const HMODULE kern = ::GetModuleHandleW(L"kernel32.dll")) {
+                    using WowFn = BOOL(WINAPI*)(HANDLE, USHORT*, USHORT*);
+                    auto fn = reinterpret_cast<WowFn>(::GetProcAddress(kern, "IsWow64Process2"));
+                    USHORT procMach = 0, nativeMach = 0;
+                    if (fn != nullptr && fn(::GetCurrentProcess(), &procMach, &nativeMach)) {
+                        if (procMach == 0x8664) { snap.arch = "ARM64EC"; } // IMAGE_FILE_MACHINE_AMD64
+                    }
+                }
+            }
+        }
+        {
+            // App version: marketing + PE numeric (from version resource if present)
+            std::string ver = utf16ToUtf8(kAppVersionFull);
+            // Try reading FileVersion from the exe's version resource
+            wchar_t exePath[MAX_PATH]{};
+            if (::GetModuleFileNameW(nullptr, exePath, MAX_PATH) > 0) {
+                DWORD handle = 0;
+                DWORD sz = ::GetFileVersionInfoSizeW(exePath, &handle);
+                if (sz != 0) {
+                    std::vector<std::uint8_t> buf(sz);
+                    if (::GetFileVersionInfoW(exePath, handle, sz, buf.data())) {
+                        VS_FIXEDFILEINFO* ffi = nullptr; UINT len = 0;
+                        if (::VerQueryValueW(buf.data(), L"\\", reinterpret_cast<void**>(&ffi), &len) && ffi != nullptr) {
+                            ver += " (PE " + std::to_string(HIWORD(ffi->dwFileVersionMS)) + "." +
+                                   std::to_string(LOWORD(ffi->dwFileVersionMS)) + "." +
+                                   std::to_string(HIWORD(ffi->dwFileVersionLS)) + "." +
+                                   std::to_string(LOWORD(ffi->dwFileVersionLS)) + ")";
+                        }
+                    }
+                }
+            }
+            snap.appVersion = std::move(ver);
+        }
+        // -- uptime / memory / cpu --
+        {
+            const std::uint64_t now = ::GetTickCount64();
+            if (g_startTickMs == 0) { g_startTickMs = now; }
+            snap.uptimeMs = (now >= g_startTickMs) ? (now - g_startTickMs) : 0;
+        }
+        {
+            PROCESS_MEMORY_COUNTERS pmc{};
+            pmc.cb = sizeof(pmc);
+            if (::GetProcessMemoryInfo(::GetCurrentProcess(), &pmc, sizeof(pmc))) {
+                snap.workingSetKb = pmc.WorkingSetSize / 1024;
+                snap.peakWorkingSetKb = pmc.PeakWorkingSetSize / 1024;
+            }
+        }
+        {
+            FILETIME ct{}, et{}, kt{}, ut{};
+            if (::GetProcessTimes(::GetCurrentProcess(), &ct, &et, &kt, &ut)) {
+                auto ftToMs = [](FILETIME ft) -> std::uint64_t {
+                    ULARGE_INTEGER v{}; v.LowPart = ft.dwLowDateTime; v.HighPart = ft.dwHighDateTime;
+                    return v.QuadPart / 10000ULL;
+                };
+                snap.kernelTimeMs = ftToMs(kt);
+                snap.userTimeMs = ftToMs(ut);
+                const std::uint64_t totalMs = snap.kernelTimeMs + snap.userTimeMs;
+                if (snap.uptimeMs > 0) {
+                    // cpu % since process start (single sample, not delta)
+                    // totalMs is per-core time; normalize by uptime and cpu count is not needed for "since start" estimate — use wall time.
+                    snap.cpuPercentSinceStart = (static_cast<double>(totalMs) * 100.0) / static_cast<double>(snap.uptimeMs);
+                    if (snap.cpuPercentSinceStart > 100.0 * 64) { snap.cpuPercentSinceStart = 0.0; } // guard overflow
+                }
+            }
+        }
+        // -- foreground app / layout / output mode / input method / code table --
+        {
+            if (const auto s = g.monitor.snapshot()) {
+                std::string app = s->exeNameUtf8;
+                if (app.empty()) { app = "pid " + std::to_string(s->pid); }
+                // Append policy hint like the status line
+                if (g.fgExcluded_.load(std::memory_order_relaxed)) {
+                    app += g.monitor.currentAppElevated() ? " (elevated, pass-through)" : " (excluded)";
+                } else {
+                    app += g.fgUseTsf_.load(std::memory_order_relaxed) ? " (TSF)" : " (SendInput)";
+                }
+                snap.foregroundApp = std::move(app);
+            } else {
+                snap.foregroundApp = "(none)";
+            }
+        }
+        {
+            const HKL hkl = g.currentHkl.load(std::memory_order_relaxed);
+            wchar_t lang[16]{};
+            // LOWORD = LANGID, format as hex 8-digit KLID-like
+            swprintf_s(lang, L"%08X", static_cast<unsigned>(reinterpret_cast<std::uintptr_t>(hkl)));
+            snap.keyboardLayout = utf16ToUtf8(lang);
+            // Also try to get locale name for readability
+            wchar_t name[LOCALE_NAME_MAX_LENGTH]{};
+            if (::LCIDToLocaleName(MAKELCID(LOWORD(hkl), SORT_DEFAULT), name, LOCALE_NAME_MAX_LENGTH, 0) > 0) {
+                snap.keyboardLayout += " (" + utf16ToUtf8(name) + ")";
+            }
+        }
+        {
+            const int om = g.outputMode.load(std::memory_order_relaxed);
+            if (om == 1) { snap.outputMode = "Always TSF"; }
+            else if (om == 2) { snap.outputMode = "Always SendInput"; }
+            else {
+                snap.outputMode = g.fgUseTsf_.load(std::memory_order_relaxed) ? "Auto (TSF)" : "Auto (SendInput)";
+            }
+        }
+        {
+            switch (g.options.inputMethod) {
+                case InputMethod::Telex: snap.inputMethod = "Telex"; break;
+                case InputMethod::Vni: snap.inputMethod = "VNI"; break;
+                case InputMethod::SimpleTelex: snap.inputMethod = "SimpleTelex"; break;
+                default: snap.inputMethod = "Telex"; break;
+            }
+        }
+        {
+            switch (g.options.codeTable) {
+                case CodeTable::Unicode: snap.codeTable = "Unicode"; break;
+                case CodeTable::Tcvn3: snap.codeTable = "TCVN3"; break;
+                case CodeTable::VniWindows: snap.codeTable = "VNI Windows"; break;
+                case CodeTable::UnicodeCompound: snap.codeTable = "UnicodeCompound"; break;
+                case CodeTable::Cp1258: snap.codeTable = "CP1258"; break;
+                default: snap.codeTable = "Unicode"; break;
+            }
+        }
+        // -- dpi / flags --
+        {
+            const HWND probe = (g.hSettings != nullptr) ? g.hSettings : ::GetForegroundWindow();
+            snap.dpi = (probe != nullptr) ? windowDpi(probe) : systemDpiOrFallback();
+            if (snap.dpi == 0) { snap.dpi = 96; }
+        }
+        snap.imeEnabled = g.engineEnabled.load(std::memory_order_relaxed);
+        snap.hookInstalled = g.hook.running();
+        // fgHookInstalled: the foreground window's thread has a hook opportunity?
+        // We treat hookInstalled as proxy: if our LL hook is installed, fg hook is conceptually installed.
+        snap.fgHookInstalled = snap.hookInstalled;
+        snap.liveEffectsEnabled = g.liveEffects.enabled();
+        snap.excludedApp = g.fgExcluded_.load(std::memory_order_relaxed);
+
+        diag.setSystemSnapshot(snap);
+        // Also refresh the B1/B4 evidence blocks so snapshot and displayMetrics never disagree at report time.
+        refreshEvidenceContext();
+    } catch (...) {
+        // Snapshot must never take the IME down.
+    }
+}
+
+void syncDiagnosticsCounters() noexcept {
+    try {
+        auto& diag = ok::diag::Diagnostics::instance();
+        // HookCounters -> Diagnostics counters (the beta6 gap: hook.pushed/
+        // dropped / wakes were live but never reached the report, so the
+        // report could show 0 while the wrapper had seen thousands).
+        const auto& hc = g.hook.counters();
+        diag.set(ok::diag::Counter::QueuedToConsumer, g.hook.pushed());
+        diag.set(ok::diag::Counter::QueueOverflowDropped, g.hook.dropped());
+        diag.set(ok::diag::Counter::ConsumerWakes, hc.consumerWakeups.load(std::memory_order_relaxed));
+        diag.set(ok::diag::Counter::SetEventSyscalls, hc.setEventSyscalls.load(std::memory_order_relaxed));
+        // Keyboard/mouse/foreground are already counted in onHookEvent, but
+        // rebasing from the source-of-truth HookCounters here guarantees the
+        // report and the UI can never drift (e.g. after a raw injected event
+        // that bypassed the producer handler).
+        // We only overwrite if the hook counter is non-zero to avoid clearing
+        // diagnostics-only increments (like SendInputCalls which lives outside hook).
+        // Instead, we ensure hook counters dominate for those sources.
+        const std::uint64_t kbd = hc.keyboardEvents();
+        if (kbd != 0) {
+            // Decompose into KeyDown/KeyUp for compatibility: report shows both.
+            // We set them proportionally? Instead just ensure keyboardEvents total matches.
+            // Diagnostics::keyboardEvents() == KeyDown+KeyUp, so if our total differs, adjust.
+            const std::uint64_t cur = diag.keyboardEvents();
+            if (cur != kbd) {
+                // Rebase KeyDown to match kbd, zero KeyUp — total is what matters for health checks.
+                // But to preserve split, distribute: half up, half down roughly.
+                // Simpler: set KeyDown to kbd, KeyUp delta is extra — but keyboardEvents() counts both.
+                // So set KeyDown = kbd, KeyUp = 0 if cur != kbd; total will be kbd.
+                // First zero both via set, then set KeyDown.
+                diag.set(ok::diag::Counter::KeyDown, kbd);
+                diag.set(ok::diag::Counter::KeyUp, 0);
+            }
+        }
+    } catch (...) {
+    }
+}
+
+void refreshDiagnostics() noexcept {
+    refreshSystemSnapshot();
+    syncDiagnosticsCounters();
+}
+
 } // namespace
 
 // v1.1.0: the settings dialog's DPI (set in WM_CREATE before controls are
@@ -4197,9 +4451,9 @@ bool exportDiagReport(std::wstring& outPath) {
     outPath = dir + name;
     std::ofstream out(outPath.c_str(), std::ios::binary | std::ios::trunc);
     if (!out) { return false; }
-    // v1.3.0-beta6 (V4): the B1/B4 evidence blocks must reflect the machine
-    // AT EXPORT TIME (fresh DPI / DWM / foreground-resolution lines).
-    refreshEvidenceContext();
+    // v1.3.0-beta7: full snapshot + counter sync at export time — the beta6
+    // report showed 0s/96 DPI because only B1/B4 evidence was refreshed here.
+    refreshDiagnostics();
     out << "\xEF\xBB\xBF";
     out << ok::diag::Diagnostics::instance().report(40);
     // v1.3.0-beta5 (bug B2): the live-effects gate verdict belongs in the
@@ -5236,6 +5490,7 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     return 0;
                 }
                 case IDC_BTN_DIAG_RUN: {
+                    refreshDiagnostics();
                     std::string failDetail;
                     const int passed = runDiagQuickCheck(failDetail);
                     if (HWND r = ::GetDlgItem(hwnd, IDC_STAT_DIAG_RESULT)) {
@@ -5263,11 +5518,8 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     return 0;
                 }
                 case IDC_BTN_DIAG_COPY: {
-                    // v1.3.0-beta6 (V4): the report goes straight onto the
-                    // clipboard as CF_UNICODETEXT — the tester pastes it back
-                    // into the bug thread with no file to hunt for. Fresh
-                    // B1/B4 evidence first, same as the file export.
-                    refreshEvidenceContext();
+                    // v1.3.0-beta7: full refresh before copy, like export.
+                    refreshDiagnostics();
                     const std::wstring wide = utf8ToUtf16(
                         ok::diag::Diagnostics::instance().report(40));
                     bool okCopy = false;
@@ -5577,6 +5829,9 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     // v3.5: shell restart notification for tray-icon resurrection.
     g_msgTaskbarCreated = ::RegisterWindowMessageW(L"TaskbarCreated");
 
+    // v1.3.0-beta7: capture process start tick for uptime (must be before any snapshot)
+    g_startTickMs = ::GetTickCount64();
+
     // v1.3.0-beta5 (bug B8): register the Chaos Lab emitter once at boot. The
     // Arcade Hub sidebar entry opens the lab through the launchChaosLab()
     // façade (src/core/ArcadeHubLaunch.hpp), which does not pass through this
@@ -5764,6 +6019,8 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     // Defensive against a future restart path that reuses this object after
     // edits were published (see PendingEditCounter::forceQuiesce's contract).
     g.pendingEdits.forceQuiesce();
+    // v1.3.0-beta7: seed the diagnostics snapshot so the first report after startup is not all zeros
+    refreshDiagnostics();
 
     // v1.1.2-r3: scan for external digit-conversion causes (other IMEs,
     // Windows Vietnamese Telex/VNI layouts) BEFORE the welcome balloon so

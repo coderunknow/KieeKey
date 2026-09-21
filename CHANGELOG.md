@@ -5,6 +5,10 @@ Keep a Changelog; versioning: SemVer.
 
 ## [Unreleased]
 
+## [1.3.0-beta7] — 2026-09-21
+### Diagnostics & snapshot truth fix (file build 1.3.0.8)
+Beta6's own report contradicted itself: `dpi: 96` vs `display-metrics 144`, `SendInputCalls: 0` vs 13 emit-chain deliveries, and every runtime field stuck at `0`/empty. Root cause was a never-refreshed `SystemSnapshot`, an inline path that never counted `SendInputCalls`, and live hook counters that never reached the report. This release refreshes the full snapshot (OS/arch/version/uptime/memory/cpu/foreground/layout/output/input/codeTable/DPI/flags) on every export/copy/quick-check and on startup, counts `SendInputCalls` on the hot inline path, mirrors `pushed`/`dropped`/`wakes`/`SetEvent` from the live `HookCounters` via `Diagnostics::set()`, and labels the provenance of `96`/`0` so a mismatch is a clue. Adds `tests/test_diagnostics_beta7_repro.cpp`.
+
 ## [1.3.0-beta6] — 2026-09-20
 ### Self-audit hardening release — preparing v1.3.0-rc1 (file build 1.3.0.7)
 No tester report drove this release: KieeKey audited itself. Five committed

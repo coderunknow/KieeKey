@@ -1,0 +1,88 @@
+# KieeKey v1.3.0-beta7 — release notes
+
+**Diagnostics & snapshot truth fix.**
+Windows file version **1.3.0.8** · tag `v1.3.0-beta7` · GPL-3.0.
+
+Beta6's exported diagnostics report contradicted itself on the tester's view and on static code reading.
+This release audits the report as an observation, not a source of truth, and fixes the pipeline that filled it.
+
+---
+
+## Root cause — diagnostics was a stale snapshot, pipeline counters were detached
+
+**Report as observation (priority: runtime > source > instrumentation > diagnostics):**
+
+- `dpi: 96` in `SystemSnapshot` vs `display-metrics dpi=144` — 96 is the struct's default initializer, not a probe.
+  `refreshEvidenceContext()` updated only `ProcessResolution` + `DisplayMetrics`, never `SystemSnapshot.dpi`.
+- `SendInputCalls: 0` vs 13 deliveries in the `emit-chain` trace (`channel=SendInput`) — the counter was incremented only on the deferred consumer path (`InlineEdit` handler) and on `TsfComposer` fallback, never on the hot inline `emitInline()` path where every Vietnamese composition actually injects.
+- `hook: CHƯA cài` vs `keyboard events >0`, `queue.pushed 0` vs keyboard events, `uptime 0 s`, `workingSet 0 KB`, `osName`/`arch`/`appVersion`/`foregroundApp`/`keyboardLayout` empty, `cpu 0.0 %` — the entire `SystemSnapshot` was zero-initialized and never populated before `Diagnostics::report()`.
+
+**Source-of-truth map (where each value lives):**
+
+- Hook liveness: `g.hook.running()` (ModernKeyHook/Win32Wrapper), not `SystemSnapshot.hookInstalled` unless refreshed.
+- Per-source event counts: `HookCounters` (`keyDown`/`keyUp`/`mouseButton`/`foregroundChanged`) and `Win32Wrapper::pushed()`/`dropped()` + `HookCounters::consumerWakeups`/`setEventSyscalls` — the report's `Counter::HookQueuePushed` etc. were never synced from those live atomics.
+- `SendInput` injections: `InlineEmitter::sendEdit()` (chunked `SendInput`) — observable via `emitTrace` at count 13, not via `Counter::SendInputCalls` which stayed 0.
+- Runtime metadata: `GetTickCount64` delta from `g_startTickMs`, `GetProcessMemoryInfo`, `GetProcessTimes`, `GetNativeSystemInfo`, `GetKeyboardLayout`/`LCIDToLocaleName`, `ProcessMonitor::snapshot()`, `g.outputMode`/`g.options` — none were copied into the snapshot.
+- Display truth: `windowDpi()` / `systemDpiOrFallback()` / `DisplayMetrics` — the report's `dpi` line showed only the stale snapshot value without provenance.
+
+**Reproduce before fixing (controlled Windows repro plan):**
+
+1. Start KieeKey, keep default `Level::Basic` (one relaxed load per key).
+2. Verify hook: tray tooltip shows mode, diagnostics tab `hookReinstallCount` stays 0.
+3. Type in Notepad (`as` → `á`, `booj` → `bộ`) and in a browser Office app (TSF path) — verify composition, then toggle IME off and verify pass-through.
+4. Toggle Vietnamese IME, generate diagnostics via `Xuất báo cáo` / `Sao chép báo cáo` — compare counters vs hook status, `SendInput` vs emit-chain, `dpi` rows, `uptime`/`workingSet` vs Task Manager.
+5. Without fix, report shows `dpi 96` while `display-metrics dpi=144`, `SendInputCalls 0` while `emit-chain` has 13 `SendInput` lines, and all runtime snapshot fields at `0`.
+
+---
+
+## Fix — only after root cause, preserve semantics, improve labels
+
+**1. `Diagnostics::set(Counter, uint64_t)` (portable):**
+- Added `void set(Counter, uint64_t) noexcept` to `Diagnostics.hpp`/`Diagnostics.cpp` — atomic store, so `main.cpp` can rebase counters from live sources without a read-modify-write race.
+
+**2. `SystemSnapshot` full refresh (`src/app/main.cpp`, Win32):**
+- `g_startTickMs` captured in `wWinMain` before any snapshot; `refreshSystemSnapshot()` fills:
+  OS name (RtlGetVersion + ProductName), arch (GetNativeSystemInfo + IsWow64Process2 for ARM64EC), app version (kAppVersionFull + PE FileVersion via GetFileVersionInfo), uptime (GetTickCount64 delta), workingSet/peak (GetProcessMemoryInfo), kernel/user time + cpu% (GetProcessTimes), foreground app + policy hint (ProcessMonitor::snapshot + g.fgUseTsf_/g.fgExcluded_), keyboardLayout (HKL hex + LCIDToLocaleName), outputMode, inputMethod, codeTable, DPI (windowDpi / systemDpiOrFallback), and flags (imeEnabled/hookInstalled/fgHookInstalled/liveEffects/excluded).
+- `refreshEvidenceContext()` still refreshes B1/B4 evidence blocks; `refreshSystemSnapshot()` calls it so the two never disagree.
+- Best-effort noexcept, exception-swallowed: evidence never takes the IME down.
+
+**3. Counter sync (`syncDiagnosticsCounters()`):**
+- Mirrors `Win32Wrapper::pushed()` → `HookQueuePushed`, `dropped()` → `HookQueueDropped`, `HookCounters::consumerWakeups` → `ConsumerWakes`, `setEventSyscalls` → `SetEventSyscalls`, and rebases `KeyDown`/`KeyUp` total to match `HookCounters::keyboardEvents()` (the labeled source-of-truth, not the ring counter). `SendInputCalls` is counted on the hot inline path.
+
+**4. Hot-path wiring:**
+- `emitInline()` increments `Counter::SendInputCalls` on any backspace/text injection (one relaxed add, Basic-gated implicitly via the emitter path).
+- `onHookEvent()` increments `Counter::MouseEvents` and `Counter::ForegroundChanges` for non-keyboard sources (Basic-gated).
+- `flushEditBatch()` fallback already counted via emitter; deferred `InlineEdit` path already counted `SendInputCalls` + histogram — preserved.
+
+**5. UI / export refresh (`refreshDiagnostics()`):**
+- `refreshDiagnostics()` = `refreshSystemSnapshot()` + `syncDiagnosticsCounters()` + `refreshEvidenceContext()`.
+- Called on startup after `forceQuiesce()`, before every `Xuất báo cáo` and `Sao chép báo cáo`, and before quick-check (`IDC_BTN_DIAG_RUN`).
+- Report labels now carry provenance:
+  `dpi (snapshot, monitor): 96 (default = not refreshed / should match display-metrics dpi=96 if refreshed)` for the default,
+  `dpi (snapshot, monitor): 144, systemDpi requested=144 (if per-monitor DPI-aware, systemDpi may be stale; ...)`
+  and `uptime: 0 s (0 = snapshot not refreshed; should be >0 when keyboard events >0)`.
+
+**6. Regression:**
+- `tests/test_diagnostics_beta7_repro.cpp` — portable repro of every beta6 contradiction (snapshot defaults vs 144, SendInput 0 vs 13 emits, hook mismatch, uptime/DPI provenance, workingSet zeros, counter set contract).
+
+Platform honesty: snapshot/DPI/memory/cpu/foreground probes are Win32-only and validated under the zig full-TU gate and MSVC CI; the `set()` contract and report labels are portable and gated in the native suite.
+
+---
+
+## Validation — startup / typing / idle / failure / shutdown
+
+- **Startup**: `g_startTickMs` seeded, `refreshDiagnostics()` after `forceQuiesce()` — first report already non-zero.
+- **Typing**: `emitInline()` + `onHookEvent()` keep counters live; `syncDiagnosticsCounters()` rebases ring/wake counters before export so idle vs burst disagree by at most one batch.
+- **Idle**: `SystemSnapshot::uptimeMs` ticks via `GetTickCount64`; `cpuPercentSinceStart` guarded against overflow.
+- **Failure**: any probe failure leaves field at last good value; all refresh paths are `noexcept` + try/catch.
+- **Shutdown**: `WM_DESTROY`/`WM_ENDSESSION` persist settings; `stop()` is bounded (ExitProcess on detached workers).
+
+## Version carriers — 1.3.0-beta7 (PE 1.3.0.8)
+
+- `src/app/main.cpp` `kAppVersionFull` / `kAppTitle` → `1.3.0-beta7`
+- `src/app/KieeKeyApp.rc` FILEVERSION/PRODUCTVERSION → `1,3,0,8` / `1.3.0.8`
+- `src/app/KieeKeyApp.manifest` → `1.3.0.8`
+- `src/core/kieekey_core.hpp` `OPENKEY_KIEEKEY_VERSION_STRING` → `1.3.0-beta7`
+- `scripts/check_version.py` `CHANNEL beta7 BUILD_REVISION 8`
+- `README.md` / `CHANGELOG.md` beta7 entries
+

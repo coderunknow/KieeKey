@@ -556,6 +556,12 @@ void Diagnostics::add(Counter id, std::uint64_t delta) noexcept {
     counters_[index].fetch_add(delta, std::memory_order_relaxed);
 }
 
+void Diagnostics::set(Counter id, std::uint64_t value) noexcept {
+    const auto index = static_cast<std::size_t>(id);
+    if (index >= counters_.size()) { return; }
+    counters_[index].store(value, std::memory_order_relaxed);
+}
+
 std::uint64_t Diagnostics::get(Counter id) const noexcept {
     const auto index = static_cast<std::size_t>(id);
     if (index >= counters_.size()) { return 0; }
@@ -789,8 +795,14 @@ std::string Diagnostics::report(std::size_t traceLines) const {
     out += "app          : "; out += sys.appVersion; out += "\n";
     out += "os           : "; out += sys.osName; out += "\n";
     out += "arch         : "; out += sys.arch; out += "\n";
-    out += "dpi          : "; out += std::to_string(sys.dpi); out += "\n";
-    out += "uptime       : "; out += std::to_string(sys.uptimeMs / 1000); out += " s\n";
+    // v1.3.0-beta7: label now names provenance — monitor DPI cached in snapshot
+    // (same value DisplayMetrics.dpi carries). Default 96 while display-metrics
+    // shows real monitor DPI (e.g. 144) proves snapshot stale; equality after
+    // refresh is correctness proof. Same for uptime/memory vs keyboard events.
+    out += "dpi (snapshot, monitor): "; out += std::to_string(sys.dpi);
+    out += " (96 default = snapshot not refreshed; should match display-metrics dpi)\n";
+    out += "uptime       : "; out += std::to_string(sys.uptimeMs / 1000);
+    out += " s (0 = snapshot not refreshed; should be >0 when keyboard events >0)\n";
     out += "process time : user "; out += std::to_string(sys.userTimeMs);
     out += " ms, kernel "; out += std::to_string(sys.kernelTimeMs);
     out += " ms, cpu "; {

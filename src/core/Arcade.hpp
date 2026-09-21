@@ -1091,7 +1091,24 @@ public:
     // whose setter regenerates/resets a run (rhythm chart, no-mistake reserve,
     // WASD start fuel). The web bridge answers `restartRequired` with exactly
     // this instead of silently swallowing the user's slider.
+    //
+    // v1.3.0-beta8 (bug UX-01): this compares against the STORED config, so it
+    // answers "would storing this config require a rebuild?" — NOT "is the
+    // RUNNING game out of date?". Those diverge as soon as a caller stores a
+    // chart knob without relaunching (every intermediate `input` event of a
+    // web slider does exactly that), after which this returns false and the
+    // pending rebuild is lost forever. Use `runNeedsRelaunch()` to ask about
+    // the RUN; this predicate is kept for callers that legitimately compare
+    // two configs before storing one.
     [[nodiscard]] bool configNeedsRelaunch(const ArcadeConfig& config) const;
+
+    // v1.3.0-beta8 (bug UX-01): true when the RUNNING game was built from a
+    // chart configuration that no longer matches the stored one — i.e. the
+    // run really is stale and a relaunch would change what the player sees.
+    // Unlike configNeedsRelaunch() this is a property of the RUN, so it stays
+    // true across any number of intermediate setConfig() calls until someone
+    // actually rebuilds the run.
+    [[nodiscard]] bool runNeedsRelaunch() const;
 
     // Recreates the current RUN with the stored config (launch + start), so the
     // knobs above become visible without the player leaving the game.
@@ -1163,6 +1180,10 @@ private:
     std::shared_ptr<IArcadeGame> m_game;               // atomic snapshot for readers
     std::atomic<bool> m_active{false};                 // fast hot-path check
     ArcadeConfig m_config{};
+    // v1.3.0-beta8 (bug UX-01): the chart configuration the CURRENT run was
+    // actually built from. makeGame() applies the full config, so this is the
+    // ground truth for "is the run stale?" — see runNeedsRelaunch().
+    ArcadeConfig m_runConfig{};
     std::vector<RunResult> m_results;
     std::uint32_t m_seed = 0;
     bool m_hasLaunched = false;

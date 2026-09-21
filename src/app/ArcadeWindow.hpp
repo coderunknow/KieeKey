@@ -73,6 +73,15 @@ public:
     void setHoverIndex(int index) noexcept;
     [[nodiscard]] double dpiScale() const noexcept;
 
+    // v1.3.0-beta8 (bug UX-10): WM_DPICHANGED used to write the new scale by
+    // reaching into `self->m_impl` from the free window procedure — a PRIVATE
+    // member, so the translation unit did not compile at all on any conforming
+    // compiler. The hub is only built into the Windows app target and the one
+    // portable harness that exercises it (ok_arcade_window_tests) was itself
+    // unwired from CMake, so nothing ever compiled this file and the break
+    // shipped unnoticed. The setter mirrors the existing dpiScale() getter.
+    void setDpiScale(double scale) noexcept;
+
     // One game frame + one repaint. Public so the host can drive it from its own
     // timer if WM_TIMER is not available (tests/automation).
     void pump(double dtSeconds);

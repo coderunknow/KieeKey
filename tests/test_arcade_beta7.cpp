@@ -107,18 +107,23 @@ int main() {
         auto resp0 = server.handleRequest("POST", "/api/config", "{\"passageLanguage\":0}");
         assert(contains(resp0.body, "\"passageLanguage\":0") && "server must handle passageLanguage=0");
 
-        // passageLanguage change should be reported as needing relaunch
-        auto respNeed = server.handleRequest("POST", "/api/config", "{\"passageLanguage\":1}");
-        // Since we just set to 0, setting to 1 again should need relaunch
-        // The server's configNeedsRelaunch path: if changed and applyNow=0,
-        // restartRequired true. We already changed, but second call with same
-        // value should NOT need relaunch. So test with opposite value.
-        // To be deterministic, set to 0 then to 1 without applyNow.
-        server.handleRequest("POST", "/api/config", "{\"passageLanguage\":0}");
-        auto need = server.handleRequest("POST", "/api/config", "{\"passageLanguage\":1}");
-        assert(contains(need.body, "\"restartRequired\":true") && "passageLanguage change must set restartRequired=true");
-        // With applyNow=1 and a game running, it should relaunch
+        // v1.3.0-beta8 (bug UX-01): restartRequired describes the RUNNING run,
+        // not the stored config. With no game running there is nothing to
+        // rebuild, so the honest answer is false — the original expectation
+        // here asserted true and could never have passed (this file was never
+        // wired into any runner, so nobody found out).
+        (void)server.handleRequest("POST", "/api/config", "{\"passageLanguage\":0}");
+        auto idle = server.handleRequest("POST", "/api/config", "{\"passageLanguage\":1}");
+        assert(contains(idle.body, "\"restartRequired\":false") &&
+               "no game running -> nothing to relaunch");
+
+        // With a game running, a real chart change IS reported as pending...
         server.startGame("typing-race");
+        auto need = server.handleRequest("POST", "/api/config", "{\"passageLanguage\":0}");
+        assert(contains(need.body, "\"restartRequired\":true") &&
+               "passageLanguage change on a live run must set restartRequired=true");
+        // ...and applyNow=1 honours it even though the value was already stored
+        // by the line above (the browser's input-then-change sequence).
         auto needApply = server.handleRequest("POST", "/api/config",
                                               "{\"passageLanguage\":0,\"applyNow\":1}");
         assert(contains(needApply.body, "\"restartApplied\":true") && "applyNow should relaunch for passageLanguage");

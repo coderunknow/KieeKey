@@ -206,13 +206,51 @@ void appendToEdit(HWND edit, const std::wstring& text) {
     ::SendMessageW(edit, EM_REPLACESEL, FALSE, reinterpret_cast<LPARAM>(text.c_str()));
 }
 
+// v1.3.0-beta8 (bug UX-08): the "chars per key" combo used to pass a literal
+// 3 to setGranularity() for EVERY entry, so the N of the "3 ký tự (N=3)" mode
+// was unreachable from the desktop — the label named a parameter the UI could
+// not change, while the web lab (web/labs.js) has always sent a real nChars
+// and FlexingGame supports 1..64. The combo now offers concrete N values and
+// this table is the single mapping from selection index to (granularity, N),
+// shared by the control creation and the apply path so they cannot drift.
+struct FlexGranChoice {
+    const wchar_t* label;
+    ok::arcade::FlexGranularity gran;
+    std::uint32_t nChars;
+};
+
+inline const FlexGranChoice* flexGranChoices(std::size_t& count) noexcept {
+    using G = ok::arcade::FlexGranularity;
+    static const FlexGranChoice kChoices[] = {
+        {L"1 ký tự",   G::OneCharPerKey, 1},
+        {L"1 từ",      G::OneWordPerKey, 1},
+        {L"3 ký tự",   G::NCharsPerKey,  3},
+        {L"5 ký tự",   G::NCharsPerKey,  5},
+        {L"10 ký tự",  G::NCharsPerKey,  10},
+        {L"25 ký tự",  G::NCharsPerKey,  25},
+        {L"Tự chảy",   G::AutoStream,    1},
+    };
+    count = sizeof(kChoices) / sizeof(kChoices[0]);
+    return kChoices;
+}
+
+inline FlexGranChoice flexGranularityChoice(int selection) noexcept {
+    std::size_t count = 0;
+    const FlexGranChoice* choices = flexGranChoices(count);
+    const std::size_t index =
+        (selection < 0 || static_cast<std::size_t>(selection) >= count)
+            ? 0u
+            : static_cast<std::size_t>(selection);
+    return choices[index];
+}
+
 void applyFlexGranularity(ChaosLabWindow::Impl& impl) {
     auto* game = dynamic_cast<ok::arcade::FlexingGame*>(
         ok::arcade::ArcadeManager::instance().getCurrentGame());
     if (game == nullptr || !impl.ownsFlexing) { return; }
     const int selection = static_cast<int>(::SendMessageW(impl.flexGran, CB_GETCURSEL, 0, 0));
-    game->setGranularity(static_cast<ok::arcade::FlexGranularity>(
-        std::clamp(selection, 0, 3)), 3);
+    const auto choice = flexGranularityChoice(selection);
+    game->setGranularity(choice.gran, choice.nChars);
 }
 
 std::size_t ensureFlexingGame(ChaosLabWindow::Impl& impl) {
@@ -687,8 +725,15 @@ bool ChaosLabWindow::open(void* owner) {
         create(L"STATIC", L"Mỗi phím sinh ra:", SS_LEFT, 610, 502, 128, 18, -1);
         m_impl->flexGran = create(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL, 646, 520, 92, 200,
                                   kIdFlexGran);
-        for (const wchar_t* label : {L"1 ký tự", L"1 từ", L"3 ký tự (N=3)", L"Tự chảy"}) {
-            ::SendMessageW(m_impl->flexGran, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label));
+        {
+            // v1.3.0-beta8 (bug UX-08): populated from the shared choice table
+            // so the labels and the applied N can never disagree.
+            std::size_t granCount = 0;
+            const FlexGranChoice* granChoices = flexGranChoices(granCount);
+            for (std::size_t i = 0; i < granCount; ++i) {
+                ::SendMessageW(m_impl->flexGran, CB_ADDSTRING, 0,
+                               reinterpret_cast<LPARAM>(granChoices[i].label));
+            }
         }
         ::SendMessageW(m_impl->flexGran, CB_SETCURSEL, 0, 0);
         m_impl->flexInject = create(L"BUTTON", L"Gõ từng nhịp", BS_AUTOCHECKBOX, 660, 552, 78, 22,

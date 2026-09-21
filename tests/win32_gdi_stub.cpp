@@ -296,6 +296,9 @@ BOOL ShowWindow(HWND hwnd, int) {
 BOOL IsWindow(HWND hwnd) { return okgdi::findWindow(hwnd) != nullptr ? TRUE : FALSE; }
 
 BOOL InvalidateRect(HWND, const RECT*, BOOL) { return TRUE; }
+// v1.3.0-beta8 (bug UX-10): mouse-leave tracking is a no-op off Windows; the
+// harness drives WM_MOUSELEAVE directly when it wants to test hover clearing.
+BOOL TrackMouseEvent(TRACKMOUSEEVENT*) { return TRUE; }
 
 BOOL GetClientRect(HWND hwnd, RECT* out) {
     okgdi::Window* window = okgdi::findWindow(hwnd);

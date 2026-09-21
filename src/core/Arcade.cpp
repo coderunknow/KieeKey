@@ -1888,34 +1888,44 @@ InputResult WasdRaceGame::handleKey(const InputEvent& ev) {
     // through to the composer — the keystroke is NEVER swallowed (W is a core
     // Telex diacritic key; swallowing it would break composition of half the
     // language).
-    const bool letterSteer = !m_vnMode;
-    const bool vnWasd = m_vnMode && m_steering != WasdSteering::Arrows;
+    //
+    // v1.3.0-beta8 (bug UX-02): a steering LETTER must never be swallowed, in
+    // EITHER language. beta5 fixed this for VN only (the "W is a core Telex
+    // key" argument) and left EN consuming a/s/d/w outright — but the English
+    // passage is "lai xe vuot chuong ngai vat toc do cao", which contains five
+    // of them. Typing the passage perfectly stalled at index 1 forever: the
+    // 'a' of "lai" steered the car and was dropped instead of counting as a
+    // typed character, so the EN run could never advance past its second
+    // letter and the tank could not be refuelled. Only the ARROW keys are
+    // pure steering (they produce no character and can never be passage text);
+    // letters steer AND fall through to the typing path below.
+    const bool letterSteer = !m_vnMode || m_steering != WasdSteering::Arrows;
     const bool chA = (ev.ch == U'a' || ev.ch == U'A');
     const bool chD = (ev.ch == U'd' || ev.ch == U'D');
     const bool chW = (ev.ch == U'w' || ev.ch == U'W');
     const bool chS = (ev.ch == U's' || ev.ch == U'S');
-    bool steerConsumes = false;
-    if (ev.vk == vk::kLeft || (letterSteer && chA)) {
+    if (ev.vk == vk::kLeft) {
         if (m_playerLane > 0) --m_playerLane;
-        steerConsumes = true;
-    } else if (ev.vk == vk::kRight || (letterSteer && chD)) {
+        return InputResult::Consumed;   // arrows are steering-only
+    }
+    if (ev.vk == vk::kRight) {
         if (m_playerLane < kLanes - 1) ++m_playerLane;
-        steerConsumes = true;
-    } else if (ev.vk == vk::kUp || (letterSteer && chW)) {
+        return InputResult::Consumed;
+    }
+    if (ev.vk == vk::kUp) {
         m_carSpeed = std::min(150.0, m_carSpeed + 12.0);
-        steerConsumes = true;
-    } else if (ev.vk == vk::kDown || (letterSteer && chS)) {
+        return InputResult::Consumed;
+    }
+    if (ev.vk == vk::kDown) {
         m_carSpeed = std::max(30.0, m_carSpeed - 12.0);
-        steerConsumes = true;
-    } else if (vnWasd && (chA || chD || chW || chS)) {
-        // Steer WITHOUT consuming: the same press feeds the composer below.
+        return InputResult::Consumed;
+    }
+    if (letterSteer && (chA || chD || chW || chS)) {
+        // Steer WITHOUT consuming: the same press still types below.
         if (chA) { if (m_playerLane > 0) --m_playerLane; }
         else if (chD) { if (m_playerLane < kLanes - 1) ++m_playerLane; }
         else if (chW) { m_carSpeed = std::min(150.0, m_carSpeed + 12.0); }
         else { m_carSpeed = std::max(30.0, m_carSpeed - 12.0); }
-    }
-    if (steerConsumes) {
-        return InputResult::Consumed;
     }
 
     // Typing fuels the engine
@@ -2086,7 +2096,12 @@ void WasdRaceGame::buildFrame(Frame& frame) const {
     frame.stats.paused = m_paused;
     frame.stats.gameOver = m_gameOver;
     if (m_gameOver) {
-        frame.stats.banner = U"HẾT NHIÊN LIỆU — nhấn R để chơi lại";
+        // v1.3.0-beta8 (bug UX-03): this used to read "nhấn R để chơi lại",
+        // but WasdRace is a TYPING game — it calls isRestartKey() without the
+        // letter alias precisely because 'r' must stay available as passage
+        // text, so pressing R did nothing at all. Snake/Tetris do accept R and
+        // keep their wording; here the banner now names the key that works.
+        frame.stats.banner = U"HẾT NHIÊN LIỆU — nhấn F2 để chơi lại";
     } else if (m_paused) {
         frame.stats.banner = U"TẠM DỪNG";
     }
@@ -2991,13 +3006,23 @@ void NoMistakeGame::buildFrame(Frame& frame) const {
     frame.stats.wpm = m_elapsedSec > 0.0
                           ? (static_cast<double>(m_currentIndex) / 5.0) / (m_elapsedSec / 60.0)
                           : 0.0;
-    frame.stats.accuracy = 100.0 * static_cast<double>(m_currentIndex) /
-                           static_cast<double>(std::max<std::size_t>(1, m_currentIndex + m_mistakes));
+    // v1.3.0-beta8 (bug UX-04): with no characters typed and no mistakes the
+    // formula yields 0/1 = 0 %, so a freshly launched NoMistake run — a mode
+    // whose entire premise is a clean sheet — greeted the player with a red
+    // "Accuracy 0%" gauge. An untouched run is flawless by definition; only
+    // start dividing once there is something to divide.
+    frame.stats.accuracy =
+        (m_currentIndex + m_mistakes == 0)
+            ? 100.0
+            : 100.0 * static_cast<double>(m_currentIndex) /
+                  static_cast<double>(m_currentIndex + m_mistakes);
     frame.stats.hint = diverged
         ? frame.internNumber(U"Sai — nhấn Backspace ",
                              static_cast<std::int64_t>(m_composer->length() - m_currentIndex),
                              U" lần để sửa")
-        : std::u32string_view(U"Gõ đúng tững ký tự · F1 tạm dừng · F2 chơi lại · Esc thoát");
+        // v1.3.0-beta8 (bug UX-05): "tững" is not a Vietnamese word — typo for
+        // "từng", shipped on the permanent HUD of a Vietnamese typing trainer.
+        : std::u32string_view(U"Gõ đúng từng ký tự · F1 tạm dừng · F2 chơi lại · Esc thoát");
     frame.stats.progress = m_textStream.empty()
                                ? 0.0
                                : static_cast<double>(m_currentIndex) /
@@ -3439,6 +3464,11 @@ bool ArcadeManager::launchGame(GameType type, std::uint32_t seed) {
         m_game = std::move(game);
         m_active.store(true, std::memory_order_release);
         m_resultCollected = false;   // fresh run: nothing reported yet
+        // v1.3.0-beta8 (bug UX-01): record WHICH configuration this run was
+        // built from. `config` was snapshotted above from m_config, so the run
+        // is by definition up to date at this instant; any later chart-knob
+        // change makes runNeedsRelaunch() true until the run is rebuilt.
+        m_runConfig = config;
     }
     return true;
 }
@@ -3635,15 +3665,34 @@ const IArcadeGame* ArcadeManager::getCurrentGame() const {
     return m_game.get();
 }
 
+// v1.3.0-beta8 (bug UX-01): ONE definition of "these two configurations build
+// a different run". Both configNeedsRelaunch() (config-vs-config) and
+// runNeedsRelaunch() (run-vs-config) delegate here, so the two answers can
+// never drift apart the way they did when the comparison was inlined once.
+static bool chartKnobsDiffer(const ArcadeConfig& a, const ArcadeConfig& b) noexcept {
+    return a.rhythmBpm != b.rhythmBpm ||
+           a.rhythmNoteCount != b.rhythmNoteCount ||
+           a.rhythmApproachSec != b.rhythmApproachSec ||
+           a.noMistakeStartReserve != b.noMistakeStartReserve ||
+           a.wasdStartFuel != b.wasdStartFuel ||
+           a.passageLanguage != b.passageLanguage ||
+           a.vnInputMethod != b.vnInputMethod;
+}
+
 bool ArcadeManager::configNeedsRelaunch(const ArcadeConfig& config) const {
     std::lock_guard<std::mutex> lock(m_mutex);
-    return config.rhythmBpm != m_config.rhythmBpm ||
-           config.rhythmNoteCount != m_config.rhythmNoteCount ||
-           config.rhythmApproachSec != m_config.rhythmApproachSec ||
-           config.noMistakeStartReserve != m_config.noMistakeStartReserve ||
-           config.wasdStartFuel != m_config.wasdStartFuel ||
-           config.passageLanguage != m_config.passageLanguage ||
-           config.vnInputMethod != m_config.vnInputMethod;
+    // A pending stale run counts too: once a chart knob has been STORED
+    // without a rebuild (every intermediate `input` event of a web slider
+    // does that), re-sending the same value must still report that the run
+    // has to be rebuilt — otherwise the final `change` event answers
+    // "nothing to do" and the user's change is silently lost.
+    return chartKnobsDiffer(config, m_config) ||
+           (m_game != nullptr && chartKnobsDiffer(config, m_runConfig));
+}
+
+bool ArcadeManager::runNeedsRelaunch() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_game != nullptr && chartKnobsDiffer(m_config, m_runConfig);
 }
 
 bool ArcadeManager::relaunchCurrentGame() {

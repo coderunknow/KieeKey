@@ -60,6 +60,13 @@ set_property(CACHE KIEEKEY_BUILD_UI PROPERTY STRINGS none winui3)
 #----------------------------------------------------------------------------
 # Toolchain / standard
 #----------------------------------------------------------------------------
+# Share the native runner's optional launcher with supported CMake generators.
+# Visual Studio ignores compiler launchers; keep its validated MSVC toolchain.
+if(DEFINED ENV{CXX_LAUNCHER} AND NOT DEFINED CMAKE_CXX_COMPILER_LAUNCHER
+        AND CMAKE_GENERATOR MATCHES "Ninja|Makefiles")
+    set(CMAKE_CXX_COMPILER_LAUNCHER "$ENV{CXX_LAUNCHER}")
+endif()
+
 if(MSVC)
     # /utf-8 is a COMPILE option (source/input charset): the sources and the
     # .rc carry Vietnamese UTF-8 text. It must never reach the LINK line —
@@ -74,7 +81,9 @@ if(MSVC)
     # regression nets; a plain `if` there fires C4127 under /W4, so it is
     # disabled too (the alternative, `if constexpr`, is ill-formed for the
     # runtime conditions the same macros also carry).
-    add_compile_options(/W4 /wd4324 /wd4127 /permissive- /Zc:__cplusplus /Zc:preprocessor /utf-8)
+    # MSBuild --parallel schedules projects; /MP2 also compiles independent
+    # translation units within a project, with bounded nested memory use.
+    add_compile_options(/MP2 /W4 /wd4324 /wd4127 /permissive- /Zc:__cplusplus /Zc:preprocessor /utf-8)
     if(KIEEKEY_WERROR)
         add_compile_options(/WX)
     endif()
@@ -682,7 +691,7 @@ if(WIN32 AND KIEEKEY_BUILD_TESTS)
     endif()
     add_test(NAME ok_perf_profiles COMMAND ok_perf_profiles)
     add_test(NAME ok_option_matrix COMMAND ok_option_matrix)
-    # CI depth is the harness default (20k events/config, ~60-120 s on MSVC);
+    # CI depth is the harness default (20k events/config);
     # deep campaign runs pass --events explicitly.
     set_tests_properties(ok_option_matrix PROPERTIES TIMEOUT 600)
 

@@ -57,12 +57,34 @@ jobs:
     name: Native regression (Linux)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    env:
+      CXX_LAUNCHER: ${{ runner.temp }}/sccache-tool/bin/sccache
+      SCCACHE_DIR: ${{ runner.temp }}/sccache-data
+      SCCACHE_CACHE_SIZE: 300M
     steps:
       - uses: actions/checkout@v7
+      - name: Install pinned compiler cache
+        run: |
+          python3 -m venv "$RUNNER_TEMP/sccache-tool"
+          "$RUNNER_TEMP/sccache-tool/bin/pip" install --disable-pip-version-check sccache==0.10.0
+      - name: Restore compiler cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.SCCACHE_DIR }}
+          # The outer key allows updates on new commits; sccache validates the
+          # compiler, flags and preprocessed source/headers for every object.
+          key: native-${{ runner.os }}-${{ runner.arch }}-sccache-0.10-v1-${{ github.sha }}
+          restore-keys: |
+            native-${{ runner.os }}-${{ runner.arch }}-sccache-0.10-v1-
       - name: Test manifest generation
         run: python3 tests/test_sha256sums.py
       - name: Full native, UI-shim and web regression suite
-        run: bash tests/run_all_tests.sh --jobs=2
+        run: bash tests/run_all_tests.sh --jobs="$(nproc)"
+      - name: Compiler cache statistics
+        if: always()
+        run: |
+          "$CXX_LAUNCHER" --show-stats
+          "$CXX_LAUNCHER" --stop-server
       - name: Upload regression logs
         if: always()
         uses: actions/upload-artifact@v7
@@ -223,7 +245,7 @@ jobs:
 
       - name: Run unit tests
         if: matrix.platform == 'x64'
-        run: ctest --test-dir out/${{ matrix.platform }} -C Release --output-on-failure
+        run: ctest --test-dir out/${{ matrix.platform }} -C Release --parallel $env:NUMBER_OF_PROCESSORS --output-on-failure
 
       # v1.2.2 RC4 (B-5): the SHA256 release manifest must stay in sync with
       # the tree it ships from — the same gate tests/run_all_tests.sh runs.

@@ -68,18 +68,25 @@ jobs:
           echo "CXX_LAUNCHER=$RUNNER_TEMP/sccache-tool/bin/sccache" >> "$GITHUB_ENV"
           echo "SCCACHE_DIR=$RUNNER_TEMP/sccache-data" >> "$GITHUB_ENV"
       - name: Restore compiler cache
+        id: compiler-cache
         uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}/sccache-data
           # The outer key allows updates on new commits; sccache validates the
           # compiler, flags and preprocessed source/headers for every object.
-          key: native-${{ runner.os }}-${{ runner.arch }}-sccache-0.10-v1-${{ github.sha }}
+          key: native-${{ runner.os }}-${{ runner.arch }}-sccache-0.10-v2-${{ github.sha }}
           restore-keys: |
-            native-${{ runner.os }}-${{ runner.arch }}-sccache-0.10-v1-
+            native-${{ runner.os }}-${{ runner.arch }}-sccache-0.10-v2-
       - name: Test manifest generation
         run: python3 tests/test_sha256sums.py
       - name: Full native, UI-shim and web regression suite
-        run: bash tests/run_all_tests.sh --jobs="$(nproc)"
+        env:
+          EXACT_CACHE_HIT: ${{ steps.compiler-cache.outputs.cache-hit }}
+        run: |
+          mkdir -p "$SCCACHE_DIR"
+          cache_files=$(find "$SCCACHE_DIR" -type f | wc -l)
+          echo "::notice title=Compiler cache before build::exact_key_hit=$EXACT_CACHE_HIT; files=$cache_files"
+          bash tests/run_all_tests.sh --jobs="$(nproc)"
       - name: Compiler cache statistics
         if: always()
         run: |
@@ -245,7 +252,33 @@ jobs:
 
       - name: Run unit tests
         if: matrix.platform == 'x64'
-        run: ctest --test-dir out/${{ matrix.platform }} -C Release --parallel $env:NUMBER_OF_PROCESSORS --output-on-failure
+        run: |
+          function Publish-Notice([string]$Title, [string]$Body) {
+            $escaped = $Body.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Host "::notice title=${Title}::$escaped"
+          }
+          $inventory = @(ctest --test-dir out/${{ matrix.platform }} -C Release -N)
+          $inventoryCode = $LASTEXITCODE
+          $inventory | Write-Output
+          if ($inventoryCode -ne 0) { exit $inventoryCode }
+          Publish-Notice 'x64 ctest -N inventory' ($inventory -join "`n")
+
+          $report = Join-Path $env:RUNNER_TEMP 'x64-ctest-results.xml'
+          ctest --test-dir out/${{ matrix.platform }} -C Release --parallel $env:NUMBER_OF_PROCESSORS --output-on-failure --output-junit $report
+          $testCode = $LASTEXITCODE
+          if (Test-Path $report) {
+            [xml]$result = Get-Content $report -Raw
+            $suite = $result.testsuite
+            $summary = @('tests=' + $suite.tests + '; failures=' + $suite.failures + '; disabled=' + $suite.disabled + '; skipped=' + $suite.skipped)
+            foreach ($case in $suite.testcase) {
+              $state = if ($case.SelectSingleNode('failure|error')) { 'failed' } elseif ($case.SelectSingleNode('skipped')) { 'skipped' } else { 'passed' }
+              $summary += "$($case.name): $state ($($case.time)s)"
+            }
+            Publish-Notice 'x64 CTest executed results' ($summary -join "`n")
+          } elseif ($testCode -eq 0) {
+            throw 'CTest succeeded but the JUnit report is missing'
+          }
+          exit $testCode
 
       # v1.2.2 RC4 (B-5): the SHA256 release manifest must stay in sync with
       # the tree it ships from — the same gate tests/run_all_tests.sh runs.

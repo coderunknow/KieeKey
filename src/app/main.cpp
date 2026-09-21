@@ -3306,29 +3306,31 @@ void refreshSystemSnapshot() noexcept {
         {
             OSVERSIONINFOEXW ovi{};
             ovi.dwOSVersionInfoSize = sizeof(ovi);
-            // GetVersionEx is shimmed by manifest; use RtlGetVersion dynamically.
+            // GetVersionEx is deprecated (C4996 → C2220 under /WX) and shimmed
+            // by the manifest; RtlGetVersion is the documented replacement and
+            // is available since Windows 2000. No fallback to GetVersionExW —
+            // if ntdll/RtlGetVersion is unavailable we keep the previous value.
             if (const HMODULE ntdll = ::GetModuleHandleW(L"ntdll.dll")) {
                 using RtlFn = LONG(WINAPI*)(OSVERSIONINFOEXW*);
                 auto fn = reinterpret_cast<RtlFn>(::GetProcAddress(ntdll, "RtlGetVersion"));
                 if (fn != nullptr) { fn(&ovi); }
-                else { ::GetVersionExW(reinterpret_cast<OSVERSIONINFOW*>(&ovi)); }
-            } else {
-                ::GetVersionExW(reinterpret_cast<OSVERSIONINFOW*>(&ovi));
             }
-            std::string os = "Windows " + std::to_string(ovi.dwMajorVersion) + "." +
-                             std::to_string(ovi.dwMinorVersion) +
-                             " (build " + std::to_string(ovi.dwBuildNumber) + ")";
-            // Product name from registry (e.g. "Windows 11 Pro") if available
-            HKEY hk = nullptr;
-            if (::RegOpenKeyExW(HKEY_LOCAL_MACHINE,
-                    L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", 0, KEY_READ, &hk) == ERROR_SUCCESS) {
-                wchar_t prod[128]{}; DWORD sz = sizeof(prod); DWORD tp = 0;
-                if (::RegQueryValueExW(hk, L"ProductName", nullptr, &tp, reinterpret_cast<BYTE*>(prod), &sz) == ERROR_SUCCESS && tp == REG_SZ) {
-                    os = utf16ToUtf8(prod) + " " + os;
+            if (ovi.dwMajorVersion != 0 || ovi.dwBuildNumber != 0) {
+                std::string os = "Windows " + std::to_string(ovi.dwMajorVersion) + "." +
+                                 std::to_string(ovi.dwMinorVersion) +
+                                 " (build " + std::to_string(ovi.dwBuildNumber) + ")";
+                // Product name from registry (e.g. "Windows 11 Pro") if available
+                HKEY hk = nullptr;
+                if (::RegOpenKeyExW(HKEY_LOCAL_MACHINE,
+                        L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", 0, KEY_READ, &hk) == ERROR_SUCCESS) {
+                    wchar_t prod[128]{}; DWORD sz = sizeof(prod); DWORD tp = 0;
+                    if (::RegQueryValueExW(hk, L"ProductName", nullptr, &tp, reinterpret_cast<BYTE*>(prod), &sz) == ERROR_SUCCESS && tp == REG_SZ) {
+                        os = utf16ToUtf8(prod) + " " + os;
+                    }
+                    ::RegCloseKey(hk);
                 }
-                ::RegCloseKey(hk);
+                snap.osName = std::move(os);
             }
-            snap.osName = std::move(os);
         }
         {
             SYSTEM_INFO si{}; ::GetNativeSystemInfo(&si);

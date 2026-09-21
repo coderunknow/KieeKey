@@ -5,6 +5,10 @@ Keep a Changelog; versioning: SemVer.
 
 ## [Unreleased]
 
+## [1.3.0-beta8] — 2026-09-21
+### Telemetry presentation polish & live-gate atomics (file build 1.3.0.9)
+Beta7 proved the pipeline truth but left the report claiming `OK` with zero evidence, bare `0`/blank for every unavailable field, and a data race between `g.options.codeTable` writers and the hook/consumer live-gate readers. Beta8 makes the report reliability-first — `CHƯA ĐỦ DỮ LIỆU` when `kbd==0 && TotalEdit==0 && QueuedToConsumer==0`, explicit `(chưa có — snapshot chưa làm tươi)` placeholders vs genuine `0`, `Level::Off` annotated `bộ đếm tạm dừng`, and an atomic `codeTableCache` mirror (sync'd in `loadSettings`/`settingsFromControls`, read via `liveGateNow()`/F9/liveOutput/trayTip). Audits `audit_layout.py --strict` and `audit_controls.py` remain green.
+
 ## [1.3.0-beta7] — 2026-09-21
 ### Diagnostics & snapshot truth fix (file build 1.3.0.8)
 Beta6's own report contradicted itself: `dpi: 96` vs `display-metrics 144`, `SendInputCalls: 0` vs 13 emit-chain deliveries, and every runtime field stuck at `0`/empty. Root cause was a never-refreshed `SystemSnapshot`, an inline path that never counted `SendInputCalls`, and live hook counters that never reached the report. This release refreshes the full snapshot (OS/arch/version/uptime/memory/cpu/foreground/layout/output/input/codeTable/DPI/flags) on every export/copy/quick-check and on startup, counts `SendInputCalls` on the hot inline path, mirrors `pushed`/`dropped`/`wakes`/`SetEvent` from the live `HookCounters` via `Diagnostics::set()`, and labels the provenance of `96`/`0` so a mismatch is a clue. Adds `tests/test_diagnostics_beta7_repro.cpp`.

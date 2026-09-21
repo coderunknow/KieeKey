@@ -19,7 +19,7 @@ The project may still be paused again in the future if development no longer pro
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20ARM64-0078D6.svg)
 ![Build](https://img.shields.io/badge/build-CMake%20%3E%3D%203.28-064FAD.svg)
 
-**KieeKey v1.3.0-beta7** is a modern, low-latency Vietnamese input method
+**KieeKey v1.3.0-beta8** is a modern, low-latency Vietnamese input method
 engine (bộ gõ Tiếng Việt) for Windows, with a system-tray application, a TSF
 text-store composer and an optional WinUI 3 Fluent settings UI.
 
@@ -33,6 +33,14 @@ text-store composer and an optional WinUI 3 Fluent settings UI.
 ![KieeKey preview](src/app/KieeKeyApp-preview.png)
 
 ---
+
+## What's new in v1.3.0-beta8 — Telemetry presentation & live-gate polish
+
+Beta8 is the presentation-polish release (Windows file version **1.3.0.9**): beta7 fixed the pipeline truth, but an empty report still said `OK` with zero evidence, every unavailable field showed bare `0`/blank, and the live-effects gate read `g.options.codeTable` across threads while the UI showed a different value. This release makes the report reliability-first — `CHƯA ĐỦ DỮ LIỆU` when no keys have been observed, explicit `(chưa có — snapshot chưa làm tươi)` placeholders for app/os/arch/uptime/memory/foreground/layout, `Level::Off` annotated as `bộ đếm tạm dừng`, and an atomic `codeTableCache` mirror so the hook, consumer, F9, tray tooltip and emit-chain gate share one proven model (`liveGateNow()`). Audits remain green (`audit_layout.py --strict`, `audit_controls.py`). See `docs/release-notes-v1.3.0-beta8.md`.
+
+* **Verdict requires evidence**: `CHƯA ĐỦ DỮ LIỆU: chưa ghi nhận phím nào…` when `kbd==0 && TotalEdit==0 && QueuedToConsumer==0` — no fake `OK` on a fresh install.
+* **Unavailable vs zero**: snapshot fields distinguish "not yet refreshed" from a genuine `0` (`(chưa có — snapshot chưa làm tươi)`, `uptime: 0 s (0 = not refreshed; should be >0 when keyboard events >0)`), DPI provenance retained, memory/process-time placeholders.
+* **Live gate race-free**: `AppState::codeTableCache` (`std::atomic<int>`) synced in `loadSettings`/`settingsFromControls`; `liveGateNow()` + F9/liveOutput/trayTip read the cache lock-free, fixing data races and UI drift.
 
 ## What's new in v1.3.0-beta7 — Diagnostics & snapshot truth fix
 
@@ -596,7 +604,7 @@ original licenses — see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 ## Tóm tắt (Tiếng Việt)
 
-**KieeKey v1.3.0-beta7** là bộ gõ Tiếng Việt cho Windows, xây dựng dựa trên
+**KieeKey v1.3.0-beta8** là bộ gõ Tiếng Việt cho Windows, xây dựng dựa trên
 **[OpenKey](https://github.com/tuyenvm/OpenKey)** (GPL-3.0) của tác giả Tuyen
 Mai. Engine gốc đã được port sang C++ hiện đại: hook bất đồng bộ với hàng đợi
 lock-free, composer TSF (không backspace ảo), bảng âm tiết flat tối ưu cache,
@@ -621,6 +629,8 @@ WASD khi gõ tiếng Việt**, Chaos Lab có lối vào ngay trong Arcade Hub, v
 tùy chọn cài đặt **áp dụng ngay khi bấm + được lưu**. Thêm tài liệu hiệu năng
 `docs/PERFORMANCE.md` (chi phí ns/phím của từng tính năng opt-in). Chi tiết:
 `docs/release-notes-v1.3.0-beta5.md`.
+
+Điểm mới của v1.3.0-beta8 — hoàn thiện trình bày chẩn đoán & cổng live (Windows **1.3.0.9**): báo cáo trống không còn `OK` giả — hiện `CHƯA ĐỦ DỮ LIỆU`, mọi trường chưa làm tươi hiện `(chưa có — snapshot chưa làm tươi)` thay vì `0`/trống, `Level::Off` ghi `bộ đếm tạm dừng`, và cổng hiệu ứng đọc qua `codeTableCache` nguyên tử để hook/consumer/UI cùng một mô hình. Chi tiết: `docs/release-notes-v1.3.0-beta8.md`.
 
 Điểm mới của v1.3.0-beta7 — bản sửa tính đúng đắn của chẩn đoán (Windows **1.3.0.8**): báo cáo beta6 tự mâu thuẫn — `dpi: 96` vs `display-metrics 144`, `SendInputCalls: 0` vs 13 dòng emit-chain, mọi trường runtime kẹt ở `0`/trống — vì `SystemSnapshot` chưa từng được làm tươi, nhánh inline chưa đếm `SendInputCalls`, và các đếm vòng/đánh thức chỉ nằm trong wrapper. Bản này làm tươi toàn bộ snapshot, đồng bộ đếm sống vào báo cáo trước mọi xuất/sao chép/kiểm tra nhanh, và ghi chú nguồn gốc cho `96`/`0`. Chi tiết: `docs/release-notes-v1.3.0-beta7.md`.
 

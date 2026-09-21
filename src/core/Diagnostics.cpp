@@ -777,6 +777,16 @@ std::string Diagnostics::verdict() const {
         text += " lần chờ barrier quá hạn)";
         return text;
     }
+    // v1.3.0-beta8: do not claim OK without evidence (reliability > cosmetic OK).
+    // A fresh install or a Level::Off run has 0 keyboard events and empty histograms;
+    // reporting OK there is fake confidence. Surface insufficient data instead.
+    const std::uint64_t kbd = get(Counter::KeyDown) + get(Counter::KeyUp);
+    const std::uint64_t totalSamples = histogram(Stage::TotalEdit).total() +
+                                       histogram(Stage::HookToDecision).total();
+    if (kbd == 0 && totalSamples == 0 && get(Counter::QueuedToConsumer) == 0) {
+        text = "CHƯA ĐỦ DỮ LIỆU: chưa ghi nhận phím nào — hãy gõ thử trong ứng dụng ngoài (ví dụ Notepad) rồi xuất lại báo cáo";
+        return text;
+    }
     text = "OK — không phát hiện lỗi pipeline";
     if (p99 >= 0) {
         text += " · p99 ";
@@ -792,9 +802,15 @@ std::string Diagnostics::report(std::size_t traceLines) const {
     const SystemSnapshot sys = systemSnapshot();
 
     out += "=== KieeKey diagnostics report ===\n";
-    out += "app          : "; out += sys.appVersion; out += "\n";
-    out += "os           : "; out += sys.osName; out += "\n";
-    out += "arch         : "; out += sys.arch; out += "\n";
+    // v1.3.0-beta8: unavailable vs zero (reliability > cosmetic zero).
+    // Empty strings and 0 counters are ambiguous: a fresh snapshot has ""/0
+    // before the first refresh, while a genuine measurement can also be 0
+    // (e.g. 0ms at startup). Show explicit placeholders instead of blank/0
+    // and keep provenance notes so stale vs fresh is testable.
+    const bool snapshotStale = sys.osName.empty() && sys.arch.empty() && sys.appVersion.empty();
+    out += "app          : "; out += sys.appVersion.empty() ? "(chưa có — snapshot chưa làm tươi)" : sys.appVersion; out += "\n";
+    out += "os           : "; out += sys.osName.empty() ? "(chưa có — snapshot chưa làm tươi)" : sys.osName; out += "\n";
+    out += "arch         : "; out += sys.arch.empty() ? "(chưa có — snapshot chưa làm tươi)" : sys.arch; out += "\n";
     // v1.3.0-beta7: label now names provenance — monitor DPI cached in snapshot
     // (same value DisplayMetrics.dpi carries). Default 96 while display-metrics
     // shows real monitor DPI (e.g. 144) proves snapshot stale; equality after
@@ -803,27 +819,44 @@ std::string Diagnostics::report(std::size_t traceLines) const {
     out += " (96 default = snapshot not refreshed; should match display-metrics dpi)\n";
     out += "uptime       : "; out += std::to_string(sys.uptimeMs / 1000);
     out += " s (0 = snapshot not refreshed; should be >0 when keyboard events >0)\n";
-    out += "process time : user "; out += std::to_string(sys.userTimeMs);
-    out += " ms, kernel "; out += std::to_string(sys.kernelTimeMs);
-    out += " ms, cpu "; {
-        char buffer[32];
-        std::snprintf(buffer, sizeof(buffer), "%.3f%%", sys.cpuPercentSinceStart);
-        out += buffer;
+    out += "process time : ";
+    if (sys.uptimeMs == 0 && sys.userTimeMs == 0 && sys.kernelTimeMs == 0) {
+        out += "(chưa có — snapshot chưa làm tươi)";
+    } else {
+        out += "user "; out += std::to_string(sys.userTimeMs);
+        out += " ms, kernel "; out += std::to_string(sys.kernelTimeMs);
+        out += " ms, cpu "; {
+            char buffer[32];
+            std::snprintf(buffer, sizeof(buffer), "%.3f%%", sys.cpuPercentSinceStart);
+            out += buffer;
+        }
     }
     out += "\n";
-    out += "memory       : WS "; out += std::to_string(sys.workingSetKb);
-    out += " kB (peak "; out += std::to_string(sys.peakWorkingSetKb); out += " kB)\n";
+    out += "memory       : ";
+    if (snapshotStale && sys.workingSetKb == 0 && sys.peakWorkingSetKb == 0) {
+        out += "(chưa có — snapshot chưa làm tươi)";
+    } else {
+        out += "WS "; out += std::to_string(sys.workingSetKb);
+        out += " kB (peak "; out += std::to_string(sys.peakWorkingSetKb); out += " kB)";
+    }
+    out += "\n";
     out += "ime          : "; out += sys.imeEnabled ? "ON" : "OFF";
     out += sys.excludedApp ? " (app đang bị loại trừ)" : "";
     out += " · hook "; out += sys.hookInstalled ? "đã cài" : "CHƯA cài";
     out += " · fg-hook "; out += sys.fgHookInstalled ? "đã cài" : "CHƯA cài";
     out += "\n";
-    out += "method/table : "; out += sys.inputMethod; out += " / "; out += sys.codeTable; out += "\n";
-    out += "output       : "; out += sys.outputMode; out += "\n";
-    out += "foreground   : "; out += sys.foregroundApp; out += "\n";
-    out += "layout       : "; out += sys.keyboardLayout; out += "\n";
+    out += "method/table : ";
+    out += sys.inputMethod.empty() ? "(chưa có)" : sys.inputMethod;
+    out += " / ";
+    out += sys.codeTable.empty() ? "(chưa có)" : sys.codeTable;
+    out += "\n";
+    out += "output       : "; out += sys.outputMode.empty() ? "(chưa có)" : sys.outputMode; out += "\n";
+    out += "foreground   : "; out += sys.foregroundApp.empty() ? "(chưa có — snapshot chưa làm tươi)" : sys.foregroundApp; out += "\n";
+    out += "layout       : "; out += sys.keyboardLayout.empty() ? "(chưa có — snapshot chưa làm tươi)" : sys.keyboardLayout; out += "\n";
     out += "live effects : "; out += sys.liveEffectsEnabled ? "ON" : "OFF"; out += "\n";
-    out += "diag level   : "; out += levelName(level()); out += "\n";
+    out += "diag level   : "; out += levelName(level());
+    if (level() == Level::Off) { out += " (bộ đếm tạm dừng — không cập nhật khi Tắt)"; }
+    out += "\n";
     out += "verdict      : "; out += verdict(); out += "\n\n";
 
     // v1.3.0-beta6 (V4): machine-readable tester evidence. These blocks are

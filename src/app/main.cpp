@@ -187,8 +187,8 @@ constexpr wchar_t kAppVersion[]     = L"1.3.0";           // numeric, 3-part
 // v1.2.2 RC1: [[maybe_unused]] — this is a documented VERSION CARRIER
 // (check_version.py reads it), not a code-level constant; the UI shows the
 // title/version forms. Keeping it zero-maintenance and warning-clean.
-[[maybe_unused]] constexpr wchar_t kAppVersionFull[] = L"1.3.0-beta7";  // with channel
-constexpr wchar_t kAppTitle[]       = L"KieeKey v1.3.0-beta7";  // sync with kAppVersionFull
+[[maybe_unused]] constexpr wchar_t kAppVersionFull[] = L"1.3.0-beta8";  // with channel
+constexpr wchar_t kAppTitle[]       = L"KieeKey v1.3.0-beta8";  // sync with kAppVersionFull
 
 //===========================================================================
 // Output item: what the consumer thread must emit (trivially copyable → can
@@ -308,6 +308,12 @@ struct AppState {
 
     // output mode: 0=Auto, 1=Always TSF, 2=Always SendInput (inline)
     std::atomic<int> outputMode{0};
+    // v1.3.0-beta8: atomic mirror of g.options.codeTable for lock-free live-gate reads.
+    // The UI thread writes g.options.codeTable under engineMtx; the hook/consumer
+    // threads read the gate via liveGateNow() without locking. Reading the
+    // non-atomic options field there is a data race (and stale-read drift). This
+    // mirror is the single source for the gate and is kept in sync on every write.
+    std::atomic<int> codeTableCache{static_cast<int>(CodeTable::Unicode)};
 
     // v1.2.1 RC2 — Performance preference profile (persisted) + hybrid
     // flags, and the RESOLVED strategy the hot paths read. Every consumer
@@ -591,6 +597,7 @@ void loadSettings() {
         if (m <= 2) { g.options.inputMethod = static_cast<InputMethod>(m); }
         const DWORD c = key.getDword(L"CodeTable", 0);
         if (c <= 4) { g.options.codeTable = static_cast<CodeTable>(c); }
+        g.codeTableCache.store(static_cast<int>(g.options.codeTable), std::memory_order_relaxed);
         g.options.checkSpelling            = key.getDword(L"CheckSpelling", 1) != 0;
         g.options.useMacro                 = key.getDword(L"UseMacro", 1) != 0;
         g.options.restoreIfWrongSpelling   = key.getDword(L"RestoreIfWrong", 1) != 0;
@@ -1060,7 +1067,7 @@ ok::effects::GateBlocker liveGateNow() noexcept {
     const bool ime = g.engineEnabled.load(std::memory_order_relaxed);
     const bool excl = g.fgExcluded_.load(std::memory_order_relaxed);
     const bool master = g.liveEffects.enabled();
-    const bool uni = g.options.codeTable == CodeTable::Unicode;
+    const bool uni = static_cast<CodeTable>(g.codeTableCache.load(std::memory_order_relaxed)) == CodeTable::Unicode;
     return ok::effects::liveGateBlocker(ime, excl, master, uni);
 }
 
@@ -1481,7 +1488,7 @@ PD onHookEventImpl(const KeyEvent& ev) {
                 const EngineResult& r = g.engine.lastResult();
                 g.engine.replacementUtf16(r, g.repScratch);
                 bs = r.backspaceCount;
-                if (g.liveEffects.enabled() && g.options.codeTable == CodeTable::Unicode) {
+                if (g.liveEffects.enabled() && static_cast<CodeTable>(g.codeTableCache.load(std::memory_order_relaxed)) == CodeTable::Unicode) {
                     g.liveEffects.rewrite(bs, g.repScratch);
                 }
             }
@@ -1753,7 +1760,7 @@ PD onHookEventImpl(const KeyEvent& ev) {
         // bug #4: never style the macro editor — the stored expansion must be
         // the clean Vietnamese the user typed, not a random-case/flip variant.
         liveOutput = !macroEditorFocus &&
-                     g.liveEffects.enabled() && g.options.codeTable == CodeTable::Unicode;
+                     g.liveEffects.enabled() && static_cast<CodeTable>(g.codeTableCache.load(std::memory_order_relaxed)) == CodeTable::Unicode;
         const std::int64_t diagEngT0 =
             ok::diag::Diagnostics::instance().atLeast(ok::diag::Level::Basic)
                 ? ok::diag::Diagnostics::nowUs() : 0;
@@ -2484,7 +2491,7 @@ std::wstring trayTipText() {
             g.engineEnabled.load(std::memory_order_relaxed),
             g.fgExcluded_.load(std::memory_order_relaxed),
             true,
-            g.options.codeTable == CodeTable::Unicode);
+            static_cast<CodeTable>(g.codeTableCache.load(std::memory_order_relaxed)) == CodeTable::Unicode);
         switch (blocker) {
             case GateBlocker::None:
                 tip += L" — hiệu ứng: BẬT";
@@ -3783,6 +3790,7 @@ void settingsFromControls() {
         if (hasComboCtl) {
             g.options.codeTable = (codeTableSel >= 0 && codeTableSel <= 4)
                 ? static_cast<CodeTable>(codeTableSel) : CodeTable::Unicode;
+            g.codeTableCache.store(static_cast<int>(g.options.codeTable), std::memory_order_relaxed);
         }
         // v1.1.3: every value below was read ABOVE the lock (fail-safe
         // dlgChecked fallbacks — a missing control can never silently turn

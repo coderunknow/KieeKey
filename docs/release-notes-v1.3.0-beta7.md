@@ -77,6 +77,27 @@ Platform honesty: snapshot/DPI/memory/cpu/foreground probes are Win32-only and v
 - **Failure**: any probe failure leaves field at last good value; all refresh paths are `noexcept` + try/catch.
 - **Shutdown**: `WM_DESTROY`/`WM_ENDSESSION` persist settings; `stop()` is bounded (ExitProcess on detached workers).
 
+## Addendum — RC polish included in this beta7 candidate (originally beta8 scope)
+
+Beta7 fixed the pipeline truth (snapshot refreshed, SendInput counted, hook counters synced). The same candidate audits the *presentation* of that truth: a report with zero evidence should not claim `OK`, an unavailable field should not look like a measured `0`, and the live-effects gate must not read `g.options.codeTable` across threads while the UI writes it. Windows additionally fixes `GetVersionExW` deprecation under `/WX`.
+
+**Root cause — diagnostics was truthful but not reliable:**
+
+- `verdict: OK` with `keyboard events 0`, `TotalEdit n=0`, `QueuedToConsumer 0` — fresh install showed green health before a single keystroke.
+- `app: ` blank, `os: ` blank, `arch: ` blank, `process time: user 0 ms, kernel 0 ms`, `memory: WS 0 kB` — empty/zero rendered as `0`/blank, indistinguishable from genuine zero.
+- `diag level: Basic` vs `Off` invisible — with `Level::Off`, counters freeze but report gave no cue.
+- `g.options.codeTable == CodeTable::Unicode` read in `emitInline()`, `liveOutput()` lambda, `trayTip` and F9 handler while UI thread wrote it under `engineMtx` — non-atomic cross-thread read (data race, UB).
+- `GetVersionExW` fallback in `detectOSName()` — deprecated, fails `/W4 /WX` on MSVC; `RtlGetVersion` path already succeeds.
+
+**Fix:**
+
+1. Verdict insufficient-data guard (`Diagnostics.cpp`): after existing escalations, check `kbd==0 && totalSamples==0 && QueuedToConsumer==0` → `CHƯA ĐỦ DỮ LIỆU: chưa ghi nhận phím nào — hãy gõ thử trong ứng dụng ngoài (ví dụ Notepad) rồi xuất lại báo cáo`. Gates `OK` on evidence, after all error paths.
+2. Report placeholders: `snapshotStale = osName.empty() && arch.empty() && appVersion.empty()` → header fields render `(chưa có — snapshot chưa làm tươi)` when stale; `process time` and `memory` collapse to placeholder when stale and zero; `diag level` line appends ` (bộ đếm tạm dừng — không cập nhật khi Tắt)` when `Level::Off`.
+3. Live-gate atomics (`main.cpp`): `AppState { std::atomic<int> codeTableCache{0}; }` mirror of `g.options.codeTable`; `loadSettings()` and `settingsFromControls()` store resolved table into cache; new `liveGateNow() noexcept` reads cache (relaxed) and returns `liveGateBlocker(g.imeEnabled, g.excludedApp, g.liveEffects.enabled(), isUnicode)`; `emitInline()`, `liveOutput()` lambda, `trayTip`, F9 handler now use `liveGateNow()`/`codeTableCache`.
+4. `GetVersionExW` removal: `detectOSName()` keeps last good `osName` on probe failure, no deprecated fallback.
+
+**Validation:** startup cache initialized to Unicode, first report `CHƯA ĐỦ DỮ LIỆU` until keys, rapid table switches stay coherent, `Level::Off` annotated, snapshot failure leaves placeholder, verdict still escalates on faults first.
+
 ## Version carriers — 1.3.0-beta7 (PE 1.3.0.8)
 
 - `src/app/main.cpp` `kAppVersionFull` / `kAppTitle` → `1.3.0-beta7`

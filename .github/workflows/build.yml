@@ -46,7 +46,7 @@ name: build
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, 'bench/**' ]
     tags: [ 'v*' ]
   pull_request:
     branches: [ main ]
@@ -92,7 +92,15 @@ jobs:
   # ---------------------------------------------------------------------------
   bench:
     name: Benchmark A/B campaign (manual)
-    if: github.event_name == 'workflow_dispatch'
+    # Runs on explicit workflow_dispatch OR a push to a `bench/**` branch.
+    # Both are deliberate opt-ins, never per-push/per-PR gates. The
+    # bench-branch form lets a scoped automation token (no Actions dispatch
+    # permission) start a campaign by pushing `bench/<base-tag>`, where the
+    # segment after `bench/` names the A/B base tag
+    # (e.g. `bench/v1.3.0-beta5` → campaign against v1.3.0-beta5).
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/bench/'))
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
@@ -103,7 +111,12 @@ jobs:
       - name: Resolve base tag
         id: base
         run: |
-          BASE_TAG="${{ inputs.base_tag || 'v1.3.0-beta5' }}"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            # refs/heads/bench/<base-tag> → strip the prefix; the rest is the tag
+            BASE_TAG="${GITHUB_REF#refs/heads/bench/}"
+          else
+            BASE_TAG="${{ inputs.base_tag || 'v1.3.0-beta5' }}"
+          fi
           git rev-parse -q --verify "refs/tags/$BASE_TAG^{commit}" \
             || { echo "::error::base tag $BASE_TAG not found"; exit 1; }
           git merge-base --is-ancestor "$BASE_TAG" HEAD \

@@ -409,20 +409,33 @@ if command -v node >/dev/null 2>&1; then
     fi
     # Pixel evidence for the HTML5 player: the frames above are rasterized
     # through the real web/arcade.js with a real Canvas2D implementation
-    # (@napi-rs/canvas — the optional dependency is absent in most checkouts,
-    # in which case the script exits 0 with a SKIPPED notice rather than
-    # failing the gate; docs/bench/arcade-130/frames/ holds the committed PNGs).
+    # @napi-rs/canvas remains optional locally. CI sets REQUIRE_WEB_FRAMES=1:
+    # a zero exit with SKIPPED (or no render-completion evidence) must fail.
     printf '  [check] %-22s' "web frames (node)"
     if ( cd "$REPO_ROOT" && node tests/render_web_frames.js "$OUT/web-frames" ) > "$OUT/logs/web_frames.log" 2>&1; then
         if grep -q 'SKIPPED' "$OUT/logs/web_frames.log"; then
-            printf ' skipped (no canvas module)\n'
+            if [ "${REQUIRE_WEB_FRAMES:-0}" = "1" ]; then
+                printf ' FAILED — web frames are required; see %s\n' "$OUT/logs/web_frames.log"
+                rc=1
+            else
+                printf ' skipped (no canvas module)\n'
+            fi
+        elif ! grep -Eq '^=== rendered [1-9][0-9]* game frames \+ a contact sheet ===$' "$OUT/logs/web_frames.log"; then
+            printf ' FAILED — missing render-completion evidence; see %s\n' "$OUT/logs/web_frames.log"
+            rc=1
         else
             printf ' ok\n'
+            if [ "${REQUIRE_WEB_FRAMES:-0}" = "1" ]; then
+                cat "$OUT/logs/web_frames.log"
+            fi
         fi
     else
         printf ' FAILED — %s\n' "$OUT/logs/web_frames.log"
         rc=1
     fi
+elif [ "${REQUIRE_WEB_FRAMES:-0}" = "1" ]; then
+    printf '  [check] %-22s FAILED — Node.js is required\n' "web frames (node)"
+    rc=1
 fi
 
 # --- release manifest matches the tracked tree ------------------------------

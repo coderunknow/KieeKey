@@ -83,11 +83,14 @@ jobs:
           key: native-${{ runner.os }}-${{ runner.arch }}-sccache-0.10-v2-${{ github.sha }}
           restore-keys: |
             native-${{ runner.os }}-${{ runner.arch }}-sccache-0.10-v2-
+      - name: Install web-frame rasterizer (no browser required)
+        run: npm install --no-save --no-package-lock @napi-rs/canvas@1.0.9
       - name: Test manifest generation
         run: python3 tests/test_sha256sums.py
       - name: Full native, UI-shim and web regression suite
         env:
           EXACT_CACHE_HIT: ${{ steps.compiler-cache.outputs.cache-hit }}
+          REQUIRE_WEB_FRAMES: '1'
         run: |
           mkdir -p "$SCCACHE_DIR"
           cache_files=$(find "$SCCACHE_DIR" -type f | wc -l)

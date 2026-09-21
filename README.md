@@ -579,3 +579,5 @@ KieeKey là phần mềm tự do theo **GNU GPLv3** (kế thừa từ OpenKey). 
 tác giả gốc được giữ trong đầu mỗi file nguồn; mã tham chiếu OpenKey 2.0.5 và
 UniKey giữ nguyên trong `tests/reference/` — xem
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+
+<!-- CI benchmark trigger -->

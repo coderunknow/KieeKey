@@ -81,9 +81,7 @@ if(MSVC)
     # regression nets; a plain `if` there fires C4127 under /W4, so it is
     # disabled too (the alternative, `if constexpr`, is ill-formed for the
     # runtime conditions the same macros also carry).
-    # MSBuild --parallel schedules projects; /MP2 also compiles independent
-    # translation units within a project, with bounded nested memory use.
-    add_compile_options(/MP2 /W4 /wd4324 /wd4127 /permissive- /Zc:__cplusplus /Zc:preprocessor /utf-8)
+    add_compile_options(/W4 /wd4324 /wd4127 /permissive- /Zc:__cplusplus /Zc:preprocessor /utf-8)
     if(KIEEKEY_WERROR)
         add_compile_options(/WX)
     endif()
@@ -446,6 +444,7 @@ else()
         # Shared portable feature implementation. Keep graphical/server tests
         # registered with CTest too (the shell runner is not the only build).
         add_library(ok_arcade_portable STATIC
+            src/core/TextEngine.cpp
             src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ArcadeRender.cpp
             src/core/Progression.cpp src/core/ArcadeServer.cpp
             src/core/ChaosEngine.cpp src/core/AiRival.cpp src/core/TypingAnalytics.cpp)

@@ -781,6 +781,15 @@ HttpResponse ArcadeServer::handleRequest(const std::string& method, const std::s
             config.typingRacePacerWpm = static_cast<double>(value);
             changed = true;
         }
+        // v1.3.0-beta6 (V2/B7): the WASD-race steering choice reaches the web
+        // player too. Live-safe (applyLiveConfigToGame reinterprets the NEXT
+        // key only — never restarts the run), so it rides the same live path
+        // as the fail mode / pacer. Values match WasdSteering: 0 Arrows,
+        // 1 Wasd, 2 Both; anything else is ignored.
+        if (jsonFindInt(body, "wasdSteering", value) && value >= 0 && value <= 2) {
+            config.wasdSteering = static_cast<WasdSteering>(value);
+            changed = true;
+        }
         long long applyNow = 0;
         (void)jsonFindInt(body, "applyNow", applyNow);
         bool needsRelaunch = false;
@@ -818,7 +827,11 @@ HttpResponse ArcadeServer::handleRequest(const std::string& method, const std::s
                         (now.noMistakeFailMode == FailMode::Hardcore ? "0" : "1") +
                         ",\"rhythmBpm\":" + std::to_string(static_cast<int>(now.rhythmBpm)) +
                         ",\"typingRacePacerWpm\":" +
-                        std::to_string(static_cast<int>(now.typingRacePacerWpm)) + "}}";
+                        std::to_string(static_cast<int>(now.typingRacePacerWpm)) +
+                        // v1.3.0-beta6 (V2/B7): echo the applied steering mode
+                        // so the web panel can reflect what actually landed.
+                        ",\"wasdSteering\":" +
+                        std::to_string(static_cast<int>(now.wasdSteering)) + "}}";
         return response;
     }
 

@@ -33,6 +33,7 @@ const ui = {
   bpmOut: document.getElementById('bpmOut'),
   pacer: document.getElementById('pacer'),
   pacerOut: document.getElementById('pacerOut'),
+  steering: document.getElementById('steering'),
 };
 
 const KIND = { RECT: 0, CIRCLE: 1, LINE: 2, POLY: 3, TEXT: 4 };
@@ -212,7 +213,11 @@ function updateHud(state) {
     ui.banner.classList.add('hidden');
   }
 
-  ui.subtitle.textContent = state.frame.status || state.frame.hint ||
+  // v1.3.0-beta6 (V2): match the win32 hub footer, which shows HINT FIRST and
+  // falls back to status (ArcadeWindow.cpp). The previous order hid the
+  // B5 divergence hint ("Sai — nhấn Backspace N lần để sửa") whenever the
+  // game also sets a status line — i.e. always, for the typing games.
+  ui.subtitle.textContent = state.frame.hint || state.frame.status ||
     'Cùng một engine C++ với bản Win32 — vẽ bằng HTML5 Canvas';
 
   if (state.slug !== activeSlug) {
@@ -452,10 +457,16 @@ async function pushConfig(opts) {
     noMistakeFailMode: parseInt(ui.failMode.value, 10),
     rhythmBpm: parseInt(ui.bpm.value, 10),
     typingRacePacerWpm: parseInt(ui.pacer.value, 10),
+    // v1.3.0-beta6 (V2/B7): steering-key choice (0 Arrows / 1 WASD / 2 Both).
+    wasdSteering: parseInt(ui.steering.value, 10),
     applyNow: (opts && opts.applyNow) ? 1 : 0,
   });
   if (!result || !result.ok) {
     return;
+  }
+  // Reflect what actually landed (the bridge echoes the applied config).
+  if (result.config && Number.isInteger(result.config.wasdSteering) && ui.steering) {
+    ui.steering.value = String(result.config.wasdSteering);
   }
   if (result.restartApplied) {
     showToast('Đã áp dụng cấu hình mới — ván chơi được bắt đầu lại');
@@ -466,7 +477,7 @@ async function pushConfig(opts) {
 
 // While the slider moves: live push only (no restart on every pixel).
 // On release: one relaunch so the new tempo is audible immediately.
-for (const el of [ui.failMode, ui.pacer]) {
+for (const el of [ui.failMode, ui.pacer, ui.steering]) {
   el.addEventListener('change', () => pushConfig());
   el.addEventListener('input', () => pushConfig());
 }

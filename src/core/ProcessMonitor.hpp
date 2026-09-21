@@ -119,6 +119,13 @@ struct ForegroundInfo {
     // probe is a separate concern — see treatAsElevated).
     std::uint32_t      nameQueryError = 0;
 
+    // v1.3.0-beta6 (V4): WHICH Win32 step produced the display name — the
+    // B4 evidence line in the diagnostics report. Values mirror
+    // ok::diag::ResolveApi (kept numeric so this header stays lean):
+    //   0 = not recorded, 1 = QueryFullProcessImageNameW (image path),
+    //   2 = UWP AUMID property, 3 = honest fallback label "pid N (lỗi X)".
+    std::uint8_t       nameApi = 0;
+
     // Auto-bypass set: IDEs/editors and immersive (fullscreen) game titles.
     // Shell (Explorer, Terminal…) is intentionally NOT auto-excluded —
     // legacy OpenKey kept processing there (Vietnamese filenames, etc.).

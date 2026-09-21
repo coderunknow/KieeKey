@@ -19,7 +19,7 @@ The project may still be paused again in the future if development no longer pro
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20ARM64-0078D6.svg)
 ![Build](https://img.shields.io/badge/build-CMake%20%3E%3D%203.28-064FAD.svg)
 
-**KieeKey v1.3.0-beta5** is a modern, low-latency Vietnamese input method
+**KieeKey v1.3.0-beta6** is a modern, low-latency Vietnamese input method
 engine (bộ gõ Tiếng Việt) for Windows, with a system-tray application, a TSF
 text-store composer and an optional WinUI 3 Fluent settings UI.
 
@@ -33,6 +33,34 @@ text-store composer and an optional WinUI 3 Fluent settings UI.
 ![KieeKey preview](src/app/KieeKeyApp-preview.png)
 
 ---
+
+## What's new in v1.3.0-beta6 — Self-audit hardening (preparing v1.3.0-rc1)
+
+Beta6 is the self-audit release (Windows file version **1.3.0.7**): there was
+no new tester report — KieeKey audited itself. Every finding below is labelled
+`[VERIFIED]` (reproduced by a probe/test before fixing) or `[HYPOTHESIS]`
+(observed in source, unproven) in `docs/release-notes-v1.3.0-beta6.md`.
+
+* **CI gates closed**: the dialog layout audit (`--strict`) and the
+  dialog-controls audit now run in the test suite — they used to pass only
+  because a human ran them by hand. Both were proven to fail on seeded
+  violations before being trusted as gates.
+* **Web player parity**: the per-game steering choice (B7) reached the HTML5
+  player; the B5 red divergent tail + "Backspace để sửa" hint is now actually
+  VISIBLE there (the web HUD used to show the status line instead of the
+  hint); the GateBlocker readout is documented as intentionally win32-only.
+* **Chaos Lab hardened**: every one of its 17 controls audited end-to-end
+  (created → consumed → engine → persisted); the intensity slider's
+  percent rounding fixed; intensity / glyph mode / granularity now survive a
+  restart; a new source-contract audit guards the window in the suite.
+* **Tester-evidence diagnostics**: the exported/copied diagnostics report now
+  carries machine-readable proof lines — the last 32 output deliveries with
+  target window class/process and the live-effects gate verdict at emit time,
+  which Win32 API resolved the foreground process name, and the real
+  DPI/font/DWM metrics — plus a one-click "copy report to clipboard" button.
+* **Benchmarks on CI**: the full no-regression A/B campaign (feature
+  isolation medians + the e2e shim pipeline) now runs as a GitHub Actions
+  workflow on a quieter runner, closing the beta5-owed e2e re-check.
 
 ## What's new in v1.3.0-beta5 — Nine reported bug clusters fixed at the root
 
@@ -544,7 +572,7 @@ original licenses — see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 ## Tóm tắt (Tiếng Việt)
 
-**KieeKey v1.3.0-beta5** là bộ gõ Tiếng Việt cho Windows, xây dựng dựa trên
+**KieeKey v1.3.0-beta6** là bộ gõ Tiếng Việt cho Windows, xây dựng dựa trên
 **[OpenKey](https://github.com/tuyenvm/OpenKey)** (GPL-3.0) của tác giả Tuyen
 Mai. Engine gốc đã được port sang C++ hiện đại: hook bất đồng bộ với hàng đợi
 lock-free, composer TSF (không backspace ảo), bảng âm tiết flat tối ưu cache,
@@ -569,6 +597,31 @@ WASD khi gõ tiếng Việt**, Chaos Lab có lối vào ngay trong Arcade Hub, v
 tùy chọn cài đặt **áp dụng ngay khi bấm + được lưu**. Thêm tài liệu hiệu năng
 `docs/PERFORMANCE.md` (chi phí ns/phím của từng tính năng opt-in). Chi tiết:
 `docs/release-notes-v1.3.0-beta5.md`.
+
+Điểm mới của v1.3.0-beta6 — bản tự kiểm tra, chuẩn bị cho **v1.3.0-rc1**
+(không có báo cáo thử nghiệm mới — KieeKey tự tìm lỗi của chính mình, mọi kết
+luận đều gắn nhãn `[VERIFIED]`/`[HYPOTHESIS]` trong
+`docs/release-notes-v1.3.0-beta6.md`):
+
+* **Đóng cổng CI**: audit dàn trang hộp thoại (`--strict`) và audit điều
+  khiển nay chạy trong bộ test (trước đây chỉ pass vì có người chạy tay);
+  cả hai cổng được chứng minh bắt được lỗi gieo trước khi được tin cậy.
+* **Cân bằng trình phát web**: chọn **phím lái** (B7) ngay trong bản web;
+  đuôi gõ sai màu đỏ + gợi ý "Backspace để sửa" (B5) nay THẬT SỰ hiển thị
+  trên web (trước đó bị dòng trạng thái đè); chỉ báo cổng chặn hiệu ứng
+  được ghi rõ là chỉ có ở bản Win32.
+* **Phòng Chaos được gia cố**: toàn bộ 17 điều khiển được kiểm tra tận gốc
+  (tạo → xử lý → engine → lưu); sửa lỗi làm tròn % của thanh cường độ;
+  cường độ / chế độ glyph / độ hạt nay sống sót qua khởi động lại; audit
+  hợp đồng nguồn mới bảo vệ cửa sổ này trong bộ test.
+* **Chẩn đoán có bằng chứng cho người thử máy**: báo cáo chẩn đoán (xuất
+  file hoặc **nút "Sao chép báo cáo"** vào clipboard) nay kèm các dòng đọc
+  được bằng máy — 32 lần xuất chữ gần nhất kèm class cửa sổ/tiến trình đích
+  và phán quyết cổng hiệu ứng tại thời điểm xuất, Win32 API nào đã giải tên
+  tiến trình nền trước, và chỉ số DPI/font/DWM thật.
+* **Benchmark chạy trên CI**: chiến dịch A/B chống thụt lùi đầy đủ (trung vị
+  cô lập tính năng + đường ống e2e shim) nay chạy bằng GitHub Actions trên
+  máy yên tĩnh hơn, trả nốt món kiểm tra e2e của beta5.
 
 Chạy toàn bộ kiểm thử: `tests/run_all_tests.sh` (Linux/mac) hoặc `ctest`
 (Windows). Bật/tắt bộ gõ nằm hoàn toàn trong ứng dụng (trình đơn khay + Cài

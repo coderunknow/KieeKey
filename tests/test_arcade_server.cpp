@@ -556,6 +556,80 @@ void testConfigApplyNow() {
 }
 
 //---------------------------------------------------------------------------
+// v1.3.0-beta6 (V2/B7): the WASD-race steering choice reaches the web player.
+// It is a LIVE knob (applyLiveConfigToGame reinterprets the next key), so it
+// must be applied without a relaunch and echoed back; out-of-range values are
+// ignored. The behavioral side (steer+compose) is pinned in test_arcade_beta5.
+void testWasdSteeringConfig() {
+    ArcadeServer server;
+    auto begin = server.handleRequest("POST", "/api/start", "{\"slug\":\"wasd-race\"}");
+    assert(begin.status == 200);
+
+    // Default is Arrows (0); the route echoes the applied value.
+    auto base = server.handleRequest("POST", "/api/config", "{}");
+    assert(base.status == 200);
+    assert(contains(bodyOf(base), "\"wasdSteering\":0"));
+
+    // Live knob: applied immediately, no relaunch requested.
+    auto set = server.handleRequest("POST", "/api/config", "{\"wasdSteering\":2}");
+    assert(set.status == 200);
+    assert(contains(bodyOf(set), "\"wasdSteering\":2"));
+    assert(contains(bodyOf(set), "\"restartRequired\":false"));
+
+    // Sticky across an empty-body read.
+    auto sticky = server.handleRequest("POST", "/api/config", "{}");
+    assert(contains(bodyOf(sticky), "\"wasdSteering\":2"));
+
+    // Out-of-range is ignored instead of corrupting the config.
+    auto bad = server.handleRequest("POST", "/api/config", "{\"wasdSteering\":9}");
+    assert(bad.status == 200);
+    assert(contains(bodyOf(bad), "\"wasdSteering\":2"));
+    assert(!contains(bodyOf(bad), "\"wasdSteering\":9"));
+
+    (void)server.handleRequest("POST", "/api/stop", "");
+    std::cout << "  [PASS] wasd steering config route (B7 web parity)\n";
+}
+
+//---------------------------------------------------------------------------
+// v1.3.0-beta6 (V2/B5): the red divergent tail + the "Backspace để sửa" hint
+// are built at FRAME level (Arcade.cpp addComposedLine / stats.hint) and the
+// web player receives them through the SAME JSON the GDI renderer never sees.
+// This proves the web transport carries them: type wrong Telex into a fresh
+// Vietnamese wasd-race run and read /api/state. Passages are real sentences,
+// so "aaaaa" diverges from every one of them within a few keys.
+void testDivergentTailReachesWebJson() {
+    ArcadeServer server;
+    auto begin = server.handleRequest("POST", "/api/start", "{\"slug\":\"wasd-race\"}");
+    assert(begin.status == 200);
+
+    // Sanity: a non-diverged frame has no composed-buffer line yet.
+    auto clean = server.handleRequest("GET", "/api/state", "");
+    assert(clean.status == 200);
+    assert(!contains(bodyOf(clean), "Bạn đã gõ"));
+
+    // Type characters that cannot match the start of any passage.
+    auto typed = server.handleRequest("POST", "/api/text", "{\"text\":\"aaaaa\"}");
+    assert(typed.status == 200);
+
+    auto diverged = server.handleRequest("GET", "/api/state", "");
+    assert(diverged.status == 200);
+    const std::string body = bodyOf(diverged);
+    // The composed-buffer line label reaches the web client...
+    assert(contains(body, "Bạn đã gõ"));
+    // ...with the corrective hint (N Backspace presses) in the frame stats...
+    assert(contains(body, "Sai — nhấn Backspace"));
+    assert(contains(body, "để sửa"));
+    // ...and the divergent tail arrives as its OWN text run drawn in the
+    // "wrong" palette color (same format as ArcadeRender's appendColor).
+    char badHex[16];
+    std::snprintf(badHex, sizeof(badHex), "\"#%02X%02X%02X%02X\"", colorR(palette::kBad),
+                  colorG(palette::kBad), colorB(palette::kBad), colorA(palette::kBad));
+    assert(contains(body, badHex));
+    assert(contains(body, "aaaa"));   // the composed tail itself, as a run payload
+    std::cout << "  [PASS] divergent tail + Backspace hint reach the web JSON (B5)\n";
+}
+
+//---------------------------------------------------------------------------
 // v1.3.0 FIX: the bridge's JSON reader only understood \n, \t and \r and
 // dropped the backslash for everything else, so \uXXXX escapes arrived as
 // literal "u0103" text (Python's json.dumps escapes non-ASCII by default) and
@@ -625,6 +699,8 @@ int main() {
     testChaosLab();
     testProgressionAndRivalRoutes();
     testConfigApplyNow();
+    testWasdSteeringConfig();
+    testDivergentTailReachesWebJson();
     testJsonStringEscapes();
     std::cout << "=== ALL ARCADE SERVER TESTS PASSED ===\n";
     return 0;

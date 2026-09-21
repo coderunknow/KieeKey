@@ -223,6 +223,15 @@
       <label>Pacer đua tốc độ (WPM): <output id="pacerOut">60</output>
         <input id="pacer" type="range" min="0" max="200" value="60">
       </label>
+      <!-- v1.3.0-beta6 (V2/B7): the WASD-race steering choice, previously a
+           win32-only setting. Values match ok::arcade::WasdSteering. -->
+      <label>Phím lái (Đua + né)
+        <select id="steering">
+          <option value="0" selected>Mũi tên (mặc định)</option>
+          <option value="1">WASD — lái VÀ gõ Telex/VNI</option>
+          <option value="2">Cả hai (mũi tên + WASD)</option>
+        </select>
+      </label>
     </div>
 
     <h2>Điều khiển</h2>

@@ -5,6 +5,56 @@ Keep a Changelog; versioning: SemVer.
 
 ## [Unreleased]
 
+## [1.3.0-beta6] — 2026-09-20
+### Self-audit hardening release — preparing v1.3.0-rc1 (file build 1.3.0.7)
+No tester report drove this release: KieeKey audited itself. Five committed
+workstreams (CI-gate closure, web-frontend parity, Chaos Lab 3-layer audit,
+Windows proof tooling, deep sweep) plus the full no-regression benchmark
+campaign offloaded to GitHub Actions. Every finding is labelled `[VERIFIED]`
+(reproduced before fixing) or `[HYPOTHESIS]` in
+`docs/release-notes-v1.3.0-beta6.md`.
+
+* **V1 — CI-gate gap closed [VERIFIED].** `audit_layout.py --strict` and
+  `audit_controls.py` are now `[check]` steps of `tests/run_all_tests.sh`;
+  they used to pass only because a human ran them by hand. Each gate was
+  proven to go red on a seeded violation (an 8px-wide radio button; a control
+  id that is read but never created) and restored afterwards.
+* **V2 — web-player parity.** [FIXED] the web HUD preferred `status` over
+  `hint`, hiding the beta5 B5 divergence hint ("Sai — nhấn Backspace N lần để
+  sửa") in the HTML5 player; it now matches the win32 footer (hint first).
+  [NEW] the per-game steering choice (B7) reaches the web player:
+  `/api/config` accepts and echoes `wasdSteering` and the player gained a
+  select control. [VERIFIED] the red divergent tail + Backspace hint DO reach
+  the web JSON (styled runs in `tests/test_arcade_server.cpp`). B2's
+  GateBlocker readout is documented as intentionally win32-only (the web
+  bridge is a standalone process with no IME gate).
+* **V3 — Chaos Lab 3-layer audit.** All 17 controls audited (created →
+  consumed → engine-connected → persisted). [FIXED] the intensity slider's
+  percent sync truncated floats (0.57 → 56 %). [FIXED] chaos intensity, glyph
+  intensity, glyph mode and case granularity are now persisted
+  (`ChaosIntensityPercent` / `ChaosGlyphIntensityPercent` / `ChaosGlyphMode` /
+  `ChaosCaseGranularity`) instead of resetting every restart. New
+  `scripts/audit_chaos_lab.py` suite gate, proven red on two seeded
+  violations.
+* **V4 — tester-evidence diagnostics.** The report (file export and the new
+  "Sao chép báo cáo" clipboard button) carries machine-readable lines:
+  `emit-chain` — last 32 deliveries with target window class/process and the
+  live-effects gate verdict at emit time (B2); `process-resolution` — which
+  Win32 API resolved the foreground name (B4); `display-metrics` — real
+  DPI/font/DWM/per-monitor numbers (B1). All portable logic unit-tested; the
+  Win32 plumbing compiles under the zig full-TU gate (x64 + ARM64).
+* **V5 — deep sweep.** [VERIFIED clean] tray menu (20/20 items wired), macro
+  file round-trip (UTF-8/UTF-16 BOM), OnlineGhost, diagnostics-level
+  persistence, TSF batch partial-apply semantics, rhythm chart regeneration
+  ordering, registry load/save symmetry (35 keys), ARM64/ARM64EC compile
+  gates. Hub catalog navigation is mouse-only by design [HYPOTHESIS: no
+  keyboard navigation was ever claimed or lost].
+* **G4 — benchmarks on CI.** The full A/B campaign (feature-isolation medians
+  + e2e shim pipeline) now runs via `workflow_dispatch` on a GitHub Actions
+  runner (quieter than dev sandboxes), closing the beta5-owed e2e re-check;
+  `tests/run_isolation_ab.sh` makes the campaign reproducible by code instead
+  of by hand.
+
 ## [1.3.0-beta5] — 2026-09-20
 ### All nine reported Windows defects fixed at the root, plus the performance-impact and discoverability asks (file build 1.3.0.6)
 Every fix below came from the beta4 Windows tester report and was reproduced

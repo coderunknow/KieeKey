@@ -185,8 +185,8 @@ constexpr wchar_t kAppVersion[]     = L"1.3.0";           // numeric, 3-part
 // v1.2.2 RC1: [[maybe_unused]] — this is a documented VERSION CARRIER
 // (check_version.py reads it), not a code-level constant; the UI shows the
 // title/version forms. Keeping it zero-maintenance and warning-clean.
-[[maybe_unused]] constexpr wchar_t kAppVersionFull[] = L"1.3.0-beta5";  // with channel
-constexpr wchar_t kAppTitle[]       = L"KieeKey v1.3.0-beta5";  // sync with kAppVersionFull
+[[maybe_unused]] constexpr wchar_t kAppVersionFull[] = L"1.3.0-beta6";  // with channel
+constexpr wchar_t kAppTitle[]       = L"KieeKey v1.3.0-beta6";  // sync with kAppVersionFull
 
 //===========================================================================
 // Output item: what the consumer thread must emit (trivially copyable → can
@@ -672,6 +672,24 @@ void loadSettings() {
             chaos.masterEnabled         = key.getDword(L"ChaosMaster", 0) != 0;
             chaos.randomCaseEnabled     = key.getDword(L"ChaosCase", 0) != 0;
             chaos.glyphTransformEnabled = key.getDword(L"ChaosGlyph", 0) != 0;
+            // v1.3.0-beta6 (V3): the Chaos Lab's slider / mode / granularity
+            // used to reset to engine defaults on every restart (only the
+            // three checkboxes were persisted). Mirror of saveSettings().
+            // The two intensities are INDEPENDENT fields (the web bridge
+            // exposes both), so they are persisted separately; the Lab's
+            // single slider happens to write the same value into both.
+            const DWORD caseIntensity = std::clamp<DWORD>(
+                key.getDword(L"ChaosIntensityPercent", 50), 0, 100);
+            chaos.randomCaseIntensity = static_cast<float>(caseIntensity) / 100.0f;
+            const DWORD glyphIntensity = std::clamp<DWORD>(
+                key.getDword(L"ChaosGlyphIntensityPercent", 100), 0, 100);
+            chaos.glyphIntensity = static_cast<float>(glyphIntensity) / 100.0f;
+            const DWORD glyphMode = key.getDword(L"ChaosGlyphMode", 0);
+            chaos.glyphMode = static_cast<ok::chaos::GlyphTransformMode>(
+                std::clamp<DWORD>(glyphMode, 0, 6));
+            const DWORD granularity = key.getDword(L"ChaosCaseGranularity", 0);
+            chaos.caseGranularity = (granularity == 1) ? ok::chaos::CaseGranularity::ByWord
+                                                       : ok::chaos::CaseGranularity::ByChar;
             ok::chaos::ChaosEngine::instance().setConfig(chaos);
 
             ok::ai::AiRivalEngine::instance().setOptIn(key.getDword(L"AiOptIn", 0) != 0);
@@ -729,6 +747,18 @@ void saveSettings() {
             key.setDword(L"ChaosMaster",   chaos.masterEnabled ? 1 : 0);
             key.setDword(L"ChaosCase",     chaos.randomCaseEnabled ? 1 : 0);
             key.setDword(L"ChaosGlyph",    chaos.glyphTransformEnabled ? 1 : 0);
+            // v1.3.0-beta6 (V3): persist the Lab knobs too (intensity, glyph
+            // mode, case granularity) — they reach ChaosEngine from the Lab
+            // window and the web bridge, and saveSettings() runs on every
+            // settings change point plus the final teardown sweep, so the
+            // registry always mirrors the last config the user applied.
+            key.setDword(L"ChaosIntensityPercent",
+                         static_cast<DWORD>(chaos.randomCaseIntensity * 100.0f + 0.5f));
+            key.setDword(L"ChaosGlyphIntensityPercent",
+                         static_cast<DWORD>(chaos.glyphIntensity * 100.0f + 0.5f));
+            key.setDword(L"ChaosGlyphMode", static_cast<DWORD>(chaos.glyphMode));
+            key.setDword(L"ChaosCaseGranularity",
+                         chaos.caseGranularity == ok::chaos::CaseGranularity::ByWord ? 1 : 0);
             key.setDword(L"AiOptIn",
                          ok::ai::AiRivalEngine::instance().isOptIn() ? 1 : 0);
         }
@@ -1007,8 +1037,72 @@ void openArcadeHub(const char* slug) {
     hub.focus();
 }
 
+//===========================================================================
+// v1.3.0-beta6 (V4) — TESTER EVIDENCE for the Windows-only residuals.
+//
+// beta5 closed with four questions only the tester's machine can answer:
+// B2 (do live effects really reach external apps?), B4 (is the foreground
+// process name really resolved?), B1 (what are the real DPI/font/DWM
+// numbers?), B8 (does the MessageBox path work?). The diagnostics report
+// now carries MACHINE-READABLE lines for the first three; these helpers
+// fill them. Everything here is noexcept + exception-swallowing: it runs on
+// the hook/consumer threads, and evidence must never take the IME down.
+//===========================================================================
+namespace {
+
+// The gate verdict for the CURRENT live flags — the same pure model the
+// hook evaluates per key (ok::effects::liveGateBlocker). Single source of
+// truth for the UI readout AND the emit-chain evidence lines.
+ok::effects::GateBlocker liveGateNow() noexcept {
+    const bool ime = g.engineEnabled.load(std::memory_order_relaxed);
+    const bool excl = g.fgExcluded_.load(std::memory_order_relaxed);
+    const bool master = g.liveEffects.enabled();
+    const bool uni = g.options.codeTable == CodeTable::Unicode;
+    return ok::effects::liveGateBlocker(ime, excl, master, uni);
+}
+
+// One delivery reached an output layer: record WHERE it went (foreground
+// window class + process from the monitor snapshot) and the gate state at
+// emit time. channel: 0 = TSF commit, 1 = SendInput.
+void recordEmitEvidence(std::uint8_t channel, std::uint32_t chars) noexcept {
+    // Gated like the consumer's own counters: at level Off the only cost is
+    // one relaxed load, so the hot path stays honest. The ring itself is a
+    // single-writer mutex (only the output thread records deliveries).
+    if (!ok::diag::Diagnostics::instance().atLeast(ok::diag::Level::Basic)) {
+        return;
+    }
+    try {
+        ok::diag::EmitRecord rec{};
+        rec.channel = channel;
+        rec.chars = chars;
+        rec.gate = static_cast<std::uint8_t>(liveGateNow());
+        const HWND fg = ::GetForegroundWindow();
+        wchar_t cls[64]{};
+        if (fg != nullptr && ::GetClassNameW(fg, cls, 64) > 0) {
+            rec.windowClass = utf16ToUtf8(std::wstring(cls));
+        }
+        if (const auto snap = g.monitor.snapshot()) {
+            rec.pid = snap->pid;
+            rec.processName = snap->exeNameUtf8;
+        }
+        ok::diag::Diagnostics::instance().recordEmit(std::move(rec));
+    } catch (...) {
+        // Evidence collection must never kill the IME.
+    }
+}
+
+// Filled near windowDpi() (it needs the DPI helpers defined later).
+void refreshEvidenceContext() noexcept;
+
+} // namespace
+
 void emitInline(std::size_t backspace, const std::wstring& text) noexcept {
     g.hook.emitter().sendEdit(backspace, text);
+    // v1.3.0-beta6 (V4): the producer-side SendInput sink — ring-full
+    // fallbacks, inline decisions and the Chaos Lab injection all land here.
+    if (!text.empty()) {
+        recordEmitEvidence(1, static_cast<std::uint32_t>(text.size()));
+    }
 }
 
 // v1.3.0: the Chaos Lab window types its transformed text through the very same
@@ -1966,6 +2060,15 @@ void onConsumerEvent(const KeyEvent& /*ev*/) noexcept {
             batchOk = false;
             appliedCountRead = 0;   // unknown progress — re-deliver the batch
         }
+        // v1.3.0-beta6 (V4): a successful TSF commit IS a delivery — record
+        // it for the emit-chain evidence (channel 0 = TSF).
+        if (batchOk) {
+            std::uint32_t totalChars = 0;
+            for (const ok::tsf::EditDelta& d : g_editBatch) {
+                totalChars += static_cast<std::uint32_t>(d.text.size());
+            }
+            recordEmitEvidence(0, totalChars);
+        }
         if (diagC) {
             diagIns.record(ok::diag::Stage::TsfCommit,
                            ok::diag::Diagnostics::nowUs() - diagCommitT0);
@@ -2002,11 +2105,16 @@ void onConsumerEvent(const KeyEvent& /*ev*/) noexcept {
             // then "to" over it -> "tto"). Deliver only the UNAPPLIED suffix.
             std::size_t applied = 0;
             if (appliedCountRead) { applied = appliedCountRead; }
+            std::uint32_t fallbackChars = 0;   // v1.3.0-beta6 (V4)
             for (std::size_t i = applied; i < g_editBatch.size(); ++i) {
                 const ok::tsf::EditDelta& d = g_editBatch[i];
                 sendBackspaces(d.backspace);
                 sendUnicodeText(d.text);
+                fallbackChars += static_cast<std::uint32_t>(d.text.size());
             }
+            // The fallback re-emitted through SendInput — that is the
+            // delivery the tester asked about (channel 1).
+            if (fallbackChars > 0) { recordEmitEvidence(1, fallbackChars); }
         }
 #if KIEEKEY_PROFILE
         if (profOn && profT0 != 0) {
@@ -2053,6 +2161,7 @@ void onConsumerEvent(const KeyEvent& /*ev*/) noexcept {
                 // Direct emitter call: no std::wstring, no allocation — the
                 // fallback must not be able to throw for the same reason.
                 g.hook.emitter().sendEdit(it.backspace, it.text, it.textLen);
+                recordEmitEvidence(1, it.textLen);   // v1.3.0-beta6 (V4)
                 continue;
             }
             ++g_editBatchCount;
@@ -2093,6 +2202,8 @@ void onConsumerEvent(const KeyEvent& /*ev*/) noexcept {
             } else {
                 g.hook.emitter().sendEdit(it.backspace, it.text, it.textLen);
             }
+            // v1.3.0-beta6 (V4): deferred inline edit delivered via SendInput.
+            recordEmitEvidence(1, it.textLen);
 #if KIEEKEY_PROFILE
             if (profOn && profT0 != 0) {
                 ok::prof::StageRecord r;
@@ -2310,12 +2421,9 @@ std::wstring infoDiagnosticsText() {
 // diagnostics report, so "I enabled it but nothing happens" always has a
 // visible, exact answer.
 const wchar_t* liveGateStatusText() noexcept {
-    const bool ime = g.engineEnabled.load(std::memory_order_relaxed);
-    const bool excl = g.fgExcluded_.load(std::memory_order_relaxed);
-    const bool master = g.liveEffects.enabled();
-    const bool uni = g.options.codeTable == CodeTable::Unicode;
     using ok::effects::GateBlocker;
-    switch (ok::effects::liveGateBlocker(ime, excl, master, uni)) {
+    // v1.3.0-beta6 (V4): same gate model the emit-chain evidence records.
+    switch (liveGateNow()) {
         case GateBlocker::None:
             return L"Hiệu ứng: SẴN SÀNG (IME bật · Unicode · app không loại trừ)";
         case GateBlocker::ImeDisabled:
@@ -3079,6 +3187,85 @@ UINT windowDpi(HWND hwnd) noexcept {
     return dpi ? dpi : 96;
 }
 
+namespace {
+
+// v1.3.0-beta6 (V4): refresh the B1/B4 evidence blocks from live Win32
+// state. Called on foreground change and right before any report is
+// generated/exported/copied, so the numbers are the machine's AT THAT
+// MOMENT, not stale startup values. All probes are dynamic GetProcAddress
+// lookups: the exe must build against older SDKs and run on a clean machine.
+UINT systemDpiOrFallback() noexcept {
+    if (const HMODULE user32 = ::GetModuleHandleW(L"user32.dll")) {
+        using Fn = UINT(WINAPI*)();
+        const auto fn = reinterpret_cast<Fn>(::GetProcAddress(user32, "GetDpiForSystem"));
+        if (fn != nullptr) {
+            const UINT d = fn();
+            if (d != 0) { return d; }
+        }
+    }
+    const HDC dc = ::GetDC(nullptr);
+    const UINT dpi = (dc != nullptr)
+        ? static_cast<UINT>(::GetDeviceCaps(dc, LOGPIXELSX)) : 96;
+    if (dc != nullptr) { ::ReleaseDC(nullptr, dc); }
+    return dpi ? dpi : 96;
+}
+
+void refreshEvidenceContext() noexcept {
+    try {
+        auto& diag = ok::diag::Diagnostics::instance();
+
+        // B4: HOW the foreground process name was resolved (the monitor
+        // stamps nameApi at resolution time; see ProcessMonitor.cpp).
+        if (const auto snap = g.monitor.snapshot()) {
+            ok::diag::ProcessResolution res{};
+            res.pid = snap->pid;
+            res.api = snap->nameApi;
+            res.error = snap->nameQueryError;
+            res.elevated = snap->elevated;
+            res.name = snap->exeNameUtf8;
+            diag.setProcessResolution(std::move(res));
+        }
+
+        // B1: the real DPI / font / DWM numbers.
+        ok::diag::DisplayMetrics dm{};
+        const HWND probe = (g.hSettings != nullptr) ? g.hSettings
+                                                    : ::GetForegroundWindow();
+        dm.dpi = (probe != nullptr) ? windowDpi(probe) : systemDpiOrFallback();
+        dm.systemDpi = systemDpiOrFallback();
+        dm.fontFace = "Segoe UI";          // the dialog's face (see cachedFont)
+        dm.fontHeightPx = -::MulDiv(13, static_cast<int>(dm.dpi), 96);
+
+        if (const HMODULE dwmapi = ::LoadLibraryW(L"dwmapi.dll")) {
+            using DwmFn = HRESULT(WINAPI*)(BOOL*);
+            const auto fn = reinterpret_cast<DwmFn>(
+                ::GetProcAddress(dwmapi, "DwmIsCompositionEnabled"));
+            BOOL enabled = FALSE;
+            if (fn != nullptr && fn(&enabled) == S_OK) {
+                dm.dwmComposition = (enabled == TRUE);
+            }
+            ::FreeLibrary(dwmapi);
+        }
+        if (const HMODULE shcore = ::LoadLibraryW(L"shcore.dll")) {
+            // PROCESS_DPI_AWARENESS: 0 unaware, 1 system, 2 per-monitor.
+            using AwareFn = HRESULT(WINAPI*)(HANDLE, int*);
+            const auto fn = reinterpret_cast<AwareFn>(
+                ::GetProcAddress(shcore, "GetProcessDpiAwareness"));
+            int awareness = 0;
+            if (fn != nullptr && fn(nullptr, &awareness) == S_OK) {
+                dm.perMonitorAware = (awareness >= 2);
+            }
+            ::FreeLibrary(shcore);
+        }
+        dm.screenWidth = static_cast<std::uint32_t>(::GetSystemMetrics(SM_CXSCREEN));
+        dm.screenHeight = static_cast<std::uint32_t>(::GetSystemMetrics(SM_CYSCREEN));
+        diag.setDisplayMetrics(std::move(dm));
+    } catch (...) {
+        // Evidence must never take the IME down.
+    }
+}
+
+} // namespace
+
 // v1.1.0: the settings dialog's DPI (set in WM_CREATE before controls are
 // built; uiFont() scales the face height to match).
 UINT g_settingsDpi = 96;
@@ -3491,7 +3678,7 @@ static constexpr int kTab3[] = {
     IDC_STAT_TSFLAB, IDC_STAT_TSFV,
     IDC_STAT_APPLAB, IDC_STAT_APPV,
     IDC_GRP_DIAG, IDC_RAD_DIAG_OFF, IDC_RAD_DIAG_BASIC, IDC_RAD_DIAG_FULL,
-    IDC_BTN_DIAG_RUN, IDC_BTN_DIAG_REPORT, IDC_STAT_DIAG_RESULT, 0
+    IDC_BTN_DIAG_RUN, IDC_BTN_DIAG_REPORT, IDC_BTN_DIAG_COPY, IDC_STAT_DIAG_RESULT, 0
 };
 // v1.1.2: tab 4 — Information (introduces the app inside the app).
 static constexpr int kTab4[] = {
@@ -4010,6 +4197,9 @@ bool exportDiagReport(std::wstring& outPath) {
     outPath = dir + name;
     std::ofstream out(outPath.c_str(), std::ios::binary | std::ios::trunc);
     if (!out) { return false; }
+    // v1.3.0-beta6 (V4): the B1/B4 evidence blocks must reflect the machine
+    // AT EXPORT TIME (fresh DPI / DWM / foreground-resolution lines).
+    refreshEvidenceContext();
     out << "\xEF\xBB\xBF";
     out << ok::diag::Diagnostics::instance().report(40);
     // v1.3.0-beta5 (bug B2): the live-effects gate verdict belongs in the
@@ -4311,6 +4501,10 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                   S(44), S(496), S(170), S(26), reinterpret_cast<HMENU>(IDC_BTN_DIAG_RUN));
             mkCtl(hwnd, L"BUTTON", L"Xuất báo cáo", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
                   S(226), S(496), S(140), S(26), reinterpret_cast<HMENU>(IDC_BTN_DIAG_REPORT));
+            // v1.3.0-beta6 (V4): one-click copy — the tester pastes the whole
+            // report straight back into the bug thread, no file hunting.
+            mkCtl(hwnd, L"BUTTON", L"Sao chép báo cáo", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                  S(378), S(496), S(132), S(26), reinterpret_cast<HMENU>(IDC_BTN_DIAG_COPY));
             mkCtl(hwnd, L"STATIC", L"Cơ bản: đếm + độ trễ · Đầy đủ: thêm trace · Tắt: ~miễn phí",
                   WS_CHILD | WS_VISIBLE, S(44), S(528), S(456), S(26),
                   reinterpret_cast<HMENU>(IDC_STAT_DIAG_RESULT));
@@ -5065,6 +5259,43 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                         }
                     } else if (HWND r = ::GetDlgItem(hwnd, IDC_STAT_DIAG_RESULT)) {
                         ::SetWindowTextW(r, L"Không ghi được báo cáo (thư mục %APPDATA%?)");
+                    }
+                    return 0;
+                }
+                case IDC_BTN_DIAG_COPY: {
+                    // v1.3.0-beta6 (V4): the report goes straight onto the
+                    // clipboard as CF_UNICODETEXT — the tester pastes it back
+                    // into the bug thread with no file to hunt for. Fresh
+                    // B1/B4 evidence first, same as the file export.
+                    refreshEvidenceContext();
+                    const std::wstring wide = utf8ToUtf16(
+                        ok::diag::Diagnostics::instance().report(40));
+                    bool okCopy = false;
+                    if (::OpenClipboard(hwnd)) {
+                        ::EmptyClipboard();
+                        const SIZE_T bytes = (wide.size() + 1) * sizeof(wchar_t);
+                        HGLOBAL mem = ::GlobalAlloc(GMEM_MOVEABLE, bytes);
+                        if (mem != nullptr) {
+                            wchar_t* dst = static_cast<wchar_t*>(::GlobalLock(mem));
+                            bool locked = (dst != nullptr);
+                            if (locked) {
+                                std::memcpy(dst, wide.c_str(), bytes);
+                                ::GlobalUnlock(mem);
+                            }
+                            // SetClipboardData takes OWNERSHIP on success;
+                            // free only when it refused the handle.
+                            if (locked && ::SetClipboardData(CF_UNICODETEXT, mem) != nullptr) {
+                                okCopy = true;
+                            } else {
+                                ::GlobalFree(mem);
+                            }
+                        }
+                        ::CloseClipboard();
+                    }
+                    if (HWND r = ::GetDlgItem(hwnd, IDC_STAT_DIAG_RESULT)) {
+                        ::SetWindowTextW(r, okCopy
+                            ? L"Đã sao chép báo cáo vào clipboard — dán (Ctrl+V) vào báo cáo lỗi"
+                            : L"Không mở được clipboard để sao chép báo cáo");
                     }
                     return 0;
                 }

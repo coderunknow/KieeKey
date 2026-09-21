@@ -536,6 +536,7 @@ void ProcessMonitor::updateFromWindow(HWND fg) noexcept {
                 }
                 info->exeNameUtf8 = utf8F;
                 info->exeNameLower = toLowerAscii(info->exeNameUtf8);
+                info->nameApi = 2;   // V4: display name came from the AUMID
                 std::unique_lock<std::shared_mutex> lkAumid(snapshotMtx_);
                 snapshot_ = std::move(info);
                 return;
@@ -560,6 +561,7 @@ void ProcessMonitor::updateFromWindow(HWND fg) noexcept {
         // never in any exclusion table.
         info->exeNameLower = "unresolved";
         info->kind = ProcessClass::Normal;
+        info->nameApi = 3;   // V4: honest fallback label, not a resolved name
         std::unique_lock<std::shared_mutex> lkUnk(snapshotMtx_);
         snapshot_ = std::move(info);
         return;
@@ -575,6 +577,8 @@ void ProcessMonitor::updateFromWindow(HWND fg) noexcept {
     }
     info->exeNameUtf8 = utf8;
     info->exeNameLower = toLowerAscii(utf8);
+    // V4: provenance of the display name (image-path query vs AUMID-only).
+    info->nameApi = name.path.empty() ? 2 : 1;
     if (!name.path.empty()) {
         // Classified ONLY from a real image name. The AUMID branch above is
         // already Metro: a friendly package name is in no exe table, and

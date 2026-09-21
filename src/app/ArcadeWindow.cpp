@@ -47,6 +47,7 @@ void ArcadeWindow::focus() {}
 int ArcadeWindow::hoverIndexForTest() const noexcept { return -1; }
 void ArcadeWindow::setHoverIndex(int) noexcept {}
 double ArcadeWindow::dpiScale() const noexcept { return 1.0; }
+void ArcadeWindow::setDpiScale(double) noexcept {}
 void ArcadeWindow::pump(double) {}
 void ArcadeWindow::paintNow(NativeWindowHandle) {}
 
@@ -774,7 +775,7 @@ LRESULT CALLBACK arcadeWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
         case WM_DPICHANGED: {
             if (self != nullptr) {
                 const UINT newDpi = HIWORD(wParam);
-                self->m_impl->dpiScale = (newDpi > 0) ? (static_cast<double>(newDpi) / 96.0) : 1.0;
+                self->setDpiScale((newDpi > 0) ? (static_cast<double>(newDpi) / 96.0) : 1.0);
                 const RECT* suggested = reinterpret_cast<const RECT*>(lParam);
                 if (suggested != nullptr) {
                     ::SetWindowPos(hwnd, nullptr, suggested->left, suggested->top,
@@ -915,6 +916,14 @@ int ArcadeWindow::hoverIndexForTest() const noexcept {
 
 double ArcadeWindow::dpiScale() const noexcept {
     return m_impl != nullptr ? m_impl->dpiScale : 1.0;
+}
+
+// v1.3.0-beta8 (bug UX-10): see the header — WM_DPICHANGED wrote m_impl
+// directly from the free window procedure, which does not compile.
+void ArcadeWindow::setDpiScale(double scale) noexcept {
+    if (m_impl != nullptr && scale > 0.0) {
+        m_impl->dpiScale = scale;
+    }
 }
 
 void ArcadeWindow::setHoverIndex(int index) noexcept {

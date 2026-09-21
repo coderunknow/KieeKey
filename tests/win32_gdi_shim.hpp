@@ -192,6 +192,14 @@ struct PAINTSTRUCT {
     BOOL fIncUpdate;
     BYTE rgbReserved[32];
 };
+// v1.3.0-beta8 (bug UX-10): mouse-leave tracking used by the hub's hover
+// highlight (see the WM_MOUSELEAVE / TME_LEAVE defines below).
+struct TRACKMOUSEEVENT {
+    DWORD cbSize;
+    DWORD dwFlags;
+    HWND  hwndTrack;
+    DWORD dwHoverTime;
+};
 
 // ---- constants used by the two window implementations ---------------------
 #define WIN32_LEAN_AND_MEAN 1
@@ -230,6 +238,13 @@ struct PAINTSTRUCT {
 #define WM_SYSCHAR       0x0106
 #define WM_MOUSEMOVE     0x0200
 #define WM_LBUTTONDOWN   0x0201
+// v1.3.0-beta8 (bug UX-10): the hub's hover highlight uses mouse-leave
+// tracking. These were missing from the shim, so src/app/ArcadeWindow.cpp
+// could not be compiled by the portable harness at all — which is how a real
+// compile error in that file (a private-member access in the free window
+// procedure) reached the tracked tree unnoticed.
+#define WM_MOUSELEAVE    0x02A3
+#define TME_LEAVE        0x00000002
 #define WM_TIMER         0x0113
 #define WM_COMMAND       0x0111
 #define WM_DESTROY       0x0002
@@ -349,6 +364,7 @@ BOOL  DestroyWindow(HWND);
 BOOL  ShowWindow(HWND, int);
 BOOL  IsWindow(HWND);
 BOOL  InvalidateRect(HWND, const RECT*, BOOL);
+BOOL  TrackMouseEvent(TRACKMOUSEEVENT*);   // v1.3.0-beta8 (bug UX-10)
 BOOL  GetClientRect(HWND, RECT*);
 BOOL  AdjustWindowRectEx(RECT*, DWORD, BOOL, DWORD);
 BOOL  SetWindowTextW(HWND, LPCWSTR);

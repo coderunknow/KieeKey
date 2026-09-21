@@ -518,13 +518,26 @@ void testConfigApplyNow() {
     assert(contains(bodyOf(chart), "\"rhythmBpm\":150"));
     assert(contains(bodyOf(chart), "rhythmNoteCount"));   // the key list is named
 
-    // applyNow=1: a FURTHER chart change rebuilds the run right away. (The
-    // previous call already stored 150, so re-sending it would be a no-op —
-    // the server only claims a restart when it really restarted.)
+    // v1.3.0-beta8 (bug UX-01) — THIS EXPECTATION WAS WRONG AND HID THE BUG.
+    // The previous call stored 150 WITHOUT relaunching, so the run is still
+    // playing the old chart: the pending change is real and applyNow=1 must
+    // honour it. The old assertion ("re-sending the same value is a no-op")
+    // compared the request against the STORED config instead of against the
+    // RUNNING one, which is exactly the browser's event sequence — `input`
+    // stores, `change` re-sends the same value with applyNow — so the final
+    // event always concluded "nothing to do" and the tempo never changed.
+    // The suite stayed green while the web slider was dead.
+    auto pending = server.handleRequest("POST", "/api/config",
+                                        "{\"rhythmBpm\":150,\"applyNow\":1}");
+    assert(pending.status == 200);
+    assert(contains(bodyOf(pending), "\"restartApplied\":true"));
+
+    // A no-op is only a no-op once the RUN is already up to date.
     auto noop = server.handleRequest("POST", "/api/config",
                                      "{\"rhythmBpm\":150,\"applyNow\":1}");
     assert(noop.status == 200);
     assert(contains(bodyOf(noop), "\"restartApplied\":false"));
+    assert(contains(bodyOf(noop), "\"restartRequired\":false"));
 
     auto applied = server.handleRequest("POST", "/api/config",
                                         "{\"rhythmBpm\":170,\"applyNow\":1}");

@@ -457,6 +457,15 @@ else()
         target_link_libraries(ok_arcade_render_tests PRIVATE ok_arcade_portable)
         add_executable(ok_arcade_server_tests tests/test_arcade_server.cpp)
         target_link_libraries(ok_arcade_server_tests PRIVATE ok_arcade_portable)
+        # v1.3.0-beta8 (bug UX-09): tests/test_arcade_beta7.cpp shipped with no
+        # build target and no runner entry, so every "regression coverage"
+        # claim made for the beta7 fixes was unverified — and the file did not
+        # even pass once it was finally compiled and run.
+        add_executable(ok_arcade_beta7_tests tests/test_arcade_beta7.cpp)
+        target_link_libraries(ok_arcade_beta7_tests PRIVATE ok_arcade_portable)
+        # v1.3.0-beta8: UI/UX audit regression suite (UX-01..UX-08).
+        add_executable(ok_arcade_beta8_ux_tests tests/test_arcade_beta8_ux.cpp)
+        target_link_libraries(ok_arcade_beta8_ux_tests PRIVATE ok_arcade_portable)
         add_executable(ok_arcade_window_tests
             tests/test_arcade_window.cpp tests/win32_gdi_stub.cpp
             src/app/ArcadeWindow.cpp src/app/ChaosLabWindow.cpp)
@@ -518,6 +527,13 @@ else()
         add_test(NAME ok_arcade_tests      COMMAND ok_arcade_tests)
         add_test(NAME ok_arcade_render_tests COMMAND ok_arcade_render_tests)
         add_test(NAME ok_arcade_server_tests COMMAND ok_arcade_server_tests)
+        # v1.3.0-beta8 (bug UX-09): these two are registered so a test that
+        # nobody runs cannot masquerade as coverage again. Both must run from
+        # the repository root — they read web/arcade.js and src/app sources.
+        add_test(NAME ok_arcade_beta7_tests COMMAND ok_arcade_beta7_tests
+                 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+        add_test(NAME ok_arcade_beta8_ux_tests COMMAND ok_arcade_beta8_ux_tests
+                 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
         add_test(NAME ok_arcade_window_tests COMMAND ok_arcade_window_tests)
         set_tests_properties(ok_arcade_window_tests ok_arcade_render_tests ok_arcade_server_tests
                              PROPERTIES TIMEOUT 120)
@@ -539,6 +555,7 @@ else()
                 ok_gate_tests ok_key_tests ok_state_tests ok_lifecycle_tests
                 ok_soak_pipeline ok_perf_profiles ok_option_matrix
                 ok_arcade_tests ok_arcade_render_tests ok_arcade_server_tests
+                ok_arcade_beta7_tests ok_arcade_beta8_ux_tests
                 ok_chaos_tests ok_ai_tests
                 ok_progression_tests ok_analytics_tests ok_online_tests
                 ok_soak_arcade)

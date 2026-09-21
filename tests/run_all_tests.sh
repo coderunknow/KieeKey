@@ -256,6 +256,13 @@ build soak_pipeline       -std=c++2b -O2 -pthread $INC tests/soak_pipeline.cpp  
 build test_arcade         -std=c++2b -O2 $INC tests/test_arcade.cpp src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ArcadeRender.cpp src/core/Progression.cpp $ENGINE23 || rc=1
 build test_arcade_render  -std=c++2b -O2 $INC tests/test_arcade_render.cpp src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ArcadeRender.cpp src/core/Progression.cpp $ENGINE23 || rc=1
 build test_arcade_server  -std=c++2b -O2 $INC tests/test_arcade_server.cpp src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ArcadeRender.cpp src/core/ArcadeServer.cpp src/core/Progression.cpp src/core/ChaosEngine.cpp src/core/AiRival.cpp src/core/TypingAnalytics.cpp $ENGINE23 || rc=1
+# v1.3.0-beta8 (bug UX-09): tests/test_arcade_beta7.cpp SHIPPED UNWIRED — it
+# was in no runner and no CMake target, so every "regression coverage" claim
+# made for the beta7 fixes was unverified. It did not even compile-and-pass
+# when finally run (it asserted restartRequired=true with no game running).
+build test_arcade_beta7   -std=c++2b -O2 $INC tests/test_arcade_beta7.cpp src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ArcadeRender.cpp src/core/ArcadeServer.cpp src/core/Progression.cpp src/core/ChaosEngine.cpp src/core/AiRival.cpp src/core/TypingAnalytics.cpp $ENGINE23 || rc=1
+# v1.3.0-beta8: the UI/UX audit regression suite (UX-01..UX-08).
+build test_arcade_beta8_ux -std=c++2b -O2 $INC tests/test_arcade_beta8_ux.cpp src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ArcadeRender.cpp src/core/ArcadeServer.cpp src/core/Progression.cpp src/core/ChaosEngine.cpp src/core/AiRival.cpp src/core/TypingAnalytics.cpp $ENGINE23 || rc=1
 # The Win32 hub/lab windows are executed here through tests/win32_gdi_stub.cpp
 # (a recording USER32/GDI32 layer), so the graphical front-end is covered on a
 # host without the Windows SDK. -D_WIN32 selects the real window implementation.
@@ -548,6 +555,8 @@ fi
 run test_arcade              120
 run test_arcade_render        60
 run test_arcade_server        60
+run test_arcade_beta7         60
+run test_arcade_beta8_ux      60
 run test_arcade_window        60
 run test_live_effects        120
 run test_live_output_plan    120

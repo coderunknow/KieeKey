@@ -267,8 +267,29 @@ def main():
             # Radio handlers may read the ID through `wParam ==` comparisons
             # (BN_CLICKED delivers the control id in wParam) instead of a
             # state-query verb.
-            row.append(window_has(main_src, cid, READ_VERBS) or
+            #
+            # v1.3.0-beta8: follow the hoisted-handle pattern too. A reader may
+            # resolve the control ONCE into a local HWND and query that local
+            # further down than the fixed context window reaches:
+            #     const HWND langCtl = ::GetDlgItem(hwnd, IDC_CMB_PASSAGE_LANG);
+            #     ...
+            #     ::SendMessageW(langCtl, CB_GETCURSEL, 0, 0);
+            # Without this, tryReadArcadeConfigFromDialog() — which reads the
+            # fail-mode and passage-language combos exactly that way — was
+            # reported as a missing read layer, i.e. a FALSE ALARM on a control
+            # that is in fact fully wired. Credit the read only when the local
+            # really is queried with a read verb, so a genuinely unread control
+            # still fails.
+            read_ok = (window_has(main_src, cid, READ_VERBS) or
                        re.search(r"wParam\s*==\s*%s\b" % cid, main_src) is not None)
+            if not read_ok:
+                for handle in re.findall(
+                        r"\b(\w+)\s*=\s*::GetDlgItem\(\s*\w+\s*,\s*%s\s*\)" % cid, main_src):
+                    if re.search(r"::SendMessageW\(\s*%s\s*,\s*(?:%s)\b"
+                                 % (handle, "|".join(READ_VERBS)), main_src):
+                        read_ok = True
+                        break
+            row.append(read_ok)
 
         if cid in EXEMPT_REFLECT:
             row.append(True)

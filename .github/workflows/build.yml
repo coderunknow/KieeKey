@@ -400,20 +400,36 @@ jobs:
           if (Test-Path "$dir/ui_probe.json") {
             $json = Get-Content "$dir/ui_probe.json" -Raw | ConvertFrom-Json
             $kinds = ($json.findingsByKind.PSObject.Properties | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join ' '
-            Write-Host "::notice title=UI probe::$($json.controls) controls, $($json.checks) checks, $($json.findings) findings [$kinds] (native DPI $($json.nativeDpi), scales $(($json.tabs | Select-Object -ExpandProperty scale -Unique) -join '/'))"
-            # GitHub keeps at most 10 annotations per step, so each tab (and each
-            # scale) gets ONE annotation carrying every finding of that run — a
-            # partial list of examples is what made the first runs hard to act
-            # on. The full detail (every control, every rect, every region) stays
-            # in ui_probe.json.
+            # One line per (tab, scale) INSIDE the notice: the per-tab detail
+            # lives in the annotations below, which GitHub caps at 10 per step —
+            # so the digest is the only channel that always lists EVERY measured
+            # tab (travel included), even when findings push annotations out.
+            $digest = @()
             foreach ($tab in $json.tabs) {
-              if ($tab.findings.Count -eq 0) { continue }
-              $parts = @()
-              foreach ($f in $tab.findings) { $parts += "[$($f.kind)] $($f.detail)" }
-              $geo = @()
-              foreach ($g in $tab.geometry) { $geo += $g }
-              Write-Host "::error::tab $($tab.tab) @$($tab.scale)% dialog=$($tab.dialog -join 'x') page=[$($tab.page -join ',')] travel=$($tab.scrollTravel) $($tab.findings.Count) finding(s): $($parts -join ' | ')"
-              Write-Host "::warning title=geometry tab $($tab.tab) @$($tab.scale)%::$($geo -join ' | ')"
+              $digest += ('t' + $tab.tab + '@' + $tab.scale + '%=' + $tab.findings.Count)
+            }
+            Write-Host "::notice title=UI probe::$($json.controls) controls, $($json.checks) checks, $($json.findings) findings [$kinds] (native DPI $($json.nativeDpi), scales $(($json.tabs | Select-Object -ExpandProperty scale -Unique) -join '/')) :: $($digest -join ' ')"
+            # v1.3.0-beta8 (CA-05): ONE annotation per TAB, carrying both scales
+            # (findings AND the geometry digest) — 9 tabs + the notice == the
+            # 10-annotation budget exactly, so no measured tab is ever dropped.
+            # 150 % comes first inside each: it is the scale that reproduces the
+            # user's report on a 1920x1080 desktop, and it is read first.
+            foreach ($group in ($json.tabs | Group-Object tab)) {
+              $lines = @()
+              $bad = 0
+              foreach ($tab in ($group.Group | Sort-Object -Property @{Expression={-$_.scale}})) {
+                $bad += [int]$tab.findings.Count
+                $geo = @()
+                foreach ($g in $tab.geometry) { $geo += $g }
+                $lines += "tab $($tab.tab) @$($tab.scale)% dialog=$($tab.dialog -join 'x') page=[$($tab.page -join ',')] travel=$($tab.scrollTravel) $($tab.findings.Count) finding(s) [$($tab.findings.Count)]"
+                foreach ($f in $tab.findings) { $lines += "  [$($f.kind)] $($f.detail)" }
+                if ($geo.Count -gt 0) { $lines += "  geometry: $($geo -join ' | ')" }
+              }
+              if ($bad -eq 0) { continue }
+              # GitHub annotations need the newline ESCAPED — a literal one
+              # truncates the command to its first line.
+              $msg = ($lines -join '%0A')
+              Write-Host "::error title=tab $($group.Name)::$msg"
             }
           } else {
             Write-Host "::error::the UI probe did not write ui_probe.json"

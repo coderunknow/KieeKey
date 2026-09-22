@@ -94,6 +94,24 @@ struct Rect {
 }
 
 //---------------------------------------------------------------------------
+// v1.3.0-beta8 (bug BS-10) — page content must start BELOW the tab strip.
+//
+// The nine tab labels wrap to a SECOND row when the dialog is narrow or the
+// font is larger (TCS_MULTILINE, planned by ok::layout::planTabs). The display
+// rectangle then starts one row lower — and the authored page rectangles were
+// solved for a single-row strip, so the top of the page (group boxes at y=100,
+// labels at y=110) ended up hidden UNDER the tab labels. The CA-03 probe found
+// it on the CI runner: `page=[16,114,...]` with `id 555 at 24,100` etc.
+//
+// The rule is deliberately data-driven and idempotent: a page whose first
+// control already starts at/below the display rectangle shifts by 0, so
+// re-solving an already-solved dialog changes nothing.
+//---------------------------------------------------------------------------
+[[nodiscard]] inline int pageTopShiftPx(int authoredTopPx, int viewportTopPx) noexcept {
+    return std::max(0, viewportTopPx - authoredTopPx);
+}
+
+//---------------------------------------------------------------------------
 // v1.3.0-beta8 (bug BS-09) — the bottom chrome row keeps its X when the
 // dialog grows.
 //

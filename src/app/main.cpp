@@ -4503,6 +4503,25 @@ void solveSettingsLayout(HWND hwnd) {
         specs.push_back(spec);
         hwnds.push_back(c);
     }
+    // v1.3.0-beta8 (bug BS-10): when the tab labels wrap to a second row, the
+    // display rectangle starts one row lower than the authored page top, and the
+    // page content would be painted UNDER the tab labels. Shift each page down
+    // so its first control lands at/below `disp.top` (idempotent: a page already
+    // at/below it shifts by 0), then let autoFit reflow as usual — the refit and
+    // the scroll range follow from the shifted content depth automatically.
+    for (int t = 0; t < 9; ++t) {
+        int authoredTop = -1;
+        for (const ok::layout::ControlSpec& spec : specs) {
+            if (spec.tab != t) { continue; }
+            authoredTop = (authoredTop < 0) ? spec.rect.y : std::min(authoredTop, spec.rect.y);
+        }
+        if (authoredTop < 0) { continue; }
+        const int shift = ok::layout::pageTopShiftPx(authoredTop, static_cast<int>(disp.top));
+        if (shift <= 0) { continue; }
+        for (ok::layout::ControlSpec& spec : specs) {
+            if (spec.tab == t) { spec.rect.y += shift; }
+        }
+    }
     const ok::layout::LayoutPlan plan = ok::layout::autoFit(
         specs, disp.top, disp.bottom);
 

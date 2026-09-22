@@ -41,6 +41,15 @@ the tested portable model (`ok::layout::bottomRowMove()`), so the row can only
 ever move down, keeping its X and the authored gaps. This was a **beta7 defect,
 not a beta8 regression** (present in `git show e9e5009:src/app/main.cpp:4412`).
 
+### Nothing hides under the tab strip any more — `[VERIFIED]` (model), `UNVERIFIED (Windows)` (pixels)
+The nine tab labels wrap to a second row when the window is narrow or the font is
+larger. The page underneath was solved for a *single* row, so the top of every
+tab (a group box's title, sometimes a whole label) was painted **under the tab
+labels** — the "chữ bị che" you reported. A page now shifts down so its first
+control starts below the tab strip, and only when it has to (already-solved pages
+do not move). Found by the new Windows UI probe, fixed in the tested portable
+model (`ok::layout::pageTopShiftPx()`).
+
 ### Combo boxes no longer hide their neighbours — `[VERIFIED]`
 A `CBS_DROPDOWNLIST` is created with the height of its *drop-down list*, so twelve
 combos were silently covering up to 175 px of the tab below the 25 px you see.

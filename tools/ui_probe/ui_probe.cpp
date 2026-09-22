@@ -567,15 +567,16 @@ int main(int argc, char** argv) {
                 if (need > c.w + 2) {
                     findings.push_back({"clip",
                         "id " + std::to_string(c.id) + " (" + c.klass + ") needs " +
-                        std::to_string(need) + "px, has " + std::to_string(c.w) + "px: " +
-                        c.text.substr(0, 60)});
+                        std::to_string(need) + "px, has " + std::to_string(c.w) + "px (fontH " +
+                        std::to_string(c.fontHeight) + "): " + c.text.substr(0, 60)});
                 }
             } else {
                 const int need = wrappedTextHeight(self, wtext, c.w);
                 if (need > c.h + 2) {
                     findings.push_back({"clip",
                         "id " + std::to_string(c.id) + " (" + c.klass + ") wraps to " +
-                        std::to_string(need) + "px in a " + std::to_string(c.h) + "px box: " +
+                        std::to_string(need) + "px in a " + std::to_string(c.h) + "px box (w " +
+                        std::to_string(c.w) + ", fontH " + std::to_string(c.fontHeight) + "): " +
                         c.text.substr(0, 60)});
                 }
             }
@@ -584,8 +585,16 @@ int main(int argc, char** argv) {
         // ---- 4. the scrollbar tells the truth (BS-01) ----------------------
         {
             ++g_checks;
+            // PAGE content only: the floating chrome (bottom button row) sits
+            // below the viewport BY DESIGN and is excluded from the depth the app
+            // compares against the viewport, so including it here produced eight
+            // "scrollbar disabled but content ends at y=677" findings whose 677 was
+            // the button row's own bottom edge.
             int contentBottom = page.top;
-            for (const Ctl& c : ctls) { contentBottom = std::max(contentBottom, c.y + c.h); }
+            for (const Ctl& c : ctls) {
+                if (isChrome(c.id)) { continue; }
+                contentBottom = std::max(contentBottom, c.y + c.h);
+            }
             SCROLLINFO si{};
             si.cbSize = sizeof(si);
             si.fMask = SIF_ALL;

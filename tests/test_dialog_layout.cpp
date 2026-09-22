@@ -719,6 +719,20 @@ void testBottomRowMovesDownOnly() {
     assert(!ok::layout::bottomRowMove(above, tabBottom, slack, delta).moves);
 }
 
+// v1.3.0-beta8 (bug BS-10): a two-row tab strip must never hide the page's top.
+void testPageTopShiftKeepsContentBelowTheTabStrip() {
+    // The CI probe measured the display rectangle at y=114 (two rows of tabs)
+    // while the authored page starts at y=100 (group boxes) / 110 (labels).
+    assert(pageTopShiftPx(100, 114) == 14);
+    assert(pageTopShiftPx(110, 114) == 4);
+    // One-row strip: the authored tops were solved for exactly this, no shift.
+    assert(pageTopShiftPx(88, 88) == 0);
+    assert(pageTopShiftPx(100, 92) == 0);
+    // Idempotent: content already at/below the display rectangle never moves up.
+    assert(pageTopShiftPx(114, 114) == 0);
+    assert(pageTopShiftPx(200, 114) == 0);
+}
+
 int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
     std::cout << "=== Running Dialog Layout Solver Suite ===\n";
@@ -742,6 +756,8 @@ int main() {
     testDpiSweepEveryControlInsideOrScrollable();
     // v1.3.0-beta8 (bug BS-09): the bottom chrome row keeps its X.
     testBottomRowMovesDownOnly();
+    // v1.3.0-beta8 (bug BS-10): the page starts below the tab strip, always.
+    testPageTopShiftKeepsContentBelowTheTabStrip();
     std::cout << "=== ALL DIALOG LAYOUT TESTS PASSED ===\n";
     return 0;
 }

@@ -227,6 +227,35 @@ applies the model's rectangle. Evidence:
 * Baseline proof: the same call shape is present in `git show e9e5009:src/app/main.cpp`
   (lines 4412-4414), i.e. this is a **beta7 defect, not a beta8 regression**.
 
+### BS-10 — A two-row tab strip hid the top of the page
+| | |
+|---|---|
+| **Severity** | **HIGH** (found by the CA-03 probe; the "chữ bị che" class) |
+| **Area** | Every tab page: group boxes at y=100, labels at y=110 vs `disp.top=114` |
+| **Status** | **FIXED — `[VERIFIED]`** (model + test; pixels: manual M1/W2) |
+
+The nine tab labels wrap to a **second row** when the dialog is narrow or the
+font is larger (`TCS_MULTILINE`, planned by `ok::layout::planTabs`). The display
+rectangle then starts one row lower — the probe measured `page=[16,114,510,635]`
+on the CI runner — while the authored page rectangles were solved for a
+single-row strip. Result: the top 4–14 px of every page (a group box's title row,
+a full label) was painted **under the tab labels**.
+
+Fix: `ok::layout::pageTopShiftPx(authoredTopPx, viewportTopPx)` — a page whose
+first control is above the display rectangle shifts down so it lands at/below it;
+a page already at/below shifts by 0, so re-solving is a no-op (the solver's
+"never move up or sideways" contract is intact, and the shift feeds the same
+`autoFit` → refit → scroll arithmetic as everything else).
+
+Evidence:
+
+* `tests/test_dialog_layout.cpp` → `testPageTopShiftKeepsContentBelowTheTabStrip()`
+  (14/4 px for the measured 100/110 vs 114; 0 for the one-row strip; idempotent).
+* **Seed verified**: forcing `return 0;` makes the suite abort with
+  ``Assertion `pageTopShiftPx(100, 114) == 14'``; restored → green.
+* Probe evidence (run 3): `tab 0 [outside_page] id 555 at 24,100 494x112`,
+  `tab 4 [outside_page] id 558 at 28,110 400x34`, … on all nine tabs.
+
 ### DS-01/02/03/05 — The Chẩn đoán tab could not display its own report
 | | |
 |---|---|
@@ -352,7 +381,7 @@ editing N re-sends it live, that the passage is preserved, and that the HTML bou
 | Seed-verified audits | `audit_layout` (9 seeds), `audit_chaos_lab` (4 layers), `audit_feature_persistence` (11 RED findings pre-fix), `audit_live_effects_truth` (4 RED pre-fix) | green |
 | Cross-compile (`zig c++ -target x86_64-windows-gnu -Wall -Wextra`) | every Windows-only edit compiles; negative control fails as expected | green |
 | Windows CI `windows-2022` (x64/ARM64/ARM64EC, MSVC `/W4 /WX`, ctest) | the REAL toolchain | **pending — this commit** |
-| Windows CI UI probe (`kieekey_ui_probe`, x64) | real HWNDs, real font metrics, per-tab screenshots, scrollbar truth | **executed** — run 1..3 found BS-09 + 6 probe-side false-positive classes; each fixed, re-run pending |
+| Windows CI UI probe (`kieekey_ui_probe`, x64) | real HWNDs, real font metrics, per-tab screenshots, scrollbar truth | **executed** — runs 1..4 found **BS-09 + BS-10** and 8 probe-side false-positive classes; each fixed |
 | Manual checklist W1–W7 / M1–M7 | real DPI, tray, hook, real `SendInput` into external apps | **pending (user)** |
 
 ---
@@ -388,6 +417,7 @@ editing N re-sends it live, that the passage is preserved, and that the HTML bou
 | BS-07 footer/FPS | MED | FIXED | `test_arcade_chrome_layout` 177 checks, RED probe (10) |
 | BS-08 worst-case notes | LOW | FIXED | `pinned_row` pin, 2 seeds |
 | BS-09 bottom row x=0 | HIGH | FIXED | `bottomRowMove()` + `testBottomRowMovesDownOnly`, seed RED |
+| BS-10 two-row tab strip hid page tops | HIGH | FIXED | `pageTopShiftPx()` + `testPageTopShiftKeepsContentBelowTheTabStrip`, seed RED |
 | DS-01 report pane | HIGH | FIXED | `test_diag_report_text` 7/7 |
 | DS-02 token mapping | MED | FIXED | same suite (6/6 + partial order) |
 | DS-03/04/05 | MED/LOW/INFO | FIXED | pane == export; hook counters under `Level::Off` |

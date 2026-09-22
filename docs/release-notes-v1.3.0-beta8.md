@@ -285,3 +285,25 @@ kèm mục **`=== Tự kiểm tra bố cục ===`**, đo **trên chính cửa s�
 
 Số liệu được lấy khi cửa sổ còn đang mở (lúc bạn bấm OK/Huỷ/Đóng), nên việc kiểm tra
 không làm nhấp nháy các tab khi bạn đang đọc.
+
+## Ba lỗi nữa, tìm bằng số đo trên Windows thật (BS-10, BS-14, BS-02f)
+
+* **BS-10 — dải 9 nhãn tab có lúc xuống 2 hàng, và nội dung trang bị chui xuống dưới
+  hàng thứ hai.** App *xin* kiểu nhiều hàng (`TCS_MULTILINE`) nhưng đọc hình chữ nhật
+  vùng trang **ngay sau đó** — mà đổi kiểu thì control chưa xếp lại hàng, nên nó vẫn
+  trả về hình chữ nhật của kiểu một hàng, phép dịch trang ra 0, và chữ cứ nằm dưới
+  nhãn tab. CI đo được: `page=[16,114,510,635]` mà các ô ở `24,114` / `44,100` —
+  22 mục `outside_page`. Nay ép control xếp lại (`SWP_FRAMECHANGED` + `UpdateWindow`)
+  rồi mới đọc, nên trang luôn bắt đầu dưới dải tab.
+* **BS-14 — nhãn được đo trước khi cửa sổ đổi bề rộng.** Bộ giải đo chữ theo bề rộng
+  *lúc đó*, rồi bước "nới cửa sổ" mới hiện thanh cuộn (mất ~17 px bề rộng trang). Nhãn
+  đo ở trang rộng, dùng ở trang hẹp ⇒ xuống thêm một dòng ⇒ ô thiếu đúng một dòng:
+  CI bắt được `id 561: cần 119 px trong ô 112 px`, `id 627: 102 px trong ô 96 px` —
+  cả hai lần app tự đo cũng ra đúng con số đó, tức là lần đo *trước* mới là sai. Nay
+  sau khi nới cửa sổ, nếu bề rộng trang đã đổi thì app giải lại **một lần** với bề
+  rộng cuối cùng.
+* **BS-02f — hàng trạng thái Arcade lúc rảnh (3 dòng) không bao giờ được nới.** Nhánh
+  "chưa có game nào đang chạy" ghi chữ bằng `SetWindowTextW` trực tiếp, trong khi mọi
+  hàng sống khác đều đi qua `refreshGrowingRow()` (đo chữ mới → xin nới hàng). Dòng
+  cuối ("Chi phí khi không chơi: ≈ +2 ns/phím…") bị cắt. CI: `[clip] id 589 wraps to
+  68px (app solver says 68) in 456x52`. Nay nhánh đó cũng đi qua `refreshGrowingRow()`.

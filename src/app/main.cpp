@@ -2627,6 +2627,10 @@ const wchar_t* liveGateStatusText() noexcept {
     }
 }
 
+// The code table's display name, used by the header status line and now by the
+// tray tip as well (defined with the settings text helpers, further below).
+const wchar_t* codeTableLabelW(CodeTable t);
+
 std::wstring trayTipText() {
     std::wstring tip = L"KieeKey v";
     tip += kAppVersion;
@@ -2644,6 +2648,17 @@ std::wstring trayTipText() {
             app += utf8ToUtf16(snap->exeNameUtf8);
             tip += app;
         }
+    }
+    // v1.3.0-beta8 (bug UX-01): the settings header warns when the code table is
+    // not Unicode (every keystroke comes out as a raw byte, and a modern app
+    // shows "?" or a stray glyph — the field report that started all of this),
+    // but the TRAY only said it about the live-effects channel. A user who never
+    // opens the settings window had no way to know. Same fact, same sentence,
+    // both surfaces.
+    if (g.options.codeTable != CodeTable::Unicode) {
+        tip += L" — ⚠ bảng mã ";
+        tip += codeTableLabelW(g.options.codeTable);
+        tip += L": chữ gõ ra là BYTE (app Unicode sẽ hiện ký tự lạ)";
     }
     // v1.3.0-beta5 (bug B2): when the live-effects channel is switched on,
     // the tooltip says whether it can actually reach the foreground app —
@@ -4389,6 +4404,17 @@ struct SettingsScrollState {
     bool enabled = false;                 // WS_VSCROLL currently on
 };
 SettingsScrollState g_settingsScroll;
+
+// v1.3.0-beta8 (bug BS-14): the solver measures every label at the width the
+// control has RIGHT THEN, and then the refit resizes the tab control (the
+// scrollbar appearing or leaving costs the page ~17 px). A label measured on
+// the wider page and applied on the narrower one wraps into one more line and
+// its box is a line short - the CI probe's last two `clip` findings, both with
+// the app's own measurement agreeing with the box: `id 561 wraps to 119px
+// (app solver says 119) in a 112px box`, measured after the refit, while the
+// solver had measured it before. One extra pass with the final width settles
+// it; the guard makes that exactly one pass, so it cannot oscillate.
+int g_settingsSolvePass = 0;
 // v1.3.0-beta8 (bug CA-06): the rendered layout self-check of the LAST solve.
 // The live check needs the dialog (and the tab control, and a solve), so a
 // report exported after the user closed Settings used to carry no self-check at
@@ -4584,6 +4610,17 @@ void solveSettingsLayout(HWND hwnd) {
         const LONG_PTR tabStyle = ::GetWindowLongPtrW(tabCtl, GWL_STYLE);
         if (tabPlan.multiline && (tabStyle & TCS_MULTILINE) == 0) {
             ::SetWindowLongPtrW(tabCtl, GWL_STYLE, tabStyle | TCS_MULTILINE);
+            // v1.3.0-beta8 (bug BS-10): the style bit alone does NOT re-lay the
+            // control out - TCM_ADJUSTRECT keeps answering with the OLD
+            // single-row display rectangle until the tab control has processed
+            // the change, so the shift below computed 0 and the top of every
+            // page stayed hidden under the second row of tab labels. The CI
+            // probe measured it: page top 114 with controls at 100..110,
+            // 22 x `outside_page`. Force the frame/layout pass, then read.
+            ::SetWindowPos(tabCtl, nullptr, 0, 0, 0, 0,
+                           SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE |
+                               SWP_FRAMECHANGED);
+            ::UpdateWindow(tabCtl);
         }
     }
 
@@ -4852,6 +4889,21 @@ void solveSettingsLayout(HWND hwnd) {
     int curTab = static_cast<int>(::SendMessageW(tabCtl, TCM_GETCURSEL, 0, 0));
     if (curTab < 0 || curTab > 8) { curTab = 0; }
     settingsScrollSetTab(hwnd, curTab);   // applies solved rects at offset 0
+
+    // v1.3.0-beta8 (bug BS-14): the refit above may have changed the page width
+    // (the scrollbar costs ~17 px when it appears), and every label was measured
+    // at the width BEFORE that change. Solve once more with the final width; the
+    // guard makes it exactly one extra pass.
+    if (g_settingsSolvePass == 0) {
+        RECT tabNow{};
+        ::GetWindowRect(tabCtl, &tabNow);
+        if (static_cast<int>(tabNow.right - tabNow.left) != tabWidth) {
+            ++g_settingsSolvePass;
+            solveSettingsLayout(hwnd);
+            --g_settingsSolvePass;
+            return;
+        }
+    }
 
     // v1.3.0-beta8 (bug CA-06): the layout self-check is NOT run here. It walks
     // all nine tabs (showTab) to read each one's scroll range, and a solve also
@@ -6270,13 +6322,21 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                                   astats.accuracy);
                     refreshGrowingRow(hwnd, IDC_STAT_ARCADE_STATUS, abuf);
                 } else {
-                    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_STAT_ARCADE_STATUS),
-                                     L"Chưa có game nào đang chạy.\r\n"
-                                     L"Nhấn một nút game để mở cửa sổ Arcade Hub.\r\n"
-                                     // v1.3.0-beta5 (G1): measured standby cost,
-                                     // so the idle hook overhead is documented
-                                     // where the feature lives.
-                                     L"Chi phí khi không chơi: ≈ +2 ns/phím (p50 64→66, bench beta4 — docs/PERFORMANCE.md).");
+                    // v1.3.0-beta8 (bug BS-14): this branch wrote THREE lines
+                    // with a plain SetWindowTextW while the solver had sized the
+                    // row for the shorter playing text — so the last line ("Chi
+                    // phí khi không chơi: …") was cut off, and the CI probe
+                    // caught it: `[clip] id 589 (Static) wraps to 68px (app
+                    // solver says 68) in 456x52`. The live-text writers all go
+                    // through refreshGrowingRow(), which measures the new text
+                    // and asks the solver to grow the row; this one did not.
+                    refreshGrowingRow(hwnd, IDC_STAT_ARCADE_STATUS,
+                                      L"Chưa có game nào đang chạy.\r\n"
+                                      L"Nhấn một nút game để mở cửa sổ Arcade Hub.\r\n"
+                                      // v1.3.0-beta5 (G1): measured standby cost,
+                                      // so the idle hook overhead is documented
+                                      // where the feature lives.
+                                      L"Chi phí khi không chơi: ≈ +2 ns/phím (p50 64→66, bench beta4 — docs/PERFORMANCE.md).");
                 }
             }
 

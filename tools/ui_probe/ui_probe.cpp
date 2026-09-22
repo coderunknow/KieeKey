@@ -607,10 +607,19 @@ void checkReach(const Audit& a, const std::vector<Ctl>& ctls, int travelPx) {
         const bool beyond = c.y + c.h > reachableBottom + 1 || c.x + c.w > a.client.right + 1 ||
                             c.x < a.client.left - 1 || c.y < a.page.top - 1;
         if (beyond) {
+            // The four bounds, spelled out: a finding whose own numbers look
+            // inside the page is worse than no finding (the first version cost a
+            // whole iteration guessing which of the four clauses fired).
             a.findings->push_back({"outside_page",
                 "id " + std::to_string(c.id) + " (" + c.klass + ") at " +
                 rectStr(c.x, c.y, c.w, c.h) + " is outside the reachable page (page " +
-                rectStr(a.page) + " + " + std::to_string(travelPx) + " px of scroll)"});
+                rectStr(a.page) + " + " + std::to_string(travelPx) + " px of scroll; "
+                "bottom " + std::to_string(c.y + c.h) + " vs " +
+                std::to_string(reachableBottom + 1) + ", right " +
+                std::to_string(c.x + c.w) + " vs " + std::to_string(a.client.right + 1) +
+                ", left " + std::to_string(c.x) + " vs " +
+                std::to_string(a.client.left - 1) + ", top " + std::to_string(c.y) +
+                " vs " + std::to_string(a.page.top - 1) + ")"});
         }
     }
     // The scrollbar must be usable exactly when the page overflows, and the

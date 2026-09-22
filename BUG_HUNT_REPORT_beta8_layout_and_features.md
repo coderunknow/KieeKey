@@ -537,6 +537,52 @@ overlap or go out of reach by itself — and then re-measures it at every scroll
 * the four growth caps (8/4/5/60 px) are gone: the solver's own measurement bounds the
   growth now, so no row can be left with text that does not fit.
 
+## 1d. UX-01 / BS-13 — two defects behind "UI hỏng hết, gõ dấu ra ký tự lạ"
+
+The third report (150 %, `SimpleTelex / CP1258`, Windows 10 LTSC 19044) named two
+classes that have nothing to do with rectangles.
+
+### UX-01 — the mouse wheel rewrote a persisted setting
+
+The report's own header changed between two reports with no UI action that could ask for
+it:
+
+```
+report 2:  method/table : SimpleTelex / Unicode
+report 3:  method/table : SimpleTelex / CP1258
+```
+
+Win32 gives `WM_MOUSEWHEEL` to the control **under the cursor**, and a closed
+`CBS_DROPDOWNLIST` changes its SELECTION for it. The user scrolls this dialog (it cannot
+fit at 150 % on 1920x1080 with `fontHeightPx=-20`), so the wheel passed over the charset
+combo on tab 1 and moved it from *Unicode* to *CP 1258* — and from that moment every
+Vietnamese keystroke was a raw CP1258 byte, which Chrome renders as a replacement or
+stray character: **"gõ dấu thì bị các ký tự lạ"**. Nothing in the UI said so (the live
+gate only guards live effects; the code table was never surfaced).
+
+Fix: every combo in the dialog is subclassed (`comboWheelProc`) and passes the wheel to
+the dialog's own scroll handler instead of to its own list, and `updateHeaderStatus()`
+now prints `⚠ BẢNG MÃ <name>: chữ gõ ra là BYTE…` while the table is not Unicode — the
+warning disappears the moment it is set back.
+
+### BS-13 — the dialog painted over its own children
+
+`CreateWindowExW(0, L"KieeKeySettings", …, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU |
+WS_MINIMIZEBOX, …)` — **no `WS_CLIPCHILDREN`**. `DialogBox()` adds that flag for every
+dialog it creates; this dialog is hand-rolled, so the parent's background brush
+(`COLOR_BTNFACE+1`) erased over ~124 child controls on every repaint. Consequences, both
+reported: flicker while idle ("không kéo thì giật giật") and leftover copies of text
+while scrolling ("chữ bị duplicated", "chữ bị kéo lên trên"). The scroll path also
+moved children with a plain `SetWindowPos` (bit-blit semantics) and never invalidated
+the strip a moving, region-clipped child left behind.
+
+Fixes: `WS_CLIPCHILDREN` on the window, `SWP_NOCOPYBITS` on every scroll move, and one
+`InvalidateRect` of the tab viewport after each scroll batch — the dialog repaints the
+ground the children vacated, and the children repaint themselves.
+
+The probe now asserts all three invariants (`no_clipchildren`, `wheel_edit`,
+`idle_jitter`), so neither class can come back unnoticed.
+
 ## 2. Verification layers
 
 | Layer | What it proves | Result |

@@ -590,14 +590,28 @@ bool rowNeedsGrowth(HWND ctl) {
 
 // Set by the timer's row writers, consumed once per tick by the reflow below.
 bool g_settingsRowGrowthPending = false;
+// id -> hash of the text that last asked for a reflow. A row that still does
+// not fit after the solver has had its say must NOT keep asking every 500 ms:
+// re-solving is visible work (it can move the window), and a loop of it is
+// exactly the "giật giật" the user reported with the first reflow build.
+std::map<int, std::size_t> g_settingsRowGrowthSeen;
 
 void refreshGrowingRow(HWND dlg, int id, const std::wstring& text) {
     const HWND ctl = ::GetDlgItem(dlg, id);
     if (ctl == nullptr) { return; }
     ::SetWindowTextW(ctl, text.c_str());
     setRowTooltip(ctl, text);
-    // Never grow it here — see the header comment above: ask for a reflow.
-    if (rowNeedsGrowth(ctl)) { g_settingsRowGrowthPending = true; }
+    // Never grow it here — see the header comment above: ask for a reflow,
+    // and only ONCE per distinct text (see g_settingsRowGrowthSeen).
+    if (!rowNeedsGrowth(ctl)) {
+        g_settingsRowGrowthSeen.erase(id);
+        return;
+    }
+    const std::size_t h = std::hash<std::wstring>{}(text);
+    const auto seen = g_settingsRowGrowthSeen.find(id);
+    if (seen != g_settingsRowGrowthSeen.end() && seen->second == h) { return; }
+    g_settingsRowGrowthSeen[id] = h;
+    g_settingsRowGrowthPending = true;
 }
 
 // Parse macro text (editor content or file content): one
@@ -3887,11 +3901,43 @@ void refreshSettingsDpi() noexcept {
     applySettingsDpiScale(windowDpi(g.hSettings));
 }
 
+// v1.3.0-beta8 (bug UX-01) — THE WHEEL IS NOT A VALUE EDITOR.
+//
+// Win32 hands WM_MOUSEWHEEL to the control under the cursor, and a closed
+// CBS_DROPDOWNLIST changes its SELECTION when it gets one. Inside a dialog the
+// user scrolls with the wheel while reading, so this silently rewrote settings:
+// the user's charset combo moved from "Unicode" to "CP 1258" between two
+// diagnostic reports with no UI action that could have asked for it, and every
+// Vietnamese keystroke after that produced byte garbage in Chrome — "gõ dấu
+// thì bị ký tự lạ". Nothing in the UI said anything (the live gate only guards
+// live effects).
+//
+// Every combo in the settings dialog therefore passes the wheel to its parent
+// (the dialog's own scroll handler) and never to its own list.
+LRESULT CALLBACK comboWheelProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
+                                UINT_PTR, DWORD_PTR) {
+    if (msg == WM_MOUSEWHEEL || msg == WM_MOUSEHWHEEL) {
+        const HWND parent = ::GetParent(hwnd);
+        if (parent != nullptr) { ::SendMessageW(parent, msg, wParam, lParam); }
+        return 0;
+    }
+    if (msg == WM_NCDESTROY) { ::RemoveWindowSubclass(hwnd, comboWheelProc, 1); }
+    return ::DefSubclassProc(hwnd, msg, wParam, lParam);
+}
+
 HWND mkCtl(HWND parent, LPCWSTR cls, LPCWSTR text, DWORD style, int x, int y,
            int w, int h, HMENU id) {
     HWND c = ::CreateWindowExW(0, cls, text, style | WS_CHILD | WS_VISIBLE,
                                x, y, w, h, parent, id, g.hInst, nullptr);
-    if (c) { ::SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont()), TRUE); }
+    if (c) {
+        ::SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont()), TRUE);
+        // v1.3.0-beta8 (bug UX-01): the wheel scrolls the DIALOG, never the
+        // selection — see comboWheelProc().
+        wchar_t real[32]{};
+        if (::GetClassNameW(c, real, 32) > 0 && ::lstrcmpiW(real, L"ComboBox") == 0) {
+            ::SetWindowSubclass(c, comboWheelProc, 1, 0);
+        }
+    }
     return c;
 }
 
@@ -3918,6 +3964,18 @@ void applyComboDropHeight(HWND combo, int dropDownPx) {
 
 // v1.1.2 — refresh the always-visible header status line: engine state,
 // input method, code table and the digits policy at a glance.
+// v1.3.0-beta8 (bug UX-01): the name of a code table for the status line.
+const wchar_t* codeTableLabelW(CodeTable t) {
+    switch (t) {
+        case CodeTable::Tcvn3:          return L"TCVN3 (ABC)";
+        case CodeTable::VniWindows:     return L"VNI Windows";
+        case CodeTable::UnicodeCompound: return L"Unicode tổ hợp";
+        case CodeTable::Cp1258:         return L"CP 1258";
+        case CodeTable::Unicode:
+        default:                        return L"Unicode";
+    }
+}
+
 void updateHeaderStatus() {
     if (!g.hSettings) { return; }
     const wchar_t* method = g.options.inputMethod == InputMethod::Telex ? L"Telex"
@@ -3930,6 +3988,15 @@ void updateHeaderStatus() {
     s += method;
     s += L"  —  Số 0–9: ";
     s += g.options.digitsAreLiteral ? L"chữ số" : L"gõ dấu (VNI)";
+    // v1.3.0-beta8 (bug UX-01): a non-Unicode table makes every Vietnamese
+    // character come out as a byte (the "ký tự lạ" report). Nothing in the UI
+    // said so before — the live gate only guards live effects — so the header
+    // now carries it, and it disappears the moment the table is Unicode again.
+    if (g.options.codeTable != CodeTable::Unicode) {
+        s += L"  —  ⚠ BẢNG MÃ ";
+        s += codeTableLabelW(g.options.codeTable);
+        s += L": chữ gõ ra là BYTE, app Unicode sẽ hiện ký tự lạ — đổi về Unicode ở tab Bàn phím";
+    }
     ::SetWindowTextW(::GetDlgItem(g.hSettings, IDC_STAT_HEAD_STATUS), s.c_str());
 }
 
@@ -4371,7 +4438,7 @@ void applySettingsScrollOffset(HWND hwnd) {
         // re-applying the baseline size here is what threw away a row's
         // runtime height on the first scroll step.
         ::SetWindowPos(entry.first, nullptr, sc.rect.x, sc.rect.y, 0, 0,
-                       SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+                       SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS);
         if (!sc.visible) {
             if (HRGN rgn = ::CreateRectRgn(0, 0, 0, 0)) {
                 ::SetWindowRgn(entry.first, rgn, TRUE);   // rgn ownership passes
@@ -4385,6 +4452,17 @@ void applySettingsScrollOffset(HWND hwnd) {
         } else {
             ::SetWindowRgn(entry.first, nullptr, TRUE);
         }
+    }
+    // v1.3.0-beta8 (bug BS-13): the children moved, so the strip they left
+    // behind belongs to the DIALOG now — and with WS_CLIPCHILDREN it can no
+    // longer paint over them. Without this invalidation those pixels stayed:
+    // a region-clipped child's old text remained on screen above its new
+    // position ("chữ bị kéo lên trên", "chữ bị duplicated").
+    if (g_settingsScroll.viewport.w > 0 && g_settingsScroll.viewport.h > 0) {
+        RECT strip{g_settingsScroll.viewport.x, g_settingsScroll.viewport.y,
+                   g_settingsScroll.viewport.x + g_settingsScroll.viewport.w,
+                   g_settingsScroll.viewport.y + g_settingsScroll.viewport.h};
+        ::InvalidateRect(hwnd, &strip, TRUE);
     }
 }
 
@@ -6463,6 +6541,7 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             g_settingsScroll.offset = 0;
             g_settingsScroll.range = 0;
             g_settingsScroll.enabled = false;
+            g_settingsRowGrowthSeen.clear();
             return 0;
     }
     return ::DefWindowProcW(hwnd, msg, wParam, lParam);
@@ -6504,7 +6583,16 @@ void openSettingsDialog(int tab) {
     const HWND created = ::CreateWindowExW(0, L"KieeKeySettings",
                                     L"KieeKey — Cài đặt & Thông tin",
                                     WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU |
-                                    WS_MINIMIZEBOX,
+                                    WS_MINIMIZEBOX |
+                                    // v1.3.0-beta8 (bug BS-13): a hand-rolled
+                                    // dialog does NOT get this for free (the
+                                    // DialogBox API adds it), so the parent's
+                                    // background brush erased OVER ~124 child
+                                    // controls on every repaint: the flicker
+                                    // while idle ("giật giật") and the stale
+                                    // copies of text left behind while
+                                    // scrolling ("chữ bị duplicated").
+                                    WS_CLIPCHILDREN,
                                     CW_USEDEFAULT, CW_USEDEFAULT, 572, 622,
                                     nullptr, nullptr, g.hInst, nullptr);
     // v1.1.3: publish the handle ONLY for a real window — a failed

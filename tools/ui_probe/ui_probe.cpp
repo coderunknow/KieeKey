@@ -829,6 +829,47 @@ int main(int argc, char** argv) {
                 ? std::max(0, (siAll.nMax + 1) - static_cast<int>(siAll.nPage))
                 : 0;
 
+            // ---- v1.3.0-beta8 (bug BS-13): the dialog must CLIP its children --
+            // DialogBox() gives every dialog WS_CLIPCHILDREN; a hand-rolled
+            // CreateWindowEx window does not, and this dialog carries ~124
+            // controls plus a background brush — so the parent erased over
+            // them on every repaint (flicker while idle, stale text left
+            // behind while scrolling: "chữ bị duplicated").
+            if (tab == 0) {
+                ++g_checks;
+                if ((::GetWindowLongPtrW(dlg, GWL_STYLE) & WS_CLIPCHILDREN) == 0) {
+                    findings.push_back({"no_clipchildren",
+                        "the settings window has no WS_CLIPCHILDREN: its background is painted "
+                        "over its own child controls on every repaint"});
+                }
+            }
+
+            // ---- v1.3.0-beta8 (bug UX-01): the wheel must never edit a value --
+            // Win32 gives WM_MOUSEWHEEL to the control under the cursor, and a
+            // closed drop-down list changes its SELECTION for it. The user's
+            // charset combo went from Unicode to CP 1258 while they scrolled
+            // the page with the wheel, and from then on every Vietnamese
+            // keystroke was a raw byte ("gõ dấu thì bị ký tự lạ").
+            for (const Ctl& c : ctls) {
+                if (c.klass != "ComboBox" || c.tabpage != tab || !c.shown) { continue; }
+                if (c.hwnd == nullptr) { continue; }
+                const LRESULT before = ::SendMessageW(c.hwnd, CB_GETCURSEL, 0, 0);
+                const LRESULT items  = ::SendMessageW(c.hwnd, CB_GETCOUNT, 0, 0);
+                if (before < 0 || items <= 1) { continue; }
+                ++g_checks;
+                ::SendMessageW(c.hwnd, WM_MOUSEWHEEL,
+                               MAKEWPARAM(0, static_cast<short>(-WHEEL_DELTA)), 0);
+                const LRESULT after = ::SendMessageW(c.hwnd, CB_GETCURSEL, 0, 0);
+                if (after != before) {
+                    findings.push_back({"wheel_edit",
+                        "id " + std::to_string(c.id) + " (ComboBox) changed its value " +
+                        std::to_string(before) + " -> " + std::to_string(after) +
+                        " from a MOUSE WHEEL — the wheel must scroll the dialog, "
+                        "never edit a setting"});
+                    ::SendMessageW(c.hwnd, CB_SETCURSEL, static_cast<WPARAM>(before), 0);
+                }
+            }
+
             checkSinglePage(a, ctls);
             checkRegions(a, ctls);
             checkOverlaps(a, ctls);
@@ -836,6 +877,37 @@ int main(int argc, char** argv) {
             checkTextFit(a, ctls);
             checkHitTests(a, ctls);
             checkTabHeaders(a, static_cast<int>(tabCount), &findings);
+            // ---- v1.3.0-beta8 (bug BS-13): the timer must not jitter --------
+            // The 500 ms tick writes live text; a row that outgrows its box
+            // asks the solver to re-solve ONCE. A second tick with nothing new
+            // to say must therefore change no rectangle at all — the user's
+            // "không kéo thì giật giật" was exactly this loop.
+            {
+                ::SendMessageW(dlg, WM_TIMER, 1, 0);
+                ::Sleep(5);
+                std::vector<Ctl> v0;
+                readCtls(dlg, all, tab, page, v0);
+                ::SendMessageW(dlg, WM_TIMER, 1, 0);
+                ::Sleep(5);
+                std::vector<Ctl> v1;
+                readCtls(dlg, all, tab, page, v1);
+                for (const Ctl& a0 : v0) {
+                    for (const Ctl& a1 : v1) {
+                        if (a0.id != a1.id || a0.klass != a1.klass) { continue; }
+                        ++g_checks;
+                        if (a0.x != a1.x || a0.y != a1.y || a0.w != a1.w || a0.h != a1.h) {
+                            findings.push_back({"idle_jitter",
+                                "id " + std::to_string(a1.id) + " (" + a1.klass + ") moved from " +
+                                std::to_string(a0.x) + "," + std::to_string(a0.y) + " " +
+                                std::to_string(a0.w) + "x" + std::to_string(a0.h) + " to " +
+                                std::to_string(a1.x) + "," + std::to_string(a1.y) + " " +
+                                std::to_string(a1.w) + "x" + std::to_string(a1.h) +
+                                " between two idle timer ticks"});
+                        }
+                    }
+                }
+            }
+
 
             // ---- v1.3.0-beta8 (bug BS-12): the scroll path may MOVE, never ---
             //      RESIZE. Rows whose runtime text grows (the 500 ms timer's

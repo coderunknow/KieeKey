@@ -644,6 +644,13 @@ void checkReach(const Audit& a, const std::vector<Ctl>& ctls, int travelPx) {
 void checkTextFit(const Audit& a, const std::vector<Ctl>& ctls) {
     for (const Ctl& c : ctls) {
         if (c.text.empty() || c.groupBox || !c.onScreen) { continue; }
+        // v1.3.0-beta8 (probe): only judge a control the PAGE SHOWS WHOLE. A row
+        // that extends below the viewport is clipped to the fold on purpose (the
+        // user scrolls to read it) and calling that "text does not fit" is the
+        // scrolling design, not a defect — the last x64 run reported exactly one
+        // such finding twice (id 561: box 196 px, effective 134 = page bottom
+        // 622 minus its y 488, with the app's own measurement agreeing on 196).
+        if (c.y < a.page.top - 1 || c.y + c.h > a.page.bottom + 1) { continue; }
         const std::wstring wtext = toWide(c.text);
         ++g_checks;
         int need = 0;

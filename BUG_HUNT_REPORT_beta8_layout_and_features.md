@@ -648,6 +648,15 @@ rectangle measured where the content is not.
 | **BS-10** | 22 x `outside_page` on tabs 0/6 at 100 %: `page=[16,114,510,635]`, controls at `24,114 494x112` and `44,100 …` — the page content sat **inside the tab header strip** | Nine Vietnamese tab labels do not fit one row in a 536 px control, so `planTabs()` asks for `TCS_MULTILINE` — and the code set the style bit and immediately read `TCM_ADJUSTRECT` for the display rectangle. The style bit alone does not re-lay a tab control out, so the rectangle answered with the OLD single-row geometry, `pageTopShiftPx()` computed 0, and the page was never shifted: the content stayed under the second row of labels once the control did re-lay out. Fixed by forcing the frame pass (`SWP_FRAMECHANGED` + `UpdateWindow`) before reading the rectangle — the shift then works and the content starts at `page.top`. |
 | **BS-14** | 2 x `clip`: `id 561 wraps to 119px (app solver says 119) in a 112px box`, `id 627 wraps to 102px (app solver says 102) in a 96px box`, both at 100 % | The app's own measurement **agrees with the probe** in both — which means the solver measured something else: it measured every label at the page width it had at that moment, and then the refit resized the tab control (the scrollbar appearing costs the page ~17 px). A label measured on the wider page and applied on the narrower one wraps into one more line, so the box ends up exactly a line short. Fixed by re-solving **once** after the refit when the tab width changed (`g_settingsSolvePass`), which is also the only way a wrapping label can ever be right on the first open of a dialog whose scrollbar state is not known until the refit has run. |
 
+One more rule came out of the same run: `clip` now judges only a control the
+PAGE SHOWS WHOLE. The last x64 run reported exactly one finding twice — `id 561`
+at 100 % and 150 % — with `box 196 px` (the solver had grown it correctly, the
+BS-14 re-solve working) and an effective height of 134 = page bottom 622 minus
+its y 488: the row simply extends below the fold, which is the scrolling design,
+and the user scrolls to read it. The check that matters for such a row is the
+one the scroll sweep already makes (it must be reachable at the end of the
+travel), not "the visible half holds the whole text".
+
 Neither is visible to the portable suites: `tests/test_dialog_layout.cpp` pins
 `pageTopShiftPx()` arithmetic (100 -> 114 = 14 px, 114 -> 114 = 0 px) and
 `scripts/audit_layout.py` models the authored geometry, but only a real tab

@@ -223,6 +223,25 @@ void testReportSectionIsReadableAndBounded() {
     std::cout << "  [PASS] the section is counted, listed and bounded\n";
 }
 
+// 7. v1.3.0-beta8 (CA-06): the window/scroll facts — the two numbers every
+// layout bug begins with — are printed when the caller measured them, and are
+// not invented when it did not (the pure suite and the probe pass no client).
+void testWindowFactsAppearOnlyWhenKnown() {
+    Plan p = onePage(2, Rect{16, 114, 510, 500});
+    const std::string bare = ok::diagself::formatSection(p, {});
+    assert(bare.find("Cửa sổ: client") == std::string::npos);
+    p.client = Rect{0, 0, 486, 689};
+    p.scrollEnabled = true;
+    p.scrollRange = 64;
+    const std::string s = ok::diagself::formatSection(p, {});
+    assert(s.find("Cửa sổ: client") != std::string::npos);
+    assert(s.find("486x689") != std::string::npos);
+    assert(s.find("thanh cuộn BẬT") != std::string::npos);
+    assert(s.find("tầm cuộn tab này 64 px") != std::string::npos);
+    assert(s.find("tab 2: vùng trang") != std::string::npos);
+    std::cout << "  [PASS] window + scroll facts printed only when measured\n";
+}
+
 } // namespace
 
 int main() {
@@ -234,6 +253,7 @@ int main() {
     testClippedTextIsReported();
     testCutAndUnreachable();
     testReportSectionIsReadableAndBounded();
+    testWindowFactsAppearOnlyWhenKnown();
     std::cout << "=== ALL LAYOUT SELF-CHECK TESTS PASSED ===\n";
     return 0;
 }

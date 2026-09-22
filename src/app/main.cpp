@@ -165,6 +165,7 @@
 // and the truth-marker contract. Portable on purpose: tests pin it.
 #include "DiagReportText.hpp"
 #include "DiagSelfCheck.hpp"   // v1.3.0-beta8 (CA-06): the app measures its own layout
+#include "DiagSelfCheck.hpp"   // v1.3.0-beta8 (CA-06): the app measures its own layout
 // v1.3.0-beta8 (bug FT-01): the persistence RULES (file names, opt-in gate,
 // throttle window) live in a portable header so tests pin them.
 #include "PersistPolicy.hpp"   // v1.3.0-beta4: runtime layout solver
@@ -4388,6 +4389,13 @@ struct SettingsScrollState {
     bool enabled = false;                 // WS_VSCROLL currently on
 };
 SettingsScrollState g_settingsScroll;
+// v1.3.0-beta8 (bug CA-06): the rendered layout self-check of the LAST solve.
+// The live check needs the dialog (and the tab control, and a solve), so a
+// report exported after the user closed Settings used to carry no self-check at
+// all — which is exactly what both beta8 reports from the field showed. The
+// text is produced once per solve (cheap, the solve is rare) and served to the
+// report pane and the export even when the window is gone.
+std::string g_settingsSelfCheckCache;
 
 void applySettingsScrollOffset(HWND hwnd);          // defined below showTab
 void settingsScrollSetTab(HWND hwnd, int tabIndex); // defined below showTab
@@ -4535,6 +4543,7 @@ int settingsPageOf(int id) {
 }
 
 // idempotent (re-solving an already-solved dialog changes nothing).
+void solveSettingsLayout(HWND hwnd);
 void solveSettingsLayout(HWND hwnd) {
     if (hwnd == nullptr) { return; }
     HWND tabCtl = ::GetDlgItem(hwnd, IDC_TAB);
@@ -4683,11 +4692,36 @@ void solveSettingsLayout(HWND hwnd) {
         ok::layout::Rect{rcWork.left, rcWork.top,
                          rcWork.right - rcWork.left, rcWork.bottom - rcWork.top});
 
-    // Any tab overflowing after the refit => keep WS_VSCROLL available.
-    const int newViewportBottom = disp.bottom + fit.clientDelta;
+    // v1.3.0-beta8 (bug BS-10): the chrome row and the tab control have to fit
+    // INSIDE the client the work area allowed — measure that band from the row
+    // controls themselves (the bottom row is every always-visible control that
+    // sits under the tab display rectangle at this point).
+    int chromeRowH = 0;
+    for (HWND c = ::GetWindow(hwnd, GW_CHILD); c != nullptr;
+         c = ::GetWindow(c, GW_HWNDNEXT)) {
+        if (c == tabCtl || pageOf(::GetDlgCtrlID(c)) != ok::layout::ControlSpec::kAlwaysVisible) {
+            continue;
+        }
+        RECT rc{};
+        ::GetWindowRect(c, &rc);
+        ::MapWindowPoints(nullptr, hwnd, reinterpret_cast<POINT*>(&rc), 2);
+        if (rc.top >= rcTab.bottom) {
+            chromeRowH = std::max(chromeRowH, static_cast<int>(rc.bottom - rc.top));
+        }
+    }
+    const int chromeBand = (chromeRowH > 0 ? chromeRowH : S(30)) + 3 * S(4);
+    RECT rcCliNow{};
+    ::GetClientRect(hwnd, &rcCliNow);
+
+    // Any tab overflowing after the refit => keep WS_VSCROLL available. The
+    // viewport the user will actually get is the tab display rectangle clipped
+    // to the client, so the decision uses that bound — not the intended growth.
+    const int plannedViewportBottom = std::min(
+        static_cast<int>(disp.bottom) + fit.clientDelta,
+        static_cast<int>(rcCliNow.bottom));
     bool anyScroll = false;
     for (int t = 0; t < 9; ++t) {
-        if (g_settingsScroll.perTabContentBottom[t] > newViewportBottom) {
+        if (g_settingsScroll.perTabContentBottom[t] > plannedViewportBottom) {
             anyScroll = true;
         }
     }
@@ -4711,13 +4745,25 @@ void solveSettingsLayout(HWND hwnd) {
     }
     {
         const int vsw = anyScroll ? ::GetSystemMetrics(SM_CXVSCROLL) : 0;
+        ::GetClientRect(hwnd, &rcCliNow);
         const int newTabW = std::max(S(200),
-            static_cast<int>(rcCli.right - rcCli.left) - S(24) - vsw);
-        ::SetWindowPos(tabCtl, nullptr, S(12), S(66), newTabW,
-                       (rcTab.bottom - rcTab.top) + fit.clientDelta,
+            static_cast<int>(rcCliNow.right - rcCliNow.left) - S(24) - vsw);
+        const int intended = (rcTab.bottom - rcTab.top) + fit.clientDelta;
+        const int fits = ok::layout::tabHeightForClient(S(66), rcCliNow.bottom, chromeBand);
+        const int newTabH = (fits > 0) ? std::min(intended, fits) : intended;
+        ::SetWindowPos(tabCtl, nullptr, S(12), S(66), newTabW, newTabH,
                        SWP_NOZORDER | SWP_NOACTIVATE);
     }
-    if (fit.clientDelta != 0) {
+    {
+        // v1.3.0-beta8 (bug BS-09): the bottom row travels DOWN with the client
+        // delta and keeps its X — the beta7 code passed x=0 here (SWP_NOSIZE
+        // suppresses the size, not the move), so every grow of the dialog
+        // stacked the four bottom buttons on the left edge.
+        // v1.3.0-beta8 (bug BS-10): and it is never pushed BELOW the window: the
+        // row is the user's only way to accept the dialog, so it stays inside
+        // the client and the page scrolls instead.
+        RECT cli{};
+        ::GetClientRect(hwnd, &cli);
         for (HWND c = ::GetWindow(hwnd, GW_CHILD); c != nullptr;
              c = ::GetWindow(c, GW_HWNDNEXT)) {
             if (c == tabCtl) { continue; }
@@ -4727,17 +4773,18 @@ void solveSettingsLayout(HWND hwnd) {
             RECT rc{};
             ::GetWindowRect(c, &rc);
             ::MapWindowPoints(nullptr, hwnd, reinterpret_cast<POINT*>(&rc), 2);
-            // v1.3.0-beta8 (bug BS-09): the row travels DOWN with the client
-            // delta and keeps its X — the beta7 code passed x=0 here (SWP_NOSIZE
-            // suppresses the size, not the move), so every grow of the dialog
-            // stacked the four bottom buttons on the left edge.
             const ok::layout::Rect cur{rc.left, rc.top, rc.right - rc.left,
                                        rc.bottom - rc.top};
             const ok::layout::BottomRowMove row =
                 ok::layout::bottomRowMove(cur, static_cast<int>(rcTab.bottom), S(4),
                                           fit.clientDelta);
+            ok::layout::Rect target = row.moves ? row.rect : cur;
             if (row.moves) {
-                ::SetWindowPos(c, nullptr, row.rect.x, row.rect.y, 0, 0,
+                target.y = ok::layout::chromeRowTopInClient(
+                    target.y, static_cast<int>(cli.bottom), target.h);
+            }
+            if (target.x != cur.x || target.y != cur.y) {
+                ::SetWindowPos(c, nullptr, target.x, target.y, 0, 0,
                                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
             }
         }
@@ -4748,9 +4795,48 @@ void solveSettingsLayout(HWND hwnd) {
     ::GetWindowRect(tabCtl, &disp2);
     ::MapWindowPoints(nullptr, hwnd, reinterpret_cast<POINT*>(&disp2), 2);
     ::SendMessageW(tabCtl, TCM_ADJUSTRECT, FALSE, reinterpret_cast<LPARAM>(&disp2));
+    // v1.3.0-beta8 (bug BS-10): the reachable page is the display rectangle
+    // CLIPPED to the client — a display rectangle that reaches past the window
+    // (clamped work area) is not something the user can see or scroll to, and
+    // treating it as the viewport was how the page silently lost its scrollbar.
+    RECT cliView{};
+    ::GetClientRect(hwnd, &cliView);
+    const int viewRight  = std::min(disp2.right, cliView.right);
+    const int viewBottom = std::min(disp2.bottom, cliView.bottom);
     g_settingsScroll.viewport = ok::layout::Rect{
-        disp2.left, disp2.top, disp2.right - disp2.left, disp2.bottom - disp2.top};
+        disp2.left, disp2.top,
+        std::max(0, static_cast<int>(viewRight - disp2.left)),
+        std::max(0, static_cast<int>(viewBottom - disp2.top))};
     g_settingsScroll.viewportBottom = g_settingsScroll.viewport.bottom();
+    // The scrollbar may have to appear because of the clamp above (the first
+    // decision used the intended growth); if so, apply it and re-measure the
+    // client width so the tab does not sit under the scrollbar.
+    if (!g_settingsScroll.enabled) {
+        bool stillOverflow = false;
+        for (int t = 0; t < 9; ++t) {
+            if (g_settingsScroll.perTabContentBottom[t] > g_settingsScroll.viewportBottom) {
+                stillOverflow = true;
+            }
+        }
+        if (stillOverflow) {
+            g_settingsScroll.enabled = true;
+            const LONG_PTR st = ::GetWindowLongPtrW(hwnd, GWL_STYLE);
+            ::SetWindowLongPtrW(hwnd, GWL_STYLE, st | WS_VSCROLL);
+            ::SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                           SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE |
+                               SWP_FRAMECHANGED);
+            RECT cli2{};
+            ::GetClientRect(hwnd, &cli2);
+            RECT tabNow{};
+            ::GetWindowRect(tabCtl, &tabNow);
+            ::MapWindowPoints(nullptr, hwnd, reinterpret_cast<POINT*>(&tabNow), 2);
+            const int vsw2 = ::GetSystemMetrics(SM_CXVSCROLL);
+            const int w2 = std::max(S(200), static_cast<int>(cli2.right) - S(24) - vsw2);
+            ::SetWindowPos(tabCtl, nullptr, S(12), S(66), w2,
+                           std::max(0, static_cast<int>(tabNow.bottom - tabNow.top)),
+                           SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+    }
     g_settingsScroll.solved.clear();
     for (std::size_t i = 0; i < specs.size(); ++i) {
         if (specs[i].tab == ok::layout::ControlSpec::kAlwaysVisible) { continue; }
@@ -4766,6 +4852,13 @@ void solveSettingsLayout(HWND hwnd) {
     int curTab = static_cast<int>(::SendMessageW(tabCtl, TCM_GETCURSEL, 0, 0));
     if (curTab < 0 || curTab > 8) { curTab = 0; }
     settingsScrollSetTab(hwnd, curTab);   // applies solved rects at offset 0
+
+    // v1.3.0-beta8 (bug CA-06): the layout self-check is NOT run here. It walks
+    // all nine tabs (showTab) to read each one's scroll range, and a solve also
+    // happens mid-read (timer growth) — doing it here would flash every tab
+    // while the user is looking at one. The cache the report falls back on is
+    // captured when the dialog CLOSES (captureLayoutSelfCheckOnClose), which is
+    // the only moment the numbers are final and nobody is watching.
 }
 
 // v1.3.0-beta8 (bug BS-12): re-solve WITHOUT losing the scroll position.
@@ -4814,7 +4907,7 @@ void reflowSettingsLayoutPreservingScroll(HWND hwnd) {
 // end, so a tab the user is not on is measured the way it will be painted.
 // Purely additive: returning an empty string leaves the report unchanged.
 //===========================================================================
-std::string settingsLayoutSelfCheckUtf8() {
+std::string settingsLayoutSelfCheckLiveUtf8() {
     HWND dlg = g.hSettings;
     if (dlg == nullptr || ::IsWindow(dlg) == FALSE || ::IsWindowVisible(dlg) == FALSE) {
         return {};
@@ -4834,6 +4927,9 @@ std::string settingsLayoutSelfCheckUtf8() {
 
     ok::diagself::Plan plan;
     plan.dpi = static_cast<int>(g_settingsDpi != 0 ? g_settingsDpi : 96);
+    plan.client = clientRect;
+    plan.scrollEnabled = g_settingsScroll.enabled;
+    plan.scrollRange = g_settingsScroll.range;
 
     // -- one snapshot of every page child, all at scroll offset 0 -----------
     wchar_t cls[32]{};
@@ -4906,6 +5002,35 @@ std::string settingsLayoutSelfCheckUtf8() {
     ::UpdateWindow(dlg);
 
     return ok::diagself::formatSection(plan, ok::diagself::findProblems(plan));
+}
+
+// Capture the numbers while the dialog is still up but on its way out: the
+// report exported after closing Settings then carries the layout the user just
+// looked at instead of nothing at all.
+void captureLayoutSelfCheckOnClose() {
+    const std::string live = settingsLayoutSelfCheckLiveUtf8();
+    if (!live.empty()) { g_settingsSelfCheckCache = live; }
+}
+
+// v1.3.0-beta8 (bug CA-06): the section the report carries. Live measurement
+// when the dialog is up (numbers the user is looking at right now), the last
+// solve's numbers when it is not, and — never both — an explicit line saying
+// no solve happened yet, so an empty report is impossible to misread as "no
+// problems". Both beta8 field reports were exported with Settings closed,
+// which is why neither of them contained this section at all.
+std::string settingsLayoutSelfCheckUtf8() {
+    const std::string live = settingsLayoutSelfCheckLiveUtf8();
+    if (!live.empty()) {
+        g_settingsSelfCheckCache = live;
+        return live;
+    }
+    if (!g_settingsSelfCheckCache.empty()) {
+        return g_settingsSelfCheckCache +
+               "(hộp thoại Cài đặt đang ĐÓNG — số liệu trên là của lần giải bố cục "
+               "gần nhất trong phiên này, không phải bịa)\n";
+    }
+    return "\n=== Tự kiểm tra bố cục ===\n"
+           "chưa giải bố cục lần nào trong phiên này — mở Cài đặt rồi xuất lại báo cáo\n";
 }
 
 //===========================================================================
@@ -6504,6 +6629,7 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     [[fallthrough]];
                 case IDCANCEL:
                     ::KillTimer(hwnd, 1);
+                    captureLayoutSelfCheckOnClose();   // v1.3.0-beta8 (CA-06)
                     destroyRowTooltip();          // v1.3.0-beta8 (BS-02)
                     ::DestroyWindow(hwnd);
                     g.hSettings = nullptr; g.macroEdit.store(nullptr, std::memory_order_release);
@@ -6527,6 +6653,7 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
         case WM_CLOSE:
             ::KillTimer(hwnd, 1);
+            captureLayoutSelfCheckOnClose();      // v1.3.0-beta8 (CA-06)
             ::DestroyWindow(hwnd);
             g.hSettings = nullptr; g.macroEdit.store(nullptr, std::memory_order_release);
             return 0;

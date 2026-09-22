@@ -265,3 +265,23 @@ lại **một lần**: hàng nới đúng theo chữ đo được, mọi thứ b
 nới, dải cuộn được tính lại — **giữ nguyên vị trí cuộn** của bạn (kẹp trong dải mới).
 Giới hạn nới cứng (8/4/5/60 px) đã bỏ: thước đo thật quyết định, nên không hàng nào còn
 bị cắt chữ.
+
+## Báo cáo giờ tự đo bố cục của nó (CA-06)
+
+Nút **Xuất báo cáo** ở tab *Chẩn đoán* trước đây chỉ có bộ đếm. Muốn biết "chữ có bị đè
+không" thì phải nhìn màn hình bạn — mà màn hình bạn thì chúng tôi không thấy. Nay báo cáo
+kèm mục **`=== Tự kiểm tra bố cục ===`**, đo **trên chính cửa sổ đang mở**:
+
+* mỗi ô: hình chữ nhật bộ giải đặt (`box`), hình chữ nhật đang vẽ thật (`rect`), chiều cao
+  chữ cần có ở đúng bề rộng đó (`needH`) — nên "ô 28px mà chữ cần 56px" là một con số, không
+  phải một lời mô tả;
+* vùng cắt (`SetWindowRgn`) đọc ngược lại được: một ô **đang hiện** mà vẫn còn vùng cắt cũ
+  bị ghi là `region` — đúng thứ gây ra "dải xám ở chỗ đáng ra có chữ";
+* cửa sổ được bao nhiêu chỗ (`client`), thanh cuộn đang bật hay tắt, mỗi tab cuộn được bao
+  nhiêu px;
+* **không bao giờ để trống**: nếu bạn xuất báo cáo sau khi đã đóng Cài đặt, mục này vẫn có
+  số liệu của lần giải bố cục gần nhất (ghi rõ là đang đóng), nên không thể nhầm "không có
+  mục" với "không có lỗi" nữa — đúng điều đã xảy ra với hai báo cáo trước.
+
+Số liệu được lấy khi cửa sổ còn đang mở (lúc bạn bấm OK/Huỷ/Đóng), nên việc kiểm tra
+không làm nhấp nháy các tab khi bạn đang đọc.

@@ -592,6 +592,34 @@ struct ScrolledChild {
     return neededH > currentH + 2;
 }
 
+// v1.3.0-beta8 (bug BS-10) — THE WINDOW IS NOT ALWAYS AS TALL AS THE CONTENT.
+//
+// 150 % on a 1080p work area is the NORMAL case, not an edge: the refit grows
+// the client by what the work area allows and the rest is supposed to become
+// scroll. The beta8 arithmetic grew the TAB CONTROL by the intended client
+// delta anyway, so at 150 % its display rectangle — and every page child inside
+// it — ended far below the window, while the bottom chrome row, moved by the
+// same delta, landed off-screen with it: the CI probe measured the button row
+// at y=911 inside a 689-pixel window, i.e. OK / Huỷ / Áp dụng were not on the
+// screen at all and the page could not scroll (the "viewport" claimed the
+// content fit). Two rules, both pure:
+//
+//   * the tab control is never taller than the space left above the chrome row
+//     INSIDE the client;
+//   * the chrome row sits just below the tab display rectangle, but never below
+//     the client.
+[[nodiscard]] inline int tabHeightForClient(int tabTopPx, int clientBottomPx,
+                                           int chromeBandPx) noexcept {
+    const int available = clientBottomPx - tabTopPx - chromeBandPx;
+    return (available > 0) ? available : 0;   // 0 => the caller keeps its minimum
+}
+
+[[nodiscard]] inline int chromeRowTopInClient(int belowTabTopPx, int clientBottomPx,
+                                             int rowHeightPx) noexcept {
+    const int maxTop = clientBottomPx - rowHeightPx;
+    return (belowTabTopPx < maxTop) ? belowTabTopPx : maxTop;
+}
+
 // Standard scrollbar metrics for the fallback.
 //
 // v1.3.0-beta8 (bug BS-01) — THE OLD MODEL MADE THE BAR UNREACHABLE.

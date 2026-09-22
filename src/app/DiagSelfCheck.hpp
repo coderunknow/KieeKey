@@ -112,6 +112,12 @@ struct Plan {
     int dpi = 96;
     int controls = 0;       // what the check looked at (== items.size())
     int checks = 0;         // how many comparisons were made
+    // v1.3.0-beta8 (CA-06): the window itself, so a report from a machine we
+    // cannot see still answers the two questions every layout bug starts with —
+    // how much room did the window actually get, and is the page scrolling?
+    Rect client{};          // dialog client area (0 width => not reported)
+    bool scrollEnabled = false;
+    int  scrollRange = 0;   // px the current tab can travel
 };
 
 struct Finding {
@@ -262,6 +268,15 @@ inline std::string label(const Item& it) {
          std::to_string(plan.controls) + " điều khiển (" +
          std::to_string(shownItems) + " đang hiện), " +
          std::to_string(plan.checks) + " phép so\n";
+    if (plan.client.w > 0) {
+        s += "Cửa sổ: client " + detail::rectText(plan.client) + "; thanh cuộn " +
+             (plan.scrollEnabled ? "BẬT" : "tắt") + " (tầm cuộn tab này " +
+             std::to_string(plan.scrollRange) + " px)\n";
+        for (const TabPage& p : plan.pages) {
+            s += "  tab " + std::to_string(p.tab) + ": vùng trang " + detail::rectText(p.rect) +
+                 " + " + std::to_string(p.travelPx) + " px cuộn\n";
+        }
+    }
     if (findings.empty()) {
         s += "Kết quả: OK — không mục nào đè, cắt hay nằm ngoài tầm với.\n";
         return s;

@@ -583,6 +583,33 @@ ground the children vacated, and the children repaint themselves.
 The probe now asserts all three invariants (`no_clipchildren`, `wheel_edit`,
 `idle_jitter`), so neither class can come back unnoticed.
 
+### 1b-bis. …and it was silently EMPTY in both field reports
+
+The check above existed in the build the user tested (`c255fadd…`, r2/r3) and still
+neither report contained it. Cause, found by reading the function instead of the
+build: `settingsLayoutSelfCheckUtf8()` opened with
+
+```cpp
+if (dlg == nullptr || !::IsWindow(dlg) || !::IsWindowVisible(dlg)) { return {}; }
+```
+
+and both reports were produced **with the settings dialog closed** (the tray export, or
+the pane read in a later session). The section therefore vanished — and a report with
+no self-check section is indistinguishable, to a reader, from a report that passed the
+self-check. The defect is the same class as BS-13: *absence presented as success*.
+
+Fixed in three parts:
+
+| part | behaviour |
+|---|---|
+| never empty | live numbers while the dialog is up; the captured numbers plus an explicit `(hộp thoại Cài đặt đang ĐÓNG: …)` note when it is not; an explicit `chưa giải bố cục lần nào trong phiên này` line in the very first session. There is no state left in which the section is missing. |
+| capture at the right moment | `captureLayoutSelfCheckOnClose()` runs on **IDOK / IDCANCEL / WM_CLOSE**, while the dialog still exists and nobody is reading it. It is deliberately *not* called from `solveSettingsLayout()`: the check walks all nine tabs through `showTab()`, and a solve also happens mid-read (the BS-12 timer growth) — running it there would flash every tab under the user's cursor. |
+| the two questions every layout bug starts with | `ok::diagself::Plan` gained `client` / `scrollEnabled` / `scrollRange`, printed as `Cửa sổ: client WxH; thanh cuộn BẬT (tầm cuộn tab này N px)` plus one `tab N: vùng trang x,y wxh + T px cuộn` line per tab — at 150 % on a clamped work area the numbers say it outright. |
+
+`tests/test_diag_self_check.cpp` case 7 pins that those lines appear **only** when the
+caller measured them (the pure suite and the CI probe pass no client), so the section can
+never invent a window size.
+
 ## 2. Verification layers
 
 | Layer | What it proves | Result |

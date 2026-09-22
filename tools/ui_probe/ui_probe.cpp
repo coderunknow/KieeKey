@@ -767,6 +767,23 @@ int main(int argc, char** argv) {
             if (ok <= 0) { continue; }
             ::Sleep(25);
         }
+        // v1.3.0-beta8 (probe): LET THE APP'S 500 ms TICK LAND, THEN STOP IT.
+        //
+        // The tick writes live text (uptime, stats, AI/coach lines) and a row
+        // whose text outgrows its box asks the solver to grow it — which moves
+        // every row below it. Measuring while that is in flight reads a layout
+        // that has already moved on, and the 150 % pass (where the fonts are
+        // bigger and rows really do grow) reported phantom findings that the
+        // 96 dpi pass never showed: 12 x `hittest` on tab 5 (each centre hitting
+        // a sibling one row down, or the dialog background) and `clip` on rows
+        // whose live height was still the pre-growth one.
+        //
+        // One settle before the pass, then the timer stays off for the audit:
+        // none of the checks below may race the app's own repaint loop. The tick
+        // itself is NOT skipped — `idle_jitter` further down sends WM_TIMER
+        // directly (twice) and still proves that an idle tick moves nothing.
+        ::Sleep(700);
+        ::KillTimer(dlg, 1);
         for (int tab = 0; tab < static_cast<int>(tabCount); ++tab) {
             if (KieeKeyProbeSelectTab(dlg, tab) != 0) { break; }
             ::Sleep(25);
@@ -970,6 +987,13 @@ int main(int argc, char** argv) {
             if (travelPx > 0) {
                 const int steps[] = {1, 2, 3, 4};
                 int lastOffset = 0;
+                // v1.3.0-beta8 (probe): the app's line step is DPI-SCALED
+                // (S(16): 16 px at 96 dpi, 24 px at 150 %), so landing exactly
+                // on the requested offset was never the contract — the tolerance
+                // is one MEASURED notch, not a constant 16 px. What is a
+                // contract: a notch always moves, never jumps a page, and the
+                // offset ends at or past what was asked for.
+                int stepMax = 16;
                 for (const int step : steps) {
                     const int want = travelPx * step / 4;
                     int guard = 0;
@@ -982,6 +1006,26 @@ int main(int argc, char** argv) {
                         if (at >= want) { break; }
                         // One notch at a time: the same increment the wheel uses.
                         ::SendMessageW(dlg, WM_VSCROLL, MAKEWPARAM(SB_LINEDOWN, 0), 0);
+                        SCROLLINFO sn{};
+                        sn.cbSize = sizeof(sn);
+                        sn.fMask = SIF_POS;
+                        ++g_checks;
+                        if (::GetScrollInfo(dlg, SB_VERT, &sn) != FALSE) {
+                            const int moved = static_cast<int>(sn.nPos) - at;
+                            if (moved > 0) { stepMax = std::max(stepMax, moved); }
+                            if (moved <= 0) {
+                                findings.push_back({"scroll_step",
+                                    "SB_LINEDOWN moved nothing at offset " +
+                                    std::to_string(at) + " — the wheel/arrow scroll is dead"});
+                                break;
+                            }
+                            if (moved > 200) {
+                                findings.push_back({"scroll_step",
+                                    "SB_LINEDOWN jumped " + std::to_string(moved) +
+                                    "px at offset " + std::to_string(at) +
+                                    " — a line step must not skip a page"});
+                            }
+                        }
                     }
                     ::Sleep(5);
                     SCROLLINFO si{};
@@ -990,7 +1034,7 @@ int main(int argc, char** argv) {
                     ++g_checks;
                     const bool got = ::GetScrollInfo(dlg, SB_VERT, &si) != FALSE;
                     const int at = got ? static_cast<int>(si.nPos) : -1;
-                    if (!got || at < want - 16 || at > want + 16) {
+                    if (!got || at < want - stepMax || at > want + stepMax) {
                         findings.push_back({"scroll_pos",
                             "asked for offset " + std::to_string(want) +
                             " (line steps), the app reports " + std::to_string(at) +

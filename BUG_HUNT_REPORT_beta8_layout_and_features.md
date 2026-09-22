@@ -610,6 +610,29 @@ Fixed in three parts:
 caller measured them (the pure suite and the CI probe pass no client), so the section can
 never invent a window size.
 
+### 1b-ter. The 150 % pass was measuring a MOVING layout (probe, fixed)
+
+With BS-10 in place the refit no longer hides the overflow: at 150 % the tab has
+real scroll travel (280 px on tab 6, 644 px on tab 3) where before the audit saw
+`travel=0`. The x64 probe run then reported, **only at 150 %**:
+
+| finding | really was |
+|---|---|
+| 12 × `hittest` on tab 5 — "id 581 centre (231,231) hits id 585", "…hits id 0" | the app's own 500 ms tick. Live text grows a row, the row asks the solver to grow it, and every row below moves — all while the audit was reading rectangles. The centres were computed from a snapshot that had already been superseded, so they landed on the row below or on the dialog background. At 96 dpi nothing grows, which is exactly why only the 150 % pass complained. |
+| 2 × `clip` (tab 5 `id 589`, tab 4 `id 561`) — "wraps to 68px (app solver says 68) in 456x52" | the same race, one step earlier: the live height was read before the growth tick had run, so the box looked 16 px (2 px at 150 %) too short. The app's solver and the probe agreed on the needed height in the message itself. |
+| 4 × `scroll_pos` — "asked for offset 483, the app reports 504 of a 644 px travel" | the app's line step is `S(16)` — 16 px at 96 dpi, **24 px at 150 %** — while the audit allowed ±16 px. The app was right; the expectation was a constant that the app never had. |
+
+Fixed in `tools/ui_probe/ui_probe.cpp`:
+
+* one 700 ms settle per scale pass, then `KillTimer(dlg, 1)` for the whole audit —
+  none of the checks may race the app's repaint loop. Coverage is not lost: the
+  `idle_jitter` check still sends `WM_TIMER` directly (twice) and proves that an
+  idle tick moves nothing;
+* the scroll check now measures the app's own notch (`SB_LINEDOWN` must move
+  something, must not jump a page) and uses **that** as the tolerance, then
+  requires the offset to reach what was asked for — DPI-independent, and stricter
+  about the part that matters (a dead or page-sized line step now fails).
+
 ## 2. Verification layers
 
 | Layer | What it proves | Result |

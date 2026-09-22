@@ -4397,6 +4397,28 @@ void settingsScrollSetTab(HWND hwnd, int tabIndex) {
 // grown/shrunk/moved per ok::layout::refitWindow, tab + bottom chrome
 // resized/shifted by the same client delta, and the residual exposed as a
 // scroll range. Runs at WM_CREATE and after every WM_DPICHANGED rescale;
+// The single source of truth for "how tall does this static's text need to be
+// at this width": DrawTextW + DT_CALCRECT | DT_WORDBREAK with the CONTROL's own
+// font, so the solve and every other caller (the CA-03 probe included) measure
+// identically. 0 means "not a text control" / "no text" / "no DC".
+int measureStaticTextHeightPx(HWND child, int widthPx) {
+    if (child == nullptr || widthPx <= 0) { return 0; }
+    wchar_t text[512];
+    const int tLen = ::GetWindowTextW(child, text, 512);
+    if (tLen <= 0) { return 0; }
+    HWND parent = ::GetParent(child);
+    if (parent == nullptr) { return 0; }
+    HDC dc = ::GetDC(parent);
+    if (dc == nullptr) { return 0; }
+    HGDIOBJ of = ::SelectObject(dc, reinterpret_cast<HGDIOBJ>(
+        ::SendMessageW(child, WM_GETFONT, 0, 0)));
+    RECT calc{0, 0, widthPx, 0};
+    ::DrawTextW(dc, text, tLen, &calc, DT_CALCRECT | DT_WORDBREAK);
+    if (of != nullptr) { ::SelectObject(dc, of); }
+    ::ReleaseDC(parent, dc);
+    return static_cast<int>(calc.bottom - calc.top);
+}
+
 // idempotent (re-solving an already-solved dialog changes nothing).
 void solveSettingsLayout(HWND hwnd) {
     if (hwnd == nullptr) { return; }
@@ -4460,7 +4482,6 @@ void solveSettingsLayout(HWND hwnd) {
     std::vector<HWND> hwnds;
     hwnds.reserve(140);
     wchar_t cls[32];
-    wchar_t text[512];
     for (HWND c = ::GetWindow(hwnd, GW_CHILD); c != nullptr;
          c = ::GetWindow(c, GW_HWNDNEXT)) {
         if (c == tabCtl) { continue; }
@@ -4484,21 +4505,7 @@ void solveSettingsLayout(HWND hwnd) {
                         ((style & SS_TYPEMASK) != SS_ICON) &&
                         ((style & SS_TYPEMASK) != SS_OWNERDRAW);
         if (spec.growable) {
-            const int tLen = ::GetWindowTextW(c, text, 512);
-            if (tLen > 0) {
-                HDC dc = ::GetDC(hwnd);
-                if (dc != nullptr) {
-                    HGDIOBJ of = ::SelectObject(dc,
-                        reinterpret_cast<HGDIOBJ>(::SendMessageW(
-                            c, WM_GETFONT, 0, 0)));
-                    RECT calc{0, 0, spec.rect.w, 0};
-                    ::DrawTextW(dc, text, tLen, &calc,
-                                DT_CALCRECT | DT_WORDBREAK);
-                    ::SelectObject(dc, of);
-                    ::ReleaseDC(hwnd, dc);
-                    spec.requiredHeight = calc.bottom - calc.top;
-                }
-            }
+            spec.requiredHeight = measureStaticTextHeightPx(c, spec.rect.w);
         }
         specs.push_back(spec);
         hwnds.push_back(c);
@@ -6812,6 +6819,18 @@ extern "C" void KieeKeyProbeInit(HINSTANCE hInst) {
 extern "C" HWND KieeKeyProbeOpenSettings(int tab) {
     openSettingsDialog(tab);
     return g.hSettings;
+}
+
+// CA-03 diagnostics: the app's OWN required height for a control at its current
+// width, so the probe can print its measurement next to the solver's instead of
+// assuming they agree (they did not, on the first runs — see the clip findings
+// in BUG_HUNT_REPORT_beta8).
+extern "C" int KieeKeyProbeMeasureStaticHeight(HWND dlg, int id) {
+    HWND child = ::GetDlgItem(dlg, id);
+    if (child == nullptr) { return -1; }
+    RECT rc{};
+    ::GetClientRect(child, &rc);
+    return measureStaticTextHeightPx(child, static_cast<int>(rc.right - rc.left));
 }
 
 // The probe switches tabs through the same notification the tab control sends,

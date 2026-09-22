@@ -78,6 +78,9 @@
 extern "C" void KieeKeyProbeInit(HINSTANCE hInst);
 extern "C" HWND KieeKeyProbeOpenSettings(int tab);
 extern "C" int  KieeKeyProbeSelectTab(HWND dlg, int tab);
+// CA-03 diagnostics: the app's OWN required text height for a control (the same
+// DrawTextW call the solver uses), so the probe can compare instead of assume.
+extern "C" int  KieeKeyProbeMeasureStaticHeight(HWND dlg, int id);
 
 namespace {
 
@@ -510,17 +513,37 @@ int main(int argc, char** argv) {
             ? std::max(0, (siReach.nMax + 1) - static_cast<int>(siReach.nPage))
             : 0;
         const int reachableBottom = page.bottom + travelPx;
+        // Horizontal bound: the tab control's own CLIENT rectangle. The display
+        // rectangle is narrower than the authored page whenever the control
+        // reserves scrollbar space, and the app legitimately fills the authored
+        // width — nothing is clipped or covered while a control stays inside the
+        // tab control's client area. The fourth CI run flagged 17 group boxes for
+        // exactly this 8 px difference.
+        RECT tabClient{};
+        if (tabsCtl != nullptr) {
+            ::GetClientRect(tabsCtl, &tabClient);
+            POINT tl{0, 0};
+            POINT br{tabClient.right, tabClient.bottom};
+            ::ClientToScreen(tabsCtl, &tl);
+            ::ClientToScreen(tabsCtl, &br);
+            ::ScreenToClient(dlg, &tl);
+            ::ScreenToClient(dlg, &br);
+            tabClient = RECT{tl.x, tl.y, br.x, br.y};
+        } else {
+            tabClient = RECT{0, 0, client.right, client.bottom};
+        }
         for (const Ctl& c : ctls) {
             if (isChrome(c.id)) { continue; }
             ++g_checks;
-            if (c.x + c.w > page.right + 1 || c.y + c.h > reachableBottom + 1 ||
-                c.x < page.left - 1 || c.y < page.top - 1) {
+            if (c.x + c.w > tabClient.right + 1 || c.y + c.h > reachableBottom + 1 ||
+                c.x < tabClient.left - 1 || c.y < page.top - 1) {
                 findings.push_back({"outside_page",
                     "id " + std::to_string(c.id) + " (" + c.klass + ") at " +
                     std::to_string(c.x) + "," + std::to_string(c.y) + " " +
                     std::to_string(c.w) + "x" + std::to_string(c.h) +
-                    " is outside the reachable page " + std::to_string(page.right) + "x" +
-                    std::to_string(reachableBottom) +
+                    " is outside the reachable page (page " + std::to_string(page.left) +
+                    "," + std::to_string(page.top) + ".." + std::to_string(tabClient.right) +
+                    "," + std::to_string(reachableBottom) + ") x=" + std::to_string(c.x) +
                     (c.y + c.h > reachableBottom + 1 && travelPx > 0
                          ? " (deeper than the scroll range by " +
                                std::to_string(c.y + c.h - reachableBottom) + " px)"
@@ -567,7 +590,9 @@ int main(int argc, char** argv) {
                 if (need > c.w + 2) {
                     findings.push_back({"clip",
                         "id " + std::to_string(c.id) + " (" + c.klass + ") needs " +
-                        std::to_string(need) + "px, has " + std::to_string(c.w) + "px (fontH " +
+                        std::to_string(need) + "px (app solver says " +
+                        std::to_string(KieeKeyProbeMeasureStaticHeight(dlg, c.id)) +
+                        "), has " + std::to_string(c.w) + "px (fontH " +
                         std::to_string(c.fontHeight) + "): " + c.text.substr(0, 60)});
                 }
             } else {
@@ -575,8 +600,10 @@ int main(int argc, char** argv) {
                 if (need > c.h + 2) {
                     findings.push_back({"clip",
                         "id " + std::to_string(c.id) + " (" + c.klass + ") wraps to " +
-                        std::to_string(need) + "px in a " + std::to_string(c.h) + "px box (w " +
-                        std::to_string(c.w) + ", fontH " + std::to_string(c.fontHeight) + "): " +
+                        std::to_string(need) + "px (app solver says " +
+                        std::to_string(KieeKeyProbeMeasureStaticHeight(dlg, c.id)) +
+                        ") in a " + std::to_string(c.h) + "px box (w " + std::to_string(c.w) +
+                        ", fontH " + std::to_string(c.fontHeight) + "): " +
                         c.text.substr(0, 60)});
                 }
             }

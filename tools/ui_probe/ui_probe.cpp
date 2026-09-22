@@ -767,26 +767,27 @@ int main(int argc, char** argv) {
             if (ok <= 0) { continue; }
             ::Sleep(25);
         }
-        // v1.3.0-beta8 (probe): LET THE APP'S 500 ms TICK LAND, THEN STOP IT.
-        //
-        // The tick writes live text (uptime, stats, AI/coach lines) and a row
-        // whose text outgrows its box asks the solver to grow it — which moves
-        // every row below it. Measuring while that is in flight reads a layout
-        // that has already moved on, and the 150 % pass (where the fonts are
-        // bigger and rows really do grow) reported phantom findings that the
-        // 96 dpi pass never showed: 12 x `hittest` on tab 5 (each centre hitting
-        // a sibling one row down, or the dialog background) and `clip` on rows
-        // whose live height was still the pre-growth one.
-        //
-        // One settle before the pass, then the timer stays off for the audit:
-        // none of the checks below may race the app's own repaint loop. The tick
-        // itself is NOT skipped — `idle_jitter` further down sends WM_TIMER
-        // directly (twice) and still proves that an idle tick moves nothing.
-        ::Sleep(700);
-        ::KillTimer(dlg, 1);
         for (int tab = 0; tab < static_cast<int>(tabCount); ++tab) {
             if (KieeKeyProbeSelectTab(dlg, tab) != 0) { break; }
             ::Sleep(25);
+
+            // v1.3.0-beta8 (probe): LET THE APP'S 500 ms TICK LAND, THEN STOP IT.
+            //
+            // Selecting a tab writes that tab's live text (uptime, arcade/AI
+            // status, coach advice) and a row whose new text outgrows its box
+            // asks for a reflow — which the app performs on its next 500 ms
+            // tick, moving that row and everything below it. Measuring before
+            // that tick reads a layout that is about to change: the 150 % pass
+            // reported `clip` on rows whose live height was still the
+            // pre-growth one (the finding's own message had the app's solver
+            // agreeing with the probe on the needed height).
+            //
+            // So: one tick of grace per tab, then the timer stays off for the
+            // audit — no check may race the app's repaint loop. The tick itself
+            // is NOT skipped: `idle_jitter` further down sends WM_TIMER
+            // directly (twice) and still proves an idle tick moves nothing.
+            ::Sleep(700);
+            ::KillTimer(dlg, 1);
 
             RECT client{};
             ::GetClientRect(dlg, &client);
@@ -867,6 +868,7 @@ int main(int argc, char** argv) {
             // charset combo went from Unicode to CP 1258 while they scrolled
             // the page with the wheel, and from then on every Vietnamese
             // keystroke was a raw byte ("gõ dấu thì bị ký tự lạ").
+            int wheeledCombos = 0;
             for (const Ctl& c : ctls) {
                 if (c.klass != "ComboBox" || c.tabpage != tab || !c.shown) { continue; }
                 if (c.hwnd == nullptr) { continue; }
@@ -874,6 +876,7 @@ int main(int argc, char** argv) {
                 const LRESULT items  = ::SendMessageW(c.hwnd, CB_GETCOUNT, 0, 0);
                 if (before < 0 || items <= 1) { continue; }
                 ++g_checks;
+                ++wheeledCombos;
                 ::SendMessageW(c.hwnd, WM_MOUSEWHEEL,
                                MAKEWPARAM(0, static_cast<short>(-WHEEL_DELTA)), 0);
                 const LRESULT after = ::SendMessageW(c.hwnd, CB_GETCURSEL, 0, 0);
@@ -885,6 +888,24 @@ int main(int argc, char** argv) {
                         "never edit a setting"});
                     ::SendMessageW(c.hwnd, CB_SETCURSEL, static_cast<WPARAM>(before), 0);
                 }
+            }
+
+            // v1.3.0-beta8 (probe): PUT THE PAGE BACK AFTER THE WHEEL CHECK.
+            //
+            // Since UX-01 the app forwards a wheel over a combo to the DIALOG —
+            // that is the whole fix: the wheel scrolls the page and never edits
+            // a value. Which also means the geometry snapshot taken before that
+            // loop is stale for every check below it, and the 150 % pass (the
+            // scale with travel) reported exactly that: 12 phantom `hittest`
+            // findings whose centres landed one row down, 2 `clip` findings on
+            // rows that had scrolled out of the page, and `scroll_pos` offsets
+            // that started life already scrolled. The wheel finding itself is
+            // unaffected: the combo's selection did NOT move (that is the
+            // contract being checked).
+            if (wheeledCombos > 0) {
+                ::SendMessageW(dlg, WM_VSCROLL, MAKEWPARAM(SB_TOP, 0), 0);
+                ::Sleep(10);
+                readCtls(dlg, all, tab, page, ctls);
             }
 
             checkSinglePage(a, ctls);

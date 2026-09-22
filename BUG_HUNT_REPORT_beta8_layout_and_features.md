@@ -612,25 +612,28 @@ never invent a window size.
 
 ### 1b-ter. The 150 % pass was measuring a MOVING layout (probe, fixed)
 
-With BS-10 in place the refit no longer hides the overflow: at 150 % the tab has
-real scroll travel (280 px on tab 6, 644 px on tab 3) where before the audit saw
-`travel=0`. The x64 probe run then reported, **only at 150 %**:
+With BS-10 in place the refit no longer hides the overflow: at 150 % the tabs have
+real scroll travel (tab 6: 280 px, tab 3: 644 px) where the audit used to see
+`travel=0`. The x64 run then reported, **only at 150 %**:
 
 | finding | really was |
 |---|---|
-| 12 × `hittest` on tab 5 — "id 581 centre (231,231) hits id 585", "…hits id 0" | the app's own 500 ms tick. Live text grows a row, the row asks the solver to grow it, and every row below moves — all while the audit was reading rectangles. The centres were computed from a snapshot that had already been superseded, so they landed on the row below or on the dialog background. At 96 dpi nothing grows, which is exactly why only the 150 % pass complained. |
-| 2 × `clip` (tab 5 `id 589`, tab 4 `id 561`) — "wraps to 68px (app solver says 68) in 456x52" | the same race, one step earlier: the live height was read before the growth tick had run, so the box looked 16 px (2 px at 150 %) too short. The app's solver and the probe agreed on the needed height in the message itself. |
-| 4 × `scroll_pos` — "asked for offset 483, the app reports 504 of a 644 px travel" | the app's line step is `S(16)` — 16 px at 96 dpi, **24 px at 150 %** — while the audit allowed ±16 px. The app was right; the expectation was a constant that the app never had. |
+| 12 x `hittest` on tab 5 - "id 581 centre (231,231) hits id 585", "... hits id 0" | **the audit's own `wheel_edit` check had scrolled the page.** Since UX-01 the app forwards a wheel over a combo to the dialog - that IS the fix: the wheel scrolls, it never edits a value. The check therefore advanced the page by 3 lines per combo, and every rectangle read before it was stale by exactly that much: the "centres" landed one row down (581 -> 585) or on the dialog background. Tab 6 has combos **and** 280 px of travel; the tabs with neither were silent. |
+| 2 x `clip` (tab 5 `id 589` at 100 %, tab 4 `id 561` at 150 %) | `id 561`: effective height **134 = page bottom 622 - its y 488** - the row had scrolled out of the page, i.e. the same stale snapshot. `id 589` sits on a tab with `travel=0`, so it is the other race: a live row whose text grew, waiting for the 500 ms tick that performs the reflow. |
+| 4 x `scroll_pos` - "asked for offset 483, the app reports 504 of a 644 px travel" | it had already been scrolled (same cause), plus an expectation the app never had: the line step is `S(16)` - **24 px at 150 %** - and the audit allowed +/-16 px. |
 
 Fixed in `tools/ui_probe/ui_probe.cpp`:
 
-* one 700 ms settle per scale pass, then `KillTimer(dlg, 1)` for the whole audit —
-  none of the checks may race the app's repaint loop. Coverage is not lost: the
-  `idle_jitter` check still sends `WM_TIMER` directly (twice) and proves that an
-  idle tick moves nothing;
-* the scroll check now measures the app's own notch (`SB_LINEDOWN` must move
+* after the wheel check, `SB_TOP` + a re-read of the geometry, so every check below
+  it measures the page the wheel left behind - and the wheel finding itself is
+  unaffected: the contract being checked (the combo's selection did not move) is
+  now verified on a page that really scrolls;
+* one 700 ms tick of grace per tab (so a live row reaches its grown height), then
+  `KillTimer(dlg, 1)` for the audit - no check races the app's repaint loop.
+  Coverage is not lost: `idle_jitter` still drives `WM_TIMER` directly, twice;
+* the scroll check measures the app's own notch (`SB_LINEDOWN` must move
   something, must not jump a page) and uses **that** as the tolerance, then
-  requires the offset to reach what was asked for — DPI-independent, and stricter
+  requires the offset to reach what was asked for - DPI-independent, and stricter
   about the part that matters (a dead or page-sized line step now fails).
 
 ## 2. Verification layers

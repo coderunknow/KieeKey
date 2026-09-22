@@ -461,6 +461,7 @@ public:
 
     // --- counters ---------------------------------------------------------
     void add(Counter id, std::uint64_t delta = 1) noexcept;
+    void set(Counter id, std::uint64_t value) noexcept;
     [[nodiscard]] std::uint64_t get(Counter id) const noexcept;
     // Convenience: the number of KEYBOARD events only (the label the beta2 UI
     // got wrong). KeyDown + KeyUp.

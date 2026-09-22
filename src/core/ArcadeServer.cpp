@@ -289,6 +289,38 @@ std::string jsonError(const std::string& message) {
 
 std::string jsonOk() { return "{\"ok\":true}"; }
 
+// v1.3.0-beta8 (bugs UX-06 / UX-07): ONE serializer for the arcade run config,
+// shared by `GET /api/config` (read the truth) and `POST /api/config` (echo
+// what landed). Keeping a single writer is what makes the new GET route
+// trustworthy: the page hydrates from exactly the shape the POST echoes.
+// `rejected` names the keys that were present in a POST but could not be
+// honoured (out of range, or not supported by this route) — an empty list is
+// still emitted so clients can rely on the field existing.
+std::string configJson(const ok::arcade::ArcadeConfig& cfg, bool restartApplied,
+                       bool restartRequired, const std::string& rejected = std::string()) {
+    using namespace ok::arcade;
+    return std::string("{\"ok\":true,\"restartApplied\":") +
+           (restartApplied ? "true" : "false") +
+           ",\"restartRequired\":" + (restartRequired ? "true" : "false") +
+           ",\"restartRequiredKeys\":\"rhythmBpm,rhythmNoteCount,"
+           "rhythmApproachSec,noMistakeStartReserve,wasdStartFuel,"
+           "passageLanguage\"" +
+           ",\"rejectedKeys\":\"" + rejected + "\"" +
+           ",\"config\":{\"rhythmFailMode\":" +
+           (cfg.rhythmFailMode == FailMode::Hardcore ? "0" : "1") +
+           ",\"noMistakeFailMode\":" +
+           (cfg.noMistakeFailMode == FailMode::Hardcore ? "0" : "1") +
+           ",\"rhythmBpm\":" + std::to_string(static_cast<int>(cfg.rhythmBpm)) +
+           ",\"passageLanguage\":" +
+           std::to_string(cfg.passageLanguage == PassageLanguage::English ? 1 : 0) +
+           ",\"typingRacePacerWpm\":" +
+           std::to_string(static_cast<int>(cfg.typingRacePacerWpm)) +
+           // v1.3.0-beta6 (V2/B7): echo the applied steering mode so the web
+           // panel can reflect what actually landed.
+           ",\"wasdSteering\":" +
+           std::to_string(static_cast<int>(cfg.wasdSteering)) + "}}";
+}
+
 std::string contentTypeForExtension(const std::string& path) {
     auto endsWith = [&path](const char* suffix) {
         const std::size_t n = std::strlen(suffix);
@@ -761,10 +793,31 @@ HttpResponse ArcadeServer::handleRequest(const std::string& method, const std::s
         response.body += '}';
         return response;
     }
+    // v1.3.0-beta8 (bug UX-06): the config is READABLE. web/arcade.js used to
+    // boot by POSTing its static HTML defaults (112 BPM, Vietnamese, Hardcore,
+    // pacer 60, Arrows) before it knew anything about the server, so merely
+    // OPENING the web hub overwrote whatever the user had configured on the
+    // desktop. There was no GET route to read the truth from — now there is,
+    // and the page hydrates its controls from it instead of clobbering them.
+    if (isGet && route == "/api/config") {
+        response.body = configJson(m_manager.getConfig(), false, false);
+        return response;
+    }
+
     if (isPost && route == "/api/config") {
         long long value = 0;
         ArcadeConfig config = m_manager.getConfig();
         bool changed = false;
+        // v1.3.0-beta8 (bug UX-07): keys that were PRESENT but could not be
+        // honoured are named back to the caller. The route used to answer a
+        // flat ok:true whether it applied the value, clamped it away, or did
+        // not understand the key at all, so a UI could not tell a successful
+        // change from a silently discarded one.
+        std::string rejected;
+        auto reject = [&rejected](const char* key) {
+            if (!rejected.empty()) { rejected += ','; }
+            rejected += key;
+        };
         if (jsonFindInt(body, "rhythmFailMode", value)) {
             config.rhythmFailMode = (value == 0) ? FailMode::Hardcore : FailMode::HealthBar;
             changed = true;
@@ -773,22 +826,59 @@ HttpResponse ArcadeServer::handleRequest(const std::string& method, const std::s
             config.noMistakeFailMode = (value == 0) ? FailMode::Hardcore : FailMode::HealthBar;
             changed = true;
         }
-        if (jsonFindInt(body, "rhythmBpm", value) && value >= 40 && value <= 400) {
-            config.rhythmBpm = static_cast<double>(value);
-            changed = true;
+        if (jsonFindInt(body, "rhythmBpm", value)) {
+            if (value >= 60 && value <= 220) {
+                config.rhythmBpm = static_cast<double>(value);
+                changed = true;
+            } else {
+                reject("rhythmBpm");
+            }
         }
-        if (jsonFindInt(body, "typingRacePacerWpm", value) && value >= 0 && value <= 300) {
-            config.typingRacePacerWpm = static_cast<double>(value);
-            changed = true;
+        if (jsonFindInt(body, "passageLanguage", value)) {
+            if (value >= 0 && value <= 1) {
+                config.passageLanguage = (value == 1) ? PassageLanguage::English
+                                                      : PassageLanguage::Vietnamese;
+                changed = true;
+            } else {
+                reject("passageLanguage");
+            }
+        }
+        // v1.3.0-beta8 (bug UX-07): the accepted range is 0..200, matching the
+        // slider in web/index.html and the desktop spin control. It used to
+        // accept up to 300, so the bridge stored pacer speeds the UI had no way
+        // to display or undo — inconsistent with its sibling rhythmBpm, which
+        // was already validated against its documented range.
+        if (jsonFindInt(body, "typingRacePacerWpm", value)) {
+            if (value >= 0 && value <= 200) {
+                config.typingRacePacerWpm = static_cast<double>(value);
+                changed = true;
+            } else {
+                reject("typingRacePacerWpm");
+            }
         }
         // v1.3.0-beta6 (V2/B7): the WASD-race steering choice reaches the web
         // player too. Live-safe (applyLiveConfigToGame reinterprets the NEXT
         // key only — never restarts the run), so it rides the same live path
         // as the fail mode / pacer. Values match WasdSteering: 0 Arrows,
         // 1 Wasd, 2 Both; anything else is ignored.
-        if (jsonFindInt(body, "wasdSteering", value) && value >= 0 && value <= 2) {
-            config.wasdSteering = static_cast<WasdSteering>(value);
-            changed = true;
+        if (jsonFindInt(body, "wasdSteering", value)) {
+            if (value >= 0 && value <= 2) {
+                config.wasdSteering = static_cast<WasdSteering>(value);
+                changed = true;
+            } else {
+                reject("wasdSteering");
+            }
+        }
+        // v1.3.0-beta8 (bug UX-07): keys the desktop supports but this route
+        // does not. They used to be swallowed in silence behind ok:true; now
+        // they are reported as unsupported so a caller can tell.
+        for (const char* unsupported : {"rhythmNoteCount", "rhythmApproachSec",
+                                        "noMistakeStartReserve", "wasdStartFuel",
+                                        "fishingAutomation", "vnInputMethod",
+                                        "wasdObstacleSpacingSec"}) {
+            if (jsonFindInt(body, unsupported, value)) {
+                reject(unsupported);
+            }
         }
         long long applyNow = 0;
         (void)jsonFindInt(body, "applyNow", applyNow);
@@ -797,41 +887,36 @@ HttpResponse ArcadeServer::handleRequest(const std::string& method, const std::s
         {
             std::lock_guard<std::mutex> lock(m_gameMutex);
             if (changed) {
-                // v1.3.0 FIX: the fail mode / pacer / automation subset reaches
-                // the RUNNING game immediately (see ArcadeManager::setConfig);
-                // the chart-building knobs can only be honoured by recreating
-                // the run, which is what applyNow asks for — otherwise the
-                // response says so instead of pretending the change landed.
-                needsRelaunch = m_manager.configNeedsRelaunch(config);
-                if (applyNow != 0 && needsRelaunch) {
-                    m_manager.setConfig(config);
-                    // Relaunch the RUN so the chart knobs are visible at once.
-                    // With no game running there is nothing to rebuild, and the
-                    // response says that instead of claiming a restart.
-                    restartApplied = m_manager.relaunchCurrentGame();
-                    needsRelaunch = false;
-                } else {
-                    m_manager.setConfig(config);
-                }
+                m_manager.setConfig(config);
+            }
+            // v1.3.0 FIX: the fail mode / pacer / automation subset reaches
+            // the RUNNING game immediately (see ArcadeManager::setConfig);
+            // the chart-building knobs can only be honoured by recreating
+            // the run, which is what applyNow asks for — otherwise the
+            // response says so instead of pretending the change landed.
+            //
+            // v1.3.0-beta8 (bug UX-01): ask whether the RUN is stale, AFTER
+            // storing, instead of comparing the incoming config against the
+            // stored one BEFORE storing. A real browser fires `input` for
+            // every intermediate slider/select value (pushConfig(), no
+            // applyNow) and then ONE `change` (applyNow=1) carrying the SAME
+            // value. The old order made the final call a no-op — incoming ==
+            // stored, so needsRelaunch was false, nothing was rebuilt and the
+            // toast never fired — leaving the player with a UI that showed
+            // 180 BPM / English while the run still played 112 BPM /
+            // Vietnamese. Run-based staleness survives any number of
+            // intermediate stores.
+            needsRelaunch = m_manager.runNeedsRelaunch();
+            if (applyNow != 0 && needsRelaunch) {
+                // Relaunch the RUN so the chart knobs are visible at once.
+                // With no game running there is nothing to rebuild, and the
+                // response says that instead of claiming a restart.
+                restartApplied = m_manager.relaunchCurrentGame();
+                needsRelaunch = m_manager.runNeedsRelaunch();
             }
         }
-        const ArcadeConfig now = m_manager.getConfig();
-        response.body = std::string("{\"ok\":true,\"restartApplied\":") +
-                        (restartApplied ? "true" : "false") +
-                        ",\"restartRequired\":" + (needsRelaunch ? "true" : "false") +
-                        ",\"restartRequiredKeys\":\"rhythmBpm,rhythmNoteCount,"
-                        "rhythmApproachSec,noMistakeStartReserve,wasdStartFuel\"" +
-                        ",\"config\":{\"rhythmFailMode\":" +
-                        (now.rhythmFailMode == FailMode::Hardcore ? "0" : "1") +
-                        ",\"noMistakeFailMode\":" +
-                        (now.noMistakeFailMode == FailMode::Hardcore ? "0" : "1") +
-                        ",\"rhythmBpm\":" + std::to_string(static_cast<int>(now.rhythmBpm)) +
-                        ",\"typingRacePacerWpm\":" +
-                        std::to_string(static_cast<int>(now.typingRacePacerWpm)) +
-                        // v1.3.0-beta6 (V2/B7): echo the applied steering mode
-                        // so the web panel can reflect what actually landed.
-                        ",\"wasdSteering\":" +
-                        std::to_string(static_cast<int>(now.wasdSteering)) + "}}";
+        response.body = configJson(m_manager.getConfig(), restartApplied, needsRelaunch,
+                                   rejected);
         return response;
     }
 

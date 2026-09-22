@@ -230,10 +230,16 @@ void testWasdBackspace() {
         WasdRaceGame g;
         g.setPassageLanguage(PassageLanguage::English, VnInputMethod::Telex);
         g.start();
+        // v1.3.0-beta8 (bug UX-02): "1:1" now really is 1:1. The passage is
+        // "lai xe ...", so typing "la" must advance TWO characters. This used
+        // to expect 1 because the 'a' was swallowed by WASD steering before it
+        // could reach the typing path — the assertion documented the very bug
+        // that made the English passage impossible to complete (five of its
+        // characters are a/s/d/w) while reading like a correctness check.
         type(g, "la");
-        check(g.getTextIndex() == 1, "EN WasdRace types ASCII 1:1");
+        check(g.getTextIndex() == 2, "EN WasdRace types ASCII 1:1");
         g.handleKey(vkKey(0x08));
-        check(g.getTextIndex() == 0, "EN WasdRace: vk=0x08 backspace rewinds");
+        check(g.getTextIndex() == 1, "EN WasdRace: vk=0x08 backspace rewinds");
     }
 }
 

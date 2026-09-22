@@ -34,6 +34,7 @@ const ui = {
   pacer: document.getElementById('pacer'),
   pacerOut: document.getElementById('pacerOut'),
   steering: document.getElementById('steering'),
+  passageLang: document.getElementById('passageLang'),
 };
 
 const KIND = { RECT: 0, CIRCLE: 1, LINE: 2, POLY: 3, TEXT: 4 };
@@ -449,6 +450,37 @@ async function loadCatalog() {
 //   restartApplied  - applyNow=1 did rebuild it.
 // Live knobs (fail mode, pacer, automation) reach the running game at once and
 // never need a restart.
+// v1.3.0-beta8 (bug UX-06): mirror a server-side config onto the controls.
+// Shared by the boot hydration and the POST echo so the panel can only ever
+// show a value the engine actually holds.
+function applyConfigToControls(cfg) {
+  if (!cfg) { return; }
+  const setNum = (el, v) => {
+    if (el && Number.isFinite(v)) { el.value = String(v); }
+  };
+  setNum(ui.failMode, cfg.rhythmFailMode);
+  setNum(ui.bpm, cfg.rhythmBpm);
+  setNum(ui.pacer, cfg.typingRacePacerWpm);
+  setNum(ui.steering, cfg.wasdSteering);
+  setNum(ui.passageLang, cfg.passageLanguage);
+  if (ui.bpmOut) { ui.bpmOut.textContent = ui.bpm.value; }
+  if (ui.pacerOut) { ui.pacerOut.textContent = ui.pacer.value; }
+}
+
+// v1.3.0-beta8 (bug UX-06): READ the live configuration at boot instead of
+// POSTing the static HTML defaults. The old boot called pushConfig(), which
+// shipped whatever was hard-coded in index.html (112 BPM, Vietnamese,
+// Hardcore, pacer 60, Arrows) — so simply opening the web hub silently reset
+// every arcade setting the user had chosen in the desktop settings dialog.
+async function hydrateConfig() {
+  try {
+    const response = await fetch('api/config', { cache: 'no-store' });
+    if (!response.ok) { return; }
+    const data = await response.json();
+    applyConfigToControls(data && data.config);
+  } catch (err) { /* offline / older build: keep the HTML defaults */ }
+}
+
 async function pushConfig(opts) {
   ui.bpmOut.textContent = ui.bpm.value;
   ui.pacerOut.textContent = ui.pacer.value;
@@ -459,14 +491,21 @@ async function pushConfig(opts) {
     typingRacePacerWpm: parseInt(ui.pacer.value, 10),
     // v1.3.0-beta6 (V2/B7): steering-key choice (0 Arrows / 1 WASD / 2 Both).
     wasdSteering: parseInt(ui.steering.value, 10),
+    // v1.3.0-beta7: passage language (0 VN / 1 EN) — needs relaunch.
+    passageLanguage: ui.passageLang ? parseInt(ui.passageLang.value, 10) : 0,
     applyNow: (opts && opts.applyNow) ? 1 : 0,
   });
   if (!result || !result.ok) {
     return;
   }
   // Reflect what actually landed (the bridge echoes the applied config).
-  if (result.config && Number.isInteger(result.config.wasdSteering) && ui.steering) {
-    ui.steering.value = String(result.config.wasdSteering);
+  applyConfigToControls(result.config);
+  // v1.3.0-beta8 (bug UX-07): the bridge now names the keys it could not
+  // honour instead of answering a flat ok:true. Silently discarding the
+  // user's input while reporting success is what made an out-of-range value
+  // look accepted until the control snapped back on the next refresh.
+  if (result.rejectedKeys) {
+    showToast('Không áp dụng được: ' + result.rejectedKeys);
   }
   if (result.restartApplied) {
     showToast('Đã áp dụng cấu hình mới — ván chơi được bắt đầu lại');
@@ -477,8 +516,8 @@ async function pushConfig(opts) {
 
 // While the slider moves: live push only (no restart on every pixel).
 // On release: one relaunch so the new tempo is audible immediately.
-for (const el of [ui.failMode, ui.pacer, ui.steering]) {
-  el.addEventListener('change', () => pushConfig());
+for (const el of [ui.failMode, ui.pacer, ui.steering, ui.passageLang].filter(Boolean)) {
+  el.addEventListener('change', () => pushConfig({ applyNow: true }));
   el.addEventListener('input', () => pushConfig());
 }
 ui.bpm.addEventListener('input', () => pushConfig());
@@ -492,7 +531,7 @@ document.getElementById('stop').addEventListener('click', () => post('api/stop')
 // Boot
 //---------------------------------------------------------------------------
 loadCatalog();
-pushConfig();
+hydrateConfig();   // v1.3.0-beta8 (bug UX-06): read, never clobber
 startStream();
 // Keep a low-rate poll alive even while streaming: it refreshes the HUD if the
 // stream stalls without firing onerror (some transparent proxies do that).

@@ -47,6 +47,7 @@ void ArcadeWindow::focus() {}
 int ArcadeWindow::hoverIndexForTest() const noexcept { return -1; }
 void ArcadeWindow::setHoverIndex(int) noexcept {}
 double ArcadeWindow::dpiScale() const noexcept { return 1.0; }
+void ArcadeWindow::setDpiScale(double) noexcept {}
 void ArcadeWindow::pump(double) {}
 void ArcadeWindow::paintNow(NativeWindowHandle) {}
 
@@ -86,6 +87,7 @@ bool launchArcadeHub(const char*) { return false; }
 
 #include "Arcade.hpp"
 #include "ArcadeRender.hpp"
+#include "ChaosLabWindow.hpp"
 #include "Progression.hpp"
 
 using namespace ok::arcade;
@@ -716,6 +718,18 @@ LRESULT CALLBACK arcadeWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
                     self->setHoverIndex(hover);
                     ::InvalidateRect(hwnd, nullptr, FALSE);
                 }
+                // Track mouse leave so hover highlight clears when cursor exits.
+                TRACKMOUSEEVENT tme{};
+                tme.cbSize = sizeof(tme);
+                tme.dwFlags = TME_LEAVE;
+                tme.hwndTrack = hwnd;
+                ::TrackMouseEvent(&tme);
+            }
+            return 0;
+        case WM_MOUSELEAVE:
+            if (self != nullptr && self->hoverIndexForTest() != -1) {
+                self->setHoverIndex(-1);
+                ::InvalidateRect(hwnd, nullptr, FALSE);
             }
             return 0;
         case WM_LBUTTONDOWN: {
@@ -758,6 +772,21 @@ LRESULT CALLBACK arcadeWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
         case WM_SIZE:
             ::InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
+        case WM_DPICHANGED: {
+            if (self != nullptr) {
+                const UINT newDpi = HIWORD(wParam);
+                self->setDpiScale((newDpi > 0) ? (static_cast<double>(newDpi) / 96.0) : 1.0);
+                const RECT* suggested = reinterpret_cast<const RECT*>(lParam);
+                if (suggested != nullptr) {
+                    ::SetWindowPos(hwnd, nullptr, suggested->left, suggested->top,
+                                   suggested->right - suggested->left,
+                                   suggested->bottom - suggested->top,
+                                   SWP_NOZORDER | SWP_NOACTIVATE);
+                }
+                ::InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            return 0;
+        }
         case WM_CLOSE:
             if (self != nullptr) {
                 self->close();
@@ -850,7 +879,19 @@ void ArcadeWindow::close() {
         return;
     }
     // stopGame() reports the finished/abandoned run to the progression engine.
-    ArcadeManager::instance().stopGame();
+    // v1.3.0-beta7 (B4): don't kill Flexing owned by Chaos Lab — the lab's own
+    // close() stops it. Without this, closing the hub while the lab is open
+    // aborts the lab's Flexing session and leaves ownsFlexing true with no game.
+    {
+        auto& mgr = ArcadeManager::instance();
+        bool labOwnsFlexing = false;
+        if (mgr.getCurrentGameType() == GameType::Flexing) {
+            labOwnsFlexing = ChaosLabWindow::instance().ownsFlexingGame();
+        }
+        if (!labOwnsFlexing) {
+            mgr.stopGame();
+        }
+    }
     if (m_impl->hwnd != nullptr) {
         HWND hwnd = m_impl->hwnd;
         m_impl->hwnd = nullptr;
@@ -875,6 +916,14 @@ int ArcadeWindow::hoverIndexForTest() const noexcept {
 
 double ArcadeWindow::dpiScale() const noexcept {
     return m_impl != nullptr ? m_impl->dpiScale : 1.0;
+}
+
+// v1.3.0-beta8 (bug UX-10): see the header — WM_DPICHANGED wrote m_impl
+// directly from the free window procedure, which does not compile.
+void ArcadeWindow::setDpiScale(double scale) noexcept {
+    if (m_impl != nullptr && scale > 0.0) {
+        m_impl->dpiScale = scale;
+    }
 }
 
 void ArcadeWindow::setHoverIndex(int index) noexcept {

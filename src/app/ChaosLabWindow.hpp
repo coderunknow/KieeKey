@@ -44,6 +44,7 @@ public:
     void close();
     [[nodiscard]] bool isOpen() const noexcept;
     [[nodiscard]] void* handle() const noexcept;
+    [[nodiscard]] bool ownsFlexingGame() const noexcept;
 
     // Applies the current chaos configuration to `input` (exposed for tests:
     // the window itself only moves text between controls).

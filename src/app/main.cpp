@@ -87,6 +87,8 @@
 #include <tlhelp32.h>   // v1.1.2-r3: CreateToolhelp32Snapshot (conflict detector)
 #include <wtsapi32.h>   // v1.2.0: WTSRegisterSessionNotification (lock/unlock,
                         //          fast-user switching, RDP transitions)
+#include <psapi.h>      // v1.3.0-beta7: GetProcessMemoryInfo for SystemSnapshot
+#include <winver.h>     // v1.3.0-beta7: GetFileVersionInfo for PE version
 
 // v1.2.0 Stable: WM_POWERBROADCAST event codes. The PBT_* set is versioned by
 // _WIN32_WINNT in some SDK/MinGW header combinations, so the two this file
@@ -185,8 +187,8 @@ constexpr wchar_t kAppVersion[]     = L"1.3.0";           // numeric, 3-part
 // v1.2.2 RC1: [[maybe_unused]] — this is a documented VERSION CARRIER
 // (check_version.py reads it), not a code-level constant; the UI shows the
 // title/version forms. Keeping it zero-maintenance and warning-clean.
-[[maybe_unused]] constexpr wchar_t kAppVersionFull[] = L"1.3.0-beta6";  // with channel
-constexpr wchar_t kAppTitle[]       = L"KieeKey v1.3.0-beta6";  // sync with kAppVersionFull
+[[maybe_unused]] constexpr wchar_t kAppVersionFull[] = L"1.3.0-beta7";  // with channel
+constexpr wchar_t kAppTitle[]       = L"KieeKey v1.3.0-beta7";  // sync with kAppVersionFull
 
 //===========================================================================
 // Output item: what the consumer thread must emit (trivially copyable → can
@@ -306,6 +308,12 @@ struct AppState {
 
     // output mode: 0=Auto, 1=Always TSF, 2=Always SendInput (inline)
     std::atomic<int> outputMode{0};
+    // v1.3.0-beta8: atomic mirror of g.options.codeTable for lock-free live-gate reads.
+    // The UI thread writes g.options.codeTable under engineMtx; the hook/consumer
+    // threads read the gate via liveGateNow() without locking. Reading the
+    // non-atomic options field there is a data race (and stale-read drift). This
+    // mirror is the single source for the gate and is kept in sync on every write.
+    std::atomic<int> codeTableCache{static_cast<int>(CodeTable::Unicode)};
 
     // v1.2.1 RC2 — Performance preference profile (persisted) + hybrid
     // flags, and the RESOLVED strategy the hot paths read. Every consumer
@@ -361,6 +369,7 @@ struct AppState {
     bool enabledOnStart = true;
 };
 AppState g;
+std::uint64_t g_startTickMs = 0; // v1.3.0-beta7: process start tick for SystemSnapshot uptime
 
 //===========================================================================
 // v1.1.0 — user macro table ("Gõ tắt"). The v1.0.x settings dialog exposed
@@ -588,6 +597,7 @@ void loadSettings() {
         if (m <= 2) { g.options.inputMethod = static_cast<InputMethod>(m); }
         const DWORD c = key.getDword(L"CodeTable", 0);
         if (c <= 4) { g.options.codeTable = static_cast<CodeTable>(c); }
+        g.codeTableCache.store(static_cast<int>(g.options.codeTable), std::memory_order_relaxed);
         g.options.checkSpelling            = key.getDword(L"CheckSpelling", 1) != 0;
         g.options.useMacro                 = key.getDword(L"UseMacro", 1) != 0;
         g.options.restoreIfWrongSpelling   = key.getDword(L"RestoreIfWrong", 1) != 0;
@@ -1057,7 +1067,7 @@ ok::effects::GateBlocker liveGateNow() noexcept {
     const bool ime = g.engineEnabled.load(std::memory_order_relaxed);
     const bool excl = g.fgExcluded_.load(std::memory_order_relaxed);
     const bool master = g.liveEffects.enabled();
-    const bool uni = g.options.codeTable == CodeTable::Unicode;
+    const bool uni = static_cast<CodeTable>(g.codeTableCache.load(std::memory_order_relaxed)) == CodeTable::Unicode;
     return ok::effects::liveGateBlocker(ime, excl, master, uni);
 }
 
@@ -1093,11 +1103,20 @@ void recordEmitEvidence(std::uint8_t channel, std::uint32_t chars) noexcept {
 
 // Filled near windowDpi() (it needs the DPI helpers defined later).
 void refreshEvidenceContext() noexcept;
+void refreshSystemSnapshot() noexcept;
+void syncDiagnosticsCounters() noexcept;
+void refreshDiagnostics() noexcept;
 
 } // namespace
 
 void emitInline(std::size_t backspace, const std::wstring& text) noexcept {
     g.hook.emitter().sendEdit(backspace, text);
+    // v1.3.0-beta8: SendInputCalls is now re-based from the emitter's own
+    // atomic (syncDiagnosticsCounters) — the source-of-truth for actual
+    // ::SendInput syscalls, including chunked batches and every fallback
+    // path. That closes the beta6 gap (inline vs deferred), the TSF-fallback
+    // gap (flushEditBatch) and the OOM-catch gap in one place, without
+    // per-edit manual increments that drift per-batch.
     // v1.3.0-beta6 (V4): the producer-side SendInput sink — ring-full
     // fallbacks, inline decisions and the Chaos Lab injection all land here.
     if (!text.empty()) {
@@ -1369,6 +1388,17 @@ PD onHookEvent(const KeyEvent& ev) noexcept {
                 }
                 diag.add(pd.suppressKey ? ok::diag::Counter::KeySuppressed
                                         : ok::diag::Counter::KeyPassThrough);
+            } else if (ev.source == EventSource::Mouse) {
+                // v1.3.0-beta8: wheel vs button were conflated — every scroll
+                // notch incremented MouseButton and left MouseWheel stuck at 0
+                // while HookCounters (mouseProc) kept them separate. Mirror the
+                // hook's classification (WM_MOUSEWHEEL / WM_MOUSEHWHEEL -> wheel).
+                const bool isWheel = (ev.wParam == WM_MOUSEWHEEL ||
+                                      ev.wParam == WM_MOUSEHWHEEL);
+                diag.add(isWheel ? ok::diag::Counter::MouseWheel
+                                 : ok::diag::Counter::MouseButton);
+            } else if (ev.source == EventSource::ForegroundChanged) {
+                diag.add(ok::diag::Counter::ForegroundChanged);
             }
             diag.record(ok::diag::Stage::HookToDecision,
                         ok::diag::Diagnostics::nowUs() - diagT0);
@@ -1462,7 +1492,7 @@ PD onHookEventImpl(const KeyEvent& ev) {
                 const EngineResult& r = g.engine.lastResult();
                 g.engine.replacementUtf16(r, g.repScratch);
                 bs = r.backspaceCount;
-                if (g.liveEffects.enabled() && g.options.codeTable == CodeTable::Unicode) {
+                if (g.liveEffects.enabled() && static_cast<CodeTable>(g.codeTableCache.load(std::memory_order_relaxed)) == CodeTable::Unicode) {
                     g.liveEffects.rewrite(bs, g.repScratch);
                 }
             }
@@ -1734,7 +1764,7 @@ PD onHookEventImpl(const KeyEvent& ev) {
         // bug #4: never style the macro editor — the stored expansion must be
         // the clean Vietnamese the user typed, not a random-case/flip variant.
         liveOutput = !macroEditorFocus &&
-                     g.liveEffects.enabled() && g.options.codeTable == CodeTable::Unicode;
+                     g.liveEffects.enabled() && static_cast<CodeTable>(g.codeTableCache.load(std::memory_order_relaxed)) == CodeTable::Unicode;
         const std::int64_t diagEngT0 =
             ok::diag::Diagnostics::instance().atLeast(ok::diag::Level::Basic)
                 ? ok::diag::Diagnostics::nowUs() : 0;
@@ -2073,7 +2103,9 @@ void onConsumerEvent(const KeyEvent& /*ev*/) noexcept {
             diagIns.record(ok::diag::Stage::TsfCommit,
                            ok::diag::Diagnostics::nowUs() - diagCommitT0);
             diagIns.add(ok::diag::Counter::TsfCommits);
-            if (batchOk && g.composer.lastCommitSlow()) {
+            if (!batchOk) {
+                diagIns.add(ok::diag::Counter::TsfFailedCommits);
+            } else if (g.composer.lastCommitSlow()) {
                 diagIns.add(ok::diag::Counter::TsfSlowCommits);
             }
         }
@@ -2190,15 +2222,15 @@ void onConsumerEvent(const KeyEvent& /*ev*/) noexcept {
             const std::uint64_t profSeq = it.profSeq;
             const std::uint64_t tFlush = ok::prof::qpcNow();
 #endif
-            // v1.3.0-beta4: consumer-side diagnostics — the SendInput emit
-            // latency + call counter (relaxed, gated to Basic).
+            // v1.3.0-beta8: SendInput diagnostics re-based from emitter (see
+            // syncDiagnosticsCounters / emitInline). Keep latency histogram;
+            // call/failed counts now come from the emitter source-of-truth.
             if (ok::diag::Diagnostics::instance().atLeast(ok::diag::Level::Basic)) {
                 ok::diag::Diagnostics& dIns = ok::diag::Diagnostics::instance();
                 const std::int64_t dT0 = ok::diag::Diagnostics::nowUs();
                 g.hook.emitter().sendEdit(it.backspace, it.text, it.textLen);
                 dIns.record(ok::diag::Stage::SendInputCall,
                             ok::diag::Diagnostics::nowUs() - dT0);
-                dIns.add(ok::diag::Counter::SendInputCalls);
             } else {
                 g.hook.emitter().sendEdit(it.backspace, it.text, it.textLen);
             }
@@ -2465,7 +2497,7 @@ std::wstring trayTipText() {
             g.engineEnabled.load(std::memory_order_relaxed),
             g.fgExcluded_.load(std::memory_order_relaxed),
             true,
-            g.options.codeTable == CodeTable::Unicode);
+            static_cast<CodeTable>(g.codeTableCache.load(std::memory_order_relaxed)) == CodeTable::Unicode);
         switch (blocker) {
             case GateBlocker::None:
                 tip += L" — hiệu ứng: BẬT";
@@ -2554,6 +2586,9 @@ void updateTrayIcon() noexcept {
     ::Shell_NotifyIconW(NIM_MODIFY, &nid);
 }
 
+// Forward declaration: defined near mkCtl(); used by toggleEngineFromUi().
+void updateHeaderStatus();
+
 //===========================================================================
 // v1.1.1 — the ONE in-app on/off path. Called from the tray menu item and
 // from the settings-dialog toggle button (both run on the UI thread).
@@ -2597,6 +2632,14 @@ void toggleEngineFromUi() {
         drainPendingEditsForLifecycle();
     }
     updateTrayIcon();
+    // v1.3.0-beta7 audit: immediate toggle-button label + header status
+    // so the user sees feedback instantly, not after the 500 ms timer tick.
+    if (g.hSettings) {
+        ::SetWindowTextW(::GetDlgItem(g.hSettings, IDC_BTN_TOGGLE),
+                         enable ? L"Bộ gõ: ĐANG BẬT — bấm để TẮT"
+                                : L"Bộ gõ: ĐANG TẮT — bấm để BẬT");
+        updateHeaderStatus();
+    }
     saveSettings();   // persist at every change point (restart-proof)
     if (enable) {
         showTrayBalloon(L"KieeKey — Bật",
@@ -3264,6 +3307,260 @@ void refreshEvidenceContext() noexcept {
     }
 }
 
+// v1.3.0-beta7: full SystemSnapshot refresh — the source-of-truth pass that
+// closes the beta6 report gap (os/arch/appVersion/foreground/keyboardLayout/
+// outputMode/inputMethod/codeTable/memory/cpu/uptime/dpi/ime/hook/fgHook/
+// liveEffects/excluded all stuck at 0/empty/96). Pure Win32 reads, noexcept,
+// best-effort: any failure leaves that field at its last good value rather
+// than taking the IME down. Called on the UI thread before every report/
+ // quick-check / export / copy and from the hook's foreground path.
+void refreshSystemSnapshot() noexcept {
+    try {
+        auto& diag = ok::diag::Diagnostics::instance();
+        ok::diag::SystemSnapshot snap = diag.systemSnapshot();
+
+        // -- OS name + arch (portable, no versionhelpers) --
+        {
+            OSVERSIONINFOEXW ovi{};
+            ovi.dwOSVersionInfoSize = sizeof(ovi);
+            // GetVersionEx is deprecated (C4996 → C2220 under /WX) and shimmed
+            // by the manifest; RtlGetVersion is the documented replacement and
+            // is available since Windows 2000. No fallback to GetVersionExW —
+            // if ntdll/RtlGetVersion is unavailable we keep the previous value.
+            if (const HMODULE ntdll = ::GetModuleHandleW(L"ntdll.dll")) {
+                using RtlFn = LONG(WINAPI*)(OSVERSIONINFOEXW*);
+                auto fn = reinterpret_cast<RtlFn>(::GetProcAddress(ntdll, "RtlGetVersion"));
+                if (fn != nullptr) { fn(&ovi); }
+            }
+            if (ovi.dwMajorVersion != 0 || ovi.dwBuildNumber != 0) {
+                std::string os = "Windows " + std::to_string(ovi.dwMajorVersion) + "." +
+                                 std::to_string(ovi.dwMinorVersion) +
+                                 " (build " + std::to_string(ovi.dwBuildNumber) + ")";
+                // Product name from registry (e.g. "Windows 11 Pro") if available
+                HKEY hk = nullptr;
+                if (::RegOpenKeyExW(HKEY_LOCAL_MACHINE,
+                        L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", 0, KEY_READ, &hk) == ERROR_SUCCESS) {
+                    wchar_t prod[128]{}; DWORD sz = sizeof(prod); DWORD tp = 0;
+                    if (::RegQueryValueExW(hk, L"ProductName", nullptr, &tp, reinterpret_cast<BYTE*>(prod), &sz) == ERROR_SUCCESS && tp == REG_SZ) {
+                        os = utf16ToUtf8(prod) + " " + os;
+                    }
+                    ::RegCloseKey(hk);
+                }
+                snap.osName = std::move(os);
+            }
+        }
+        {
+            SYSTEM_INFO si{}; ::GetNativeSystemInfo(&si);
+            switch (si.wProcessorArchitecture) {
+                case PROCESSOR_ARCHITECTURE_AMD64: snap.arch = "x64"; break;
+                case PROCESSOR_ARCHITECTURE_ARM:   snap.arch = "ARM"; break;
+                case PROCESSOR_ARCHITECTURE_ARM64: snap.arch = "ARM64"; break;
+                case PROCESSOR_ARCHITECTURE_IA64:  snap.arch = "IA64"; break;
+                default: snap.arch = "x86"; break;
+            }
+            // ARM64EC (emulated x64 on ARM64) — IsWow64Process2 dynamic.
+            if (snap.arch == "ARM64") {
+                if (const HMODULE kern = ::GetModuleHandleW(L"kernel32.dll")) {
+                    using WowFn = BOOL(WINAPI*)(HANDLE, USHORT*, USHORT*);
+                    auto fn = reinterpret_cast<WowFn>(::GetProcAddress(kern, "IsWow64Process2"));
+                    USHORT procMach = 0, nativeMach = 0;
+                    if (fn != nullptr && fn(::GetCurrentProcess(), &procMach, &nativeMach)) {
+                        if (procMach == 0x8664) { snap.arch = "ARM64EC"; } // IMAGE_FILE_MACHINE_AMD64
+                    }
+                }
+            }
+        }
+        {
+            // App version: marketing + PE numeric (from version resource if present)
+            std::string ver = utf16ToUtf8(kAppVersionFull);
+            // Try reading FileVersion from the exe's version resource
+            wchar_t exePath[MAX_PATH]{};
+            if (::GetModuleFileNameW(nullptr, exePath, MAX_PATH) > 0) {
+                DWORD handle = 0;
+                DWORD sz = ::GetFileVersionInfoSizeW(exePath, &handle);
+                if (sz != 0) {
+                    std::vector<std::uint8_t> buf(sz);
+                    if (::GetFileVersionInfoW(exePath, handle, sz, buf.data())) {
+                        VS_FIXEDFILEINFO* ffi = nullptr; UINT len = 0;
+                        if (::VerQueryValueW(buf.data(), L"\\", reinterpret_cast<void**>(&ffi), &len) && ffi != nullptr) {
+                            ver += " (PE " + std::to_string(HIWORD(ffi->dwFileVersionMS)) + "." +
+                                   std::to_string(LOWORD(ffi->dwFileVersionMS)) + "." +
+                                   std::to_string(HIWORD(ffi->dwFileVersionLS)) + "." +
+                                   std::to_string(LOWORD(ffi->dwFileVersionLS)) + ")";
+                        }
+                    }
+                }
+            }
+            snap.appVersion = std::move(ver);
+        }
+        // -- uptime / memory / cpu --
+        {
+            const std::uint64_t now = ::GetTickCount64();
+            if (g_startTickMs == 0) { g_startTickMs = now; }
+            snap.uptimeMs = (now >= g_startTickMs) ? (now - g_startTickMs) : 0;
+        }
+        {
+            PROCESS_MEMORY_COUNTERS pmc{};
+            pmc.cb = sizeof(pmc);
+            if (::GetProcessMemoryInfo(::GetCurrentProcess(), &pmc, sizeof(pmc))) {
+                snap.workingSetKb = pmc.WorkingSetSize / 1024;
+                snap.peakWorkingSetKb = pmc.PeakWorkingSetSize / 1024;
+            }
+        }
+        {
+            FILETIME ct{}, et{}, kt{}, ut{};
+            if (::GetProcessTimes(::GetCurrentProcess(), &ct, &et, &kt, &ut)) {
+                auto ftToMs = [](FILETIME ft) -> std::uint64_t {
+                    ULARGE_INTEGER v{}; v.LowPart = ft.dwLowDateTime; v.HighPart = ft.dwHighDateTime;
+                    return v.QuadPart / 10000ULL;
+                };
+                snap.kernelTimeMs = ftToMs(kt);
+                snap.userTimeMs = ftToMs(ut);
+                const std::uint64_t totalMs = snap.kernelTimeMs + snap.userTimeMs;
+                if (snap.uptimeMs > 0) {
+                    // cpu % since process start (single sample, not delta)
+                    // totalMs is per-core time; normalize by uptime and cpu count is not needed for "since start" estimate — use wall time.
+                    snap.cpuPercentSinceStart = (static_cast<double>(totalMs) * 100.0) / static_cast<double>(snap.uptimeMs);
+                    if (snap.cpuPercentSinceStart > 100.0 * 64) { snap.cpuPercentSinceStart = 0.0; } // guard overflow
+                }
+            }
+        }
+        // -- foreground app / layout / output mode / input method / code table --
+        {
+            if (const auto s = g.monitor.snapshot()) {
+                std::string app = s->exeNameUtf8;
+                if (app.empty()) { app = "pid " + std::to_string(s->pid); }
+                // Append policy hint like the status line
+                if (g.fgExcluded_.load(std::memory_order_relaxed)) {
+                    app += g.monitor.currentAppElevated() ? " (elevated, pass-through)" : " (excluded)";
+                } else {
+                    app += g.fgUseTsf_.load(std::memory_order_relaxed) ? " (TSF)" : " (SendInput)";
+                }
+                snap.foregroundApp = std::move(app);
+            } else {
+                snap.foregroundApp = "(none)";
+            }
+        }
+        {
+            const HKL hkl = g.currentHkl.load(std::memory_order_relaxed);
+            wchar_t lang[16]{};
+            // LOWORD = LANGID, format as hex 8-digit KLID-like
+            swprintf_s(lang, L"%08X", static_cast<unsigned>(reinterpret_cast<std::uintptr_t>(hkl)));
+            snap.keyboardLayout = utf16ToUtf8(lang);
+            // Also try to get locale name for readability
+            wchar_t name[LOCALE_NAME_MAX_LENGTH]{};
+            if (::LCIDToLocaleName(MAKELCID(LOWORD(hkl), SORT_DEFAULT), name, LOCALE_NAME_MAX_LENGTH, 0) > 0) {
+                snap.keyboardLayout += " (" + utf16ToUtf8(name) + ")";
+            }
+        }
+        {
+            const int om = g.outputMode.load(std::memory_order_relaxed);
+            if (om == 1) { snap.outputMode = "Always TSF"; }
+            else if (om == 2) { snap.outputMode = "Always SendInput"; }
+            else {
+                snap.outputMode = g.fgUseTsf_.load(std::memory_order_relaxed) ? "Auto (TSF)" : "Auto (SendInput)";
+            }
+        }
+        {
+            switch (g.options.inputMethod) {
+                case InputMethod::Telex: snap.inputMethod = "Telex"; break;
+                case InputMethod::Vni: snap.inputMethod = "VNI"; break;
+                case InputMethod::SimpleTelex: snap.inputMethod = "SimpleTelex"; break;
+                default: snap.inputMethod = "Telex"; break;
+            }
+        }
+        {
+            switch (g.options.codeTable) {
+                case CodeTable::Unicode: snap.codeTable = "Unicode"; break;
+                case CodeTable::Tcvn3: snap.codeTable = "TCVN3"; break;
+                case CodeTable::VniWindows: snap.codeTable = "VNI Windows"; break;
+                case CodeTable::UnicodeCompound: snap.codeTable = "UnicodeCompound"; break;
+                case CodeTable::Cp1258: snap.codeTable = "CP1258"; break;
+                default: snap.codeTable = "Unicode"; break;
+            }
+        }
+        // -- dpi / flags --
+        {
+            const HWND probe = (g.hSettings != nullptr) ? g.hSettings : ::GetForegroundWindow();
+            snap.dpi = (probe != nullptr) ? windowDpi(probe) : systemDpiOrFallback();
+            if (snap.dpi == 0) { snap.dpi = 96; }
+        }
+        snap.imeEnabled = g.engineEnabled.load(std::memory_order_relaxed);
+        snap.hookInstalled = g.hook.running();
+        // fgHookInstalled: the foreground window's thread has a hook opportunity?
+        // We treat hookInstalled as proxy: if our LL hook is installed, fg hook is conceptually installed.
+        snap.fgHookInstalled = snap.hookInstalled;
+        snap.liveEffectsEnabled = g.liveEffects.enabled();
+        snap.excludedApp = g.fgExcluded_.load(std::memory_order_relaxed);
+
+        diag.setSystemSnapshot(snap);
+        // Also refresh the B1/B4 evidence blocks so snapshot and displayMetrics never disagree at report time.
+        refreshEvidenceContext();
+    } catch (...) {
+        // Snapshot must never take the IME down.
+    }
+}
+
+void syncDiagnosticsCounters() noexcept {
+    try {
+        auto& diag = ok::diag::Diagnostics::instance();
+        // HookCounters + Emitter + Barrier -> Diagnostics (the beta6 gap:
+        // hook.pushed/dropped/wakes were live but never reached the report,
+        // so the report could show 0 while the wrapper had seen thousands;
+        // beta7 closed most of the snapshot fields, but MouseWheel,
+        // ForegroundChanged, BarrierTimeouts, HookReinstalls and the
+        // SendInput*/TsfFailed counters still drifted or stayed zero).
+        const auto& hc = g.hook.counters();
+        // Ring / wake path — the source-of-truth is the hook's atomics
+        // (QueueStats + HookCounters). Overwrite unconditionally: a stale
+        // Diagnostics value is strictly worse than a fresh 0 at startup.
+        diag.set(ok::diag::Counter::QueuedToConsumer, g.hook.pushed());
+        diag.set(ok::diag::Counter::QueueOverflowDropped, g.hook.dropped());
+        diag.set(ok::diag::Counter::ConsumerWakes, hc.consumerWakeups.load(std::memory_order_relaxed));
+        diag.set(ok::diag::Counter::SetEventSyscalls, hc.setEventSyscalls.load(std::memory_order_relaxed));
+        // Barrier / hook health — displayed on the Chẩn đoán tab directly
+        // from g.drainBarrier / g.hook, but the exported report reads the
+        // Diagnostics counter copy, which used to follow independent paths.
+        // Re-base here so the report and the UI never disagree.
+        diag.set(ok::diag::Counter::BarrierTimeouts, g.drainBarrier.timeouts());
+        diag.set(ok::diag::Counter::HookReinstalls, g.hook.hookReinstallCount());
+        // Mouse / foreground — beta7's sync only touched keyboard and left
+        // MouseWheel stuck at 0 (onHookEvent conflated wheel->button, and
+        // sync never corrected it) and ForegroundChanged drifting.
+        diag.set(ok::diag::Counter::MouseButton, hc.mouseButton.load(std::memory_order_relaxed));
+        diag.set(ok::diag::Counter::MouseWheel, hc.mouseWheel.load(std::memory_order_relaxed));
+        diag.set(ok::diag::Counter::ForegroundChanged, hc.foregroundChanged.load(std::memory_order_relaxed));
+        // Keyboard — the hook distinguishes KeyDown/SysKeyDown and
+        // KeyUp/SysKeyUp, while Diagnostics folds them to KeyDown/KeyUp
+        // (engine contract: shift vs sys does not matter to Vietnamese).
+        // Re-base with the exact split so KeyDown+KeyUp == hook.keyboardEvents()
+        // and the report never shows a phantom 0 KeyUp or a collapsed total.
+        {
+            const std::uint64_t kd = hc.keyDown.load(std::memory_order_relaxed) +
+                                     hc.sysKeyDown.load(std::memory_order_relaxed);
+            const std::uint64_t ku = hc.keyUp.load(std::memory_order_relaxed) +
+                                     hc.sysKeyUp.load(std::memory_order_relaxed);
+            diag.set(ok::diag::Counter::KeyDown, kd);
+            diag.set(ok::diag::Counter::KeyUp, ku);
+        }
+        // Output — the emitter is the source-of-truth for actual
+        // ::SendInput syscalls (including chunked batches, TSF fallbacks,
+        // OOM-catch deferred paths). One re-base covers all of them;
+        // per-edit manual adds are gone (see emitInline).
+        diag.set(ok::diag::Counter::SendInputCalls, g.hook.emitter().sendInputCalls());
+        diag.set(ok::diag::Counter::SendInputFailedEvents, g.hook.emitter().sendInputFailed());
+        // Note: TsfCommits / TsfSlowCommits / TsfFailedCommits are counted
+        // directly in onConsumerEvent's flushEditBatch (only that thread
+        // knows whether commitBatch succeeded); nothing to re-base here.
+    } catch (...) {
+    }
+}
+
+void refreshDiagnostics() noexcept {
+    refreshSystemSnapshot();
+    syncDiagnosticsCounters();
+}
+
 } // namespace
 
 // v1.1.0: the settings dialog's DPI (set in WM_CREATE before controls are
@@ -3462,6 +3759,71 @@ bool dlgChecked(HWND h, int id, bool fallback) noexcept {
                : fallback;
 }
 
+// v1.3.0-beta7 (B2 follow-up): shared arcade-config reader for the desktop UI.
+// Reads the arcade tab controls (fail mode, BPM, passage language, steering)
+// and fills `out`. Returns true on success; on BPM parse error shows the
+// same warning the dedicated Apply button shows and returns false. When the
+// controls do not exist (half-built dialog) it leaves `out` untouched and
+// returns true so the caller can keep the persisted config.
+bool tryReadArcadeConfigFromDialog(HWND hwnd, ok::arcade::ArcadeConfig& out) {
+    if (hwnd == nullptr) { return true; }
+    const HWND failCtl = ::GetDlgItem(hwnd, IDC_CMB_FAILMODE);
+    const HWND bpmCtl  = ::GetDlgItem(hwnd, IDC_EDT_RHYTHM_BPM);
+    const HWND langCtl = ::GetDlgItem(hwnd, IDC_CMB_PASSAGE_LANG);
+    const HWND steerCtl = ::GetDlgItem(hwnd, IDC_CMB_STEERING);
+    if (failCtl == nullptr && bpmCtl == nullptr && langCtl == nullptr && steerCtl == nullptr) {
+        return true;
+    }
+    if (failCtl != nullptr) {
+        const int selection = static_cast<int>(::SendMessageW(failCtl, CB_GETCURSEL, 0, 0));
+        const auto mode = (selection == 1) ? ok::arcade::FailMode::HealthBar
+                                           : ok::arcade::FailMode::Hardcore;
+        out.rhythmFailMode = mode;
+        out.noMistakeFailMode = mode;
+    }
+    if (bpmCtl != nullptr) {
+        wchar_t bpmText[16]{};
+        const int bpmLen = ::GetDlgItemTextW(hwnd, IDC_EDT_RHYTHM_BPM, bpmText, 16);
+        if (bpmLen > 0) {
+            wchar_t* endPtr = nullptr;
+            const long bpm = std::wcstol(bpmText, &endPtr, 10);
+            const bool fullyParsed = (endPtr != nullptr && *endPtr == L'\0');
+            if (!fullyParsed || bpm < 60 || bpm > 220) {
+                ::MessageBoxW(hwnd,
+                              L"BPM không hợp lệ — nhập số nguyên từ 60 đến 220, "
+                              L"hoặc để trống để giữ nguyên.",
+                              L"KieeKey Arcade", MB_OK | MB_ICONWARNING);
+                return false;
+            }
+            out.rhythmBpm = static_cast<double>(bpm);
+        }
+    }
+    if (langCtl != nullptr) {
+        const int langSel = static_cast<int>(::SendMessageW(langCtl, CB_GETCURSEL, 0, 0));
+        out.passageLanguage = (langSel == 1) ? ok::arcade::PassageLanguage::English
+                                             : ok::arcade::PassageLanguage::Vietnamese;
+    }
+    // Composition method follows the IME method already chosen on tab 0.
+    // When the Telex radio exists we use its state; otherwise keep g.options.
+    {
+        const HWND telexCtl = ::GetDlgItem(hwnd, IDC_RADIO_TELEX);
+        const HWND vniCtl   = ::GetDlgItem(hwnd, IDC_RADIO_VNI);
+        if (telexCtl != nullptr && vniCtl != nullptr) {
+            const bool telex = (::SendMessageW(telexCtl, BM_GETCHECK, 0, 0) == BST_CHECKED);
+            const bool vni   = (::SendMessageW(vniCtl,   BM_GETCHECK, 0, 0) == BST_CHECKED);
+            const int method = telex ? 0 : (vni ? 1 : 2);
+            out.vnInputMethod = static_cast<ok::arcade::VnInputMethod>(method);
+        } else {
+            out.vnInputMethod = static_cast<ok::arcade::VnInputMethod>(g.options.inputMethod);
+        }
+    }
+    if (steerCtl != nullptr) {
+        const int steerSel = static_cast<int>(::SendMessageW(steerCtl, CB_GETCURSEL, 0, 0));
+        out.wasdSteering = static_cast<ok::arcade::WasdSteering>(std::clamp(steerSel, 0, 2));
+    }
+    return true;
+}
+
 void settingsFromControls() {
     const bool telex = (::SendMessageW(::GetDlgItem(g.hSettings, IDC_RADIO_TELEX),
                                        BM_GETCHECK, 0, 0) == BST_CHECKED);
@@ -3510,6 +3872,12 @@ void settingsFromControls() {
     const bool hybLowCpu   = dlgChecked(g.hSettings, IDC_CHK_PERF_LOWCPU, (curHyb & ok::perf::kHybridLowCpu) != 0);
     const bool hybDict     = dlgChecked(g.hSettings, IDC_CHK_PERF_DICT,   (curHyb & ok::perf::kHybridExtraCorrect) != 0);
     const bool notifyOn    = dlgChecked(g.hSettings, IDC_CHK_NOTIFY, !g.notify.sessionMuted());
+    // v1.3.0-beta7: arcade tab controls (fail mode, BPM, passage language,
+    // steering) must also be read on OK/Apply — otherwise changing them and
+    // pressing OK loses the change unless the dedicated arcade button was
+    // pressed first. Read above the lock, same as the other controls.
+    auto arcadeCfg = ok::arcade::ArcadeManager::instance().getConfig();
+    const bool arcadeOk = tryReadArcadeConfigFromDialog(g.hSettings, arcadeCfg);
     // v1.1.0 (race fix): parse + swap the table UNDER engineMtx — the
     // hook thread reads g_macros through the resolver inside
     // engine.process(), which always runs under this lock. The FILE WRITE
@@ -3529,6 +3897,7 @@ void settingsFromControls() {
         if (hasComboCtl) {
             g.options.codeTable = (codeTableSel >= 0 && codeTableSel <= 4)
                 ? static_cast<CodeTable>(codeTableSel) : CodeTable::Unicode;
+            g.codeTableCache.store(static_cast<int>(g.options.codeTable), std::memory_order_relaxed);
         }
         // v1.1.3: every value below was read ABOVE the lock (fail-safe
         // dlgChecked fallbacks — a missing control can never silently turn
@@ -3560,6 +3929,19 @@ void settingsFromControls() {
         g.monitor.setExcludeShell(g.exclShell);
         updateExclusionCache();
         updateForegroundPolicy();   // output mode affects the TSF-vs-inline decision
+    }
+    // v1.3.0-beta7: apply arcade config that was read above the lock (if the
+    // BPM field was valid). The ArcadeManager owns its own mutex. If the new
+    // config needs a chart rebuild (passage language, BPM, …) and a game is
+    // running, relaunch it now — same behaviour as the web /api/config with
+    // applyNow.
+    if (arcadeOk) {
+        auto& mgr = ok::arcade::ArcadeManager::instance();
+        const bool needsRelaunch = mgr.configNeedsRelaunch(arcadeCfg);
+        mgr.setConfig(arcadeCfg);
+        if (needsRelaunch) {
+            (void)mgr.relaunchCurrentGame();
+        }
     }
     // Disk write OUTSIDE engineMtx: never let file I/O extend the window in
     // which the hook thread's keystroke path can be blocked.
@@ -4197,9 +4579,9 @@ bool exportDiagReport(std::wstring& outPath) {
     outPath = dir + name;
     std::ofstream out(outPath.c_str(), std::ios::binary | std::ios::trunc);
     if (!out) { return false; }
-    // v1.3.0-beta6 (V4): the B1/B4 evidence blocks must reflect the machine
-    // AT EXPORT TIME (fresh DPI / DWM / foreground-resolution lines).
-    refreshEvidenceContext();
+    // v1.3.0-beta7: full snapshot + counter sync at export time — the beta6
+    // report showed 0s/96 DPI because only B1/B4 evidence was refreshed here.
+    refreshDiagnostics();
     out << "\xEF\xBB\xBF";
     out << ok::diag::Diagnostics::instance().report(40);
     // v1.3.0-beta5 (bug B2): the live-effects gate verdict belongs in the
@@ -5124,52 +5506,47 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     return 0;
                 case IDC_BTN_APPLY_ARCADE_CFG: {
                     auto cfg = ok::arcade::ArcadeManager::instance().getConfig();
-                    HWND combo = ::GetDlgItem(hwnd, IDC_CMB_FAILMODE);
-                    const int selection = (combo != nullptr)
-                                              ? static_cast<int>(::SendMessageW(combo, CB_GETCURSEL,
-                                                                               0, 0))
-                                              : 0;
-                    const auto mode = (selection == 1) ? ok::arcade::FailMode::HealthBar
-                                                       : ok::arcade::FailMode::Hardcore;
-                    cfg.rhythmFailMode = mode;
-                    cfg.noMistakeFailMode = mode;
-                    wchar_t bpmText[16]{};
-                    ::GetDlgItemTextW(hwnd, IDC_EDT_RHYTHM_BPM, bpmText, 16);
-                    const long bpm = std::wcstol(bpmText, nullptr, 10);
-                    if (bpm >= 60 && bpm <= 220) {
-                        cfg.rhythmBpm = static_cast<double>(bpm);
+                    if (!tryReadArcadeConfigFromDialog(hwnd, cfg)) {
+                        return 0;
                     }
-                    // v1.3.0-beta3 (bug #2): passage language (VN default) + the
-                    // composition method, which follows the IME method already
-                    // configured so the games compose Telex/VNI exactly like the IME.
-                    HWND langCombo = ::GetDlgItem(hwnd, IDC_CMB_PASSAGE_LANG);
-                    const int langSel = (langCombo != nullptr)
-                                            ? static_cast<int>(::SendMessageW(langCombo,
-                                                                              CB_GETCURSEL, 0, 0))
-                                            : 0;
-                    cfg.passageLanguage = (langSel == 1)
-                                              ? ok::arcade::PassageLanguage::English
-                                              : ok::arcade::PassageLanguage::Vietnamese;
-                    cfg.vnInputMethod =
-                        static_cast<ok::arcade::VnInputMethod>(g.options.inputMethod);
-                    // v1.3.0-beta5 (bug B7): steering-key choice (clamped —
-                    // CB_ERR/-1 from an untouched combo falls back to Arrows).
-                    HWND steerCombo = ::GetDlgItem(hwnd, IDC_CMB_STEERING);
-                    const int steerSel = (steerCombo != nullptr)
-                                             ? static_cast<int>(::SendMessageW(steerCombo,
-                                                                               CB_GETCURSEL, 0, 0))
-                                             : 0;
-                    cfg.wasdSteering = static_cast<ok::arcade::WasdSteering>(
-                        std::clamp(steerSel, 0, 2));
-                    ok::arcade::ArcadeManager::instance().setConfig(cfg);
+                    auto& mgr = ok::arcade::ArcadeManager::instance();
+                    const bool needsRelaunch = mgr.configNeedsRelaunch(cfg);
+                    const bool hasGame = mgr.hasActiveGame();
+                    mgr.setConfig(cfg);
+                    bool relaunched = false;
+                    if (needsRelaunch && hasGame) {
+                        relaunched = mgr.relaunchCurrentGame();
+                    }
                     // v1.3.0-beta5 (bug B6): PERSIST right away — before this,
                     // the applied config lived only in memory and vanished on
                     // restart unless the user also pressed OK on the dialog.
                     saveSettings();
-                    ::MessageBoxW(hwnd,
-                                  L"Đã áp dụng + lưu: chế độ Rhythm/No-Mistake, nhịp BPM, "
-                                  L"ngôn ngữ đoạn văn và phím lái cho các game.",
-                                  L"KieeKey Arcade", MB_OK | MB_ICONINFORMATION);
+                    updateHeaderStatus();
+                    if (needsRelaunch) {
+                        if (relaunched) {
+                            ::MessageBoxW(hwnd,
+                                          L"Đã áp dụng + lưu và khởi động lại game: chế độ "
+                                          L"Rhythm/No-Mistake, nhịp BPM, ngôn ngữ đoạn văn và "
+                                          L"phím lái.",
+                                          L"KieeKey Arcade", MB_OK | MB_ICONINFORMATION);
+                        } else if (hasGame) {
+                            ::MessageBoxW(hwnd,
+                                          L"Đã áp dụng + lưu, nhưng không khởi động lại được game "
+                                          L"(thử mở lại từ Arcade Hub).",
+                                          L"KieeKey Arcade", MB_OK | MB_ICONWARNING);
+                        } else {
+                            ::MessageBoxW(hwnd,
+                                          L"Đã áp dụng + lưu: chế độ Rhythm/No-Mistake, nhịp BPM, "
+                                          L"ngôn ngữ đoạn văn và phím lái. Thay đổi sẽ có hiệu lực "
+                                          L"khi mở game tiếp theo (cần khởi động lại run).",
+                                          L"KieeKey Arcade", MB_OK | MB_ICONINFORMATION);
+                        }
+                    } else {
+                        ::MessageBoxW(hwnd,
+                                      L"Đã áp dụng + lưu: chế độ Rhythm/No-Mistake, nhịp BPM, "
+                                      L"ngôn ngữ đoạn văn và phím lái cho các game.",
+                                      L"KieeKey Arcade", MB_OK | MB_ICONINFORMATION);
+                    }
                     return 0;
                 }
                 case IDC_CHK_LIVE:
@@ -5236,6 +5613,7 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     return 0;
                 }
                 case IDC_BTN_DIAG_RUN: {
+                    refreshDiagnostics();
                     std::string failDetail;
                     const int passed = runDiagQuickCheck(failDetail);
                     if (HWND r = ::GetDlgItem(hwnd, IDC_STAT_DIAG_RESULT)) {
@@ -5263,11 +5641,8 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     return 0;
                 }
                 case IDC_BTN_DIAG_COPY: {
-                    // v1.3.0-beta6 (V4): the report goes straight onto the
-                    // clipboard as CF_UNICODETEXT — the tester pastes it back
-                    // into the bug thread with no file to hunt for. Fresh
-                    // B1/B4 evidence first, same as the file export.
-                    refreshEvidenceContext();
+                    // v1.3.0-beta7: full refresh before copy, like export.
+                    refreshDiagnostics();
                     const std::wstring wide = utf8ToUtf16(
                         ok::diag::Diagnostics::instance().report(40));
                     bool okCopy = false;
@@ -5346,6 +5721,7 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     settingsFromControls();
                     saveSettings();
                     updateTrayIcon();
+                    updateHeaderStatus();
                     [[fallthrough]];
                 case IDCANCEL:
                     ::KillTimer(hwnd, 1);
@@ -5356,6 +5732,7 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     settingsFromControls();
                     saveSettings();
                     updateTrayIcon();
+                    updateHeaderStatus();
                     return 0;
                 default: break;
             }
@@ -5404,6 +5781,9 @@ void openSettingsDialog(int tab) {
         g.conflictWarning = cs.warning;
         g.conflictDetail  = cs.detail;
     }
+    // v1.3.0-beta7 audit: clamp tab to valid range (0..8) so --settings=99
+    // does not show an empty dialog (all tabs hidden).
+    if (tab < 0 || tab > 8) { tab = 0; }
     if (g.hSettings) {
         // Already open: just bring it up on the requested tab.
         g_settingsOpenTab = tab;
@@ -5576,6 +5956,9 @@ LRESULT CALLBACK mainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     // v3.5: shell restart notification for tray-icon resurrection.
     g_msgTaskbarCreated = ::RegisterWindowMessageW(L"TaskbarCreated");
+
+    // v1.3.0-beta7: capture process start tick for uptime (must be before any snapshot)
+    g_startTickMs = ::GetTickCount64();
 
     // v1.3.0-beta5 (bug B8): register the Chaos Lab emitter once at boot. The
     // Arcade Hub sidebar entry opens the lab through the launchChaosLab()
@@ -5764,6 +6147,8 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     // Defensive against a future restart path that reuses this object after
     // edits were published (see PendingEditCounter::forceQuiesce's contract).
     g.pendingEdits.forceQuiesce();
+    // v1.3.0-beta7: seed the diagnostics snapshot so the first report after startup is not all zeros
+    refreshDiagnostics();
 
     // v1.1.2-r3: scan for external digit-conversion causes (other IMEs,
     // Windows Vietnamese Telex/VNI layouts) BEFORE the welcome balloon so
@@ -5841,6 +6226,17 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     BOOL gmRet = 0;
     while ((gmRet = ::GetMessageW(&msg, nullptr, 0, 0)) > 0) {
         if (g.hSettings && ::IsDialogMessageW(g.hSettings, &msg)) { continue; }
+        // v1.3.0-beta7 audit: Chaos Lab has many child controls with
+        // WS_TABSTOP but previously lacked IsDialogMessageW, so Tab
+        // navigation was broken. Give it the same dialog-message handling
+        // as the settings dialog.
+        {
+            HWND labHwnd = static_cast<HWND>(ok::app::ChaosLabWindow::instance().handle());
+            if (labHwnd != nullptr && ::IsWindow(labHwnd) &&
+                ::IsDialogMessageW(labHwnd, &msg)) {
+                continue;
+            }
+        }
         ::TranslateMessage(&msg);
         ::DispatchMessageW(&msg);
     }

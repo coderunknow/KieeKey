@@ -419,6 +419,20 @@ if command -v python3 >/dev/null 2>&1; then
         cat "$OUT/logs/dialog-controls.log"
         rc=1
     fi
+
+    # v1.3.0-beta8 (BS-16): the paint layer of the hand-rolled dialog — sibling
+    # clipping, window styles, repaint-after-change and the reflow policy. The
+    # corruption the users photographed was invisible to every rectangle check;
+    # these rules pin the mechanisms so they cannot come back silently.
+    printf '  [check] %-22s' "dialog paint rules"
+    if ( cd "$REPO_ROOT" && python3 scripts/check_dialog_paint_rules.py --repo=. ) \
+            > "$OUT/logs/dialog-paint-rules.log" 2>&1; then
+        printf ' ok\n'
+    else
+        printf ' FAILED — %s\n' "$OUT/logs/dialog-paint-rules.log"
+        cat "$OUT/logs/dialog-paint-rules.log"
+        rc=1
+    fi
     # v1.3.0-beta6 (V3): the Chaos Lab window is a SECOND interactive surface
     # driving the engine singletons — same 3-layer contract as the settings
     # dialog: created + consumed + engine-connected + persisted.

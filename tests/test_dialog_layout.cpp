@@ -759,6 +759,16 @@ void testRuntimeGrowthRequestsAReflow() {
     assert(!ok::layout::rowNeedsReflow(188, 188));  // the same text
     assert(!ok::layout::rowNeedsReflow(188, 190));  // 2 px: measurement noise
     assert(!ok::layout::rowNeedsReflow(188, 170));  // shorter: never shrink
+    // v1.3.0-beta8 (bug BS-16d): the reflow request is deduped by REQUIRED
+    // HEIGHT. A row whose text changes every tick but whose need does not must
+    // not re-solve the dialog; a strictly taller need must.
+    assert(ok::layout::shouldRequestReflow(0, 40));     // first ask
+    assert(!ok::layout::shouldRequestReflow(40, 40));   // the solver granted it
+    assert(!ok::layout::shouldRequestReflow(40, 41));   // noise: 2 px tolerance
+    assert(!ok::layout::shouldRequestReflow(40, 42));   // still noise
+    assert(ok::layout::shouldRequestReflow(40, 43));    // a real extra need
+    assert(ok::layout::shouldRequestReflow(40, 60));    // one more line
+    assert(!ok::layout::shouldRequestReflow(60, 40));   // never shrink
     // ...and the reflow it triggers keeps every offset reachable (BS-01).
     const ScrollMetrics before = ok::layout::scrollMetrics(500, 0);
     const ScrollMetrics after = ok::layout::scrollMetrics(500, 28);

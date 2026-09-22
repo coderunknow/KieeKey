@@ -562,18 +562,20 @@ void markOneLineRow(HWND ctl, const std::wstring& text) {
     setRowTooltip(ctl, text);
 }
 
-// Does this row's CURRENT text need more height than the row has? Same
-// measurement the solver makes (DT_CALCRECT | DT_WORDBREAK with the control's
-// own font) plus its 4 px of breathing room, and the same 2 px tolerance.
-bool rowNeedsGrowth(HWND ctl) {
-    if (ctl == nullptr) { return false; }
+// How much height does this row's CURRENT text need? Same measurement the
+// solver makes (DT_CALCRECT | DT_WORDBREAK with the control's own font) plus
+// its 4 px of breathing room, and the same 2 px tolerance. Returns the needed
+// height in px, or 0 when the row already fits (the only two answers the
+// reflow policy needs -- see ok::layout::shouldRequestReflow, BS-16d).
+int rowNeededHeightPx(HWND ctl) {
+    if (ctl == nullptr) { return 0; }
     RECT rc{};
-    if (!::GetWindowRect(ctl, &rc)) { return false; }
+    if (!::GetWindowRect(ctl, &rc)) { return 0; }
     const int w = rc.right - rc.left;
     const int h = rc.bottom - rc.top;
     const HFONT font = reinterpret_cast<HFONT>(::SendMessageW(ctl, WM_GETFONT, 0, 0));
     HDC dc = ::GetDC(ctl);
-    if (dc == nullptr) { return false; }
+    if (dc == nullptr) { return 0; }
     const HGDIOBJ oldFont = (font != nullptr) ? ::SelectObject(dc, font) : nullptr;
     RECT measure{0, 0, w, 0};
     const std::wstring text = [&] {
@@ -586,16 +588,20 @@ bool rowNeedsGrowth(HWND ctl) {
                 DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX | DT_EDITCONTROL);
     if (oldFont != nullptr) { ::SelectObject(dc, oldFont); }
     ::ReleaseDC(ctl, dc);
-    return ok::layout::rowNeedsReflow(h, (measure.bottom - measure.top) + 4);
+    const int needed = (measure.bottom - measure.top) + 4;
+    return ok::layout::rowNeedsReflow(h, needed) ? needed : 0;
 }
 
 // Set by the timer's row writers, consumed once per tick by the reflow below.
 bool g_settingsRowGrowthPending = false;
-// id -> hash of the text that last asked for a reflow. A row that still does
-// not fit after the solver has had its say must NOT keep asking every 500 ms:
-// re-solving is visible work (it can move the window), and a loop of it is
-// exactly the "giật giật" the user reported with the first reflow build.
-std::map<int, std::size_t> g_settingsRowGrowthSeen;
+// id -> the required height this row last asked for. A row that still does not
+// fit after the solver has had its say must NOT keep asking every 500 ms:
+// re-solving is visible work (it moves every child and can move the window), and
+// a loop of it is exactly the "giật giật" the user reported with the first
+// reflow build. v1.3.0-beta8 (bug BS-16d): the memory is the REQUIREMENT, not
+// the text -- a live counter changes its text twice a second and never needs a
+// pixel more room, and hashing the text made that a 2 Hz full re-solve.
+std::map<int, int> g_settingsRowGrowthSeen;
 
 void refreshGrowingRow(HWND dlg, int id, const std::wstring& text) {
     const HWND ctl = ::GetDlgItem(dlg, id);
@@ -604,14 +610,19 @@ void refreshGrowingRow(HWND dlg, int id, const std::wstring& text) {
     setRowTooltip(ctl, text);
     // Never grow it here — see the header comment above: ask for a reflow,
     // and only ONCE per distinct text (see g_settingsRowGrowthSeen).
-    if (!rowNeedsGrowth(ctl)) {
+    const int need = rowNeededHeightPx(ctl);
+    if (need <= 0) {
+        // Fits now: forget the last request so a later regression can ask again.
         g_settingsRowGrowthSeen.erase(id);
         return;
     }
-    const std::size_t h = std::hash<std::wstring>{}(text);
     const auto seen = g_settingsRowGrowthSeen.find(id);
-    if (seen != g_settingsRowGrowthSeen.end() && seen->second == h) { return; }
-    g_settingsRowGrowthSeen[id] = h;
+    const int asked = (seen == g_settingsRowGrowthSeen.end()) ? 0 : seen->second;
+    // BS-16d: ask only when the row needs MORE than what it already asked for
+    // (plus tolerance) -- a text that keeps changing without needing more room
+    // must not re-solve the dialog.
+    if (!ok::layout::shouldRequestReflow(asked, need)) { return; }
+    g_settingsRowGrowthSeen[id] = need;
     g_settingsRowGrowthPending = true;
 }
 
@@ -3943,7 +3954,17 @@ LRESULT CALLBACK comboWheelProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
 HWND mkCtl(HWND parent, LPCWSTR cls, LPCWSTR text, DWORD style, int x, int y,
            int w, int h, HMENU id) {
-    HWND c = ::CreateWindowExW(0, cls, text, style | WS_CHILD | WS_VISIBLE,
+    // v1.3.0-beta8 (bug BS-16b): WS_CLIPSIBLINGS on EVERY child. The tab
+    // control is created first and its rectangle is the WHOLE page area, so it
+    // sits UNDER ~120 page controls: without this flag its own repaint (a tab
+    // switch, a resize, a theme change, any message that invalidates it) is not
+    // clipped against the controls above it and paints its background and its
+    // tab labels straight through them. Static labels never repaint on their
+    // own, so what they lose stays lost -- half-erased rows with tab glyphs on
+    // top, the "chữ bị duplicated / chữ bị kéo lên trên" report. Clipping is a
+    // per-window style: it cannot be solved from the parent.
+    HWND c = ::CreateWindowExW(0, cls, text,
+                               style | WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
                                x, y, w, h, parent, id, g.hInst, nullptr);
     if (c) {
         ::SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont()), TRUE);
@@ -4426,6 +4447,30 @@ std::string g_settingsSelfCheckCache;
 void applySettingsScrollOffset(HWND hwnd);          // defined below showTab
 void settingsScrollSetTab(HWND hwnd, int tabIndex); // defined below showTab
 
+// v1.3.0-beta8 (bug BS-16a): THE DIALOG'S OWN PIXELS.
+//
+// Every page child is a sibling of the dialog, and since BS-13 the dialog
+// carries WS_CLIPCHILDREN -- so the dialog is the ONLY window that can paint
+// the client area its children do not cover, and it is the only window that can
+// erase what a child leaves behind when it moves, hides or is re-laid-out. The
+// class brush (COLOR_BTNFACE) does that on WM_ERASEBKGND, but the erase only
+// covers the INVALID region -- and this file invalidated exactly two rectangles
+// in total. Everything else stayed on screen: after the tab strip wrapped to a
+// second row (or a DPI change, or a tab switch, or the refit) the previous
+// frame was still there, in the strip band, at the old offsets, mixed with the
+// new one. That is the photographed corruption: rows visible twice at two
+// offsets, a combo box from another tab still drawn over the header, tab labels
+// on top of diagnostics rows.
+//
+// One call after every state change is the whole fix: hide/move/show a control
+// and then repaint what the dialog owns. Cheap by construction -- with
+// WS_CLIPCHILDREN the paint skips every child rectangle.
+void settingsRepaintAll(HWND hwnd) {
+    if (hwnd == nullptr) { return; }
+    ::InvalidateRect(hwnd, nullptr, TRUE);
+    ::UpdateWindow(hwnd);
+}
+
 } // namespace
 
 void showTab(int tab) {
@@ -4450,6 +4495,12 @@ void showTab(int tab) {
     // the scroll range and jump back to the top (no-op before the first
     // solve, when WM_CREATE's settingsToControls() runs showTab early).
     settingsScrollSetTab(g.hSettings, tab);
+    // BS-16a: the previous tab's controls are hidden, and every pixel they
+    // occupied is the dialog's to repaint. Without this the old tab stayed on
+    // screen behind the new one -- the "duplicated text/buttons" that looked
+    // like two tabs drawn on top of each other even though the window state
+    // (checked by the probe, and green in CI) was perfectly correct.
+    settingsRepaintAll(g.hSettings);
 }
 
 //===========================================================================
@@ -4492,12 +4543,12 @@ void applySettingsScrollOffset(HWND hwnd) {
     // longer paint over them. Without this invalidation those pixels stayed:
     // a region-clipped child's old text remained on screen above its new
     // position ("chữ bị kéo lên trên", "chữ bị duplicated").
-    if (g_settingsScroll.viewport.w > 0 && g_settingsScroll.viewport.h > 0) {
-        RECT strip{g_settingsScroll.viewport.x, g_settingsScroll.viewport.y,
-                   g_settingsScroll.viewport.x + g_settingsScroll.viewport.w,
-                   g_settingsScroll.viewport.y + g_settingsScroll.viewport.h};
-        ::InvalidateRect(hwnd, &strip, TRUE);
-    }
+    // BS-16a: the children moved, so the pixels they left behind belong to the
+    // dialog now -- and with WS_CLIPCHILDREN the dialog is the only window that
+    // can paint them. BS-13 invalidated the viewport only, which cannot cover a
+    // child that was moved (or region-clipped) from outside it, nor the band the
+    // page vacated when the tab strip grew to a second row.
+    settingsRepaintAll(hwnd);
 }
 
 // Per-tab scroll range from the stored content depths; resets to the top.
@@ -4899,6 +4950,8 @@ void solveSettingsLayout(HWND hwnd) {
     int curTab = static_cast<int>(::SendMessageW(tabCtl, TCM_GETCURSEL, 0, 0));
     if (curTab < 0 || curTab > 8) { curTab = 0; }
     settingsScrollSetTab(hwnd, curTab);   // applies solved rects at offset 0
+    // BS-16a: the solve moved every page child and possibly the page itself.
+    settingsRepaintAll(hwnd);
 
     // v1.3.0-beta8 (bug BS-14): the refit above may have changed the page width
     // (the scrollbar costs ~17 px when it appears), and every label was measured
@@ -4933,14 +4986,17 @@ void reflowSettingsLayoutPreservingScroll(HWND hwnd) {
     const int keep = g_settingsScroll.offset;
     solveSettingsLayout(hwnd);
     const int clamped = std::clamp(keep, 0, std::max(0, g_settingsScroll.range));
-    if (clamped == g_settingsScroll.offset) { return; }
-    g_settingsScroll.offset = clamped;
-    SCROLLINFO si{};
-    si.cbSize = sizeof(SCROLLINFO);
-    si.fMask = SIF_POS;
-    si.nPos = clamped;
-    ::SetScrollInfo(hwnd, SB_VERT, &si, TRUE);
-    applySettingsScrollOffset(hwnd);
+    if (clamped != g_settingsScroll.offset) {
+        g_settingsScroll.offset = clamped;
+        SCROLLINFO si{};
+        si.cbSize = sizeof(SCROLLINFO);
+        si.fMask = SIF_POS;
+        si.nPos = clamped;
+        ::SetScrollInfo(hwnd, SB_VERT, &si, TRUE);
+        applySettingsScrollOffset(hwnd);
+    }
+    // BS-16a: the solve ran either way, so the dialog repaints either way.
+    settingsRepaintAll(hwnd);
 }
 
 } // namespace
@@ -6178,6 +6234,11 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             return 0;
         }
 
+#if defined(KIEEKEY_UI_PROBE)
+        case WM_APP + 77:   // KieeKeyProbeFreezeUi: the probe owns the dialog now
+            ::KillTimer(hwnd, 1);
+            return 0;
+#endif
         case WM_TIMER: {
             wchar_t buf[64];
 
@@ -6777,7 +6838,14 @@ void openSettingsDialog(int tab) {
     }
     if (!g.hInst) { return; }
     g_settingsOpenTab = tab;
-    const HWND created = ::CreateWindowExW(0, L"KieeKeySettings",
+    // v1.3.0-beta8 (bug BS-16c): bottom-up compositing for the whole subtree.
+    // The 500 ms telemetry tick rewrites ~30 live rows, and every rewrite used
+    // to be a visible erase+draw on the desktop at 2 Hz ("không kéo thì giật
+    // giật"). WS_EX_COMPOSITED makes the subtree paint into one buffer, so the
+    // user sees finished frames only. The dialog has no animation of its own,
+    // so there is nothing to lose by compositing it (the arcade windows are
+    // separate top-level windows and are untouched).
+    const HWND created = ::CreateWindowExW(WS_EX_COMPOSITED, L"KieeKeySettings",
                                     L"KieeKey — Cài đặt & Thông tin",
                                     WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU |
                                     WS_MINIMIZEBOX |
@@ -7296,6 +7364,15 @@ extern "C" void KieeKeyProbeInit(HINSTANCE hInst) {
     loadMacros();
     loadProgressionAtBoot();
     registerWindowClasses(hInst);
+}
+
+// BS-16e: stop the 500 ms telemetry tick while the probe compares real screen
+// pixels (a live row changing its text between the two reads would be reported
+// as a stale pixel). Sent as a message so it runs on the dialog's own thread,
+// which is the only thread allowed to touch its timer.
+extern "C" void KieeKeyProbeFreezeUi(HWND dlg) {
+    if (dlg == nullptr) { return; }
+    ::SendMessageW(dlg, WM_APP + 77, 0, 0);
 }
 
 extern "C" HWND KieeKeyProbeOpenSettings(int tab) {

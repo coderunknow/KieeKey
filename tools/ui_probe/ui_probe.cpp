@@ -116,6 +116,7 @@ struct Ctl {
     bool        interactive = false;
     bool        shown = false;                 // IsWindowVisible
     int         fontHeight = 0;
+    bool        clipSiblings = false;          // WS_CLIPSIBLINGS (BS-16b)
     bool        hasRegion = false;             // a window region is set ...
     bool        regionEmpty = false;           // ... and it is empty (hidden)
     RECT        region{};                      // bounding box, child-local px
@@ -354,8 +355,23 @@ bool captureWindow(HWND hwnd, const std::wstring& path, int* outW, int* outH) {
         return false;
     }
     HGDIOBJ old = ::SelectObject(mem, bmp);
-    ::SendMessageW(hwnd, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(mem),
-                   static_cast<LPARAM>(PRF_CLIENT | PRF_CHILDREN | PRF_ERASEBKGND));
+    // BS-16e: prefer the REAL screen. WM_PRINTCLIENT (the fallback) asks the app
+    // to draw the window and always answers with a correct frame — it is a good
+    // picture of the layout and a useless one of the desktop, which is where the
+    // stale pixels live. `rc` is the whole window, so the capture includes the
+    // frame exactly as the user sees it.
+    bool shot = false;
+    {
+        HDC screen2 = ::GetDC(nullptr);
+        if (screen2 != nullptr) {
+            shot = ::BitBlt(mem, 0, 0, w, h, screen2, rc.left, rc.top, SRCCOPY) != FALSE;
+            ::ReleaseDC(nullptr, screen2);
+        }
+    }
+    if (!shot) {
+        ::SendMessageW(hwnd, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(mem),
+                       static_cast<LPARAM>(PRF_CLIENT | PRF_CHILDREN | PRF_ERASEBKGND));
+    }
     ::GdiFlush();
     const bool ok = writePng(path, w, h, static_cast<const std::uint32_t*>(bits));
     if (old != nullptr) { ::SelectObject(mem, old); }
@@ -401,6 +417,8 @@ std::string rectStr(const RECT& r) {
     return rectStr(r.left, r.top, r.right - r.left, r.bottom - r.top);
 }
 
+extern "C" void KieeKeyProbeFreezeUi(HWND dlg);   // main.cpp, probe build only
+
 // Reads the live geometry of every child of the dialog. `all` is the stable
 // child list (refreshed geometry re-reads it after a scroll).
 void readCtls(HWND dlg, const std::vector<HWND>& all, int currentTab,
@@ -421,6 +439,7 @@ void readCtls(HWND dlg, const std::vector<HWND>& all, int currentTab,
         c.tabpage = KieeKeyProbeTabOfControl(dlg, c.id);
         c.shown = ::IsWindowVisible(child) != FALSE;
         const LONG_PTR style = ::GetWindowLongPtrW(child, GWL_STYLE);
+        c.clipSiblings = (style & WS_CLIPSIBLINGS) != 0;
         // BS_GROUPBOX is 0x7 (a triplet of flag bits), so `style & BS_GROUPBOX`
         // is ALSO true for BS_DEFPUSHBUTTON (0x1) — which silently excluded the
         // OK button from the overlap and hit-test checks (a false negative that
@@ -597,6 +616,10 @@ void checkOverlaps(const Audit& a, const std::vector<Ctl>& ctls) {
 }
 
 // ---- d) everything reachable ----------------------------------------------
+// Counts how often the desktop was unusable, so the digest says so out loud
+// instead of looking like "0 findings" when nothing could be measured.
+int g_screenUnavailable = 0;
+
 void checkReach(const Audit& a, const std::vector<Ctl>& ctls, int travelPx) {
     const int reachableBottom = a.page.bottom + travelPx;
     int contentBottom = a.page.top;
@@ -702,6 +725,177 @@ void checkHitTests(const Audit& a, const std::vector<Ctl>& ctls) {
             std::to_string(pt.x) + "," + std::to_string(pt.y) + ") hits id " +
             std::to_string(::GetDlgCtrlID(hit)) + " (" + className(hit) + ")"});
     }
+}
+
+// ---- h) a sibling paints through another one (BS-16b) ----------------------
+//
+// Every page child is a DIRECT child of the dialog, and the tab control's
+// rectangle is the WHOLE page area: it is the lower-z sibling of ~120 controls
+// at once. A window that does not carry WS_CLIPSIBLINGS is not clipped against
+// the windows above it in z-order, so when it repaints it paints straight
+// through them: leftover tab labels on top of diagnostics rows, half-erased
+// labels that never come back (a static control only repaints when IT is
+// invalidated, so a pixel it lost is lost until something moves it), and the
+// user's "chữ bị duplicated / chữ bị kéo lên trên". Not one rectangle is wrong
+// while this happens, which is why the whole geometry model — and the app's own
+// self-check — stays green.
+//
+// The rule enforced here is the one the app now keeps: the tab control is part
+// of the comparison, and any visible control whose effective rectangle really
+// overlaps another visible one must clip against its siblings.
+void checkSiblingClobber(const Audit& a, const std::vector<Ctl>& ctls) {
+    struct Box {
+        HWND hwnd; int id; std::string klass;
+        int x, y, w, h; bool clip;
+    };
+    std::vector<Box> vis;
+    vis.reserve(ctls.size() + 1);
+    for (const Ctl& c : ctls) {
+        if (!c.onScreen || c.ew <= 0 || c.eh <= 0) { continue; }
+        vis.push_back(Box{c.hwnd, c.id, c.klass, c.ex, c.ey, c.ew, c.eh, c.clipSiblings});
+    }
+    // The tab control is excluded from the child list (it is the page's
+    // container) — include it here, it is the worst offender by area.
+    if (a.tabsCtl != nullptr && ::IsWindowVisible(a.tabsCtl) != FALSE) {
+        RECT r{};
+        if (::GetWindowRect(a.tabsCtl, &r) != FALSE) {
+            POINT tl{r.left, r.top};
+            POINT br{r.right, r.bottom};
+            ::ScreenToClient(a.dlg, &tl);
+            ::ScreenToClient(a.dlg, &br);
+            const long style = ::GetWindowLongW(a.tabsCtl, GWL_STYLE);
+            vis.push_back(Box{a.tabsCtl, ::GetDlgCtrlID(a.tabsCtl), className(a.tabsCtl),
+                              static_cast<int>(tl.x), static_cast<int>(tl.y),
+                              static_cast<int>(br.x - tl.x), static_cast<int>(br.y - tl.y),
+                              (style & WS_CLIPSIBLINGS) != 0});
+        }
+    }
+    for (std::size_t i = 0; i < vis.size(); ++i) {
+        for (std::size_t j = i + 1; j < vis.size(); ++j) {
+            const Box& bi = vis[i];
+            const Box& bj = vis[j];
+            const int ix = std::min(bi.x + bi.w, bj.x + bj.w) - std::max(bi.x, bj.x);
+            const int iy = std::min(bi.y + bi.h, bj.y + bj.h) - std::max(bi.y, bj.y);
+            if (ix <= kTouchTolerancePx || iy <= kTouchTolerancePx) { continue; }
+            ++g_checks;
+            if (bi.clip && bj.clip) { continue; }
+            const Box& bad = bi.clip ? bj : bi;
+            a.findings->push_back({"clobber",
+                a.prefix + "id " + std::to_string(bad.id) + " (" + bad.klass +
+                ") " + rectStr(bad.x, bad.y, bad.w, bad.h) +
+                " overlaps id " + std::to_string((bi.clip ? bi : bj).id) + " (" +
+                (bi.clip ? bi : bj).klass + ") " +
+                rectStr((bi.clip ? bi : bj).x, (bi.clip ? bi : bj).y,
+                        (bi.clip ? bi : bj).w, (bi.clip ? bi : bj).h) +
+                " by " + std::to_string(ix) + "x" + std::to_string(iy) +
+                " px and does not clip against its siblings (WS_CLIPSIBLINGS)" +
+                " — its repaint paints through the control above it"});
+        }
+    }
+}
+
+// ---- j) the desktop holds what the app painted (BS-16e) --------------------
+//
+// Everything the probe ever "saw" was drawn on demand: WM_PRINTCLIENT renders
+// the frame the app WOULD produce, correctly, every time. The user's screen
+// holds the frame the app DID leave behind, and that is a different object: a
+// control that moved left its pixels, a hidden tab's controls are still drawn,
+// the tab control painted through the page. No rectangle check can see any of
+// it — which is why CI was green on a screen the user photographed as broken.
+//
+// There is exactly one way to test it: read the screen, ask the app for a full
+// repaint of the whole subtree, read the screen again, and compare. A window
+// that owns its pixels is bit-identical; every differing pixel is a pixel the
+// app left behind. (A headless or fully occluded session returns a uniform
+// bitmap — the check then reports itself as unavailable instead of passing.)
+bool readScreenClient(HWND hwnd, std::vector<std::uint32_t>* px, int* w, int* h) {
+    RECT client{};
+    if (::GetClientRect(hwnd, &client) == FALSE) { return false; }
+    const int cw = static_cast<int>(client.right - client.left);
+    const int ch = static_cast<int>(client.bottom - client.top);
+    if (cw <= 0 || ch <= 0 || cw > 4096 || ch > 4096) { return false; }
+    POINT org{client.left, client.top};
+    if (::ClientToScreen(hwnd, &org) == FALSE) { return false; }
+
+    HDC screen = ::GetDC(nullptr);
+    if (screen == nullptr) { return false; }
+    HDC mem = ::CreateCompatibleDC(screen);
+    BITMAPINFO bi{};
+    bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bi.bmiHeader.biWidth = cw;
+    bi.bmiHeader.biHeight = -ch;
+    bi.bmiHeader.biPlanes = 1;
+    bi.bmiHeader.biBitCount = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+    void* bits = nullptr;
+    HBITMAP bmp = ::CreateDIBSection(screen, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+    bool ok = false;
+    if (bmp != nullptr && bits != nullptr && mem != nullptr) {
+        HGDIOBJ old = ::SelectObject(mem, bmp);
+        if (::BitBlt(mem, 0, 0, cw, ch, screen, org.x, org.y, SRCCOPY) != FALSE) {
+            ::GdiFlush();
+            px->assign(static_cast<const std::uint32_t*>(bits),
+                       static_cast<const std::uint32_t*>(bits) + static_cast<std::size_t>(cw) * ch);
+            *w = cw;
+            *h = ch;
+            ok = true;
+        }
+        if (old != nullptr) { ::SelectObject(mem, old); }
+    }
+    if (bmp != nullptr) { ::DeleteObject(bmp); }
+    if (mem != nullptr) { ::DeleteDC(mem); }
+    ::ReleaseDC(nullptr, screen);
+    return ok;
+}
+
+// A uniform bitmap means the session has no visible desktop (or our window is
+// completely covered): the pixel comparison would compare nothing to nothing.
+bool screenIsUsable(const std::vector<std::uint32_t>& px) {
+    if (px.empty()) { return false; }
+    std::uint32_t first = px.front() & 0x00FFFFFFU;
+    int different = 0;
+    for (const std::uint32_t p : px) {
+        if ((p & 0x00FFFFFFU) != first) { ++different; }
+    }
+    return different > static_cast<int>(px.size() / 100);   // >1 % of the area
+}
+
+void checkStalePixels(const Audit& a) {
+    if (a.dlg == nullptr) { return; }
+    ::Sleep(40);   // let the composer settle before the reference frame
+    std::vector<std::uint32_t> before;
+    std::vector<std::uint32_t> after;
+    int w = 0;
+    int h = 0;
+    if (!readScreenClient(a.dlg, &before, &w, &h) || !screenIsUsable(before)) {
+        ++g_screenUnavailable;
+        return;
+    }
+    ::RedrawWindow(a.dlg, nullptr, nullptr,
+                   RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN |
+                   RDW_UPDATENOW | RDW_FRAME);
+    ::UpdateWindow(a.dlg);
+    ::Sleep(60);
+    if (!readScreenClient(a.dlg, &after, &w, &h) || after.size() != before.size()) { return; }
+    ++g_checks;
+    int diff = 0;
+    int firstX = -1;
+    int firstY = -1;
+    for (std::size_t i = 0; i < before.size(); ++i) {
+        if (before[i] == after[i]) { continue; }
+        ++diff;
+        if (firstX < 0) {
+            firstX = static_cast<int>(i % static_cast<std::size_t>(w));
+            firstY = static_cast<int>(i / static_cast<std::size_t>(w));
+        }
+    }
+    if (diff == 0) { return; }
+    a.findings->push_back({"stale_pixels",
+        a.prefix + std::to_string(diff) + " of " + std::to_string(w * h) +
+        " client pixels changed after a forced full repaint (first at " +
+        std::to_string(firstX) + "," + std::to_string(firstY) +
+        ") — what the desktop held was not what the app draws: pixels of moved," +
+        " hidden or painted-through controls were left behind"});
 }
 
 // ---- g) the tab headers are readable ---------------------------------------
@@ -847,6 +1041,12 @@ int main(int argc, char** argv) {
                 all.push_back(c);
             }
 
+            // BS-16e: the settings dialog rewrites ~30 live rows twice a second.
+            // Between the two screen reads that frames nothing but noise, so the
+            // telemetry tick is stopped for the rest of the run (the geometry
+            // checks drive the dialog themselves and never needed it).
+            KieeKeyProbeFreezeUi(dlg);
+
             std::vector<Ctl> ctls;
             std::vector<Finding> findings;
             Audit a;
@@ -937,7 +1137,10 @@ int main(int argc, char** argv) {
             checkReach(a, ctls, travelPx);
             checkTextFit(a, ctls);
             checkHitTests(a, ctls);
+            checkSiblingClobber(a, ctls);
             checkTabHeaders(a, static_cast<int>(tabCount), &findings);
+            // Last, so the screenshot below records the cleaned frame.
+            checkStalePixels(a);
             // ---- v1.3.0-beta8 (bug BS-13): the timer must not jitter --------
             // The 500 ms tick writes live text; a row that outgrows its box
             // asks the solver to re-solve ONCE. A second tick with nothing new

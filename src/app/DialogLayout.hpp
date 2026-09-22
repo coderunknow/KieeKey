@@ -592,6 +592,23 @@ struct ScrolledChild {
     return neededH > currentH + 2;
 }
 
+// v1.3.0-beta8 (bug BS-16d) -- ASK ONCE PER REQUIREMENT, NOT ONCE PER TEXT.
+//
+// The timer asks for a reflow when a live row's text outgrew its box. The first
+// version remembered the TEXT HASH, so a row whose text changes every tick (a
+// counter, a hook latency, "đang gõ"/"nhàn rỗi") but whose REQUIRED HEIGHT does
+// not re-solved the whole dialog -- all 121 children moved, the window refitted,
+// the scroll range recomputed -- at 2 Hz, forever. The measured height is the
+// only thing the solver acts on, so it is the only thing worth deduping: the
+// caller asks again only when the row needs MORE room than the height it last
+// asked for (plus the same 2 px the fit test tolerates). A row that can no
+// longer be satisfied (window at the work-area clamp, growth applied as far as
+// it goes) stops asking instead of looping.
+[[nodiscard]] inline bool shouldRequestReflow(int lastRequestedNeedPx,
+                                              int neededPx) noexcept {
+    return neededPx > lastRequestedNeedPx + 2;
+}
+
 // v1.3.0-beta8 (bug BS-10) — THE WINDOW IS NOT ALWAYS AS TALL AS THE CONTENT.
 //
 // 150 % on a 1080p work area is the NORMAL case, not an edge: the refit grows

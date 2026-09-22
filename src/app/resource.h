@@ -218,6 +218,13 @@
 #define IDC_BTN_DIAG_REPORT      635
 #define IDC_STAT_DIAG_RESULT     636
 #define IDC_BTN_DIAG_COPY        637   /* v1.3.0-beta6 (V4): copy report to clipboard */
+/* ---- v1.3.0-beta8 (bug DS-01): the report is now readable INSIDE the app.
+   The tab could export and copy its report but never display it: the only
+   in-app feedback was one clipped status line. */
+#define IDC_BTN_DIAG_VIEW        638   /* load report(40) + the gate line into the pane */
+#define IDC_BTN_DIAG_OPEN        639   /* ShellExecuteW on the last exported file */
+#define IDC_GRP_DIAG_REPORT      649   /* the pane's group box */
+#define IDC_EDIT_DIAG_REPORT     650   /* read-only, scrollable report pane */
 
 // ---- v1.3.0-beta5 (bug B3): per-source telemetry rows (tab 3) ----
 // "Sự kiện bàn phím đã xử lý" was fed by pushed() — the ring counter that

@@ -1,0 +1,611 @@
+//============================================================================
+// KieeKey - A modified version based on OpenKey
+//
+// Modified work:
+//   KieeKey - refactored and completed logic
+//   Copyright (C) 2026 coderunknow - https://github.com/coderunknow
+//   SPDX-FileCopyrightText: 2026 coderunknow <https://github.com/coderunknow>
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+//
+// File: tools/ui_probe/ui_probe.cpp
+// SPDX-License-Identifier: GPL-3.0-or-later
+//============================================================================
+//---------------------------------------------------------------------------
+// v1.3.0-beta8 (CA-03) — the Windows UI probe.
+//
+// WHY THIS EXISTS
+//   beta7 shipped with layout defects no local gate could see: the Linux suite
+//   cannot create a real HWND, and scripts/audit_layout.py models the font
+//   instead of measuring it. This probe runs INSIDE the real Windows UI: it
+//   opens the shipped settings dialog through the app's own creation path
+//   (KieeKeyProbeOpenSettings, compiled in only with -DKIEEKEY_UI_PROBE), walks
+//   every tab and measures every control with the real font through
+//   GetTextExtentPoint32W / DrawTextW.
+//
+// WHAT IT PROVES (per tab)
+//   1. every visible control is inside its tab page             (outside_page)
+//   2. no two visible controls overlap                          (overlap)
+//   3. every label fits its box with the real font              (clip)
+//   4. the vertical scrollbar is enabled EXACTLY when the solved content is
+//      taller than the viewport — the BS-01 contract           (scrollbar)
+//   5. every interactive control's centre hit-tests back to it  (hittest)
+//   6. every tab header fits its item rectangle                 (tab_header)
+//
+// ARTEFACTS (written to the output directory, CI uploads them)
+//   ui_probe.json  — every control (class/id/rect/text/font height) plus all
+//                    findings, so a failure is diagnosable without a screen.
+//   tab<N>.png     — one screenshot per tab (dependency-free PNG writer).
+//
+// WHAT IT DOES NOT PROVE (labelled MODELLED, never claimed as VERIFIED)
+//   The runner has one real DPI (usually 96). The 100/125/150 % arithmetic
+//   model stays with scripts/audit_layout.py (CA-01a) and the manual M1
+//   checklist; this probe reports the DPI it actually measured.
+//
+// USAGE
+//   kieekey_ui_probe [outDir]     -> exit 0 clean, 1 findings, 3 cannot run
+//---------------------------------------------------------------------------
+#if !defined(_WIN32_WINNT)
+#define _WIN32_WINNT 0x0A00   // GetDpiForWindow / SetProcessDpiAwarenessContext
+#endif
+#if !defined(WIN32_LEAN_AND_MEAN)
+#define WIN32_LEAN_AND_MEAN
+#endif
+
+#include <windows.h>
+#include <commctrl.h>
+
+#include <algorithm>
+#include <cstdint>
+#include <cstdio>
+#include <string>
+#include <vector>
+
+#include "resource.h"   // IDC_TAB — the same id the app uses
+
+// The probe-only surface of src/app/main.cpp (compiled into this target).
+extern "C" void KieeKeyProbeInit(HINSTANCE hInst);
+extern "C" HWND KieeKeyProbeOpenSettings(int tab);
+extern "C" int  KieeKeyProbeSelectTab(HWND dlg, int tab);
+
+namespace {
+
+int g_checks = 0;
+int g_findings = 0;
+
+struct Finding {
+    std::string kind;
+    std::string detail;
+};
+
+struct Ctl {
+    int         id = 0;
+    std::string klass;
+    std::string text;
+    int         x = 0, y = 0, w = 0, h = 0;   // dialog client coordinates
+    bool        groupBox = false;
+    bool        interactive = false;
+    int         fontHeight = 0;
+};
+
+//--------------------------------------------------------------- conversions
+std::wstring toWide(const std::string& s) {
+    if (s.empty()) { return {}; }
+    const int need = ::MultiByteToWideChar(CP_UTF8, 0, s.c_str(),
+                                           static_cast<int>(s.size()), nullptr, 0);
+    if (need <= 0) { return {}; }
+    std::wstring out(static_cast<std::size_t>(need), L'\0');
+    ::MultiByteToWideChar(CP_UTF8, 0, s.c_str(), static_cast<int>(s.size()),
+                          out.data(), need);
+    return out;
+}
+
+std::string toUtf8(const std::wstring& w) {
+    if (w.empty()) { return {}; }
+    const int need = ::WideCharToMultiByte(CP_UTF8, 0, w.c_str(),
+                                           static_cast<int>(w.size()),
+                                           nullptr, 0, nullptr, nullptr);
+    if (need <= 0) { return {}; }
+    std::string out(static_cast<std::size_t>(need), '\0');
+    ::WideCharToMultiByte(CP_UTF8, 0, w.c_str(), static_cast<int>(w.size()),
+                          out.data(), need, nullptr, nullptr);
+    return out;
+}
+
+std::string jsonEscape(const std::string& s) {
+    std::string out;
+    out.reserve(s.size() + 8);
+    for (char ch : s) {
+        const unsigned char c = static_cast<unsigned char>(ch);
+        switch (c) {
+            case '"':  out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n";  break;
+            case '\r': out += "\\r";  break;
+            case '\t': out += "\\t";  break;
+            default:
+                if (c < 0x20) {
+                    char buf[8]{};
+                    std::snprintf(buf, sizeof(buf), "\\u%04x", c);
+                    out += buf;
+                } else {
+                    out.push_back(ch);
+                }
+        }
+    }
+    return out;
+}
+
+//------------------------------------------------------------ measurements
+std::string windowText(HWND h) {
+    const int len = ::GetWindowTextLengthW(h);
+    if (len <= 0) { return {}; }
+    std::wstring buf(static_cast<std::size_t>(len) + 1, L'\0');
+    const int got = ::GetWindowTextW(h, buf.data(), len + 1);
+    buf.resize(got > 0 ? static_cast<std::size_t>(got) : 0);
+    return toUtf8(buf);
+}
+
+std::string className(HWND h) {
+    wchar_t buf[128]{};
+    ::GetClassNameW(h, buf, static_cast<int>(sizeof(buf) / sizeof(buf[0])));
+    return toUtf8(buf);
+}
+
+// The real measured width of `text` in `h`'s own font.
+int textWidth(HWND h, const std::wstring& text) {
+    if (h == nullptr || text.empty()) { return 0; }
+    HDC dc = ::GetDC(h);
+    if (dc == nullptr) { return 0; }
+    HFONT font = reinterpret_cast<HFONT>(::SendMessageW(h, WM_GETFONT, 0, 0));
+    HGDIOBJ old = font != nullptr ? ::SelectObject(dc, font) : nullptr;
+    SIZE sz{};
+    const BOOL ok = ::GetTextExtentPoint32W(dc, text.c_str(),
+                                            static_cast<int>(text.size()), &sz);
+    if (old != nullptr) { ::SelectObject(dc, old); }
+    ::ReleaseDC(h, dc);
+    return ok != FALSE ? static_cast<int>(sz.cx) : 0;
+}
+
+// Height the text needs inside `w` px — measured by DrawTextW, the same call
+// the app's own solver uses for wrapped STATICs.
+int wrappedTextHeight(HWND h, const std::wstring& text, int w) {
+    if (h == nullptr || text.empty() || w <= 0) { return 0; }
+    HDC dc = ::GetDC(h);
+    if (dc == nullptr) { return 0; }
+    HFONT font = reinterpret_cast<HFONT>(::SendMessageW(h, WM_GETFONT, 0, 0));
+    HGDIOBJ old = font != nullptr ? ::SelectObject(dc, font) : nullptr;
+    RECT r{0, 0, w, 0};
+    ::DrawTextW(dc, text.c_str(), static_cast<int>(text.size()), &r,
+                DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
+    if (old != nullptr) { ::SelectObject(dc, old); }
+    ::ReleaseDC(h, dc);
+    return static_cast<int>(r.bottom - r.top);
+}
+
+//=========================================================== PNG writer ====
+// Dependency-free (no GDI+, no zlib): stored deflate blocks + CRC32. The shots
+// are a few hundred kB each and only ever read by a human or by CI artefacts.
+std::uint32_t crc32Of(const std::uint8_t* data, std::size_t len) {
+    static std::uint32_t table[256];
+    static bool built = false;
+    if (!built) {
+        for (std::uint32_t i = 0; i < 256U; ++i) {
+            std::uint32_t c = i;
+            for (int k = 0; k < 8; ++k) {
+                c = (c & 1U) != 0U ? (0xEDB88320U ^ (c >> 1)) : (c >> 1);
+            }
+            table[i] = c;
+        }
+        built = true;
+    }
+    std::uint32_t c = 0xFFFFFFFFU;
+    for (std::size_t i = 0; i < len; ++i) {
+        c = table[(c ^ data[i]) & 0xFFU] ^ (c >> 8);
+    }
+    return c ^ 0xFFFFFFFFU;
+}
+
+void put32(std::vector<std::uint8_t>& out, std::uint32_t v) {
+    out.push_back(static_cast<std::uint8_t>((v >> 24) & 0xFFU));
+    out.push_back(static_cast<std::uint8_t>((v >> 16) & 0xFFU));
+    out.push_back(static_cast<std::uint8_t>((v >> 8) & 0xFFU));
+    out.push_back(static_cast<std::uint8_t>(v & 0xFFU));
+}
+
+void putChunk(std::vector<std::uint8_t>& out, const char* tag,
+              const std::vector<std::uint8_t>& body) {
+    put32(out, static_cast<std::uint32_t>(body.size()));
+    const std::size_t start = out.size();
+    out.insert(out.end(), tag, tag + 4);
+    out.insert(out.end(), body.begin(), body.end());
+    put32(out, crc32Of(out.data() + start, out.size() - start));
+}
+
+bool writeAll(const std::wstring& path, const void* data, std::size_t len) {
+    HANDLE f = ::CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr,
+                             CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) { return false; }
+    DWORD written = 0;
+    const bool ok = ::WriteFile(f, data, static_cast<DWORD>(len), &written, nullptr) != FALSE &&
+                    static_cast<std::size_t>(written) == len;
+    ::CloseHandle(f);
+    return ok;
+}
+
+bool writePng(const std::wstring& path, int w, int h, const std::uint32_t* bgra) {
+    if (w <= 0 || h <= 0 || bgra == nullptr) { return false; }
+    std::vector<std::uint8_t> raw;
+    raw.reserve(static_cast<std::size_t>(h) * (static_cast<std::size_t>(w) * 3U + 1U));
+    for (int y = 0; y < h; ++y) {
+        raw.push_back(0);   // filter type: none
+        for (int x = 0; x < w; ++x) {
+            const std::uint32_t px =
+                bgra[static_cast<std::size_t>(y) * static_cast<std::size_t>(w) +
+                     static_cast<std::size_t>(x)];
+            raw.push_back(static_cast<std::uint8_t>((px >> 16) & 0xFFU));
+            raw.push_back(static_cast<std::uint8_t>((px >> 8) & 0xFFU));
+            raw.push_back(static_cast<std::uint8_t>(px & 0xFFU));
+        }
+    }
+    std::vector<std::uint8_t> z;
+    z.push_back(0x78);
+    z.push_back(0x01);
+    std::size_t pos = 0;
+    while (pos < raw.size()) {
+        const std::size_t n = std::min<std::size_t>(65535U, raw.size() - pos);
+        const bool last = pos + n >= raw.size();
+        z.push_back(last ? 1U : 0U);
+        z.push_back(static_cast<std::uint8_t>(n & 0xFFU));
+        z.push_back(static_cast<std::uint8_t>((n >> 8) & 0xFFU));
+        const std::uint16_t inv = static_cast<std::uint16_t>(~n);
+        z.push_back(static_cast<std::uint8_t>(inv & 0xFFU));
+        z.push_back(static_cast<std::uint8_t>((inv >> 8) & 0xFFU));
+        z.insert(z.end(), raw.begin() + static_cast<std::ptrdiff_t>(pos),
+                 raw.begin() + static_cast<std::ptrdiff_t>(pos + n));
+        pos += n;
+    }
+    std::uint32_t a = 1U;
+    std::uint32_t b = 0U;
+    for (std::uint8_t byte : raw) {
+        a = (a + byte) % 65521U;
+        b = (b + a) % 65521U;
+    }
+    put32(z, (b << 16) | a);
+
+    std::vector<std::uint8_t> png{0x89U, 0x50U, 0x4EU, 0x47U, 0x0DU, 0x0AU, 0x1AU, 0x0AU};
+    std::vector<std::uint8_t> ihdr;
+    put32(ihdr, static_cast<std::uint32_t>(w));
+    put32(ihdr, static_cast<std::uint32_t>(h));
+    ihdr.push_back(8);   // bit depth
+    ihdr.push_back(2);   // truecolour
+    ihdr.push_back(0);
+    ihdr.push_back(0);
+    ihdr.push_back(0);
+    putChunk(png, "IHDR", ihdr);
+    putChunk(png, "IDAT", z);
+    putChunk(png, "IEND", std::vector<std::uint8_t>());
+    return writeAll(path, png.data(), png.size());
+}
+
+// Renders the dialog (and children) into a 32-bpp DIB and writes it as PNG.
+bool captureWindow(HWND hwnd, const std::wstring& path, int* outW, int* outH) {
+    RECT rc{};
+    if (::GetWindowRect(hwnd, &rc) == FALSE) { return false; }
+    const int w = static_cast<int>(rc.right - rc.left);
+    const int h = static_cast<int>(rc.bottom - rc.top);
+    if (w <= 0 || h <= 0 || w > 4096 || h > 4096) { return false; }
+
+    HDC screen = ::GetDC(nullptr);
+    if (screen == nullptr) { return false; }
+    HDC mem = ::CreateCompatibleDC(screen);
+    BITMAPINFO bi{};
+    bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bi.bmiHeader.biWidth = w;
+    bi.bmiHeader.biHeight = -h;             // top-down
+    bi.bmiHeader.biPlanes = 1;
+    bi.bmiHeader.biBitCount = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+    void* bits = nullptr;
+    HBITMAP bmp = ::CreateDIBSection(screen, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+    ::ReleaseDC(nullptr, screen);
+    if (bmp == nullptr || bits == nullptr) {
+        if (bmp != nullptr) { ::DeleteObject(bmp); }
+        if (mem != nullptr) { ::DeleteDC(mem); }
+        return false;
+    }
+    HGDIOBJ old = ::SelectObject(mem, bmp);
+    ::SendMessageW(hwnd, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(mem),
+                   static_cast<LPARAM>(PRF_CLIENT | PRF_CHILDREN | PRF_ERASEBKGND));
+    ::GdiFlush();
+    const bool ok = writePng(path, w, h, static_cast<const std::uint32_t*>(bits));
+    if (old != nullptr) { ::SelectObject(mem, old); }
+    ::DeleteObject(bmp);
+    ::DeleteDC(mem);
+    if (outW != nullptr) { *outW = w; }
+    if (outH != nullptr) { *outH = h; }
+    return ok;
+}
+
+// Translates a control's screen rectangle into dialog client coordinates.
+RECT clientRectOf(HWND parent, HWND child) {
+    RECT r{};
+    ::GetWindowRect(child, &r);
+    POINT tl{r.left, r.top};
+    POINT br{r.right, r.bottom};
+    ::ScreenToClient(parent, &tl);
+    ::ScreenToClient(parent, &br);
+    return RECT{tl.x, tl.y, br.x, br.y};
+}
+
+} // namespace
+
+int main(int argc, char** argv) {
+    std::string outDir = ".";
+    if (argc > 1 && argv[1] != nullptr && argv[1][0] != '\0') { outDir = argv[1]; }
+    (void)::SetConsoleOutputCP(CP_UTF8);
+
+    // Per-monitor v2 so the app scales exactly as it does for a real user (the
+    // runner reports its own DPI; see the header for what stays MODELLED).
+    (void)::SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    INITCOMMONCONTROLSEX ice{};
+    ice.dwSize = sizeof(ice);
+    ice.dwICC = ICC_TAB_CLASSES | ICC_STANDARD_CLASSES | ICC_BAR_CLASSES;
+    ::InitCommonControlsEx(&ice);
+
+    KieeKeyProbeInit(::GetModuleHandleW(nullptr));
+    HWND dlg = KieeKeyProbeOpenSettings(0);
+    if (dlg == nullptr) {
+        std::printf("ui_probe: FAIL — the settings dialog could not be created\n");
+        return 3;
+    }
+    const UINT dpi = ::GetDpiForWindow(dlg);
+    std::printf("ui_probe: settings dialog %p, dpi=%u (%d%%)\n",
+                static_cast<void*>(dlg), static_cast<unsigned>(dpi),
+                static_cast<int>((dpi * 100U) / 96U));
+
+    std::string json;
+    json += "{\n \"tool\": \"kieekey_ui_probe\",\n";
+    json += " \"dpi\": " + std::to_string(static_cast<unsigned>(dpi)) + ",\n";
+    json += " \"scalePercent\": " + std::to_string(static_cast<int>((dpi * 100U) / 96U)) + ",\n";
+    json += " \"note\": \"virtual 150% stays MODELLED (audit_layout.py CA-01a + manual M1)\",\n";
+    json += " \"tabs\": [\n";
+
+    const HWND tabsCtl = ::GetDlgItem(dlg, IDC_TAB);
+    LRESULT tabCount = tabsCtl != nullptr ? ::SendMessageW(tabsCtl, TCM_GETITEMCOUNT, 0, 0) : 0;
+    if (tabCount <= 0) { tabCount = 9; }
+
+    int totalControls = 0;
+    for (int tab = 0; tab < static_cast<int>(tabCount); ++tab) {
+        if (KieeKeyProbeSelectTab(dlg, tab) != 0) { break; }
+        ::Sleep(25);
+
+        RECT client{};
+        ::GetClientRect(dlg, &client);
+        RECT page{0, 0, client.right, client.bottom};
+        if (tabsCtl != nullptr) {
+            RECT item{};
+            const LRESULT cur = ::SendMessageW(tabsCtl, TCM_GETCURSEL, 0, 0);
+            if (::SendMessageW(tabsCtl, TCM_GETITEMRECT, static_cast<WPARAM>(cur),
+                               reinterpret_cast<LPARAM>(&item)) != FALSE) {
+                POINT tl{item.left, item.top};
+                POINT br{item.right, item.bottom};
+                ::ClientToScreen(tabsCtl, &tl);
+                ::ClientToScreen(tabsCtl, &br);
+                ::ScreenToClient(dlg, &tl);
+                ::ScreenToClient(dlg, &br);
+                page = RECT{tl.x, tl.y, br.x, br.y};
+            }
+        }
+
+        std::vector<Ctl> ctls;
+        std::vector<Finding> findings;
+
+        // ---- collect ------------------------------------------------------
+        for (HWND child = ::GetWindow(dlg, GW_CHILD); child != nullptr;
+             child = ::GetWindow(child, GW_HWNDNEXT)) {
+            if (child == tabsCtl || ::IsWindowVisible(child) == FALSE) { continue; }
+            Ctl c;
+            c.id = ::GetDlgCtrlID(child);
+            c.klass = className(child);
+            c.text = windowText(child);
+            const RECT r = clientRectOf(dlg, child);
+            c.x = r.left;
+            c.y = r.top;
+            c.w = static_cast<int>(r.right - r.left);
+            c.h = static_cast<int>(r.bottom - r.top);
+            const LONG_PTR style = ::GetWindowLongPtrW(child, GWL_STYLE);
+            c.groupBox = c.klass == "Button" && (style & BS_GROUPBOX) != 0;
+            c.interactive = c.klass == "Button" || c.klass == "Edit" || c.klass == "ComboBox" ||
+                            c.klass == "ListBox";
+            HDC dc = ::GetDC(child);
+            if (dc != nullptr) {
+                TEXTMETRICW tm{};
+                HFONT font = reinterpret_cast<HFONT>(::SendMessageW(child, WM_GETFONT, 0, 0));
+                HGDIOBJ oldFont = font != nullptr ? ::SelectObject(dc, font) : nullptr;
+                if (::GetTextMetricsW(dc, &tm) != FALSE) {
+                    c.fontHeight = static_cast<int>(tm.tmHeight);
+                }
+                if (oldFont != nullptr) { ::SelectObject(dc, oldFont); }
+                ::ReleaseDC(child, dc);
+            }
+            ctls.push_back(c);
+        }
+        totalControls += static_cast<int>(ctls.size());
+
+        // ---- 1. inside the tab page ---------------------------------------
+        for (const Ctl& c : ctls) {
+            ++g_checks;
+            if (c.x + c.w > page.right + 1 || c.y + c.h > page.bottom + 1 ||
+                c.x < page.left - 1 || c.y < page.top - 1) {
+                findings.push_back({"outside_page",
+                    "id " + std::to_string(c.id) + " (" + c.klass + ") at " +
+                    std::to_string(c.x) + "," + std::to_string(c.y) + " " +
+                    std::to_string(c.w) + "x" + std::to_string(c.h) +
+                    " is outside the tab page " + std::to_string(page.right) + "x" +
+                    std::to_string(page.bottom)});
+            }
+        }
+
+        // ---- 2. no overlaps ------------------------------------------------
+        for (std::size_t i = 0; i < ctls.size(); ++i) {
+            if (ctls[i].groupBox) { continue; }
+            for (std::size_t j = i + 1; j < ctls.size(); ++j) {
+                if (ctls[j].groupBox) { continue; }
+                ++g_checks;
+                const int ix = std::min(ctls[i].x + ctls[i].w, ctls[j].x + ctls[j].w) -
+                               std::max(ctls[i].x, ctls[j].x);
+                const int iy = std::min(ctls[i].y + ctls[i].h, ctls[j].y + ctls[j].h) -
+                               std::max(ctls[i].y, ctls[j].y);
+                if (ix > 1 && iy > 1) {
+                    findings.push_back({"overlap",
+                        "id " + std::to_string(ctls[i].id) + " (" + ctls[i].klass +
+                        ") and id " + std::to_string(ctls[j].id) + " (" + ctls[j].klass +
+                        ") overlap by " + std::to_string(ix) + "x" + std::to_string(iy) + " px"});
+                }
+            }
+        }
+
+        // ---- 3. real-font text fit -----------------------------------------
+        for (const Ctl& c : ctls) {
+            if (c.text.empty() || c.groupBox) { continue; }
+            const HWND self = ::GetDlgItem(dlg, c.id);
+            const std::wstring wtext = toWide(c.text);
+            ++g_checks;
+            if (c.h <= c.fontHeight + 4) {
+                const int need = textWidth(self, wtext);
+                if (need > c.w + 2) {
+                    findings.push_back({"clip",
+                        "id " + std::to_string(c.id) + " (" + c.klass + ") needs " +
+                        std::to_string(need) + "px, has " + std::to_string(c.w) + "px: " +
+                        c.text.substr(0, 60)});
+                }
+            } else {
+                const int need = wrappedTextHeight(self, wtext, c.w);
+                if (need > c.h + 2) {
+                    findings.push_back({"clip",
+                        "id " + std::to_string(c.id) + " (" + c.klass + ") wraps to " +
+                        std::to_string(need) + "px in a " + std::to_string(c.h) + "px box: " +
+                        c.text.substr(0, 60)});
+                }
+            }
+        }
+
+        // ---- 4. the scrollbar tells the truth (BS-01) ----------------------
+        {
+            ++g_checks;
+            int contentBottom = page.top;
+            for (const Ctl& c : ctls) { contentBottom = std::max(contentBottom, c.y + c.h); }
+            SCROLLINFO si{};
+            si.cbSize = sizeof(si);
+            si.fMask = SIF_ALL;
+            const bool have = ::GetScrollInfo(dlg, SB_VERT, &si) != FALSE;
+            const bool enabled = have && si.nPage > 0 && si.nMax > static_cast<int>(si.nPage) - 1;
+            const bool wanted = contentBottom > page.bottom + 1;
+            if (enabled != wanted) {
+                findings.push_back({"scrollbar",
+                    std::string("scrollbar ") + (enabled ? "enabled" : "disabled") +
+                    " but content ends at y=" + std::to_string(contentBottom) +
+                    ", viewport ends at y=" + std::to_string(page.bottom) +
+                    (wanted ? " — content is unreachable" : " — no overflow")});
+            }
+        }
+
+        // ---- 5. hit-test: every interactive control owns its centre --------
+        for (const Ctl& c : ctls) {
+            if (!c.interactive || c.groupBox || c.w <= 0 || c.h <= 0) { continue; }
+            ++g_checks;
+            const POINT pt{page.left + c.x + c.w / 2, page.top + c.y + c.h / 2};
+            const HWND hit = ::RealChildWindowFromPoint(dlg, pt);
+            const HWND self = ::GetDlgItem(dlg, c.id);
+            if (hit != nullptr && self != nullptr && hit != self && ::IsChild(self, hit) == FALSE) {
+                findings.push_back({"hittest",
+                    "id " + std::to_string(c.id) + " centre (" + std::to_string(pt.x) + "," +
+                    std::to_string(pt.y) + ") hits id " +
+                    std::to_string(::GetDlgCtrlID(hit)) + " (" + className(hit) + ")"});
+            }
+        }
+
+        // ---- 6. tab headers -------------------------------------------------
+        if (tabsCtl != nullptr) {
+            for (int i = 0; i < static_cast<int>(tabCount); ++i) {
+                wchar_t label[128]{};
+                TCITEMW item{};
+                item.mask = TCIF_TEXT;
+                item.pszText = label;
+                item.cchTextMax = static_cast<int>(sizeof(label) / sizeof(label[0]));
+                RECT ir{};
+                ++g_checks;
+                if (::SendMessageW(tabsCtl, TCM_GETITEMW, static_cast<WPARAM>(i),
+                                   reinterpret_cast<LPARAM>(&item)) == FALSE ||
+                    ::SendMessageW(tabsCtl, TCM_GETITEMRECT, static_cast<WPARAM>(i),
+                                   reinterpret_cast<LPARAM>(&ir)) == FALSE) {
+                    continue;
+                }
+                const int need = textWidth(tabsCtl, label);
+                if (need + 8 > static_cast<int>(ir.right - ir.left)) {
+                    findings.push_back({"tab_header",
+                        "tab " + std::to_string(i) + " needs " + std::to_string(need) +
+                        "px in " + std::to_string(static_cast<int>(ir.right - ir.left)) + "px"});
+                }
+            }
+        }
+
+        // ---- screenshot + JSON ---------------------------------------------
+        int capW = 0;
+        int capH = 0;
+        const std::wstring shot = toWide(outDir) + L"\\tab" + std::to_wstring(tab) + L".png";
+        const bool shotOk = captureWindow(dlg, shot, &capW, &capH);
+
+        g_findings += static_cast<int>(findings.size());
+        json += "  {\"tab\": " + std::to_string(tab) + ", \"controls\": " +
+                std::to_string(ctls.size()) + ", \"page\": [" + std::to_string(page.left) +
+                "," + std::to_string(page.top) + "," + std::to_string(page.right) + "," +
+                std::to_string(page.bottom) + "], \"screenshot\": \"" +
+                (shotOk ? "tab" + std::to_string(tab) + ".png" : "") + "\", \"findings\": [";
+        for (std::size_t i = 0; i < findings.size(); ++i) {
+            json += std::string(i > 0 ? ", " : "") + std::string("{\"kind\": \"") +
+                    findings[i].kind + "\", \"detail\": \"" +
+                    jsonEscape(findings[i].detail) + "\"}";
+        }
+        json += "], \"controls_detail\": [";
+        for (std::size_t i = 0; i < ctls.size(); ++i) {
+            const Ctl& c = ctls[i];
+            json += std::string(i > 0 ? ", " : "") + "{\"id\": " + std::to_string(c.id) +
+                    ", \"class\": \"" + jsonEscape(c.klass) + "\", \"rect\": [" +
+                    std::to_string(c.x) + "," + std::to_string(c.y) + "," +
+                    std::to_string(c.w) + "," + std::to_string(c.h) + "], \"fontH\": " +
+                    std::to_string(c.fontHeight) + ", \"text\": \"" +
+                    jsonEscape(c.text.substr(0, 120)) + "\"}";
+        }
+        json += "]}";
+        json += tab + 1 < static_cast<int>(tabCount) ? ",\n" : "\n";
+
+        std::printf("  tab %d: %d controls, %d findings%s\n", tab,
+                    static_cast<int>(ctls.size()), static_cast<int>(findings.size()),
+                    shotOk ? "" : " (screenshot failed)");
+        for (const Finding& f : findings) {
+            std::printf("    [%s] %s\n", f.kind.c_str(), f.detail.c_str());
+            if (f.kind == "overlap" || f.kind == "hittest") { std::printf("\n"); }
+        }
+    }
+    json += " ],\n \"controls\": " + std::to_string(totalControls) + ",\n \"checks\": " +
+            std::to_string(g_checks) + ",\n \"findings\": " + std::to_string(g_findings) + "\n}\n";
+
+    const std::wstring jsonPath = toWide(outDir) + L"\\ui_probe.json";
+    const bool jsonOk = writeAll(jsonPath, json.data(), json.size());
+    std::printf("ui_probe: %d findings over %d controls / %d checks; json %s\n",
+                g_findings, totalControls, g_checks, jsonOk ? "written" : "FAILED");
+    return g_findings == 0 ? 0 : 1;
+}

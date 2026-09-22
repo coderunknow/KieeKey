@@ -215,7 +215,7 @@ jobs:
           fetch-depth: 1
 
       - name: Configure (CMake, Visual Studio generator — no dev prompt needed)
-        run: cmake -S . -B out/${{ matrix.platform }} ${{ matrix.cmake_args }} -DCMAKE_BUILD_TYPE=Release -DKIEEKEY_BUILD_TESTS=ON -DKIEEKEY_BUILD_UI=none
+        run: cmake -S . -B out/${{ matrix.platform }} ${{ matrix.cmake_args }} -DCMAKE_BUILD_TYPE=Release -DKIEEKEY_BUILD_TESTS=ON -DKIEEKEY_BUILD_UI=none -DKIEEKEY_BUILD_UI_PROBE=${{ matrix.platform == 'x64' && 'ON' || 'OFF' }}
 
       - name: Build
         shell: pwsh
@@ -290,7 +290,7 @@ jobs:
             # (KIEEKEY_WERROR=OFF) and report the FULL inventory, deduplicated —
             # one push then tells the whole story instead of one warning per run.
             Write-Host "::notice::re-running the build with KIEEKEY_WERROR=OFF to list every warning"
-            cmake -S . -B out/diag ${{ matrix.cmake_args }} -DCMAKE_BUILD_TYPE=Release -DKIEEKEY_BUILD_TESTS=ON -DKIEEKEY_BUILD_UI=none -DKIEEKEY_WERROR=OFF | Out-Null
+            cmake -S . -B out/diag ${{ matrix.cmake_args }} -DCMAKE_BUILD_TYPE=Release -DKIEEKEY_BUILD_TESTS=ON -DKIEEKEY_BUILD_UI=none -DKIEEKEY_BUILD_UI_PROBE=OFF -DKIEEKEY_WERROR=OFF | Out-Null
             $diagLog = "build-${{ matrix.platform }}-diag.log"
             cmake --build out/diag --config Release --parallel 2>&1 | Tee-Object -FilePath $diagLog | Out-Null
             $seenDiag = @{}
@@ -373,6 +373,43 @@ jobs:
             throw 'CTest succeeded but the JUnit report is missing'
           }
           exit $testCode
+
+      # v1.3.0-beta8 (CA-03): the Windows UI probe. It opens the REAL settings
+      # dialog through the app's own creation path (probe-only entry points,
+      # -DKIEEKEY_UI_PROBE) and measures every control on all nine tabs with the
+      # real font: no overlap, nothing outside its tab page, every label fits
+      # its box, the scrollbar is enabled exactly when content overflows, and
+      # every interactive control's centre hit-tests back to itself. Exits
+      # non-zero on any finding; ui_probe.json + one PNG per tab are uploaded.
+      - name: UI probe (real HWNDs, real font metrics)
+        if: matrix.platform == 'x64'
+        shell: pwsh
+        run: |
+          $dir = "ui-probe"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          & "out/x64/Release/kieekey_ui_probe.exe" $dir
+          $code = $LASTEXITCODE
+          if (Test-Path "$dir/ui_probe.json") {
+            $json = Get-Content "$dir/ui_probe.json" -Raw | ConvertFrom-Json
+            Write-Host "::notice title=UI probe::$($json.controls) controls, $($json.checks) checks, $($json.findings) findings at DPI $($json.dpi) ($($json.note))"
+            foreach ($tab in $json.tabs) {
+              foreach ($f in $tab.findings) {
+                Write-Host "::error::tab $($tab.tab) [$($f.kind)] $($f.detail)"
+              }
+            }
+          } else {
+            Write-Host "::error::the UI probe did not write ui_probe.json"
+          }
+          exit $code
+
+      - name: Upload UI probe artifacts
+        if: always() && matrix.platform == 'x64'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ui-probe-${{ matrix.platform }}
+          path: ui-probe/
+          if-no-files-found: warn
+          retention-days: 14
 
       # v1.2.2 RC4 (B-5): the SHA256 release manifest must stay in sync with
       # the tree it ships from — the same gate tests/run_all_tests.sh runs.

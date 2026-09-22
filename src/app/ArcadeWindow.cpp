@@ -25,6 +25,7 @@
 // which is what keeps a 60 Hz redraw flicker-free on GDI.
 //----------------------------------------------------------------------------
 #include "ArcadeWindow.hpp"
+#include "ArcadeChromeLayout.hpp"   // v1.3.0-beta8 (bug BS-07)
 
 #include "ArcadeHubLaunch.hpp"
 
@@ -588,12 +589,36 @@ void drawChrome(HDC dc, GdiCache& cache, const RenderList& list, int width, int 
     }
 
     // ---- footer ----
+    // v1.3.0-beta8 (bug BS-07): the hint used to be drawn with a bare TextOutW
+    // and no measurement — a long hint (the B5 "Sai — nhấn Backspace N lần để
+    // sửa" style messages) simply ran past its edge, and the FPS counter in
+    // presentFrame() is positioned by a DIFFERENT formula. Both now ask
+    // planFooter() for their band, so they cannot disagree at any DPI.
     fillRectColor(dc, cache, 0, height - footer, width, footer, kFooterBg);
     std::wstring hint = utf8ToWide(!list.hint.empty() ? list.hint : list.status);
-    oldFont = ::SelectObject(dc, cache.fontFor(px(14), false, false));
-    ::SetTextColor(dc, toColorRef(kTextPrimary));
+    const auto hintFont = cache.fontFor(px(14), false, false);
+    oldFont = ::SelectObject(dc, hintFont);
+    int hintWidthPx = 0;
     if (!hint.empty()) {
-        ::TextOutW(dc, sidebar + px(20), height - footer + px(12), hint.c_str(),
+        SIZE sz{};
+        ::GetTextExtentPoint32W(dc, hint.c_str(), static_cast<int>(hint.size()), &sz);
+        hintWidthPx = static_cast<int>(sz.cx);
+    }
+    const arcadechrome::FooterPlan plan =
+        arcadechrome::planFooter(width, height, dpiScale, hintWidthPx,
+                                 px(16));
+    if (!hint.empty()) {
+        if (plan.hintEllipsized) {
+            const auto measure = [&](std::wstring_view probe) {
+                SIZE sz{};
+                ::GetTextExtentPoint32W(dc, probe.data(),
+                                        static_cast<int>(probe.size()), &sz);
+                return static_cast<int>(sz.cx);
+            };
+            hint = arcadechrome::ellipsizeToWidth(hint, plan.hint.w, measure);
+        }
+        ::SetTextColor(dc, toColorRef(kTextPrimary));
+        ::TextOutW(dc, plan.hint.x, plan.hint.y, hint.c_str(),
                    static_cast<int>(hint.size()));
     }
     oldFont = ::SelectObject(dc, cache.fontFor(px(12), false, true));
@@ -602,7 +627,7 @@ void drawChrome(HDC dc, GdiCache& cache, const RenderList& list, int width, int 
     std::swprintf(meta, std::size(meta), L"điểm %lld · %.0f WPM · %.1f%% chính xác",
                   static_cast<long long>(list.stats.score), list.stats.wpm,
                   list.stats.accuracy);
-    ::TextOutW(dc, sidebar + px(20), height - footer + px(38), meta,
+    ::TextOutW(dc, plan.meta.x, plan.meta.y, meta,
                static_cast<int>(::wcslen(meta)));
     ::SelectObject(dc, oldFont);
 }
@@ -1048,8 +1073,20 @@ void ArcadeWindow::paintNow(NativeWindowHandle handle) {
         wchar_t text[32]{};
         std::swprintf(text, std::size(text), L"%.0f FPS", impl->fps);
         ::SetTextColor(impl->memoryDc, RGB(0x9A, 0xA7, 0xB8));
-        HGDIOBJ oldFont = ::SelectObject(impl->memoryDc, impl->cache.fontFor(13, false, true));
-        ::TextOutW(impl->memoryDc, width - 76, height - footer - 22, text,
+        // v1.3.0-beta8 (bug BS-07): DPI-scaled, right-aligned inside the band
+        // drawChrome() reserved for it (the old literals `13 / width - 76 /
+        // - 22` ignored the scale entirely).
+        const auto fpsFont = impl->cache.fontFor(
+            static_cast<int>(std::lround(13.0 * impl->dpiScale)), false, true);
+        HGDIOBJ oldFont = ::SelectObject(impl->memoryDc, fpsFont);
+        const arcadechrome::FooterPlan plan = arcadechrome::planFooter(
+            width, height, impl->dpiScale, 0,
+            static_cast<int>(std::lround(16.0 * impl->dpiScale)));
+        SIZE sz{};
+        ::GetTextExtentPoint32W(impl->memoryDc, text,
+                                static_cast<int>(::wcslen(text)), &sz);
+        const int x = std::max(plan.fps.x, plan.fps.right() - static_cast<int>(sz.cx));
+        ::TextOutW(impl->memoryDc, x, plan.fps.y, text,
                    static_cast<int>(::wcslen(text)));
         ::SelectObject(impl->memoryDc, oldFont);
     }

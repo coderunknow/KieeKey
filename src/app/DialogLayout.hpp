@@ -519,19 +519,49 @@ struct ScrolledChild {
     return out;
 }
 
-// Standard scrollbar metrics for the fallback: range = the pixels of content
-// below the viewport, page = 90 % of the viewport (one "page" of scroll).
+// Standard scrollbar metrics for the fallback.
+//
+// v1.3.0-beta8 (bug BS-01) — THE OLD MODEL MADE THE BAR UNREACHABLE.
+// It shipped as `nMax = overflow - 1` with `nPage = 90 % of the viewport`
+// (beta5..beta7). Win32 DISABLES a scrollbar whenever `nPage >= nMax + 1`, so
+// with a ~470 px viewport (nPage ~423) and the tens-of-pixels overflows this
+// dialog actually produces (one wrapped label = +17 px) the bar was dead in
+// exactly the cases it exists for — while `applySettingsScrollOffset()` had
+// already region-clipped every child below the viewport. The user's text was
+// invisible AND unreachable ("chữ bị che, không thể kéo").
+//
+// Correct model, used by src/app/main.cpp verbatim:
+//   * 1 scroll unit == 1 px, so SCROLLINFO::nMax + 1 == the whole content;
+//   * nPage == the viewport height (one page), never a fraction of it;
+//   * the bar is therefore enabled iff `maxTravelPx > 0`;
+//   * the thumb fraction is viewport / content — what every native scrollbar
+//     shows — and the drag travel is exactly the overflow, so the last pixel
+//     row of the page is reachable.
 struct ScrollMetrics {
-    int rangeMax = 0;
-    int pagePx   = 0;
-    int linePx   = 16;
+    int  contentPx   = 0;      // total content height == nMax + 1
+    int  pagePx      = 0;      // one page == the viewport height
+    int  linePx      = 16;     // arrow-key / wheel step
+    int  maxTravelPx = 0;      // largest legal scroll offset == the overflow
+    int  rangeMaxPx  = 0;      // SCROLLINFO::nMax (contentPx - 1, inclusive)
+    bool enabled     = false;  // nPage < nMax + 1  <=>  maxTravelPx > 0
+
+    [[nodiscard]] double thumbFraction() const noexcept {
+        return contentPx > 0
+                   ? static_cast<double>(pagePx) / static_cast<double>(contentPx)
+                   : 1.0;
+    }
 };
 
 [[nodiscard]] inline ScrollMetrics scrollMetrics(int viewportHeightPx,
                                                  int scrollRangePx) noexcept {
     ScrollMetrics m;
-    m.rangeMax = std::max(0, scrollRangePx);
-    m.pagePx = std::max(1, viewportHeightPx * 9 / 10);
+    m.pagePx      = std::max(1, viewportHeightPx);   // never 0: Win32 would
+                                                     // drop the page info and
+                                                     // hide the thumb entirely
+    m.maxTravelPx = std::max(0, scrollRangePx);
+    m.contentPx   = m.pagePx + m.maxTravelPx;
+    m.rangeMaxPx  = m.contentPx - 1;
+    m.enabled     = m.maxTravelPx > 0;
     return m;
 }
 

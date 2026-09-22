@@ -44,6 +44,7 @@
 #include "DialogLayout.hpp"
 
 #include <cassert>
+#include <cmath>
 #include <cstdio>
 #include <iostream>
 #include <string>
@@ -519,14 +520,11 @@ void testScrollChildRectClipsAtViewportEdges() {
     assert(!gone.visible && gone.clip.h == 0);
     const ScrolledChild below = scrollChildRect(Rect{44, 700, 460, 100}, 0, viewport);
     assert(!below.visible);
-    // Scroll metrics: range == the overflow, page == 90 % of the viewport.
-    const ScrollMetrics m = scrollMetrics(viewport.h, 122);
-    assert(m.rangeMax == 122);
-    assert(m.pagePx == viewport.h * 9 / 10);
-    const ScrollMetrics none = scrollMetrics(viewport.h, 0);
-    assert(none.rangeMax == 0);
-    std::cout << "  [PASS] scrollChildRect clips at the viewport edges;"
-                 " scroll metrics follow the standard\n";
+    // Scroll metrics are covered by the dedicated BS-01 test below: the old
+    // expectations that used to live here (`rangeMax == overflow`,
+    // `pagePx == viewport * 9 / 10`) ENCODED THE BUG — see
+    // testScrollMetricsEnableTheBarExactlyWhenContentOverflows().
+    std::cout << "  [PASS] scrollChildRect clips at the viewport edges\n";
 }
 
 void testDpiSweepEveryControlInsideOrScrollable() {
@@ -585,6 +583,89 @@ void testDpiSweepEveryControlInsideOrScrollable() {
                  " the client area or scroll-reachable, no chrome overlap\n";
 }
 
+void testScrollMetricsEnableTheBarExactlyWhenContentOverflows() {
+    // v1.3.0-beta8 (bug BS-01) — "chữ bị che, không thể kéo".
+    //
+    // The scroll fallback shipped (beta5, bug B1) as
+    //     nMax  = overflow - 1          (overflow == content below the viewport)
+    //     nPage = 90 % of the viewport
+    // Win32 DISABLES a scrollbar whenever nPage >= nMax + 1. With a viewport of
+    // ~470 px nPage is ~423, while the overflows this dialog actually produces
+    // are tens of pixels (one wrapped label = +17 px). 423 >= 18 => the bar was
+    // dead in exactly the cases it exists for, while applySettingsScrollOffset()
+    // had already region-clipped the children below the viewport: the text was
+    // invisible AND unreachable.
+    //
+    // Correct model: 1 scroll unit = 1 px, nMax + 1 == the whole content,
+    // nPage == the viewport. The bar is then enabled iff there IS overflow,
+    // the thumb fraction is viewport/content (as every native scrollbar shows
+    // it) and the drag travel is exactly the overflow.
+    const int viewports[] = {300, 470};
+    const int overflows[] = {1, 15, 150, 1000};
+    for (const int v : viewports) {
+        const ScrollMetrics fits = scrollMetrics(v, 0);
+        assert(!fits.enabled);                      // nothing to scroll => disabled
+        assert(fits.pagePx == v);
+        assert(fits.maxTravelPx == 0);
+        assert(fits.contentPx == v);
+        assert(fits.rangeMaxPx + 1 == v);           // nMax + 1 == content
+        assert(fits.thumbFraction() == 1.0);
+        for (const int r : overflows) {
+            const ScrollMetrics m = scrollMetrics(v, r);
+            assert(m.enabled);                      // <-- RED on the old formula
+            assert(m.pagePx == v);                  // one page == the viewport
+            assert(m.maxTravelPx == r);             // drag travel == the overflow
+            assert(m.contentPx == v + r);
+            assert(m.rangeMaxPx == m.contentPx - 1);
+            // The Win32 enable condition, verbatim: nPage < nMax + 1.
+            assert(m.pagePx < m.rangeMaxPx + 1);
+            // Thumb fraction == viewport / content (what the user sees).
+            const double expected = static_cast<double>(v) / static_cast<double>(v + r);
+            assert(std::fabs(m.thumbFraction() - expected) < 1e-9);
+            // The thumb travel maps exactly onto the scroll range.
+            assert(std::fabs((1.0 - m.thumbFraction()) * m.contentPx - r) < 1e-9);
+        }
+        // A negative range (model misuse) must clamp to "no scrolling", never
+        // to a negative nMax that would make the bar's position meaningless.
+        const ScrollMetrics neg = scrollMetrics(v, -5);
+        assert(!neg.enabled && neg.maxTravelPx == 0 && neg.rangeMaxPx + 1 == v);
+        // A degenerate viewport (measured before the first solve) must never
+        // produce nPage == 0 — Win32 treats that as "no page info" and hides
+        // the thumb entirely.
+        const ScrollMetrics tiny = scrollMetrics(0, 40);
+        assert(tiny.pagePx >= 1 && tiny.enabled);
+        assert(tiny.pagePx < tiny.rangeMaxPx + 1);
+    }
+    std::cout << "  [PASS] BS-01: scrollbar enabled iff content overflows;"
+                 " thumb fraction == viewport/content; travel == overflow\n";
+}
+
+void testScrollOffsetIsAlwaysReachableAtBothEnds() {
+    // BS-01 follow-through: with the corrected metrics the LAST line of a page
+    // is reachable at max offset for every (viewport, overflow) pair — the
+    // property the user experiences as "I can finally read the bottom of the
+    // tab". Previously maxTravel was capped at nMax == overflow - 1, so the
+    // final pixel row of content was never reachable even with a live bar.
+    const int viewports[] = {300, 470};
+    const int overflows[] = {1, 15, 150, 1000};
+    for (const int v : viewports) {
+        for (const int r : overflows) {
+            const ScrollMetrics m = scrollMetrics(v, r);
+            const int contentBottom = v + r;                 // in viewport coords
+            const int lastVisibleRow = contentBottom - m.maxTravelPx;
+            assert(lastVisibleRow == v);                     // bottom row == viewport bottom
+            // Every offset in [0, maxTravel] is a legal, non-negative position
+            // and never overshoots the content.
+            for (int off = 0; off <= m.maxTravelPx; off += std::max(1, m.maxTravelPx / 7)) {
+                assert(off >= 0 && off <= r);
+                assert(contentBottom - off >= v);
+            }
+        }
+    }
+    std::cout << "  [PASS] BS-01: the deepest content row is reachable at max"
+                 " offset for every viewport/overflow pair\n";
+}
+
 } // namespace
 
 int main() {
@@ -602,6 +683,11 @@ int main() {
     testRefitWindowShrinksOversizedWindowToScroll();
     testFitRectToWorkArea();
     testScrollChildRectClipsAtViewportEdges();
+    // v1.3.0-beta8 (bug BS-01): the scrollbar must be enabled exactly when the
+    // content overflows — the beta5..beta7 model disabled it in every case the
+    // dialog actually produces.
+    testScrollMetricsEnableTheBarExactlyWhenContentOverflows();
+    testScrollOffsetIsAlwaysReachableAtBothEnds();
     testDpiSweepEveryControlInsideOrScrollable();
     std::cout << "=== ALL DIALOG LAYOUT TESTS PASSED ===\n";
     return 0;

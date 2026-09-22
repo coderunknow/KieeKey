@@ -176,6 +176,21 @@ async function testFlexingStage() {
   assert(preload && preload.body && preload.body.text === 'Xin chao!',
          'the passage sent to the engine is the one in the text box');
   assert(preload && preload.body.granularity === 1, 'granularity comes from the combo');
+  // v1.3.0-beta8 (FT-04 / phase2-R3): the "N" input is not decoration. It is
+  // the free-form counterpart of the desktop Lab's fixed "N ký tự" choices and
+  // travels to FlexingGame::setGranularity(gran, nChars) through
+  // ArcadeServer's /api/preload — same engine call, same clamp (1..64).
+  assert(preload && preload.body.nChars === Number(elements.flexN.value),
+         'N comes from the flexN input, not from a hardcoded default');
+  requests.length = 0;
+  elements.flexN.value = '7';
+  elements.flexN.dispatch('change');
+  await flush();
+  const afterN = requests.filter((r) => r.url === 'api/preload').pop();
+  assert(afterN && afterN.body && afterN.body.nChars === 7,
+         'editing N re-sends it to the engine (the control is live)');
+  assert(afterN && afterN.body && afterN.body.text === 'Xin chao!',
+         'changing N keeps the passage that is in the box');
   assert(!elements.labFlexing.classList.contains('hidden'), 'the stage becomes visible');
 
   // The streamed engine output is what appears in the target control.
@@ -269,6 +284,21 @@ async function testChaosLab() {
 }
 
 //---------------------------------------------------------------------------
+// The web N input must not be able to ask the engine for something it cannot
+// do: FlexingGame clamps nChars to 1..64 (src/core/Arcade.cpp:3084) and the
+// HTML input declares the very same bounds. A future edit to either side that
+// forgets the other is caught here.
+function testGranularityBoundsMatchTheEngine() {
+  const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  const input = html.match(/<input id="flexN"[^>]*>/);
+  assert(!!input, 'the flexN input exists in index.html');
+  const tag = input ? input[0] : '';
+  assert(/min="1"/.test(tag), 'flexN declares min=1 like the engine clamp: ' + tag);
+  assert(/max="64"/.test(tag), 'flexN declares max=64 like the engine clamp: ' + tag);
+  section('Web N input bounds match the engine clamp');
+}
+
+//---------------------------------------------------------------------------
 function testNativeInputGuard() {
   const api = sandbox.window.KieeKeyLabs;
   assert(typeof api.isNativeInput === 'function', 'the labs expose the input guard');
@@ -288,6 +318,7 @@ function testNativeInputGuard() {
   await testFlexingStage();
   await testChaosLab();
   testNativeInputGuard();
+  testGranularityBoundsMatchTheEngine();
   if (failures === 0) {
     console.log('=== ALL WEB LAB TESTS PASSED (' + checks + ' checks) ===');
     process.exit(0);

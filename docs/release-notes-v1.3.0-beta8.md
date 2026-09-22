@@ -146,7 +146,7 @@ the manual checklist below.
 | Seed-verified audits | `audit_layout` 9 seeds, `audit_chaos_lab` 4 layers, `audit_feature_persistence` (RED 11 on the pre-fix tree), `audit_live_effects_truth` (RED 4) |
 | Cross-compile | every Windows-only edit compiles with `zig c++ -target x86_64-windows-gnu -Wall -Wextra`; a deliberately broken copy fails as expected |
 | `check_version.py` | OK — `1.3.0-beta8` (PE 1.3.0.9, manifest 1.3.0.9) |
-| Windows CI (x64/ARM64/ARM64EC `/W4 /WX` + ctest + UI probe) | **this commit** |
+| Windows CI (x64/ARM64/ARM64EC `/W4 /WX` + ctest + UI probe) | **GREEN** — 3 platforms built, 8/8 ctest, UI probe **0 findings over 184 controls / 1764 checks** at DPI 96 |
 | Manual checklist (below) | **you** |
 
 ---

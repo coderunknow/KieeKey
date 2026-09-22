@@ -422,7 +422,7 @@ editing N re-sends it live, that the passage is preserved, and that the HTML bou
 | New portable suites | BS-01 (14), BS-07 (177), DS-01/02 (7), FT-01 (29), FT-02 (94 checks) | green |
 | Seed-verified audits | `audit_layout` (9 seeds), `audit_chaos_lab` (4 layers), `audit_feature_persistence` (11 RED findings pre-fix), `audit_live_effects_truth` (4 RED pre-fix) | green |
 | Cross-compile (`zig c++ -target x86_64-windows-gnu -Wall -Wextra`) | every Windows-only edit compiles; negative control fails as expected | green |
-| Windows CI `windows-2022` (x64/ARM64/ARM64EC, MSVC `/W4 /WX`, ctest) | the REAL toolchain | **pending — this commit** |
+| Windows CI `windows-2022` (x64/ARM64/ARM64EC, MSVC `/W4 /WX`, ctest) | the REAL toolchain | **GREEN** (run 35726539425: Build + 8/8 ctest on x64/ARM64/ARM64EC) |
 | Windows CI UI probe (`kieekey_ui_probe`, x64) | real HWNDs, real font metrics, per-tab screenshots, scrollbar truth | **executed** — runs 1..5 found **BS-09, BS-10, BS-11** and 10 probe-side false-positive classes; each fixed |
 | Manual checklist W1–W7 / M1–M7 | real DPI, tray, hook, real `SendInput` into external apps | **pending (user)** |
 
@@ -473,4 +473,4 @@ editing N re-sends it live, that the passage is preserved, and that the HTML bou
 | FT-05 R1 F9 guard | LOW | FIXED | isolation gate + mirror atomic |
 | FT-06 eight games | INFO | REGRESSION ONLY | all `test_arcade*` green |
 
-## 6. Release status: **READY FOR WINDOWS CI + MANUAL CHECKLIST**
+## 6. Release status: **CI GREEN — READY FOR THE MANUAL CHECKLIST**

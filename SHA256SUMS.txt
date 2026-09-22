@@ -280,7 +280,7 @@ e36dd02c5f0be8fa270fc223b9175034f44098bea9d439d9f667ceaea46ac065  KieeKey/docs/p
 9464699cf1ca012aacb22d11f27ebea9e1349a06d49e5fca6087e94dc35d54df  KieeKey/docs/release-notes-v1.3.0-beta5.md
 e1c8b66702230fab318c73799dea9959374689c5f992d87cd6233bcbb293b5ef  KieeKey/docs/release-notes-v1.3.0-beta6.md
 95eb46243113cb1c625ac3e1f24e3c229487586715c205168f632aaaac18caf1  KieeKey/docs/release-notes-v1.3.0-beta7.md
-2798a28aeb0263e5503464967f1e9c995933f3bd3bc4523d80f77ddfc9028b42  KieeKey/docs/release-notes-v1.3.0-beta8.md
+b9f84b7041cdd10b6cc2ff8fbdb6dc50e87ad2d591c277942d6255f89e180c2f  KieeKey/docs/release-notes-v1.3.0-beta8.md
 1e56e21b5a476c7df86d3ba4a856d3ff2c4733474325891a89290c5f4c472bae  KieeKey/docs/reports/ACCENT_AB_REPORT.md
 526b8d53bfede002703302edb9cfe9578996776b7ed1a8c67b59d1d185e1f8e0  KieeKey/docs/reports/BENCHMARK_DELTA.md
 3b93def81725e405c81a04b1010d76607743f5f45c876450be56a17182b52ce4  KieeKey/docs/reports/DIRTY_INPUT_REPORT.md

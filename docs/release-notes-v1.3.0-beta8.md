@@ -227,3 +227,27 @@ its whole range and re-checks the geometry at every step, and repeats the entire
 audit at 150 % using the application's own DPI-change path. Everything it finds is
 reported per tab with the numbers (`id: x,y wxh`), so a finding can be reproduced
 without the screenshot.
+
+## The report now tells us WHERE, not just how it looks
+
+"Chữ bị đè" survives CI because CI's DPI, font and text scale are not the user's. So
+the app measures its own settings dialog — every tab, at the DPI in use, with each
+control's own font — and appends the result to the diagnostics report (the pane and the
+exported file, one builder). `Xuất báo cáo` now ends with a section like:
+
+```
+=== Tự kiểm tra bố cục (đo trên cửa sổ đang mở) ===
+DPI hiệu dụng: 96 (100 %)
+Đã đo: 9 tab, 124 điều khiển (124 đang hiện), 2148 phép so
+Kết quả: OK — không mục nào đè, cắt hay nằm ngoài tầm với.
+```
+
+or, when something really is wrong, `Kết quả: CÓ LỖI — N mục:` and one line per defect:
+`[overlap] đè nhau 24x6px — …`, `[clipped] chữ cần 56px cao nhưng ô chỉ 28px — …`,
+`[region] bị cắt bởi vùng vẽ cũ …`, `[cut] rộng hơn vùng tab 60px ở bên phải …`,
+`[unreachable] nằm dưới trang kể cả khi đã cuộn hết 193px …`. Send that file instead of
+a screenshot: it carries the numbers, the tab and the DPI.
+
+---
+
+*SPDX-License-Identifier: GPL-3.0-or-later*

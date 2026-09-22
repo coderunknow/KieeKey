@@ -1111,15 +1111,12 @@ void refreshDiagnostics() noexcept;
 
 void emitInline(std::size_t backspace, const std::wstring& text) noexcept {
     g.hook.emitter().sendEdit(backspace, text);
-    // v1.3.0-beta7: keep Diagnostics in sync with the real emitter.
-    // SendInputCalls was stuck at 0 while the emit-chain trace showed 13
-    // deliveries: the counter was only incremented on the deferred
-    // consumer path, never on the hot inline path. One relaxed add here
-    // closes that gap with no hook-thread cost.
-    if (backspace != 0 || !text.empty()) {
-        ok::diag::Diagnostics::instance().add(ok::diag::Counter::SendInputCalls);
-        // Backspace-only edits still inject input; count once per emit.
-    }
+    // v1.3.0-beta8: SendInputCalls is now re-based from the emitter's own
+    // atomic (syncDiagnosticsCounters) — the source-of-truth for actual
+    // ::SendInput syscalls, including chunked batches and every fallback
+    // path. That closes the beta6 gap (inline vs deferred), the TSF-fallback
+    // gap (flushEditBatch) and the OOM-catch gap in one place, without
+    // per-edit manual increments that drift per-batch.
     // v1.3.0-beta6 (V4): the producer-side SendInput sink — ring-full
     // fallbacks, inline decisions and the Chaos Lab injection all land here.
     if (!text.empty()) {
@@ -1392,7 +1389,14 @@ PD onHookEvent(const KeyEvent& ev) noexcept {
                 diag.add(pd.suppressKey ? ok::diag::Counter::KeySuppressed
                                         : ok::diag::Counter::KeyPassThrough);
             } else if (ev.source == EventSource::Mouse) {
-                diag.add(ok::diag::Counter::MouseButton);
+                // v1.3.0-beta8: wheel vs button were conflated — every scroll
+                // notch incremented MouseButton and left MouseWheel stuck at 0
+                // while HookCounters (mouseProc) kept them separate. Mirror the
+                // hook's classification (WM_MOUSEWHEEL / WM_MOUSEHWHEEL -> wheel).
+                const bool isWheel = (ev.wParam == WM_MOUSEWHEEL ||
+                                      ev.wParam == WM_MOUSEHWHEEL);
+                diag.add(isWheel ? ok::diag::Counter::MouseWheel
+                                 : ok::diag::Counter::MouseButton);
             } else if (ev.source == EventSource::ForegroundChanged) {
                 diag.add(ok::diag::Counter::ForegroundChanged);
             }
@@ -2099,7 +2103,9 @@ void onConsumerEvent(const KeyEvent& /*ev*/) noexcept {
             diagIns.record(ok::diag::Stage::TsfCommit,
                            ok::diag::Diagnostics::nowUs() - diagCommitT0);
             diagIns.add(ok::diag::Counter::TsfCommits);
-            if (batchOk && g.composer.lastCommitSlow()) {
+            if (!batchOk) {
+                diagIns.add(ok::diag::Counter::TsfFailedCommits);
+            } else if (g.composer.lastCommitSlow()) {
                 diagIns.add(ok::diag::Counter::TsfSlowCommits);
             }
         }
@@ -2216,15 +2222,15 @@ void onConsumerEvent(const KeyEvent& /*ev*/) noexcept {
             const std::uint64_t profSeq = it.profSeq;
             const std::uint64_t tFlush = ok::prof::qpcNow();
 #endif
-            // v1.3.0-beta4: consumer-side diagnostics — the SendInput emit
-            // latency + call counter (relaxed, gated to Basic).
+            // v1.3.0-beta8: SendInput diagnostics re-based from emitter (see
+            // syncDiagnosticsCounters / emitInline). Keep latency histogram;
+            // call/failed counts now come from the emitter source-of-truth.
             if (ok::diag::Diagnostics::instance().atLeast(ok::diag::Level::Basic)) {
                 ok::diag::Diagnostics& dIns = ok::diag::Diagnostics::instance();
                 const std::int64_t dT0 = ok::diag::Diagnostics::nowUs();
                 g.hook.emitter().sendEdit(it.backspace, it.text, it.textLen);
                 dIns.record(ok::diag::Stage::SendInputCall,
                             ok::diag::Diagnostics::nowUs() - dT0);
-                dIns.add(ok::diag::Counter::SendInputCalls);
             } else {
                 g.hook.emitter().sendEdit(it.backspace, it.text, it.textLen);
             }
@@ -3498,37 +3504,54 @@ void refreshSystemSnapshot() noexcept {
 void syncDiagnosticsCounters() noexcept {
     try {
         auto& diag = ok::diag::Diagnostics::instance();
-        // HookCounters -> Diagnostics counters (the beta6 gap: hook.pushed/
-        // dropped / wakes were live but never reached the report, so the
-        // report could show 0 while the wrapper had seen thousands).
+        // HookCounters + Emitter + Barrier -> Diagnostics (the beta6 gap:
+        // hook.pushed/dropped/wakes were live but never reached the report,
+        // so the report could show 0 while the wrapper had seen thousands;
+        // beta7 closed most of the snapshot fields, but MouseWheel,
+        // ForegroundChanged, BarrierTimeouts, HookReinstalls and the
+        // SendInput*/TsfFailed counters still drifted or stayed zero).
         const auto& hc = g.hook.counters();
+        // Ring / wake path — the source-of-truth is the hook's atomics
+        // (QueueStats + HookCounters). Overwrite unconditionally: a stale
+        // Diagnostics value is strictly worse than a fresh 0 at startup.
         diag.set(ok::diag::Counter::QueuedToConsumer, g.hook.pushed());
         diag.set(ok::diag::Counter::QueueOverflowDropped, g.hook.dropped());
         diag.set(ok::diag::Counter::ConsumerWakes, hc.consumerWakeups.load(std::memory_order_relaxed));
         diag.set(ok::diag::Counter::SetEventSyscalls, hc.setEventSyscalls.load(std::memory_order_relaxed));
-        // Keyboard/mouse/foreground are already counted in onHookEvent, but
-        // rebasing from the source-of-truth HookCounters here guarantees the
-        // report and the UI can never drift (e.g. after a raw injected event
-        // that bypassed the producer handler).
-        // We only overwrite if the hook counter is non-zero to avoid clearing
-        // diagnostics-only increments (like SendInputCalls which lives outside hook).
-        // Instead, we ensure hook counters dominate for those sources.
-        const std::uint64_t kbd = hc.keyboardEvents();
-        if (kbd != 0) {
-            // Decompose into KeyDown/KeyUp for compatibility: report shows both.
-            // We set them proportionally? Instead just ensure keyboardEvents total matches.
-            // Diagnostics::keyboardEvents() == KeyDown+KeyUp, so if our total differs, adjust.
-            const std::uint64_t cur = diag.keyboardEvents();
-            if (cur != kbd) {
-                // Rebase KeyDown to match kbd, zero KeyUp — total is what matters for health checks.
-                // But to preserve split, distribute: half up, half down roughly.
-                // Simpler: set KeyDown to kbd, KeyUp delta is extra — but keyboardEvents() counts both.
-                // So set KeyDown = kbd, KeyUp = 0 if cur != kbd; total will be kbd.
-                // First zero both via set, then set KeyDown.
-                diag.set(ok::diag::Counter::KeyDown, kbd);
-                diag.set(ok::diag::Counter::KeyUp, 0);
-            }
+        // Barrier / hook health — displayed on the Chẩn đoán tab directly
+        // from g.drainBarrier / g.hook, but the exported report reads the
+        // Diagnostics counter copy, which used to follow independent paths.
+        // Re-base here so the report and the UI never disagree.
+        diag.set(ok::diag::Counter::BarrierTimeouts, g.drainBarrier.timeouts());
+        diag.set(ok::diag::Counter::HookReinstalls, g.hook.hookReinstallCount());
+        // Mouse / foreground — beta7's sync only touched keyboard and left
+        // MouseWheel stuck at 0 (onHookEvent conflated wheel->button, and
+        // sync never corrected it) and ForegroundChanged drifting.
+        diag.set(ok::diag::Counter::MouseButton, hc.mouseButton.load(std::memory_order_relaxed));
+        diag.set(ok::diag::Counter::MouseWheel, hc.mouseWheel.load(std::memory_order_relaxed));
+        diag.set(ok::diag::Counter::ForegroundChanged, hc.foregroundChanged.load(std::memory_order_relaxed));
+        // Keyboard — the hook distinguishes KeyDown/SysKeyDown and
+        // KeyUp/SysKeyUp, while Diagnostics folds them to KeyDown/KeyUp
+        // (engine contract: shift vs sys does not matter to Vietnamese).
+        // Re-base with the exact split so KeyDown+KeyUp == hook.keyboardEvents()
+        // and the report never shows a phantom 0 KeyUp or a collapsed total.
+        {
+            const std::uint64_t kd = hc.keyDown.load(std::memory_order_relaxed) +
+                                     hc.sysKeyDown.load(std::memory_order_relaxed);
+            const std::uint64_t ku = hc.keyUp.load(std::memory_order_relaxed) +
+                                     hc.sysKeyUp.load(std::memory_order_relaxed);
+            diag.set(ok::diag::Counter::KeyDown, kd);
+            diag.set(ok::diag::Counter::KeyUp, ku);
         }
+        // Output — the emitter is the source-of-truth for actual
+        // ::SendInput syscalls (including chunked batches, TSF fallbacks,
+        // OOM-catch deferred paths). One re-base covers all of them;
+        // per-edit manual adds are gone (see emitInline).
+        diag.set(ok::diag::Counter::SendInputCalls, g.hook.emitter().sendInputCalls());
+        diag.set(ok::diag::Counter::SendInputFailedEvents, g.hook.emitter().sendInputFailed());
+        // Note: TsfCommits / TsfSlowCommits / TsfFailedCommits are counted
+        // directly in onConsumerEvent's flushEditBatch (only that thread
+        // knows whether commitBatch succeeded); nothing to re-base here.
     } catch (...) {
     }
 }

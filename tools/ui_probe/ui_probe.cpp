@@ -423,6 +423,21 @@ int main(int argc, char** argv) {
             }
         }
 
+        // The always-visible chrome lives OUTSIDE the tab page by design: the
+        // header strip (icon/title/status), the in-app ON/OFF toggle and the
+        // OK/Cancel/Apply row. `outside_page` must not count it — the second CI
+        // run reported the three header statics as findings for exactly this
+        // reason. Keep in sync with the always-visible controls in main.cpp.
+        static const int kChromeIds[] = {IDOK, IDCANCEL, IDC_BTN_TOGGLE, IDC_BTN_APPLY,
+                                         IDC_STAT_HEAD_ICON, IDC_STAT_HEAD_TITLE,
+                                         IDC_STAT_HEAD_STATUS};
+        const auto isChrome = [](int id) {
+            for (const int chrome : kChromeIds) {
+                if (chrome == id) { return true; }
+            }
+            return false;
+        };
+
         std::vector<Ctl> ctls;
         std::vector<Finding> findings;
 
@@ -460,6 +475,7 @@ int main(int argc, char** argv) {
 
         // ---- 1. inside the tab page ---------------------------------------
         for (const Ctl& c : ctls) {
+            if (isChrome(c.id)) { continue; }
             ++g_checks;
             if (c.x + c.w > page.right + 1 || c.y + c.h > page.bottom + 1 ||
                 c.x < page.left - 1 || c.y < page.top - 1) {
@@ -483,10 +499,15 @@ int main(int argc, char** argv) {
                 const int iy = std::min(ctls[i].y + ctls[i].h, ctls[j].y + ctls[j].h) -
                                std::max(ctls[i].y, ctls[j].y);
                 if (ix > 1 && iy > 1) {
+                    const auto at = [](const Ctl& c) {
+                        return "at " + std::to_string(c.x) + "," + std::to_string(c.y) + " " +
+                               std::to_string(c.w) + "x" + std::to_string(c.h);
+                    };
                     findings.push_back({"overlap",
-                        "id " + std::to_string(ctls[i].id) + " (" + ctls[i].klass +
-                        ") and id " + std::to_string(ctls[j].id) + " (" + ctls[j].klass +
-                        ") overlap by " + std::to_string(ix) + "x" + std::to_string(iy) + " px"});
+                        "id " + std::to_string(ctls[i].id) + " (" + ctls[i].klass + ") " +
+                        at(ctls[i]) + " and id " + std::to_string(ctls[j].id) + " (" +
+                        ctls[j].klass + ") " + at(ctls[j]) + " overlap by " +
+                        std::to_string(ix) + "x" + std::to_string(iy) + " px"});
                 }
             }
         }
@@ -544,13 +565,26 @@ int main(int argc, char** argv) {
             // the point is absolute — the first CI run added page.left/top on
             // top of them, which sent every probe point to the wrong control.
             const POINT pt{c.x + c.w / 2, c.y + c.h / 2};
-            const HWND hit = ::RealChildWindowFromPoint(dlg, pt);
+            POINT screenPt{pt.x, pt.y};
+            ::ClientToScreen(dlg, &screenPt);
+            // WindowFromPoint is the API the mouse input path itself uses (screen
+            // coordinates; hidden and disabled windows are skipped). The second
+            // CI run used RealChildWindowFromPoint, which answers inside the tab
+            // control's own (larger) window rectangle and produced a batch of
+            // "hits id 500 (SysTabControl32)" findings that no click could
+            // reproduce. When the two APIs disagree the detail says so.
+            const HWND hit = ::WindowFromPoint(screenPt);
+            const HWND real = ::RealChildWindowFromPoint(dlg, pt);
             const HWND self = ::GetDlgItem(dlg, c.id);
             if (hit != nullptr && self != nullptr && hit != self && ::IsChild(self, hit) == FALSE) {
-                findings.push_back({"hittest",
-                    "id " + std::to_string(c.id) + " centre (" + std::to_string(pt.x) + "," +
-                    std::to_string(pt.y) + ") hits id " +
-                    std::to_string(::GetDlgCtrlID(hit)) + " (" + className(hit) + ")"});
+                std::string detail = "id " + std::to_string(c.id) + " centre (" +
+                    std::to_string(pt.x) + "," + std::to_string(pt.y) + ") hits id " +
+                    std::to_string(::GetDlgCtrlID(hit)) + " (" + className(hit) + ")";
+                if (real != nullptr && real != hit) {
+                    detail += "; RealChildWindowFromPoint says id " +
+                              std::to_string(::GetDlgCtrlID(real));
+                }
+                findings.push_back({"hittest", detail});
             }
         }
 
@@ -588,7 +622,9 @@ int main(int argc, char** argv) {
         for (const Finding& f : findings) { noteKind(f.kind); }
         g_findings += static_cast<int>(findings.size());
         json += "  {\"tab\": " + std::to_string(tab) + ", \"controls\": " +
-                std::to_string(ctls.size()) + ", \"page\": [" + std::to_string(page.left) +
+                std::to_string(ctls.size()) + ", \"dialog\": [" +
+                std::to_string(client.right) + "," + std::to_string(client.bottom) +
+                "], \"page\": [" + std::to_string(page.left) +
                 "," + std::to_string(page.top) + "," + std::to_string(page.right) + "," +
                 std::to_string(page.bottom) + "], \"screenshot\": \"" +
                 (shotOk ? "tab" + std::to_string(tab) + ".png" : "") + "\", \"findings\": [";
@@ -610,9 +646,12 @@ int main(int argc, char** argv) {
         json += "]}";
         json += tab + 1 < static_cast<int>(tabCount) ? ",\n" : "\n";
 
-        std::printf("  tab %d: %d controls, %d findings%s\n", tab,
-                    static_cast<int>(ctls.size()), static_cast<int>(findings.size()),
-                    shotOk ? "" : " (screenshot failed)");
+        std::printf("  tab %d: %d controls, %d findings%s (page %d,%d..%d,%d dialog %dx%d)\n",
+                    tab, static_cast<int>(ctls.size()), static_cast<int>(findings.size()),
+                    shotOk ? "" : " (screenshot failed)", static_cast<int>(page.left),
+                    static_cast<int>(page.top), static_cast<int>(page.right),
+                    static_cast<int>(page.bottom), static_cast<int>(client.right),
+                    static_cast<int>(client.bottom));
         for (const Finding& f : findings) {
             std::printf("    [%s] %s\n", f.kind.c_str(), f.detail.c_str());
             if (f.kind == "overlap" || f.kind == "hittest") { std::printf("\n"); }

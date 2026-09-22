@@ -310,6 +310,9 @@ build test_progression_persist -std=c++2b -O2 -Isrc/app -Isrc/core -pthread $INC
 # v1.3.0-beta8 (DS-01/02/05): the diagnostics TEXT layer — quick-check token
 # mapping, the one builder shared by the pane and the export, truth markers.
 build test_diag_report_text -std=c++2b -O2 -Isrc/app $INC tests/test_diag_report_text.cpp || rc=1
+# v1.3.0-beta8 (CA-06): the app measures its own layout into the report the
+# user sends — overlap / clipped / cut / unreachable, pure rectangle math.
+build test_diag_self_check -std=c++2b -O2 -Isrc/app $INC tests/test_diag_self_check.cpp || rc=1
 # v1.3.0-beta8 (BS-07): Arcade Hub footer/counter geometry — the hint band and
 # the FPS band come from one function, disjoint at 100-200 % for the longest
 # hints the games can produce.
@@ -630,6 +633,7 @@ run test_ai_rival            60
 run test_progression         60
 run test_progression_persist 60
 run test_diag_report_text    30
+run test_diag_self_check     30
 run test_arcade_chrome_layout 30
 run test_flex_send_outcome   30
 run test_analytics           60

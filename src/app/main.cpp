@@ -164,6 +164,7 @@
 // quick-check mapping, the one builder shared by the pane and the export,
 // and the truth-marker contract. Portable on purpose: tests pin it.
 #include "DiagReportText.hpp"
+#include "DiagSelfCheck.hpp"   // v1.3.0-beta8 (CA-06): the app measures its own layout
 // v1.3.0-beta8 (bug FT-01): the persistence RULES (file names, opt-in gate,
 // throttle window) live in a portable header so tests pin them.
 #include "PersistPolicy.hpp"   // v1.3.0-beta4: runtime layout solver
@@ -4428,6 +4429,20 @@ int measureStaticTextHeightPx(HWND child, int widthPx) {
     return static_cast<int>(calc.bottom - calc.top);
 }
 
+// v1.3.0-beta8 (CA-06): which tab page owns a control id. Extracted from
+// solveSettingsLayout()'s local lambda so the runtime solver and the in-app
+// self-check can never disagree about who belongs to which tab.
+int settingsPageOf(int id) {
+    const int* pages[9] = {kTab0, kTab1, kTab2, kTab3,
+                           kTab4, kTab5, kTab6, kTab7, kTab8};
+    for (int t = 0; t < 9; ++t) {
+        for (const int* p = pages[t]; *p; ++p) {
+            if (*p == id) { return t; }
+        }
+    }
+    return ok::layout::ControlSpec::kAlwaysVisible;
+}
+
 // idempotent (re-solving an already-solved dialog changes nothing).
 void solveSettingsLayout(HWND hwnd) {
     if (hwnd == nullptr) { return; }
@@ -4473,16 +4488,7 @@ void solveSettingsLayout(HWND hwnd) {
     }
 
     // -- 1b. Pages: measure every label, autoFit. --
-    const int* pages[9] = {kTab0, kTab1, kTab2, kTab3,
-                           kTab4, kTab5, kTab6, kTab7, kTab8};
-    auto pageOf = [&pages](int id) {
-        for (int t = 0; t < 9; ++t) {
-            for (const int* p = pages[t]; *p; ++p) {
-                if (*p == id) { return t; }
-            }
-        }
-        return ok::layout::ControlSpec::kAlwaysVisible;
-    };
+    auto pageOf = [](int id) { return settingsPageOf(id); };
     RECT disp = rcTab;
     ::SendMessageW(tabCtl, TCM_ADJUSTRECT, FALSE, reinterpret_cast<LPARAM>(&disp));
 
@@ -4665,6 +4671,124 @@ void solveSettingsLayout(HWND hwnd) {
 }
 
 } // namespace
+
+//===========================================================================
+// v1.3.0-beta8 (CA-06) — the app measures its OWN layout for the report.
+//
+// The CI probe (tools/ui_probe) measures a fresh dialog on the build machine:
+// 96 dpi and a simulated 150 %. The user's report — text overlapping, scrolling
+// scrambling it — reached us from a machine with its own DPI, its own font
+// scale and its own text scale, so "it looks wrong in the screenshot" was all
+// we had. This runs the same three questions the probe asks, on the dialog the
+// user is actually looking at, and appends the answer to the report they send:
+//
+//   box   = the SOLVED rectangle (g_settingsScroll.solved — what the runtime
+//           solver decided), which is the rectangle the probe calls "app
+//           solver says ...";
+//   rect  = the LIVE window rectangle at the moment of the check, i.e. what is
+//           actually painted (the app rezises scrolled children to the clip),
+//   needH = the child's own text re-measured with its own font at its solved
+//           width (measureStaticTextHeightPx — the same function the solver
+//           uses), so "wraps to 56px but the box is 28px" is detectable here
+//           exactly as it is in CI.
+//
+// Visibility is switched through showTab() for each tab and restored at the
+// end, so a tab the user is not on is measured the way it will be painted.
+// Purely additive: returning an empty string leaves the report unchanged.
+//===========================================================================
+std::string settingsLayoutSelfCheckUtf8() {
+    HWND dlg = g.hSettings;
+    if (dlg == nullptr || ::IsWindow(dlg) == FALSE || ::IsWindowVisible(dlg) == FALSE) {
+        return {};
+    }
+    HWND tabCtl = ::GetDlgItem(dlg, IDC_TAB);
+    if (tabCtl == nullptr || g_settingsScroll.solved.empty() ||
+        g_settingsScroll.viewport.w <= 0) {
+        return {};   // before the first solve there is nothing to measure
+    }
+
+    RECT client{};
+    ::GetClientRect(dlg, &client);
+    const ok::diagself::Rect clientRect{client.left, client.top,
+                                        client.right - client.left,
+                                        client.bottom - client.top};
+    const int keepTab = static_cast<int>(::SendMessageW(tabCtl, TCM_GETCURSEL, 0, 0));
+
+    ok::diagself::Plan plan;
+    plan.dpi = static_cast<int>(g_settingsDpi != 0 ? g_settingsDpi : 96);
+
+    // -- one snapshot of every page child, all at scroll offset 0 -----------
+    wchar_t cls[32]{};
+    wchar_t text[192]{};
+    for (const auto& entry : g_settingsScroll.solved) {
+        const HWND child = entry.first;
+        const int id = ::GetDlgCtrlID(child);
+        if (id == 0 || child == nullptr) { continue; }
+        ok::diagself::Item it;
+        it.id = id;
+        it.tab = settingsPageOf(id);
+        it.box = ok::diagself::Rect{entry.second.x, entry.second.y,
+                                    entry.second.w, entry.second.h};
+        RECT rc{};
+        ::GetWindowRect(child, &rc);
+        ::MapWindowPoints(nullptr, dlg, reinterpret_cast<POINT*>(&rc), 2);
+        it.rect = ok::diagself::Rect{rc.left, rc.top, rc.right - rc.left,
+                                     rc.bottom - rc.top};
+        it.shown = ::IsWindowVisible(child) != FALSE;
+        // The region the app set (scroll clipping), if any. Its box is in the
+        // CHILD's own coordinates — the same space SetWindowRgn was given.
+        if (HRGN rgn = ::CreateRectRgn(0, 0, 0, 0)) {
+            if (::GetWindowRgn(child, rgn) != ERROR) {
+                RECT rr{};
+                ::GetRgnBox(rgn, &rr);
+                it.rgn = ok::diagself::Rect{rr.left, rr.top,
+                                            rr.right - rr.left,
+                                            rr.bottom - rr.top};
+                it.hasRgn = true;
+            }
+            ::DeleteObject(rgn);
+        }
+        const int clsLen = ::GetClassNameW(child, cls, 32);
+        it.name = (clsLen > 0) ? utf16ToUtf8(std::wstring(cls, static_cast<std::size_t>(clsLen)))
+                               : std::string("?");
+        const int tLen = ::GetWindowTextW(child, text, 192);
+        if (tLen > 0) {
+            it.name += ": " + ok::diagself::detail::trimText(
+                                  utf16ToUtf8(std::wstring(text, static_cast<std::size_t>(tLen))),
+                                  48);
+        }
+        // Compared against the class names GetClassNameW really returns
+        // ("Button", "Static") — mixed case, case-insensitively — so this
+        // reads as what it means and stays a second, independent spelling of
+        // the check the solver makes against its ALL-CAPS style literals.
+        const LONG_PTR style = ::GetWindowLongPtrW(child, GWL_STYLE);
+        const bool isButton = ::lstrcmpiW(cls, L"Button") == 0;
+        const bool isStatic = ::lstrcmpiW(cls, L"Static") == 0;
+        it.group = isButton && ((style & BS_TYPEMASK) == BS_GROUPBOX);
+        if (isStatic && !it.group) {
+            // Only text-holding controls: an EDIT's window text is its
+            // CONTENT, and comparing that with its box would report every
+            // memo field the user typed into.
+            it.needH = measureStaticTextHeightPx(child, it.box.w);
+        }
+        plan.items.push_back(it);
+    }
+
+    // -- per-tab page + scroll travel (showTab restores offset 0 as it goes) --
+    plan.pages.reserve(9);
+    for (int t = 0; t < 9; ++t) {
+        showTab(t);
+        const ok::diagself::Rect page = ok::diagself::Rect{
+            g_settingsScroll.viewport.x, g_settingsScroll.viewport.y,
+            g_settingsScroll.viewport.w,
+            g_settingsScroll.viewport.h}.clippedTo(clientRect);
+        plan.pages.push_back(ok::diagself::TabPage{t, page, g_settingsScroll.range});
+    }
+    showTab(keepTab < 0 || keepTab > 8 ? 0 : keepTab);
+    ::UpdateWindow(dlg);
+
+    return ok::diagself::formatSection(plan, ok::diagself::findProblems(plan));
+}
 
 //===========================================================================
 // v1.3.0-beta4 — Diagnostics control panel (tab 3 "Chẩn đoán")
@@ -4922,9 +5046,14 @@ std::wstring g_lastDiagExportPath;
 // mails to support" are byte-identical by construction (the export adds only
 // the UTF-8 BOM). tests/test_diag_report_text.cpp pins this contract.
 std::string buildDiagReportUtf8() {
-    return ok::apptext::diagReportPayload(
+    std::string out = ok::apptext::diagReportPayload(
         ok::diag::Diagnostics::instance().report(40),
         utf16ToUtf8(liveGateStatusText()));
+    // v1.3.0-beta8 (CA-06): the layout self-check rides along in both the pane
+    // and the export (one builder, DS-05), so a report from a machine we
+    // cannot reproduce carries the numbers instead of a description.
+    out += settingsLayoutSelfCheckUtf8();
+    return out;
 }
 
 // v1.3.0-beta8 (bug DS-01): load the report into the tab-3 pane. Returns the

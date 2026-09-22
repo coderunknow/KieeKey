@@ -448,6 +448,47 @@ rescale path is shared with `WM_DPICHANGED` instead of being duplicated):
   `KieeKeyProbeSimulateDpi()` (the app's own `applySettingsDpiScale()` + solve), so
   the scale the user reports is measured rather than modelled.
 
+## 1b. CA-06 — the app measures its own layout, because CI's DPI is not the user's
+
+CA-05 gave the probe effective rectangles, the one-page rule, the scroll path and a
+real 150 % run; CI then reported **2304 controls / 8425 checks / 0 findings** on the
+same dialog the user says is broken. The remaining gap is not a check we forgot, it is
+the *machine*: CI has one font, one DPI and one text scale.
+
+Two things the first full probe run taught us, both now fixed (`0bb271c`):
+
+| finding | was it the product? | what it really was |
+|---|---|---|
+| 80 × `outside_page` at 150 % | no | `KieeKeyProbeSimulateDpi()` rescaled the children but not the WINDOW: `WM_DPICHANGED` applies the monitor's suggested window rect *first*. 1.5× content inside an unscaled window measures as 80 controls outside a page that never grew. |
+| 8 × `scroll_pos` | no | the audit sent a synthetic `WM_VSCROLL`/`SB_THUMBTRACK`; `SCROLLINFO::nTrackPos` is only populated by a real thumb drag, so the app correctly stayed at 0 while the probe asked for 48/96/144/193. It now drives line steps and `SB_BOTTOM` — the path the wheel and the arrows use — and adds `scroll_reach`: at the end of the travel the deepest row must be in view. |
+
+With both fixed the probe is green at 96 **and** 150 % — and green is exactly why the
+user's report cannot be answered from CI. So the shipped app now answers it itself:
+`src/app/DiagSelfCheck.hpp` + `settingsLayoutSelfCheckUtf8()` measure the OPEN dialog
+— all nine tabs, switched through `showTab()` so each is measured as it is painted —
+and append the result to **both** the report pane and the export (the DS-05 single
+builder), which is the file the user sends us:
+
+* `box` = the SOLVED rectangle from the runtime solver; `rect` = the live window
+  rectangle (what is painted); `needH` = the control's own text re-measured with its
+  own font at its solved width by `measureStaticTextHeightPx()` — the same function the
+  solver uses, so "wraps to 56px, box is 28px" is detectable on the user's machine
+  exactly as it is in CI;
+* four judgements, all pure rectangle arithmetic and pinned by
+  `tests/test_diag_self_check.cpp` (6 cases): `overlap` (painted rectangles; group
+  boxes and any fully enclosing rectangle are containers, not overlaps), `clipped`
+  (text taller than the box that shows it whole), `region` (a stale scroll region on a
+  control the page shows whole — the "band of empty grey where the label should be"
+  class), `cut` (wider than the page) and `unreachable` (below the page even at full
+  travel);
+* a control that is scrolled half out of the page is measured as such and **not**
+  reported: the app clips it on purpose, and calling that a defect would flood the
+  report.
+
+The report line reads, in Vietnamese, `Kết quả: OK — không mục nào đè, cắt hay nằm
+ngoài tầm với.` or `Kết quả: CÓ LỖI — N mục:` followed by `[kind] id (class…): x,y wxh`
+lines, so a machine we cannot reproduce is still a machine we can measure.
+
 ## 2. Verification layers
 
 | Layer | What it proves | Result |

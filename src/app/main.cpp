@@ -4495,10 +4495,20 @@ void solveSettingsLayout(HWND hwnd) {
         spec.rect = {rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top};
         spec.tab = pageOf(id);
         const int clsLen = ::GetClassNameW(c, cls, 32);
-        const bool isStatic = (clsLen == 6 && wcscmp(cls, L"STATIC") == 0);
+        // v1.3.0-beta8 (bug BS-11): the predefined Win32 classes report MIXED
+        // case from GetClassNameW ("Static", "Button", ...), so comparing them
+        // against uppercase literals with wcscmp() was false for EVERY control:
+        // `growable` and `groupBox` never became true and the runtime half of
+        // the solver — the label growth and the group-box stretch this dialog's
+        // whole layout story rests on — never ran. Nothing in the portable
+        // suites could see it (tests/test_dialog_layout.cpp injects `growable`
+        // by hand and scripts/audit_layout.py models the authored geometry);
+        // the CA-03 probe caught it by printing the app's own measurement (102)
+        // next to the rectangle it was applied to (96).
+        const bool isStatic = (clsLen == 6 && ::lstrcmpiW(cls, L"STATIC") == 0);
         const LONG_PTR style = ::GetWindowLongPtrW(c, GWL_STYLE);
         const bool isGroupBox =
-            (clsLen == 6 && wcscmp(cls, L"BUTTON") == 0) &&
+            (clsLen == 6 && ::lstrcmpiW(cls, L"BUTTON") == 0) &&
             ((style & BS_GROUPBOX) == BS_GROUPBOX);
         spec.groupBox = isGroupBox;
         spec.growable = isStatic && !isGroupBox &&

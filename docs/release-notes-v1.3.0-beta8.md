@@ -31,6 +31,17 @@ UI, UX, presentation, persistence or feature wiring.
   (`IDC_STAT_OUT_NOTE` and three siblings) are checked at 100/125/150 % on every
   commit, so a future string edit cannot bring the clipping back.
 
+### Labels really do grow to fit their text now — `[VERIFIED]`
+The dialog measures every label with your real font and grows the box when the
+text needs more room. That half of the layout model had **never actually run**:
+the code asked Windows for each control's class and compared it against
+`"STATIC"`/`"BUTTON"`, but Windows answers `"Static"`/`"Button"` — so no label was
+ever marked growable and no group box was ever stretched (the authored boxes were
+just big enough to hide it, except for two labels that clipped by 6–7 px). Found
+by the new UI probe printing the app's own measurement (`needs 102px … in a 96px
+box`); fixed with a case-insensitive comparison, plus a new audit rule
+(`class_case`) that fails the build if anyone writes that comparison again.
+
 ### The bottom button row no longer jumps to the left edge — `[VERIFIED]` (model), `UNVERIFIED (Windows)` (pixels)
 Whenever the dialog had to grow to fit its content, the OK / Hủy / Áp dụng
 buttons and the big ON/OFF switch were moved with a `SetWindowPos` call that

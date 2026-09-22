@@ -513,36 +513,25 @@ int main(int argc, char** argv) {
             ? std::max(0, (siReach.nMax + 1) - static_cast<int>(siReach.nPage))
             : 0;
         const int reachableBottom = page.bottom + travelPx;
-        // Horizontal bound: the tab control's own CLIENT rectangle. The display
-        // rectangle is narrower than the authored page whenever the control
-        // reserves scrollbar space, and the app legitimately fills the authored
-        // width — nothing is clipped or covered while a control stays inside the
-        // tab control's client area. The fourth CI run flagged 17 group boxes for
-        // exactly this 8 px difference.
-        RECT tabClient{};
-        if (tabsCtl != nullptr) {
-            ::GetClientRect(tabsCtl, &tabClient);
-            POINT tl{0, 0};
-            POINT br{tabClient.right, tabClient.bottom};
-            ::ClientToScreen(tabsCtl, &tl);
-            ::ClientToScreen(tabsCtl, &br);
-            ::ScreenToClient(dlg, &tl);
-            ::ScreenToClient(dlg, &br);
-            tabClient = RECT{tl.x, tl.y, br.x, br.y};
-        } else {
-            tabClient = RECT{0, 0, client.right, client.bottom};
-        }
+        // Horizontal bound: the DIALOG's client rectangle — the only place
+        // where a control can actually be clipped or covered (a window with
+        // WS_VSCROLL, as this dialog has, keeps the scrollbar OUT of its client
+        // rect). The tab control's own frame may legitimately sit under the
+        // page: the app fills the authored page width (audited against the
+        // authored page area) even when TCM_ADJUSTRECT's display rectangle is
+        // narrower because the control reserves scrollbar space. Bounding by the
+        // display rect flagged 17 group boxes for that 4 px difference.
         for (const Ctl& c : ctls) {
             if (isChrome(c.id)) { continue; }
             ++g_checks;
-            if (c.x + c.w > tabClient.right + 1 || c.y + c.h > reachableBottom + 1 ||
-                c.x < tabClient.left - 1 || c.y < page.top - 1) {
+            if (c.x + c.w > client.right + 1 || c.y + c.h > reachableBottom + 1 ||
+                c.x < client.left - 1 || c.y < page.top - 1) {
                 findings.push_back({"outside_page",
                     "id " + std::to_string(c.id) + " (" + c.klass + ") at " +
                     std::to_string(c.x) + "," + std::to_string(c.y) + " " +
                     std::to_string(c.w) + "x" + std::to_string(c.h) +
                     " is outside the reachable page (page " + std::to_string(page.left) +
-                    "," + std::to_string(page.top) + ".." + std::to_string(tabClient.right) +
+                    "," + std::to_string(page.top) + ".." + std::to_string(client.right) +
                     "," + std::to_string(reachableBottom) + ") x=" + std::to_string(c.x) +
                     (c.y + c.h > reachableBottom + 1 && travelPx > 0
                          ? " (deeper than the scroll range by " +

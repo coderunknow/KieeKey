@@ -256,6 +256,48 @@ Evidence:
 * Probe evidence (run 3): `tab 0 [outside_page] id 555 at 24,100 494x112`,
   `tab 4 [outside_page] id 558 at 28,110 400x34`, … on all nine tabs.
 
+### BS-11 — The runtime solve never grew a single label (case-sensitive class names)
+| | |
+|---|---|
+| **Severity** | **HIGH** (the whole runtime half of the layout model was inert) |
+| **Area** | `solveSettingsLayout()`: `isStatic` / `isGroupBox` detection |
+| **Status** | **FIXED — `[VERIFIED]`** (audit + seed + probe evidence) |
+
+```cpp
+const bool isStatic = (clsLen == 6 && wcscmp(cls, L"STATIC") == 0);   // never true
+const bool isGroupBox = (clsLen == 6 && wcscmp(cls, L"BUTTON") == 0) && (style & BS_GROUPBOX) == BS_GROUPBOX;
+```
+
+The predefined Win32 classes report **mixed case** from `GetClassNameW`
+("Static", "Button", "Edit" — the CI probe's own findings printed `(Static)` and
+`(Button)`), so both comparisons were false for **every** control. Consequences:
+`ControlSpec::growable` was never true → no label was ever grown to its measured
+height at run time, and `ControlSpec::groupBox` was never true → no group box was
+ever stretched to contain its grown children. The dialog only ever looked correct
+because the *authored* rectangles had been tuned to satisfy the static audit's
+font model — which is a few pixels short of the real font, so the two deepest
+labels clipped (`IDC_STAT_LIVE_HINT`: box 96 px, real font needs 102; the CI
+annotation read `wraps to 102px (app solver says 102) in a 96px box`).
+
+Why nothing caught it: `tests/test_dialog_layout.cpp` builds `ControlSpec`
+objects by hand (it sets `growable`/`groupBox` itself), and
+`scripts/audit_layout.py` models the authored geometry — the detection of the
+real HWND class is only exercised on Windows, i.e. by the CA-03 probe.
+
+Fix and guard:
+
+* `::lstrcmpiW(cls, L"STATIC")` / `::lstrcmpiW(cls, L"BUTTON")` (case-insensitive,
+  the documented comparison for class names).
+* **New static check** `audit_win32_class_matching()` (CA-01e) in
+  `scripts/audit_layout.py`: any case-sensitive comparison of a GetClassName
+  result against an ALL-CAPS predefined class literal is a hard finding, with the
+  reason in the message. Seed registered as
+  `CA-01e  GetClassNameW compared against an ALL-CAPS class literal` →
+  `tests/verify_audit_seeds.py` reports 10/10 seeds caught.
+* Runtime evidence: the probe prints the app's own measurement next to the
+  rectangle it was applied to, so a future regression reads
+  `app solver says 102 … in a 96px box` again instead of staying silent.
+
 ### DS-01/02/03/05 — The Chẩn đoán tab could not display its own report
 | | |
 |---|---|
@@ -381,7 +423,7 @@ editing N re-sends it live, that the passage is preserved, and that the HTML bou
 | Seed-verified audits | `audit_layout` (9 seeds), `audit_chaos_lab` (4 layers), `audit_feature_persistence` (11 RED findings pre-fix), `audit_live_effects_truth` (4 RED pre-fix) | green |
 | Cross-compile (`zig c++ -target x86_64-windows-gnu -Wall -Wextra`) | every Windows-only edit compiles; negative control fails as expected | green |
 | Windows CI `windows-2022` (x64/ARM64/ARM64EC, MSVC `/W4 /WX`, ctest) | the REAL toolchain | **pending — this commit** |
-| Windows CI UI probe (`kieekey_ui_probe`, x64) | real HWNDs, real font metrics, per-tab screenshots, scrollbar truth | **executed** — runs 1..4 found **BS-09 + BS-10** and 8 probe-side false-positive classes; each fixed |
+| Windows CI UI probe (`kieekey_ui_probe`, x64) | real HWNDs, real font metrics, per-tab screenshots, scrollbar truth | **executed** — runs 1..5 found **BS-09, BS-10, BS-11** and 10 probe-side false-positive classes; each fixed |
 | Manual checklist W1–W7 / M1–M7 | real DPI, tray, hook, real `SendInput` into external apps | **pending (user)** |
 
 ---
@@ -418,6 +460,7 @@ editing N re-sends it live, that the passage is preserved, and that the HTML bou
 | BS-08 worst-case notes | LOW | FIXED | `pinned_row` pin, 2 seeds |
 | BS-09 bottom row x=0 | HIGH | FIXED | `bottomRowMove()` + `testBottomRowMovesDownOnly`, seed RED |
 | BS-10 two-row tab strip hid page tops | HIGH | FIXED | `pageTopShiftPx()` + `testPageTopShiftKeepsContentBelowTheTabStrip`, seed RED |
+| BS-11 class names compared case-sensitively | HIGH | FIXED | `lstrcmpiW` + new audit `class_case` + seed (10/10) |
 | DS-01 report pane | HIGH | FIXED | `test_diag_report_text` 7/7 |
 | DS-02 token mapping | MED | FIXED | same suite (6/6 + partial order) |
 | DS-03/04/05 | MED/LOW/INFO | FIXED | pane == export; hook counters under `Level::Off` |

@@ -34,6 +34,7 @@ WHY THIS EXISTS
                                                    (kind: combo_window)
         c  group boxes that do not contain theirs  (kind: outside_group)
         d  one-line rows that cannot hold their text (kind: clip)
+        e  GetClassNameW compared case-sensitively (kind: class_case)
 
     A check that has never failed is not evidence. This harness SEEDS one
     violation of every new class into a throwaway copy of the tree and asserts
@@ -139,7 +140,14 @@ SEEDS: list[tuple[str, str, str, str, str]] = [
         'm_impl->flexLoad = create(L"BUTTON", L"Nạp văn bản", BS_PUSHBUTTON, 466, 520, 60, 26,\n'
         '                                  kIdFlexLoad);',
         "clip",
+    ),    (
+        "CA-01e  GetClassNameW compared against an ALL-CAPS class literal",
+        "src/app/main.cpp",
+        'const bool isStatic = (clsLen == 6 && ::lstrcmpiW(cls, L"STATIC") == 0);',
+        'const bool isStatic = (clsLen == 6 && wcscmp(cls, L"STATIC") == 0);',
+        "class_case",
     ),
+
 ]
 
 

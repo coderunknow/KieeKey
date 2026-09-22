@@ -577,6 +577,9 @@ def audit(controls: list, tab_labels: list, src: str = "") -> list:
     # --- 6. the worst-case note rows (BS-08) --------------------------------
     findings += audit_pinned_multiline_rows(controls)
 
+    # --- 7. GetClassNameW results are compared case-insensitively (BS-11) --
+    findings += audit_win32_class_matching(src)
+
     # --- 6. the Lab never sets a font (EDIT => SYSTEM_FIXED_FONT) ----------
     return findings
 
@@ -853,6 +856,40 @@ def audit_pinned_multiline_rows(controls: list) -> list:
     return findings
 
 
+WIN32_PREDEFINED_CLASSES = ("STATIC", "BUTTON", "EDIT", "COMBOBOX",
+                            "LISTBOX", "SCROLLBAR", "SYSTABCONTROL32")
+
+
+def audit_win32_class_matching(src: str) -> list:
+    """CA-01e (BS-11) — GetClassNameW results must be compared case-insensitively.
+
+    The predefined Win32 classes report MIXED case ("Static", "Button", ...),
+    so `wcscmp(cls, L"STATIC")` is false for every control that actually
+    exists. That is how the runtime solve's `growable` and `groupBox` flags
+    ended up permanently false: no label ever grew to its measured height at
+    run time and no group box was ever stretched, while the portable solver
+    tests (which set `growable` by hand) and this audit (which models the
+    authored rectangles) both stayed green. The CA-03 probe found the
+    consequence — a 96 px box the app itself measures as needing 102 px.
+
+    This is the static half of the guard; the probe is the runtime half.
+    """
+    findings: list = []
+    call = re.compile(r"(?P<fn>wcscmp|strcmp|_wcsicmp|_stricmp|lstrcmp)\s*\(\s*(?:cls|className)\s*,"
+                      r"\s*L?\"(?P<lit>[A-Z]+)\"\s*\)")
+    for i, line in enumerate(src.splitlines(), start=1):
+        for m in call.finditer(line):
+            lit = m.group("lit")
+            if lit in WIN32_PREDEFINED_CLASSES or lit in ("WC_TABCONTROLW",):
+                findings.append(Finding(
+                    "class_case", "definite", "settings",
+                    f"line {i}: {m.group('fn')}(cls, L\"{lit}\") can never match — "
+                    f"GetClassNameW reports the predefined class in mixed case "
+                    f"(\"Static\", \"Button\"); use ::lstrcmpiW",
+                    line=i))
+    return findings
+
+
 def audit_single_line_policy(controls: list) -> list:
     """CA-01d (BS-02/BS-03) — a one-line value row must declare HOW it clips.
 
@@ -954,7 +991,7 @@ def main() -> int:
     hard = [f for f in findings if f.severity == "definite" and
             f.kind in ("overlap", "out_of_page", "tab_crowding", "no_font",
                        "outside_group", "under_combo", "combo_window",
-                       "pinned_row")]
+                       "pinned_row", "class_case")]
     if args.strict:
         hard += [f for f in findings if f.kind == "clip" and f.severity in ("definite", "probable")]
         hard += [f for f in findings if f.kind == "under_combo" and f.severity == "probable"]

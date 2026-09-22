@@ -307,3 +307,13 @@ không làm nhấp nháy các tab khi bạn đang đọc.
   hàng sống khác đều đi qua `refreshGrowingRow()` (đo chữ mới → xin nới hàng). Dòng
   cuối ("Chi phí khi không chơi: ≈ +2 ns/phím…") bị cắt. CI: `[clip] id 589 wraps to
   68px (app solver says 68) in 456x52`. Nay nhánh đó cũng đi qua `refreshGrowingRow()`.
+
+## BS-15 — trang bị mất 17 px hai lần (đã sửa)
+
+Thanh cuộn dọc của cửa sổ Cài đặt là *non-client*: `GetClientRect` đã trừ nó ra.
+Nhưng chỗ đặt bề rộng dải tab lại trừ thêm `SM_CXVSCROLL` một lần nữa, nên vùng trang
+hẹp mất 17 px không cần thiết. Nội dung được thiết kế rộng tới x=528, trang chỉ còn
+tới 510 — và đường cuộn cắt vùng (region) đúng vào giữa một chữ: CI đọc được
+`[clip] id 559 wraps to 68px (app solver says 51) in 28,152 482x64 (box ... 500x64)`,
+chuỗi kết thúc bằng ký tự lạ `�` — chính là chỗ bị cắt. Nay dải tab rộng bằng
+`client − 24`, không trừ thanh cuộn lần thứ hai.

@@ -4781,10 +4781,18 @@ void solveSettingsLayout(HWND hwnd) {
         ::GetClientRect(hwnd, &rcCli);
     }
     {
-        const int vsw = anyScroll ? ::GetSystemMetrics(SM_CXVSCROLL) : 0;
+        // v1.3.0-beta8 (bug BS-15): the dialog's OWN client rectangle already
+        // excludes its vertical scrollbar (a scrollbar is non-client), so
+        // subtracting SM_CXVSCROLL a second time cost the page 17 px for nothing.
+        // The tab control - and with it the page every control is clipped to -
+        // ended 17 px narrower than the dialog could afford, the authored content
+        // (which reaches x=528) stuck out past the page, and the scroll path
+        // region-clipped it MID-GLYPH. The CI probe caught the last of them:
+        // `[clip] id 559 wraps to 68px (app solver says 51) in 28,152 482x64
+        // (box 28,152 500x64)` - with a `?` exactly where the region cut.
         ::GetClientRect(hwnd, &rcCliNow);
         const int newTabW = std::max(S(200),
-            static_cast<int>(rcCliNow.right - rcCliNow.left) - S(24) - vsw);
+            static_cast<int>(rcCliNow.right - rcCliNow.left) - S(24));
         const int intended = (rcTab.bottom - rcTab.top) + fit.clientDelta;
         const int fits = ok::layout::tabHeightForClient(S(66), rcCliNow.bottom, chromeBand);
         const int newTabH = (fits > 0) ? std::min(intended, fits) : intended;
@@ -4867,8 +4875,10 @@ void solveSettingsLayout(HWND hwnd) {
             RECT tabNow{};
             ::GetWindowRect(tabCtl, &tabNow);
             ::MapWindowPoints(nullptr, hwnd, reinterpret_cast<POINT*>(&tabNow), 2);
-            const int vsw2 = ::GetSystemMetrics(SM_CXVSCROLL);
-            const int w2 = std::max(S(200), static_cast<int>(cli2.right) - S(24) - vsw2);
+            // Same rule as above (bug BS-15): cli2 is the client rect WITH the
+            // scrollbar already excluded.
+            const int w2 = std::max(S(200),
+                                    static_cast<int>(cli2.right - cli2.left) - S(24));
             ::SetWindowPos(tabCtl, nullptr, S(12), S(66), w2,
                            std::max(0, static_cast<int>(tabNow.bottom - tabNow.top)),
                            SWP_NOZORDER | SWP_NOACTIVATE);

@@ -1106,6 +1106,7 @@ void refreshEvidenceContext() noexcept;
 void refreshSystemSnapshot() noexcept;
 void syncDiagnosticsCounters() noexcept;
 void refreshDiagnostics() noexcept;
+void updateHeaderStatus();
 
 } // namespace
 

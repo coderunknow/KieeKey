@@ -1106,7 +1106,6 @@ void refreshEvidenceContext() noexcept;
 void refreshSystemSnapshot() noexcept;
 void syncDiagnosticsCounters() noexcept;
 void refreshDiagnostics() noexcept;
-void updateHeaderStatus();
 
 } // namespace
 
@@ -2580,6 +2579,9 @@ void updateTrayIcon() noexcept {
     nid.szTip[tip.size()] = L'\0';
     ::Shell_NotifyIconW(NIM_MODIFY, &nid);
 }
+
+// Forward declaration: defined near mkCtl(); used by toggleEngineFromUi().
+void updateHeaderStatus();
 
 //===========================================================================
 // v1.1.1 — the ONE in-app on/off path. Called from the tray menu item and

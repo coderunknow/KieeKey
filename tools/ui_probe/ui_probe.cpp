@@ -854,6 +854,18 @@ int main(int argc, char** argv) {
             //      at every scroll offset below.
             int grownId = 0;
             int grownH = 0;
+            int grownW = 0;
+            int grownOrigH = 0;
+            HWND grownHwnd = nullptr;
+            // The injected growth belongs to the PROBE, not to the app: every
+            // geometry check below runs without it (it would otherwise be
+            // reported as an overlap / out-of-page defect it just created).
+            const auto dropInjected = [&](std::vector<Ctl>& v) {
+                if (grownId == 0) { return; }
+                v.erase(std::remove_if(v.begin(), v.end(),
+                                       [&](const Ctl& c) { return c.id == grownId; }),
+                        v.end());
+            };
             if (travelPx > 0) {
                 ::KillTimer(dlg, 1);   // the app's 500 ms text/layout timer
                 ::Sleep(10);
@@ -861,7 +873,6 @@ int main(int argc, char** argv) {
                 for (const Ctl& c : ctls) {
                     if (c.tabpage != tab || !c.shown || c.id == 0 || c.groupBox) { continue; }
                     if (c.hwnd == nullptr) { continue; }
-                    if (c.y + c.h + 20 > a.page.bottom + travelPx) { continue; }
                     if (victim == nullptr || c.y > victim->y) { victim = &c; }
                 }
                 if (victim != nullptr) {
@@ -869,6 +880,9 @@ int main(int argc, char** argv) {
                                    SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
                     grownId = victim->id;
                     grownH = victim->h + 20;
+                    grownW = victim->w;
+                    grownOrigH = victim->h;
+                    grownHwnd = victim->hwnd;
                     readCtls(dlg, all, tab, page, ctls);
                 }
             }
@@ -927,6 +941,7 @@ int main(int argc, char** argv) {
                                     "rects; runtime growth must survive)"});
                             }
                         }
+                        dropInjected(ctls);
                     }
                     Audit sa = a;
                     sa.prefix = "at scroll " + std::to_string(at) + "/" +
@@ -940,6 +955,7 @@ int main(int argc, char** argv) {
                 ::Sleep(5);
                 readCtls(dlg, all, tab, page, ctls);
                 {
+                    dropInjected(ctls);
                     Audit sa = a;
                     sa.prefix = "at the bottom of the travel: ";
                     int deepestTop = a.page.top;
@@ -966,6 +982,13 @@ int main(int argc, char** argv) {
                 ::SendMessageW(dlg, WM_VSCROLL, MAKEWPARAM(SB_TOP, 0), 0);
                 ::Sleep(5);
                 readCtls(dlg, all, tab, page, ctls);
+                // Undo the probe's own growth: the next tab (and the audit
+                // snapshot that follows) must see the app's layout, not ours.
+                if (grownHwnd != nullptr) {
+                    ::SetWindowPos(grownHwnd, nullptr, 0, 0, grownW, grownOrigH,
+                                   SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+                    grownId = 0;
+                }
             }
 
             for (const Finding& f : findings) { noteKind(f.kind); }

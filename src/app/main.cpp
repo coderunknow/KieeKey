@@ -4585,9 +4585,18 @@ void solveSettingsLayout(HWND hwnd) {
             RECT rc{};
             ::GetWindowRect(c, &rc);
             ::MapWindowPoints(nullptr, hwnd, reinterpret_cast<POINT*>(&rc), 2);
-            if (rc.top >= rcTab.bottom - S(4)) {   // the bottom button row
-                ::SetWindowPos(c, nullptr, 0, rc.top + fit.clientDelta,
-                               0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+            // v1.3.0-beta8 (bug BS-09): the row travels DOWN with the client
+            // delta and keeps its X — the beta7 code passed x=0 here (SWP_NOSIZE
+            // suppresses the size, not the move), so every grow of the dialog
+            // stacked the four bottom buttons on the left edge.
+            const ok::layout::Rect cur{rc.left, rc.top, rc.right - rc.left,
+                                       rc.bottom - rc.top};
+            const ok::layout::BottomRowMove row =
+                ok::layout::bottomRowMove(cur, static_cast<int>(rcTab.bottom), S(4),
+                                          fit.clientDelta);
+            if (row.moves) {
+                ::SetWindowPos(c, nullptr, row.rect.x, row.rect.y, 0, 0,
+                               SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
             }
         }
     }

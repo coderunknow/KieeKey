@@ -668,6 +668,57 @@ void testScrollOffsetIsAlwaysReachableAtBothEnds() {
 
 } // namespace
 
+// v1.3.0-beta8 (bug BS-09): the bottom chrome row slides DOWN and keeps its X.
+// The beta7 apply loop called SetWindowPos(..., 0, y, 0, 0, SWP_NOSIZE | ...) —
+// no SWP_NOMOVE — so all four bottom buttons jumped to x=0 and stacked as soon
+// as the dialog grew. The probe caught it on real Windows; this is the portable
+// guard (see scratch/BS09 seed note in BUG_HUNT_REPORT_beta8...).
+void testBottomRowMovesDownOnly() {
+    // The row is chrome: the solver must never treat it as page content.
+    assert(ControlSpec::kAlwaysVisible == -1);
+    const ok::layout::Rect toggle{12, 580, 240, 30};
+    const ok::layout::Rect okBtn{300, 580, 76, 30};
+    const ok::layout::Rect cancel{384, 580, 76, 30};
+    const ok::layout::Rect apply{468, 580, 80, 30};
+    const ok::layout::Rect header{58, 12, 490, 18};
+    const int tabBottom = 572;   // authored tab control: S(66) + S(506), 96 dpi
+    const int slack = 4;
+    const int delta = 67;        // the CI refit grew the client by 67 px (probe: y=580 -> 647)
+
+    for (const ok::layout::Rect& r : {toggle, okBtn, cancel, apply}) {
+        const ok::layout::BottomRowMove m =
+            ok::layout::bottomRowMove(r, tabBottom, slack, delta);
+        assert(m.moves);
+        assert(m.rect.x == r.x);                 // BS-09: X is preserved
+        assert(m.rect.y == r.y + delta);         // and Y follows the refit
+        assert(m.rect.w == r.w && m.rect.h == r.h);
+        // The row must stay a row: the four controls keep the authored gaps.
+    }
+    const ok::layout::BottomRowMove a =
+        ok::layout::bottomRowMove(apply, tabBottom, slack, delta);
+    const ok::layout::BottomRowMove t =
+        ok::layout::bottomRowMove(toggle, tabBottom, slack, delta);
+    assert(a.rect.x - (t.rect.x + t.rect.w) == 468 - (12 + 240));   // gap preserved
+
+    // The header is ABOVE the tab bottom: it never moves with the refit.
+    const ok::layout::BottomRowMove h =
+        ok::layout::bottomRowMove(header, tabBottom, slack, delta);
+    assert(!h.moves);
+    assert(h.rect.x == header.x && h.rect.y == header.y);
+
+    // A dialog that did not grow must not move the row at all.
+    const ok::layout::BottomRowMove z =
+        ok::layout::bottomRowMove(okBtn, tabBottom, slack, 0);
+    assert(z.moves);
+    assert(z.rect.y == okBtn.y && z.rect.x == okBtn.x);
+
+    // A control exactly on the slack line counts as the row (>= tabBottom - slack).
+    const ok::layout::Rect edge{44, tabBottom - slack, 100, 20};
+    assert(ok::layout::bottomRowMove(edge, tabBottom, slack, delta).moves);
+    const ok::layout::Rect above{44, tabBottom - slack - 1, 100, 20};
+    assert(!ok::layout::bottomRowMove(above, tabBottom, slack, delta).moves);
+}
+
 int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
     std::cout << "=== Running Dialog Layout Solver Suite ===\n";
@@ -689,6 +740,8 @@ int main() {
     testScrollMetricsEnableTheBarExactlyWhenContentOverflows();
     testScrollOffsetIsAlwaysReachableAtBothEnds();
     testDpiSweepEveryControlInsideOrScrollable();
+    // v1.3.0-beta8 (bug BS-09): the bottom chrome row keeps its X.
+    testBottomRowMovesDownOnly();
     std::cout << "=== ALL DIALOG LAYOUT TESTS PASSED ===\n";
     return 0;
 }

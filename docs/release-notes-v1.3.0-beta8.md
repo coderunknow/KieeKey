@@ -31,6 +31,16 @@ UI, UX, presentation, persistence or feature wiring.
   (`IDC_STAT_OUT_NOTE` and three siblings) are checked at 100/125/150 % on every
   commit, so a future string edit cannot bring the clipping back.
 
+### The bottom button row no longer jumps to the left edge — `[VERIFIED]` (model), `UNVERIFIED (Windows)` (pixels)
+Whenever the dialog had to grow to fit its content, the OK / Hủy / Áp dụng
+buttons and the big ON/OFF switch were moved with a `SetWindowPos` call that
+passed **x = 0** (and `SWP_NOSIZE` does not suppress a move — only
+`SWP_NOMOVE` does). All four ended up stacked on the left edge and unusable.
+The new Windows UI probe caught it on its first run; the decision now lives in
+the tested portable model (`ok::layout::bottomRowMove()`), so the row can only
+ever move down, keeping its X and the authored gaps. This was a **beta7 defect,
+not a beta8 regression** (present in `git show e9e5009:src/app/main.cpp:4412`).
+
 ### Combo boxes no longer hide their neighbours — `[VERIFIED]`
 A `CBS_DROPDOWNLIST` is created with the height of its *drop-down list*, so twelve
 combos were silently covering up to 175 px of the tab below the 25 px you see.
@@ -112,7 +122,7 @@ the manual checklist below.
 | Layer | Result |
 |---|---|
 | Local gate `tests/run_all_tests.sh --quick --jobs=2` | **ALL GREEN** — 14 checks (incl. 5 audit gates), ~50 native targets, 4 node suites, SHA256SUMS |
-| New portable suites | `test_arcade_chrome_layout` (177 checks), `test_diag_report_text` (7), `test_progression_persist` (29), `test_flex_send_outcome` (94 checks), `test_dialog_layout` extended to 14 |
+| New portable suites | `test_arcade_chrome_layout` (177 checks), `test_diag_report_text` (7), `test_progression_persist` (29), `test_flex_send_outcome` (94 checks), `test_dialog_layout` extended (BS-01 + BS-09) |
 | Seed-verified audits | `audit_layout` 9 seeds, `audit_chaos_lab` 4 layers, `audit_feature_persistence` (RED 11 on the pre-fix tree), `audit_live_effects_truth` (RED 4) |
 | Cross-compile | every Windows-only edit compiles with `zig c++ -target x86_64-windows-gnu -Wall -Wextra`; a deliberately broken copy fails as expected |
 | `check_version.py` | OK — `1.3.0-beta8` (PE 1.3.0.9, manifest 1.3.0.9) |

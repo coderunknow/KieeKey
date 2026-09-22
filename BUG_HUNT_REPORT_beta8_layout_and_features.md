@@ -187,6 +187,46 @@ three sibling notes (`METHOD_HINT`, `CHAOS_WARN`, `LIVE_HINT`) are now pinned by
 name: the audit fails if one is renamed away or stops fitting at 100/125/150 %.
 Two seeds prove the check can fail.
 
+### BS-09 — The bottom button row collapsed to x=0 whenever the dialog grew
+| | |
+|---|---|
+| **Severity** | **HIGH** (found by the new CI probe, invisible to every static audit) |
+| **Area** | Settings dialog: `IDC_BTN_TOGGLE`, `IDOK`, `IDCANCEL`, `IDC_BTN_APPLY` |
+| **Status** | **FIXED — `[VERIFIED]`** (portable model + test; pixels: manual M2) |
+
+`solveSettingsLayout()` anchors the always-visible bottom row by moving it DOWN
+with the refit's client delta. The apply loop called
+
+```cpp
+::SetWindowPos(c, nullptr, 0, rc.top + fit.clientDelta, 0, 0,
+               SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+```
+
+`SWP_NOSIZE` suppresses cx/cy — it does **not** suppress the move: X and Y are
+applied unless `SWP_NOMOVE` is passed. So every control below the tab control
+(`rc.top >= rcTab.bottom - S(4)`, i.e. y=580 ≥ 572−4) jumped to **x = 0** the
+moment the refit grew the window, stacking the four buttons on the left edge and
+on top of each other.
+
+Why nothing caught it before: `scripts/audit_layout.py` models rectangles, not
+`SetWindowPos` flags; the condition (`fit.clientDelta != 0`) only fires when the
+real font on the real monitor needs a taller window; and the row keeps working
+when the dialog already fits. The **first CI run of the CA-03 probe** found it:
+`id 550/2/517 at 0,647` overlapping by `76x30`/`80x30` px, on all nine tabs.
+
+Fix + guard: the decision now lives in the portable model
+(`ok::layout::bottomRowMove()`, `src/app/DialogLayout.hpp`) so it is unit-tested
+— the row moves down by the delta and keeps its authored X — and `main.cpp`
+applies the model's rectangle. Evidence:
+
+* `tests/test_dialog_layout.cpp` → `testBottomRowMovesDownOnly()` (row keeps X
+  and the authored gaps; header above the tab bottom never moves; delta 0 is a
+  no-op; the `>= tabBottom - slack` edge is inclusive).
+* **Seed verified**: forcing `m.rect.x = 0` (the beta7 behaviour) makes the suite
+  abort with ``Assertion `m.rect.x == r.x' failed``; restored → green.
+* Baseline proof: the same call shape is present in `git show e9e5009:src/app/main.cpp`
+  (lines 4412-4414), i.e. this is a **beta7 defect, not a beta8 regression**.
+
 ### DS-01/02/03/05 — The Chẩn đoán tab could not display its own report
 | | |
 |---|---|
@@ -312,7 +352,7 @@ editing N re-sends it live, that the passage is preserved, and that the HTML bou
 | Seed-verified audits | `audit_layout` (9 seeds), `audit_chaos_lab` (4 layers), `audit_feature_persistence` (11 RED findings pre-fix), `audit_live_effects_truth` (4 RED pre-fix) | green |
 | Cross-compile (`zig c++ -target x86_64-windows-gnu -Wall -Wextra`) | every Windows-only edit compiles; negative control fails as expected | green |
 | Windows CI `windows-2022` (x64/ARM64/ARM64EC, MSVC `/W4 /WX`, ctest) | the REAL toolchain | **pending — this commit** |
-| Windows CI UI probe (`kieekey_ui_probe`, x64) | real HWNDs, real font metrics, per-tab screenshots, scrollbar truth | **pending — this commit** |
+| Windows CI UI probe (`kieekey_ui_probe`, x64) | real HWNDs, real font metrics, per-tab screenshots, scrollbar truth | **executed** — run 1..3 found BS-09 + 6 probe-side false-positive classes; each fixed, re-run pending |
 | Manual checklist W1–W7 / M1–M7 | real DPI, tray, hook, real `SendInput` into external apps | **pending (user)** |
 
 ---
@@ -347,6 +387,7 @@ editing N re-sends it live, that the passage is preserved, and that the HTML bou
 | BS-06 Lab DPI | HIGH | FIXED | `audit_chaos_lab` layer 4, RED pre-fix (4) |
 | BS-07 footer/FPS | MED | FIXED | `test_arcade_chrome_layout` 177 checks, RED probe (10) |
 | BS-08 worst-case notes | LOW | FIXED | `pinned_row` pin, 2 seeds |
+| BS-09 bottom row x=0 | HIGH | FIXED | `bottomRowMove()` + `testBottomRowMovesDownOnly`, seed RED |
 | DS-01 report pane | HIGH | FIXED | `test_diag_report_text` 7/7 |
 | DS-02 token mapping | MED | FIXED | same suite (6/6 + partial order) |
 | DS-03/04/05 | MED/LOW/INFO | FIXED | pane == export; hook counters under `Level::Off` |

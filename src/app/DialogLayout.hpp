@@ -94,6 +94,43 @@ struct Rect {
 }
 
 //---------------------------------------------------------------------------
+// v1.3.0-beta8 (bug BS-09) — the bottom chrome row keeps its X when the
+// dialog grows.
+//
+// The in-app ON/OFF toggle and the OK/Cancel/Apply row are authored BELOW the
+// tab control's viewport, so they are not page content: the caller anchors them
+// to the window refit by moving them DOWN with `clientDelta`. The beta7 apply
+// loop handed SetWindowPos an X of 0 with SWP_NOSIZE but WITHOUT SWP_NOMOVE —
+// on real Windows that moves every button in the row to the left edge and
+// stacks the four of them on top of each other (and SetWindowPos applies X and
+// Y whenever SWP_NOMOVE is absent; SWP_NOSIZE only suppresses cx/cy). Nothing
+// caught it: scripts/audit_layout.py models rectangles, not SetWindowPos flags,
+// and the defect only shows up when the refit actually grows the dialog — i.e.
+// on a real monitor with a real font. The first CI run of tools/ui_probe (CA-03)
+// found it: four buttons at x=0, three of them overlapping by 76x30/80x30 px.
+//
+// The decision is modelled here so it is unit-testable and cannot regress:
+// a chrome rectangle at/below `tabBottom - slackPx` moves down by `clientDelta`
+// and keeps its authored X; anything above that line (the header) does not move.
+//---------------------------------------------------------------------------
+struct BottomRowMove {
+    bool moves = false;   // this chrome control sits in the bottom button row
+    Rect rect{};          // where it must end up (equals the input when !moves)
+};
+
+[[nodiscard]] inline BottomRowMove bottomRowMove(const Rect& chrome, int tabBottom,
+                                                int slackPx, int clientDelta) noexcept {
+    BottomRowMove m;
+    m.rect = chrome;
+    if (chrome.y < tabBottom - slackPx) { return m; }
+    m.moves = true;
+    m.rect.y = chrome.y + clientDelta;
+    m.rect.x = chrome.x;   // never sideways: the row slides down, not left
+    return m;
+}
+
+
+//---------------------------------------------------------------------------
 // One control as authored, plus what the runtime measurement said about it.
 //---------------------------------------------------------------------------
 struct ControlSpec {

@@ -187,8 +187,12 @@ int wrappedTextHeight(HWND h, const std::wstring& text, int w) {
     HFONT font = reinterpret_cast<HFONT>(::SendMessageW(h, WM_GETFONT, 0, 0));
     HGDIOBJ old = font != nullptr ? ::SelectObject(dc, font) : nullptr;
     RECT r{0, 0, w, 0};
+    // No DT_NOPREFIX: a STATIC interprets '&' as a prefix marker (and so does the
+    // app's solver), so measuring with DT_NOPREFIX measures a string no user ever
+    // sees — the second CI run turned that into two phantom "clip" findings on the
+    // only two labels whose text contains '&'.
     ::DrawTextW(dc, text.c_str(), static_cast<int>(text.size()), &r,
-                DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
+                DT_CALCRECT | DT_WORDBREAK);
     if (old != nullptr) { ::SelectObject(dc, old); }
     ::ReleaseDC(h, dc);
     return static_cast<int>(r.bottom - r.top);
@@ -339,6 +343,13 @@ bool captureWindow(HWND hwnd, const std::wstring& path, int* outW, int* outH) {
 }
 
 // Translates a control's screen rectangle into dialog client coordinates.
+// The audit (scripts/audit_layout.py TOUCH_TOLERANCE_PX) accepts a <= 4 px
+// touch between neighbours: label boxes carry leading/descender space that no
+// glyph reaches. The probe mirrors that rule so the two layers agree — the
+// second CI run flagged 2 px label/control touches that the audit models as
+// fine, which is noise, not a defect.
+constexpr int kTouchTolerancePx = 4;
+
 RECT clientRectOf(HWND parent, HWND child) {
     RECT r{};
     ::GetWindowRect(child, &r);
@@ -411,8 +422,17 @@ int main(int argc, char** argv) {
             // check further down.
             RECT display{};
             ::GetClientRect(tabsCtl, &display);
-            if (::SendMessageW(tabsCtl, TCM_ADJUSTRECT, FALSE,
-                               reinterpret_cast<LPARAM>(&display)) != FALSE) {
+            const RECT before = display;
+            // TCM_ADJUSTRECT documents NO return value (it returns 0), so the
+            // result must be trusted and sanity-checked — testing the return
+            // value silently kept the fallback rectangle, i.e. the WHOLE dialog
+            // client, which made every page check vacuous.
+            (void)::SendMessageW(tabsCtl, TCM_ADJUSTRECT, FALSE,
+                                 reinterpret_cast<LPARAM>(&display));
+            const bool sane = display.right > display.left && display.bottom > display.top &&
+                              display.left >= before.left && display.top >= before.top &&
+                              display.right <= before.right && display.bottom <= before.bottom;
+            if (sane) {
                 POINT tl{display.left, display.top};
                 POINT br{display.right, display.bottom};
                 ::ClientToScreen(tabsCtl, &tl);
@@ -455,7 +475,11 @@ int main(int argc, char** argv) {
             c.w = static_cast<int>(r.right - r.left);
             c.h = static_cast<int>(r.bottom - r.top);
             const LONG_PTR style = ::GetWindowLongPtrW(child, GWL_STYLE);
-            c.groupBox = c.klass == "Button" && (style & BS_GROUPBOX) != 0;
+            // BS_GROUPBOX is 0x7 (a triplet of flag bits), so `style & BS_GROUPBOX`
+            // is ALSO true for BS_DEFPUSHBUTTON (0x1) — which silently excluded the
+            // OK button from the overlap and hit-test checks (a false negative that
+            // hid the fourth stacked button of BS-09).
+            c.groupBox = c.klass == "Button" && (style & BS_TYPEMASK) == BS_GROUPBOX;
             c.interactive = c.klass == "Button" || c.klass == "Edit" || c.klass == "ComboBox" ||
                             c.klass == "ListBox";
             HDC dc = ::GetDC(child);
@@ -474,17 +498,33 @@ int main(int argc, char** argv) {
         totalControls += static_cast<int>(ctls.size());
 
         // ---- 1. inside the tab page ---------------------------------------
+        // The page is a VIEWPORT: content below it is reachable through the
+        // vertical scrollbar (BS-01), so the bottom bound is the reachable end
+        // of the scroll range, not page.bottom. Anything deeper than that is
+        // painted but unreachable — the beta7 complaint class.
+        SCROLLINFO siReach{};
+        siReach.cbSize = sizeof(siReach);
+        siReach.fMask = SIF_RANGE | SIF_PAGE;
+        const bool haveScroll = ::GetScrollInfo(dlg, SB_VERT, &siReach) != FALSE;
+        const int travelPx = haveScroll
+            ? std::max(0, (siReach.nMax + 1) - static_cast<int>(siReach.nPage))
+            : 0;
+        const int reachableBottom = page.bottom + travelPx;
         for (const Ctl& c : ctls) {
             if (isChrome(c.id)) { continue; }
             ++g_checks;
-            if (c.x + c.w > page.right + 1 || c.y + c.h > page.bottom + 1 ||
+            if (c.x + c.w > page.right + 1 || c.y + c.h > reachableBottom + 1 ||
                 c.x < page.left - 1 || c.y < page.top - 1) {
                 findings.push_back({"outside_page",
                     "id " + std::to_string(c.id) + " (" + c.klass + ") at " +
                     std::to_string(c.x) + "," + std::to_string(c.y) + " " +
                     std::to_string(c.w) + "x" + std::to_string(c.h) +
-                    " is outside the tab page " + std::to_string(page.right) + "x" +
-                    std::to_string(page.bottom)});
+                    " is outside the reachable page " + std::to_string(page.right) + "x" +
+                    std::to_string(reachableBottom) +
+                    (c.y + c.h > reachableBottom + 1 && travelPx > 0
+                         ? " (deeper than the scroll range by " +
+                               std::to_string(c.y + c.h - reachableBottom) + " px)"
+                         : "")});
             }
         }
 
@@ -493,12 +533,16 @@ int main(int argc, char** argv) {
             if (ctls[i].groupBox) { continue; }
             for (std::size_t j = i + 1; j < ctls.size(); ++j) {
                 if (ctls[j].groupBox) { continue; }
+                // A page control MAY sit under the floating chrome when the page
+                // scrolls (that is what the fixed bottom row is for), so only
+                // page-vs-page and chrome-vs-chrome pairs are compared.
+                if (isChrome(ctls[i].id) != isChrome(ctls[j].id)) { continue; }
                 ++g_checks;
                 const int ix = std::min(ctls[i].x + ctls[i].w, ctls[j].x + ctls[j].w) -
                                std::max(ctls[i].x, ctls[j].x);
                 const int iy = std::min(ctls[i].y + ctls[i].h, ctls[j].y + ctls[j].h) -
                                std::max(ctls[i].y, ctls[j].y);
-                if (ix > 1 && iy > 1) {
+                if (ix > kTouchTolerancePx && iy > kTouchTolerancePx) {
                     const auto at = [](const Ctl& c) {
                         return "at " + std::to_string(c.x) + "," + std::to_string(c.y) + " " +
                                std::to_string(c.w) + "x" + std::to_string(c.h);
@@ -565,6 +609,13 @@ int main(int argc, char** argv) {
             // the point is absolute — the first CI run added page.left/top on
             // top of them, which sent every probe point to the wrong control.
             const POINT pt{c.x + c.w / 2, c.y + c.h / 2};
+            // Only the part of the page that is on screen right now can be
+            // clicked: a control scrolled below the viewport (BS-01 keeps them
+            // there on purpose) has no reachable centre until the user scrolls.
+            // Its reachability is the scrollbar check's business.
+            if (pt.y >= client.bottom || pt.x >= client.right || pt.x < 0 || pt.y < 0) {
+                continue;
+            }
             POINT screenPt{pt.x, pt.y};
             ::ClientToScreen(dlg, &screenPt);
             // WindowFromPoint is the API the mouse input path itself uses (screen

@@ -19,7 +19,7 @@ The project may still be paused again in the future if development no longer pro
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20ARM64-0078D6.svg)
 ![Build](https://img.shields.io/badge/build-CMake%20%3E%3D%203.28-064FAD.svg)
 
-**KieeKey v1.3.0-beta7** is a modern, low-latency Vietnamese input method
+**KieeKey v1.3.0-beta8** is a modern, low-latency Vietnamese input method
 engine (bộ gõ Tiếng Việt) for Windows, with a system-tray application, a TSF
 text-store composer and an optional WinUI 3 Fluent settings UI.
 
@@ -33,6 +33,45 @@ text-store composer and an optional WinUI 3 Fluent settings UI.
 ![KieeKey preview](src/app/KieeKeyApp-preview.png)
 
 ---
+
+## What's new in v1.3.0-beta8 — "Text you can actually read" + progression that survives a restart
+
+Beta8 is the layout-and-data-loss release (Windows file version **1.3.0.9**). Every
+item in the beta7 tester report is fixed with a regression that is red on the
+pre-fix tree:
+
+* **Text can no longer be clipped or stranded.** The scroll model is one unit
+  everywhere, so a control below the tab viewport is reachable again; one-line
+  value rows ellipsize with a tooltip instead of cutting words off, and rows whose
+  text grows at runtime (engine status, arcade status, AI stats, coach advice) grow
+  their box with the real font, measured by `DrawTextW(DT_CALCRECT)`.
+* **Combo boxes no longer hide their neighbours.** A `CBS_DROPDOWNLIST` is created
+  *closed* and asks for its drop-down height afterwards, so the 120–200 px
+  invisible window that covered lower rows is gone.
+* **The Chaos Lab follows the monitor DPI.** Children are re-laid out from the
+  authored table and the window is re-fitted on `WM_DPICHANGED` — no more
+  "chữ bị đè" at 125/150 %.
+* **The Arcade Hub footer stays readable.** The hint band and the FPS counter band
+  come from one function, so they cannot collide, and the counter scales.
+* **Bạn đọc được báo cáo Chẩn đoán ngay trong app**: a read-only scrollable pane
+  fed by the very same builder the export uses (pane bytes == exported bytes),
+  a Vietnamese item list instead of a raw machine token, and "Mở file" to open the
+  last export.
+* **XP, level, achievements and the learned AI rival survive a restart**
+  (`%APPDATA%\KieeKey\progression.dat` / `aiprofile.dat`; saved on exit and every
+  30 s, loaded fail-open, AI profile only while opted in). Beta7 lost them at
+  every quit: the engines could always save — nothing in the app ever called them.
+* **"Gõ chữ Flexing ra app" now says why it did nothing** (no target app / Windows
+  refused the focus / the emitter failed), with a one-time dialog on the refusal.
+* **F9 no longer steals the key from a running arcade game**, and the Live-Effects
+  cost note is pinned to `docs/PERFORMANCE.md`.
+* **New CI capability:** an opt-in Windows UI probe opens the real settings dialog
+  and checks all nine tabs with real font metrics (overlap, clipping, scrollbar
+  truth, hit-testing), writing `ui_probe.json` plus one screenshot per tab.
+
+Per-item evidence, including what still needs a real Windows session:
+`BUG_HUNT_REPORT_beta8_layout_and_features.md` and
+`docs/release-notes-v1.3.0-beta8.md`.
 
 ## What's new in v1.3.0-beta7 — Diagnostics & snapshot truth fix
 
@@ -597,7 +636,7 @@ original licenses — see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 ## Tóm tắt (Tiếng Việt)
 
-**KieeKey v1.3.0-beta7** là bộ gõ Tiếng Việt cho Windows, xây dựng dựa trên
+**KieeKey v1.3.0-beta8** là bộ gõ Tiếng Việt cho Windows, xây dựng dựa trên
 **[OpenKey](https://github.com/tuyenvm/OpenKey)** (GPL-3.0) của tác giả Tuyen
 Mai. Engine gốc đã được port sang C++ hiện đại: hook bất đồng bộ với hàng đợi
 lock-free, composer TSF (không backspace ảo), bảng âm tiết flat tối ưu cache,
@@ -622,6 +661,22 @@ WASD khi gõ tiếng Việt**, Chaos Lab có lối vào ngay trong Arcade Hub, v
 tùy chọn cài đặt **áp dụng ngay khi bấm + được lưu**. Thêm tài liệu hiệu năng
 `docs/PERFORMANCE.md` (chi phí ns/phím của từng tính năng opt-in). Chi tiết:
 `docs/release-notes-v1.3.0-beta5.md`.
+
+Điểm mới của v1.3.0-beta8 — bản "chữ đọc được" + tiến trình không mất khi
+thoát (Windows **1.3.0.9**): sửa toàn bộ báo cáo thử nghiệm beta7, mỗi mục đều
+có test đỏ trên bản cũ — mô hình cuộn dùng một đơn vị nên **nội dung dưới khung
+vẫn kéo tới được**; hàng một dòng tự cắt bằng "…" kèm tooltip, hàng đổi chữ lúc
+chạy (trạng thái engine/arcade/AI/coach) **tự nới chiều cao theo font thật**;
+combo được tạo ở chiều cao ĐÓNG nên cửa sổ ẩn 120–200 px không còn che các
+hàng dưới; **Phòng Chaos theo đúng DPI màn hình** (cả chữ lẫn khung); chân
+Arcade Hub chia sẻ một hàm dàn trang nên gợi ý không đè lên bộ đếm FPS; tab
+Chẩn đoán có **ô báo cáo đọc được ngay trong app** (đúng bằng byte của file
+xuất) + danh sách mục tiếng Việt thay cho mã máy trạng thái; **XP/cấp độ/thành
+tựu và hồ sơ AI học được lưu lại qua lần chạy** (`%APPDATA%\KieeKey\progression.dat`,
+`aiprofile.dat` — lưu khi thoát và mỗi 30 giây, nạp kiểu fail-open, chỉ lưu hồ sơ
+AI khi bạn đã đồng ý); nút "Gõ chữ Flexing ra app" **nói rõ vì sao không gõ
+được**; F9 không còn cướp phím của game đang chạy. Chi tiết + danh sách việc cần
+bạn xác nhận trên Windows: `docs/release-notes-v1.3.0-beta8.md`.
 
 Điểm mới của v1.3.0-beta7 — bản sửa tính đúng đắn của chẩn đoán (Windows **1.3.0.8**): báo cáo beta6 tự mâu thuẫn — `dpi: 96` vs `display-metrics 144`, `SendInputCalls: 0` vs 13 dòng emit-chain, mọi trường runtime kẹt ở `0`/trống — vì `SystemSnapshot` chưa từng được làm tươi, nhánh inline chưa đếm `SendInputCalls`, và các đếm vòng/đánh thức chỉ nằm trong wrapper. Bản này làm tươi toàn bộ snapshot, đồng bộ đếm sống vào báo cáo trước mọi xuất/sao chép/kiểm tra nhanh, và ghi chú nguồn gốc cho `96`/`0`. Chi tiết: `docs/release-notes-v1.3.0-beta7.md`.
 

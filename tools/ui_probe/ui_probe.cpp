@@ -619,6 +619,9 @@ void checkOverlaps(const Audit& a, const std::vector<Ctl>& ctls) {
 // Counts how often the desktop was unusable, so the digest says so out loud
 // instead of looking like "0 findings" when nothing could be measured.
 int g_screenUnavailable = 0;
+// How many times the screen comparison actually ran (vs. was skipped): "0
+// findings" must never be read as "verified" when nothing was measured.
+int g_screenCaptures = 0;
 
 void checkReach(const Audit& a, const std::vector<Ctl>& ctls, int travelPx) {
     const int reachableBottom = a.page.bottom + travelPx;
@@ -871,6 +874,7 @@ void checkStalePixels(const Audit& a) {
         ++g_screenUnavailable;
         return;
     }
+    ++g_screenCaptures;
     ::RedrawWindow(a.dlg, nullptr, nullptr,
                    RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN |
                    RDW_UPDATENOW | RDW_FRAME);
@@ -1412,6 +1416,8 @@ int main(int argc, char** argv) {
     json += "\n ],\n \"controls\": " + std::to_string(totalControls) +
             ",\n \"checks\": " + std::to_string(g_checks) +
             ",\n \"findings\": " + std::to_string(g_findings) +
+            ",\n \"screenCaptures\": " + std::to_string(g_screenCaptures) +
+            ",\n \"screenUnavailable\": " + std::to_string(g_screenUnavailable) +
             ",\n \"findingsByKind\": {";
     for (std::size_t i = 0; i < byKind.size(); ++i) {
         json += std::string(i > 0 ? ", " : "") + "\"" + byKind[i].first + "\": " +

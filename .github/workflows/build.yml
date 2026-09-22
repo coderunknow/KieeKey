@@ -408,7 +408,7 @@ jobs:
             foreach ($tab in $json.tabs) {
               $digest += ('t' + $tab.tab + '@' + $tab.scale + '%=' + $tab.findings.Count)
             }
-            Write-Host "::notice title=UI probe::$($json.controls) controls, $($json.checks) checks, $($json.findings) findings [$kinds] (native DPI $($json.nativeDpi), scales $(($json.tabs | Select-Object -ExpandProperty scale -Unique) -join '/')) :: $($digest -join ' ')"
+            Write-Host "::notice title=UI probe::$($json.controls) controls, $($json.checks) checks, $($json.findings) findings [$kinds] (native DPI $($json.nativeDpi), scales $(($json.tabs | Select-Object -ExpandProperty scale -Unique) -join '/'), screen checks $($json.screenCaptures) run / $($json.screenUnavailable) unavailable) :: $($digest -join ' ')"
             # v1.3.0-beta8 (CA-05): ONE annotation per TAB, carrying both scales
             # (findings AND the geometry digest) — 9 tabs + the notice == the
             # 10-annotation budget exactly, so no measured tab is ever dropped.

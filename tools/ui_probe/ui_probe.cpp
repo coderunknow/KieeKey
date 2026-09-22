@@ -690,6 +690,13 @@ void checkHitTests(const Audit& a, const std::vector<Ctl>& ctls) {
         const HWND hit = ::WindowFromPoint(screenPt);
         if (hit == nullptr) { continue; }
         if (hit == c.hwnd || ::IsChild(c.hwnd, hit) != FALSE) { continue; }
+        // v1.3.0-beta8 (probe): only a hit inside OUR OWN window says anything
+        // about our layout. The 150 % pass reported three `hittest` findings
+        // whose centre landed on a window of class "Ghost" — created by the
+        // shell, not by the app: another desktop window covering the dialog is
+        // not a statement about where our controls are. A hit on the dialog
+        // itself (id 0) or on a sibling control still is, and is still reported.
+        if (hit != a.dlg && ::IsChild(a.dlg, hit) == FALSE) { continue; }
         a.findings->push_back({"hittest",
             a.prefix + "id " + std::to_string(c.id) + " (" + c.klass + ") centre (" +
             std::to_string(pt.x) + "," + std::to_string(pt.y) + ") hits id " +

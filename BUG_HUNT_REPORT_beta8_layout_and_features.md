@@ -665,6 +665,54 @@ control can answer "did the style bit re-lay the control out?" and only a real
 scrollbar can make the refit change the page width. That is exactly the layer
 the probe exists for.
 
+## 1e. BS-16 — the paint layer: why four green CI rounds sat on a corrupted screen
+
+The r4 build carried BS-12 (move-only scrolling), BS-13 (`WS_CLIPCHILDREN`) and
+UX-01 (the wheel no longer rewrites a combo). The user tested it and the screen
+was still corrupted — the same photograph: rows visible **twice at two
+offsets**, tab labels printed over diagnostics rows, a combo box from another
+tab still drawn across the header. Every geometry check in CI was green, at
+100 % and at 150 %, on all nine tabs, at that exact commit.
+
+That is not a contradiction: **the defects were one layer below the one every
+test measured.** The audits, the portable suites and the CA-03 probe all check
+WINDOW STATE — rectangles, regions, visibility, z-order-independent overlap.
+The state was correct. The pixels were not. And the probe's screenshots could
+not see it either, because they were produced by `WM_PRINTCLIENT`: they asked
+the app to draw the window on demand, and an app drawing on request always
+produces the correct frame.
+
+| # | Mechanism | Evidence it was real | Fix |
+|---|---|---|---|
+| **BS-16a** | The dialog owns every client pixel its ~120 children do not cover, and with `WS_CLIPCHILDREN` it is the *only* window that can paint them — but the file called `InvalidateRect` on two rectangles in total. After a control moved, was hidden, or the page moved down (two-row tab strip, DPI change, refit), the previous frame stayed: duplicate rows at two offsets, a hidden tab's combo over the header, rows drawn in the tab-strip band | the photographed screen; the pre-BS-10 page band that moved under the strip | `settingsRepaintAll()` after every state change: `showTab`, `applySettingsScrollOffset`, the solver, the growth reflow |
+| **BS-16b** | **No child had `WS_CLIPSIBLINGS`.** The tab control is created first and its rectangle is the WHOLE page area, so it is the lower-z sibling of every page control: its repaint (tab switch, resize, theme change) painted its background and its tab labels *through* them — and a static label that lost its pixels never repaints on its own | `grep WS_CLIPSIBLINGS src/app/main.cpp` → 0 hits; the tab header glyphs on top of the diagnostics rows in the photograph | `mkCtl()` sets the flag on every control it creates |
+| **BS-16c** | The dialog was created without `WS_EX_COMPOSITED`, so the 500 ms telemetry tick (≈30 live rows) erased and drew straight onto the desktop | "không kéo thì giật giật" — the user's jitter with no scrolling at all | `CreateWindowExW(WS_EX_COMPOSITED, …)` for this dialog |
+| **BS-16d** | The reflow request was deduped by **text hash**. A live row whose text changes twice a second (counters, latency, arcade status) but needs not one pixel more still re-solved the whole dialog — 121 children moved, window refitted, scroll range recomputed — at 2 Hz | the first reflow build's "giật giật" report; `g_settingsRowGrowthSeen` held `std::hash<std::wstring>` | deduped by REQUIRED HEIGHT (`ok::layout::shouldRequestReflow`, tolerance 2 px), with tests; a row that cannot be satisfied stops asking |
+| **BS-16e** | The probe could not see any of it: `captureWindow()` created a screen DC and then asked the window to draw itself (`WM_PRINTCLIENT`), and `EnumChildWindows`-based checks skipped the tab control | four green CI rounds over a corrupted screen | `checkSiblingClobber()` (a visible control that really overlaps another must clip against it — the tab control is included) and `checkStalePixels()` (read the real screen, force `RDW_ALLCHILDREN` repaint, read again, compare; a window that owns its pixels is bit-identical) |
+
+### The evidence this round
+
+* `tests/verify_audit_seeds.py` seeds one violation per mechanism into a throwaway
+  copy and requires `scripts/check_dialog_paint_rules.py` to fail naming it —
+  five seeds, all caught (a check that has never failed is not evidence).
+* CI run `35749370721` (x64, real Windows): **2304 controls, 11185 checks,
+  0 findings at 100 % and 150 %**, and the digest now says how many pixel
+  comparisons actually *ran*: **`screen checks 18 run / 0 unavailable`** — the
+  screen was readable, the frames were compared, and nothing was left behind.
+* The probe also stopped measuring a layout that was still moving: the 150 %
+  rows grew while the probe read them (the telemetry tick), which had produced
+  phantom `clip`/`hittest` findings on exactly the tabs whose live rows grow.
+  The probe now stops the tick and measures a settled layout — and exercises the
+  tick explicitly through `WM_TIMER` where it is the subject.
+
+### What this round does NOT claim
+
+`stale_pixels` compares a frame against a full repaint on the CI runner's
+session; a real desktop with other windows on top, a themed DWM composition or a
+different GPU driver could still leave a difference. The user's screenshot after
+this build is the authority — which is exactly what `TESTING.txt` §V1–V4 asks
+for.
+
 ## 2. Verification layers
 
 | Layer | What it proves | Result |

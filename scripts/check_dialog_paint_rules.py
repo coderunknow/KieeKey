@@ -127,9 +127,9 @@ def check(repo: Path):
 
     probe = (repo / 'tools/ui_probe/ui_probe.cpp').read_text(encoding='utf-8')
     for needle, why in (
-            ('checkSiblingClobber',
+            ('void checkSiblingClobber(',
              'the z-order rule that let a sibling paint through the page (BS-16b)'),
-            ('checkStalePixels',
+            ('void checkStalePixels(',
              'the real-screen staleness check: CI otherwise only ever sees '
              'WM_PRINTCLIENT renders (BS-16e)'),
             ('readScreenClient', 'the screen read the staleness check needs')):

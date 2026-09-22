@@ -151,6 +151,65 @@ SEEDS: list[tuple[str, str, str, str, str]] = [
 ]
 
 
+# v1.3.0-beta8 (BS-16): the PAINT rules are a source-level gate as well, and a
+# gate that has never been red proves nothing — the whole point of this round is
+# that four green CI rounds sat on top of a screen the users photographed as
+# corrupted. Each seed removes exactly one mechanism that corruption needed, and
+# the gate must fail naming it.
+PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
+    (
+        "BS-16b  a child that does not clip against its siblings",
+        "src/app/main.cpp",
+        "style | WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,",
+        "style | WS_CHILD | WS_VISIBLE,",
+        "WS_CLIPSIBLINGS",
+    ),
+    (
+        "BS-16c  the dialog back to an uncomposited frame",
+        "src/app/main.cpp",
+        'CreateWindowExW(WS_EX_COMPOSITED, L"KieeKeySettings"',
+        'CreateWindowExW(0, L"KieeKeySettings"',
+        "WS_EX_COMPOSITED",
+    ),
+    (
+        "BS-16a  a tab switch that leaves the old tab on screen",
+        "src/app/main.cpp",
+        "    settingsRepaintAll(g.hSettings);\n",
+        "    /* seeded: no repaint */\n",
+        "showTab",
+    ),
+    (
+        "BS-16d  the reflow request deduped by text again",
+        "src/app/main.cpp",
+        "!ok::layout::shouldRequestReflow(asked, need)",
+        "(need > asked)",
+        "dedupes by required height",
+    ),
+    (
+        "BS-16e  the probe's z-order rule deleted",
+        "tools/ui_probe/ui_probe.cpp",
+        "void checkSiblingClobber(const Audit& a, const std::vector<Ctl>& ctls) {",
+        "void checkSiblingClobberRemoved(const Audit& a, const std::vector<Ctl>& ctls) {",
+        "checkSiblingClobber",
+    ),
+]
+
+# Files scripts/check_dialog_paint_rules.py reads, relative to the repo root.
+PAINT_INPUTS = (
+    "src/app/main.cpp",
+    "src/app/DialogLayout.hpp",
+    "tools/ui_probe/ui_probe.cpp",
+)
+
+
+def run_paint_rules(root: pathlib.Path) -> tuple[int, str]:
+    proc = subprocess.run(
+        [sys.executable, str(root / "scripts" / "check_dialog_paint_rules.py"),
+         f"--repo={root}"],
+        capture_output=True, text=True)
+    return proc.returncode, proc.stdout + proc.stderr
+
+
 def run_audit(root: pathlib.Path) -> tuple[int, str]:
     proc = subprocess.run(
         [sys.executable, str(root / "scripts" / "audit_layout.py"),
@@ -190,6 +249,39 @@ def main() -> int:
             rc, out = run_audit(root)
             caught = rc != 0 and kind in out
             print(f"  [{'ok' if caught else 'MISS'}] {name} -> expected a {kind!r} finding")
+            if not caught:
+                failures += 1
+                print(out)
+
+    # v1.3.0-beta8 (BS-16): the paint rules, same discipline.
+    rc, out = run_paint_rules(REPO)
+    if rc != 0:
+        print("FAIL: the un-seeded tree does not pass the paint rules — fix that first")
+        print(out)
+        return 1
+    print("  [ok] un-seeded tree: PAINT RULES OK")
+
+    for name, rel, old, new, kind in PAINT_SEEDS:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            (root / "scripts").mkdir(parents=True)
+            shutil.copy2(REPO / "scripts" / "check_dialog_paint_rules.py",
+                         root / "scripts" / "check_dialog_paint_rules.py")
+            for relpath in PAINT_INPUTS:
+                dst = root / relpath
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(REPO / relpath, dst)
+            target = root / rel
+            text = target.read_text(encoding="utf-8")
+            if text.count(old) != 1:
+                print(f"  [skipped] {name}: seed anchor not found ({text.count(old)} matches)"
+                      f" — the source changed, update tests/verify_audit_seeds.py")
+                failures += 1
+                continue
+            target.write_text(text.replace(old, new, 1), encoding="utf-8")
+            rc, out = run_paint_rules(root)
+            caught = rc != 0 and kind in out
+            print(f"  [{'ok' if caught else 'MISS'}] {name} -> expected {kind!r}")
             if not caught:
                 failures += 1
                 print(out)

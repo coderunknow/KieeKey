@@ -733,6 +733,42 @@ void testPageTopShiftKeepsContentBelowTheTabStrip() {
     assert(pageTopShiftPx(200, 114) == 0);
 }
 
+// v1.3.0-beta8 (bug BS-12): the scroll path may MOVE a page child, never
+// RESIZE it. The app re-applied the baseline size on every step, which threw
+// away the height a row had grown at runtime — the CI probe measured a row
+// going 188px -> 168px at offset 7 of 7 (tab 6 @150 %). Whatever the offset,
+// the model must hand back the SOLVED size.
+void testScrollModelNeverResizesAChild() {
+    const Rect solved{40, 200, 300, 188};
+    const Rect viewport{16, 114, 510, 500};
+    for (int offset = 0; offset <= 600; offset += 37) {
+        const ScrolledChild c = scrollChildRect(solved, offset, viewport);
+        assert(c.rect.w == solved.w);
+        assert(c.rect.h == solved.h);
+        assert(c.clip.w <= solved.w && c.clip.h <= solved.h);
+    }
+    std::cout << "  [PASS] BS-12: scrolling moves a child and never resizes it\n";
+}
+
+// v1.3.0-beta8 (bug BS-12): a runtime text change that needs more room is a
+// REFLOW request, not a local resize: the controls below the row have to move
+// with it (and the scroll range has to grow), or the text runs under them.
+void testRuntimeGrowthRequestsAReflow() {
+    assert(ok::layout::rowNeedsReflow(188, 216));   // two more lines
+    assert(ok::layout::rowNeedsReflow(28, 31));
+    assert(!ok::layout::rowNeedsReflow(188, 188));  // the same text
+    assert(!ok::layout::rowNeedsReflow(188, 190));  // 2 px: measurement noise
+    assert(!ok::layout::rowNeedsReflow(188, 170));  // shorter: never shrink
+    // ...and the reflow it triggers keeps every offset reachable (BS-01).
+    const ScrollMetrics before = ok::layout::scrollMetrics(500, 0);
+    const ScrollMetrics after = ok::layout::scrollMetrics(500, 28);
+    assert(before.maxTravelPx == 0);
+    assert(after.maxTravelPx == 28);
+    assert(after.pagePx == 500);
+    std::cout << "  [PASS] BS-12: runtime growth asks for a reflow, and the"
+                 " reflow grows the travel\n";
+}
+
 int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
     std::cout << "=== Running Dialog Layout Solver Suite ===\n";
@@ -758,6 +794,10 @@ int main() {
     testBottomRowMovesDownOnly();
     // v1.3.0-beta8 (bug BS-10): the page starts below the tab strip, always.
     testPageTopShiftKeepsContentBelowTheTabStrip();
+    // v1.3.0-beta8 (bug BS-12): scrolling moves, never resizes; runtime text
+    // growth is a reflow request, not a local resize.
+    testScrollModelNeverResizesAChild();
+    testRuntimeGrowthRequestsAReflow();
     std::cout << "=== ALL DIALOG LAYOUT TESTS PASSED ===\n";
     return 0;
 }

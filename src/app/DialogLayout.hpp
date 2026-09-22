@@ -574,6 +574,24 @@ struct ScrolledChild {
     return out;
 }
 
+// v1.3.0-beta8 (bug BS-12) — a runtime text change is a LAYOUT change.
+//
+// The 500 ms timer writes four rows with live text (diagnostics verdict, arcade
+// status, AI stats, coaching advice) whose height the solver could not know
+// when it solved the page. The beta8 build grew those rows ON THE SPOT: the
+// neighbours below stayed where they were (the row ran under them) and the
+// solver's baseline kept the OLD height, so the next scroll step resized the
+// row back down — the line the user had just read was cut in half again
+// (measured by the CI probe: 188px -> 168px at offset 7 on tab 6 @150%).
+//
+// The rule this models: if the text needs more room than the row has, the
+// DIALOG must be re-solved (grown row + everything below shifted + window
+// refitted + scroll range recomputed), never the row alone. 2 px of tolerance
+// so a rounding difference never starts a reflow loop.
+[[nodiscard]] inline bool rowNeedsReflow(int currentH, int neededH) noexcept {
+    return neededH > currentH + 2;
+}
+
 // Standard scrollbar metrics for the fallback.
 //
 // v1.3.0-beta8 (bug BS-01) — THE OLD MODEL MADE THE BAR UNREACHABLE.

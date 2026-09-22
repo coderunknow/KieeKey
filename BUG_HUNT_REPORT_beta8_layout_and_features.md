@@ -489,6 +489,54 @@ The report line reads, in Vietnamese, `Kết quả: OK — không mục nào đ�
 ngoài tầm với.` or `Kết quả: CÓ LỖI — N mục:` followed by `[kind] id (class…): x,y wxh`
 lines, so a machine we cannot reproduce is still a machine we can measure.
 
+## 1c. BS-12 — "khi kéo thì chữ loạn": the scroll path threw away runtime heights
+
+The user's second report (150 %, `fontHeightPx=-20` — a UI font 11 % larger than plain
+150 % scaling — on a 1920x1080 screen, so the dialog CANNOT fit and the scrollbar is the
+normal way to read it) narrowed it to one class: **geometry the runtime changes outside
+the solver**.
+
+`src/app/main.cpp`'s 500 ms timer writes four rows with live text (diagnostics verdict,
+arcade status, AI stats, coaching advice) and, until this fix, called
+`growRowToFitText()`, which resized the row **in place**:
+
+* the controls below it never moved — nothing in the solver knew the row was taller, so
+  the extra lines ran UNDER the next row ("chữ đè");
+* `g_settingsScroll.solved` kept the OLD height, and
+  `applySettingsScrollOffset()` re-applied that baseline on **every** scroll step — so
+  the first touch of the scrollbar resized the row back down and the line the user was
+  reading was cut in half, then grew again 500 ms later ("kéo thì chữ loạn").
+
+**The RED run (commit `1d50f60`, probe check only, no fix):** x64 job failed with
+
+```
+tab 6 @150% dialog=831x689 page=[22,169,792,895] travel=7  1 finding(s):
+  [scroll_resize] id 627 (Static) was 188px tall before scrolling and is 168px
+  at offset 7 of 7 — the scroll path RESIZED a control
+tab 3 @150% travel=371: id 650 (Edit)  296px -> 276px
+tab 3 @100% travel=193: id 638 (Button) 46px ->  26px
+```
+
+The probe reaches that deterministically: it kills the app's timer (it owns the dialog),
+makes one page control 20 px taller — exactly what the growth path did, choosing the
+deepest control that still fits the reachable page so the extra height cannot create an
+overlap or go out of reach by itself — and then re-measures it at every scroll offset.
+
+**The fix (`[VERIFIED]` by the GREEN run that follows):**
+
+* the **solver owns the rectangles**: `solveSettingsLayout()` applies position **and
+  size** to every page child once, and records them in `g_settingsScroll.solved`;
+* **scrolling only moves** (`SWP_NOSIZE`), so nothing the runtime sized can be resized
+  back by a wheel tick;
+* a runtime text that needs more room raises `g_settingsRowGrowthPending` and
+  `rowNeedsGrowth()` (pure rule: `ok::layout::rowNeedsReflow()`, 2 px tolerance,
+  never shrinks) asks for a **reflow**; `WM_TIMER` runs exactly one
+  `reflowSettingsLayoutPreservingScroll()` at the end of the tick, so the row grows to
+  its measured text, everything below shifts, the window refits and the scroll range is
+  recomputed — with the user's scroll position preserved and clamped to the new range;
+* the four growth caps (8/4/5/60 px) are gone: the solver's own measurement bounds the
+  growth now, so no row can be left with text that does not fit.
+
 ## 2. Verification layers
 
 | Layer | What it proves | Result |

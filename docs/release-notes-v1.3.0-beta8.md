@@ -250,4 +250,18 @@ a screenshot: it carries the numbers, the tab and the DPI.
 
 ---
 
-*SPDX-License-Identifier: GPL-3.0-or-later*
+## Cuộn chỉ DI CHUYỂN, không đổi kích thước — và hàng chữ mọc thêm thì cả trang cùng dãn
+
+Bốn dòng trong tab Cài đặt mang chữ sống (kết luận chẩn đoán, trạng thái Arcade, số liệu
+AI, lời khuyên Coach): chữ dài ra thì hàng phải cao thêm. Bản trước tự nới hàng đó **tại
+chỗ**, nên hai chuyện xảy ra cùng lúc: các hàng bên dưới không hề dịch xuống (chữ chạy
+xuống dưới chúng), và vị trí cuộn vẫn nhớ chiều cao CŨ — vừa kéo là hàng bị bóp về chiều
+cao cũ, dòng bạn đang đọc bị cắt ngang, nửa giây sau mới mọc lại. CI đo được đúng con số:
+`id 627: 188px → 168px ở offset 7/7` (tab 6 @150 %), `id 650: 296px → 276px` (tab 3 @150 %).
+
+Nay: bộ giải layout là nơi DUY NHẤT đặt vị trí và kích thước; cuộn chỉ di chuyển
+(`SWP_NOSIZE`); hàng cần thêm chỗ thì đặt yêu cầu "giải lại", và mỗi nhịp 500 ms chỉ giải
+lại **một lần**: hàng nới đúng theo chữ đo được, mọi thứ bên dưới dịch xuống, cửa sổ tự
+nới, dải cuộn được tính lại — **giữ nguyên vị trí cuộn** của bạn (kẹp trong dải mới).
+Giới hạn nới cứng (8/4/5/60 px) đã bỏ: thước đo thật quyết định, nên không hàng nào còn
+bị cắt chữ.

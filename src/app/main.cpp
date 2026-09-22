@@ -538,9 +538,18 @@ void destroyRowTooltip() {
 // Two honest little helpers instead of a second solver:
 //   * markOneLineRow()  — one-line rows NEVER wrap (a wrapped tail is
 //     invisible), so they ellipsize and carry the full string as a tooltip;
-//   * growRowToFitText() — wrapped rows grow their HEIGHT to the text the
-//     Graphics Device Interface actually lays out (DT_CALCRECT with the
-//     control's own font), never shrink, and never past `maxGrowPx`.
+//   * rowNeedsGrowth() — wrapped rows whose NEW text needs more height than
+//     the box has ask for a REFLOW; the row is never resized here.
+//
+// v1.3.0-beta8 (bug BS-12): growing the row HERE, behind the solver's back,
+// was wrong twice over — the controls below it never moved (the text ran under
+// them) and g_settingsScroll.solved kept the OLD height, so the very next
+// scroll step resized the row back down and the line the user was reading was
+// cut in half again ("khi kéo thì chữ loạn"). The CI probe measured exactly
+// that: id 627 188px -> 168px at offset 7 of 7 (tab 6 @150 %). Growth is now a
+// request: WM_TIMER re-solves once at the end, and the solver grows the row to
+// its measured text, shifts everything below, refits the window and recomputes
+// the scroll range — the same measurements the probe audits.
 //---------------------------------------------------------------------------
 void markOneLineRow(HWND ctl, const std::wstring& text) {
     if (ctl == nullptr) { return; }
@@ -552,15 +561,18 @@ void markOneLineRow(HWND ctl, const std::wstring& text) {
     setRowTooltip(ctl, text);
 }
 
-int growRowToFitText(HWND ctl, int maxGrowPx) {
-    if (ctl == nullptr || maxGrowPx <= 0) { return 0; }
+// Does this row's CURRENT text need more height than the row has? Same
+// measurement the solver makes (DT_CALCRECT | DT_WORDBREAK with the control's
+// own font) plus its 4 px of breathing room, and the same 2 px tolerance.
+bool rowNeedsGrowth(HWND ctl) {
+    if (ctl == nullptr) { return false; }
     RECT rc{};
-    if (!::GetWindowRect(ctl, &rc)) { return 0; }
+    if (!::GetWindowRect(ctl, &rc)) { return false; }
     const int w = rc.right - rc.left;
     const int h = rc.bottom - rc.top;
     const HFONT font = reinterpret_cast<HFONT>(::SendMessageW(ctl, WM_GETFONT, 0, 0));
     HDC dc = ::GetDC(ctl);
-    if (dc == nullptr) { return h; }
+    if (dc == nullptr) { return false; }
     const HGDIOBJ oldFont = (font != nullptr) ? ::SelectObject(dc, font) : nullptr;
     RECT measure{0, 0, w, 0};
     const std::wstring text = [&] {
@@ -573,22 +585,19 @@ int growRowToFitText(HWND ctl, int maxGrowPx) {
                 DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX | DT_EDITCONTROL);
     if (oldFont != nullptr) { ::SelectObject(dc, oldFont); }
     ::ReleaseDC(ctl, dc);
-    const int needed = (measure.bottom - measure.top) + 4;
-    if (needed <= h) { return h; }
-    const int grown = (needed - h > maxGrowPx) ? h + maxGrowPx : needed;
-    ::SetWindowPos(ctl, nullptr, 0, 0, w, grown,
-                   SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
-    return grown;
+    return ok::layout::rowNeedsReflow(h, (measure.bottom - measure.top) + 4);
 }
 
-void refreshGrowingRow(HWND dlg, int id, const std::wstring& text, int maxGrowPx) {
+// Set by the timer's row writers, consumed once per tick by the reflow below.
+bool g_settingsRowGrowthPending = false;
+
+void refreshGrowingRow(HWND dlg, int id, const std::wstring& text) {
     const HWND ctl = ::GetDlgItem(dlg, id);
     if (ctl == nullptr) { return; }
     ::SetWindowTextW(ctl, text.c_str());
-    // The tooltip is set BEFORE growing: growing can push the text back under
-    // whatever sits below, which is precisely when the hover text matters.
     setRowTooltip(ctl, text);
-    if (maxGrowPx > 0) { (void)growRowToFitText(ctl, maxGrowPx); }
+    // Never grow it here — see the header comment above: ask for a reflow.
+    if (rowNeedsGrowth(ctl)) { g_settingsRowGrowthPending = true; }
 }
 
 // Parse macro text (editor content or file content): one
@@ -4357,8 +4366,12 @@ void applySettingsScrollOffset(HWND hwnd) {
     for (const auto& entry : g_settingsScroll.solved) {
         const ok::layout::ScrolledChild sc = ok::layout::scrollChildRect(
             entry.second, g_settingsScroll.offset, g_settingsScroll.viewport);
-        ::SetWindowPos(entry.first, nullptr, sc.rect.x, sc.rect.y,
-                       sc.rect.w, sc.rect.h, SWP_NOZORDER | SWP_NOACTIVATE);
+        // v1.3.0-beta8 (bug BS-12): MOVE ONLY. The sizes come from the solver
+        // (applied at the end of solveSettingsLayout) and from nothing else —
+        // re-applying the baseline size here is what threw away a row's
+        // runtime height on the first scroll step.
+        ::SetWindowPos(entry.first, nullptr, sc.rect.x, sc.rect.y, 0, 0,
+                       SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
         if (!sc.visible) {
             if (HRGN rgn = ::CreateRectRgn(0, 0, 0, 0)) {
                 ::SetWindowRgn(entry.first, rgn, TRUE);   // rgn ownership passes
@@ -4663,11 +4676,38 @@ void solveSettingsLayout(HWND hwnd) {
     g_settingsScroll.solved.clear();
     for (std::size_t i = 0; i < specs.size(); ++i) {
         if (specs[i].tab == ok::layout::ControlSpec::kAlwaysVisible) { continue; }
+        // v1.3.0-beta8 (bug BS-12): the SOLVER owns the page children's
+        // rectangles — apply position AND size here, once. Scrolling only
+        // moves them (applySettingsScrollOffset), so anything the runtime grew
+        // keeps its height instead of being resized back on the next wheel tick.
+        ::SetWindowPos(hwnds[i], nullptr, plan.rects[i].x, plan.rects[i].y,
+                       plan.rects[i].w, plan.rects[i].h,
+                       SWP_NOZORDER | SWP_NOACTIVATE);
         g_settingsScroll.solved.emplace_back(hwnds[i], plan.rects[i]);
     }
     int curTab = static_cast<int>(::SendMessageW(tabCtl, TCM_GETCURSEL, 0, 0));
     if (curTab < 0 || curTab > 8) { curTab = 0; }
     settingsScrollSetTab(hwnd, curTab);   // applies solved rects at offset 0
+}
+
+// v1.3.0-beta8 (bug BS-12): re-solve WITHOUT losing the scroll position.
+// solveSettingsLayout() ends by jumping the current tab back to the top (the
+// right thing at open / DPI change, the wrong thing in the middle of a read),
+// so the timer's growth request comes through here: solve, then put the user
+// back where they were, clamped to whatever range the new content allows.
+void reflowSettingsLayoutPreservingScroll(HWND hwnd) {
+    if (hwnd == nullptr) { return; }
+    const int keep = g_settingsScroll.offset;
+    solveSettingsLayout(hwnd);
+    const int clamped = std::clamp(keep, 0, std::max(0, g_settingsScroll.range));
+    if (clamped == g_settingsScroll.offset) { return; }
+    g_settingsScroll.offset = clamped;
+    SCROLLINFO si{};
+    si.cbSize = sizeof(SCROLLINFO);
+    si.fMask = SIF_POS;
+    si.nPos = clamped;
+    ::SetScrollInfo(hwnd, SB_VERT, &si, TRUE);
+    applySettingsScrollOffset(hwnd);
 }
 
 } // namespace
@@ -5902,7 +5942,7 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     // v1.3.0-beta8 (bug BS-02b): the verdict is runtime text —
                     // it grows a line when a conflict is found. Grow the row
                     // (never shrink) and keep the full text on hover.
-                    refreshGrowingRow(hwnd, IDC_STAT_INFO_STATUS, diag, 8);
+                    refreshGrowingRow(hwnd, IDC_STAT_INFO_STATUS, diag);
                     s_lastDiag = diag;
                 }
             }
@@ -6025,7 +6065,7 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                                   L"Game chạy trong cửa sổ KieeKey Arcade Hub (nút bên trên).",
                                   slug.c_str(), static_cast<long long>(astats.score), astats.wpm,
                                   astats.accuracy);
-                    refreshGrowingRow(hwnd, IDC_STAT_ARCADE_STATUS, abuf, 4);
+                    refreshGrowingRow(hwnd, IDC_STAT_ARCADE_STATUS, abuf);
                 } else {
                     ::SetWindowTextW(::GetDlgItem(hwnd, IDC_STAT_ARCADE_STATUS),
                                      L"Chưa có game nào đang chạy.\r\n"
@@ -6069,7 +6109,7 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 // v1.3.0-beta8 (bug BS-02b): the AI row carries four measured
                 // numbers and wraps to a third line at 125%+; grow (max 5px of
                 // air here — the Coach row owns the space below).
-                refreshGrowingRow(hwnd, IDC_STAT_AI_STATS, aibuf, 5);
+                refreshGrowingRow(hwnd, IDC_STAT_AI_STATS, aibuf);
 
                 auto coachRecs = ok::analytics::TypingAnalyticsEngine::instance().generateCoachingAdvice();
                 if (!coachRecs.empty()) {
@@ -6078,11 +6118,20 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     // v1.3.0-beta8 (bug BS-02b): coaching advice is generated
                     // text of arbitrary length — the one row with real room
                     // below it (up to the AI group's bottom edge).
-                    refreshGrowingRow(hwnd, IDC_STAT_COACH_ADVICE, wctext, 60);
+                    refreshGrowingRow(hwnd, IDC_STAT_COACH_ADVICE, wctext);
                 }
             } else {
                 ::SetWindowTextW(::GetDlgItem(hwnd, IDC_STAT_AI_STATS), L"AI: chưa bật (không học nhịp gõ).");
                 ::SetWindowTextW(::GetDlgItem(hwnd, IDC_STAT_COACH_ADVICE), L"Coach: bật AI để xem phân tích.");
+            }
+
+            // v1.3.0-beta8 (bug BS-12): ONE reflow per tick, at the end, and
+            // only when a row's live text outgrew its box. The solver grows the
+            // row, shifts everything below it, refits the window and recomputes
+            // the scroll range; the user's scroll position is preserved.
+            if (g_settingsRowGrowthPending) {
+                g_settingsRowGrowthPending = false;
+                reflowSettingsLayoutPreservingScroll(hwnd);
             }
             return 0;
         }

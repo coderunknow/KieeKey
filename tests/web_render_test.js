@@ -301,13 +301,15 @@ function testHudAndBanner() {
 //---------------------------------------------------------------------------
 function testSteeringConfigPush() {
   // v1.3.0-beta6 (V2/B7): the per-game steering choice reaches the bridge.
-  // Boot already pushed one config (ui.steering.value was '1'); changing the
-  // select must push again with the new value.
+  //
+  // v1.3.0-beta8 (bug UX-06): boot no longer PUSHES anything. It used to POST
+  // the static HTML defaults before reading the server, so merely opening the
+  // web hub silently reset every arcade setting the user had chosen on the
+  // desktop. This assertion used to require that clobbering push; now it
+  // requires the opposite — boot must not write the config at all.
   const configBodies = () => requestBodies.filter((b) => b.indexOf('rhythmFailMode') !== -1);
-  const bootBodies = configBodies();
-  assert(bootBodies.length >= 1, 'the boot pushConfig hits /api/config');
-  assert(bootBodies.some((b) => b.indexOf('"wasdSteering":1') !== -1),
-         'the boot config push carries the steering choice');
+  assert(configBodies().length === 0,
+         'boot does not POST a config (it hydrates from the server instead)');
 
   elements.steering.value = '2';
   const handlers = elements.steering.handlers.change || [];

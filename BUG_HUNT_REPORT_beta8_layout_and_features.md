@@ -414,6 +414,40 @@ editing N re-sends it live, that the passage is preserved, and that the HTML bou
 
 ---
 
+## 1a. CA-05 — what the probe had to learn before it could see the user's screen
+
+The user's report from a real Windows desktop ("chữ bị đè còn nhiều hơn cả lúc trước
+nữa… khi kéo thì chữ loạn lên") arrived while the UI probe was **green** (184
+controls, 1764 checks, 0 findings, DPI 96). Both facts were true, and the gap between
+them was the probe's own model:
+
+| what the probe assumed | what decides the user's screen | consequence |
+|---|---|---|
+| `GetWindowRect` is the control | the WINDOW REGION is the control: the page children are direct children of the dialog and "scroll" by moving + `SetWindowRgn`-clipping to the tab viewport | a hidden or mis-clipped control measured perfectly; a region expressed in the wrong space cannot be detected at all |
+| every visible control may be compared with every other | exactly ONE page is on screen: the other tabs' controls must be invisible (and region-hidden controls are not "visible" in the sense that matters) | two pages' controls could overlap and the probe would still call it a layout defect of neither |
+| the page always fits | the scroll fallback engages whenever the work area cannot show the solved page — i.e. on the high-DPI laptops where users complain, never on the runner's large 96-dpi desktop | the entire scrolling path (moving children, clipping, restoring) was NEVER executed in CI |
+| DPI 96 is the layout | 125 % / 150 % change the font-to-box ratio, the tab strip row count, the display rectangle and the refit budget | "virtual 150 % stays MODELLED" was doing the work of a real measurement |
+
+CA-05 closes those four gaps in `tools/ui_probe/ui_probe.cpp` + `src/app/main.cpp`
+(probe-only hooks `KieeKeyProbeTabOfControl`, `KieeKeyProbeSimulateDpi`; the DPI
+rescale path is shared with `WM_DPICHANGED` instead of being duplicated):
+
+* every geometry check runs on the **effective rectangle** = window rect translated by
+  the region's bounding box, clipped to the page, and skipped entirely when the
+  control is not on screen;
+* `wrong_page` / `page_hidden` prove that exactly one page is on screen;
+* `region` compares the applied region with the one the page allows, so a
+  region-space or stale-region bug is a finding instead of a mystery screenshot;
+* `group_overlap` reports a group box covering a control it does not contain — the
+  "text under a grey band" class that both `findOverlaps()` and the old probe
+  deliberately skipped;
+* the **scroll path** is exercised (`WM_VSCROLL`/`SB_THUMBTRACK` at 0/25/50/75/100 %
+  of the travel) and re-audited at every step, which is where "khi kéo thì chữ loạn
+  lên" lives;
+* the whole audit runs a second time at **150 %** through
+  `KieeKeyProbeSimulateDpi()` (the app's own `applySettingsDpiScale()` + solve), so
+  the scale the user reports is measured rather than modelled.
+
 ## 2. Verification layers
 
 | Layer | What it proves | Result |
@@ -465,7 +499,8 @@ editing N re-sends it live, that the passage is preserved, and that the HTML bou
 | DS-02 token mapping | MED | FIXED | same suite (6/6 + partial order) |
 | DS-03/04/05 | MED/LOW/INFO | FIXED | pane == export; hook counters under `Level::Off` |
 | CA-01 a–d | P1 | DONE | 9 seed-verified checks, `--strict` green |
-| CA-03 UI probe | P1 | WRITTEN | CMake target + CI step; never run yet |
+| CA-03 UI probe | P1 | DONE | CI step on x64; found BS-09/10/11 (3 RED runs), then green over 184 controls / 1764 checks |
+| CA-05 probe: effective rects, one page at a time, the scroll path, 150 % | P1 | DONE | probe audits the visible rectangle (window rect ∩ region ∩ page), drives the real `WM_VSCROLL` path through the whole travel, and re-audits at 150 % through the app's own DPI-change path |
 | FT-01 persistence | HIGH | FIXED | 29-check suite + 11-finding RED audit |
 | FT-02 silent Flexing send | MED | FIXED | 94-check suite + audit layer 4 |
 | FT-03 gate truth | MED | FIXED | `audit_live_effects_truth` |

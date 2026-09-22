@@ -81,6 +81,13 @@ extern "C" int  KieeKeyProbeSelectTab(HWND dlg, int tab);
 // CA-03 diagnostics: the app's OWN required text height for a control (the same
 // DrawTextW call the solver uses), so the probe can compare instead of assume.
 extern "C" int  KieeKeyProbeMeasureStaticHeight(HWND dlg, int id);
+// CA-03: which page the APP assigns a control id to (-1 == always-visible
+// chrome). Used to prove that two pages can never be on screen at once — the
+// failure mode behind "every label is overwritten".
+extern "C" int  KieeKeyProbeTabOfControl(HWND dlg, int id);
+// CA-03: drive the REAL DPI-change path (child rescale + re-solve) with a forced
+// DPI so the probe can audit the 125/150 % layouts a 96-dpi runner cannot make.
+extern "C" int  KieeKeyProbeSimulateDpi(HWND dlg, UINT dpi);
 
 namespace {
 
@@ -92,14 +99,28 @@ struct Finding {
     std::string detail;
 };
 
+// One control, as the USER sees it. `region`/`onScreen`/`ex..eh` exist because
+// the window-region state — not the window rectangle — decides what is painted:
+// this dialog's page children are direct children of the dialog and "scroll" by
+// moving + region-clipping, so a wrong region measures perfectly with
+// GetWindowRect and paints garbage. Every geometry check below uses the
+// EFFECTIVE rectangle, never the window rectangle.
 struct Ctl {
+    HWND        hwnd = nullptr;
     int         id = 0;
     std::string klass;
     std::string text;
-    int         x = 0, y = 0, w = 0, h = 0;   // dialog client coordinates
+    int         x = 0, y = 0, w = 0, h = 0;   // window rect, dialog client coords
+    int         tabpage = -1;                  // the app's page (-1 == chrome)
     bool        groupBox = false;
     bool        interactive = false;
+    bool        shown = false;                 // IsWindowVisible
     int         fontHeight = 0;
+    bool        hasRegion = false;             // a window region is set ...
+    bool        regionEmpty = false;           // ... and it is empty (hidden)
+    RECT        region{};                      // bounding box, child-local px
+    bool        onScreen = false;              // region ∩ page is non-empty
+    int         ex = 0, ey = 0, ew = 0, eh = 0;   // effective (visible) rectangle
 };
 
 //--------------------------------------------------------------- conversions
@@ -363,6 +384,330 @@ RECT clientRectOf(HWND parent, HWND child) {
     return RECT{tl.x, tl.y, br.x, br.y};
 }
 
+bool rectEmpty(const RECT& r) { return r.right <= r.left || r.bottom <= r.top; }
+
+RECT intersectRect(const RECT& a, const RECT& b) {
+    RECT o{std::max(a.left, b.left), std::max(a.top, b.top),
+           std::min(a.right, b.right), std::min(a.bottom, b.bottom)};
+    return o;
+}
+
+std::string rectStr(int x, int y, int w, int h) {
+    return std::to_string(x) + "," + std::to_string(y) + " " +
+           std::to_string(w) + "x" + std::to_string(h);
+}
+
+std::string rectStr(const RECT& r) {
+    return rectStr(r.left, r.top, r.right - r.left, r.bottom - r.top);
+}
+
+// Reads the live geometry of every child of the dialog. `all` is the stable
+// child list (refreshed geometry re-reads it after a scroll).
+void readCtls(HWND dlg, const std::vector<HWND>& all, int currentTab,
+              const RECT& page, std::vector<Ctl>& ctls) {
+    ctls.clear();
+    ctls.reserve(all.size());
+    for (HWND child : all) {
+        Ctl c;
+        c.hwnd = child;
+        c.id = ::GetDlgCtrlID(child);
+        c.klass = className(child);
+        c.text = windowText(child);
+        const RECT r = clientRectOf(dlg, child);
+        c.x = r.left;
+        c.y = r.top;
+        c.w = static_cast<int>(r.right - r.left);
+        c.h = static_cast<int>(r.bottom - r.top);
+        c.tabpage = KieeKeyProbeTabOfControl(dlg, c.id);
+        c.shown = ::IsWindowVisible(child) != FALSE;
+        const LONG_PTR style = ::GetWindowLongPtrW(child, GWL_STYLE);
+        // BS_GROUPBOX is 0x7 (a triplet of flag bits), so `style & BS_GROUPBOX`
+        // is ALSO true for BS_DEFPUSHBUTTON (0x1) — which silently excluded the
+        // OK button from the overlap and hit-test checks (a false negative that
+        // hid the fourth stacked button of BS-09).
+        c.groupBox = c.klass == "Button" && (style & BS_TYPEMASK) == BS_GROUPBOX;
+        c.interactive = c.klass == "Button" || c.klass == "Edit" ||
+                        c.klass == "ComboBox" || c.klass == "ListBox";
+        // The window region is what the user actually sees. GetWindowRgn fails
+        // (ERROR) when no region is set; NULLREGION means an EMPTY region — the
+        // app's "move it out of sight without touching SW_SHOW/SW_HIDE".
+        {
+            HRGN rgn = ::CreateRectRgn(0, 0, 0, 0);
+            if (rgn != nullptr) {
+                const int type = ::GetWindowRgn(child, rgn);
+                RECT box{};
+                if (type != ERROR) {
+                    c.hasRegion = true;
+                    if (::GetRgnBox(rgn, &box) == NULLREGION) {
+                        c.regionEmpty = true;
+                        box = RECT{0, 0, 0, 0};
+                    }
+                    c.region = box;
+                }
+                ::DeleteObject(rgn);
+            }
+        }
+        int rx = c.x;
+        int ry = c.y;
+        int rw = c.w;
+        int rh = c.h;
+        if (c.hasRegion) {
+            rx = c.x + c.region.left;
+            ry = c.y + c.region.top;
+            rw = c.region.right - c.region.left;
+            rh = c.region.bottom - c.region.top;
+        }
+        const RECT eff = intersectRect(RECT{rx, ry, rx + rw, ry + rh}, page);
+        c.onScreen = c.shown && !rectEmpty(eff);
+        c.ex = eff.left;
+        c.ey = eff.top;
+        c.ew = eff.right - eff.left;
+        c.eh = eff.bottom - eff.top;
+        // Font metrics + text (only for what the user can see).
+        HDC dc = ::GetDC(child);
+        if (dc != nullptr) {
+            TEXTMETRICW tm{};
+            HFONT font = reinterpret_cast<HFONT>(::SendMessageW(child, WM_GETFONT, 0, 0));
+            HGDIOBJ oldFont = font != nullptr ? ::SelectObject(dc, font) : nullptr;
+            if (::GetTextMetricsW(dc, &tm) != FALSE) {
+                c.fontHeight = static_cast<int>(tm.tmHeight);
+            }
+            if (oldFont != nullptr) { ::SelectObject(dc, oldFont); }
+            ::ReleaseDC(child, dc);
+        }
+        (void)currentTab;
+        ctls.push_back(std::move(c));
+    }
+}
+
+struct Audit {
+    HWND   dlg = nullptr;
+    HWND   tabsCtl = nullptr;
+    RECT   client{};
+    RECT   page{};
+    int    tab = 0;
+    int    scalePercent = 100;
+    std::string prefix;                  // "" or "scroll@N: "
+    std::vector<Finding>* findings = nullptr;
+};
+
+// ---- a) one page at a time -------------------------------------------------
+void checkSinglePage(const Audit& a, const std::vector<Ctl>& ctls) {
+    for (const Ctl& c : ctls) {
+        ++g_checks;
+        if (c.tabpage >= 0 && c.tabpage != a.tab && c.shown) {
+            a.findings->push_back({"wrong_page",
+                "id " + std::to_string(c.id) + " (" + c.klass + ") at " +
+                rectStr(c.x, c.y, c.w, c.h) + " belongs to tab " +
+                std::to_string(c.tabpage) + " but is VISIBLE while tab " +
+                std::to_string(a.tab) + " is selected"});
+        }
+        if (c.tabpage == a.tab && !c.shown) {
+            a.findings->push_back({"page_hidden",
+                "id " + std::to_string(c.id) + " (" + c.klass + ") at " +
+                rectStr(c.x, c.y, c.w, c.h) + " belongs to the selected tab " +
+                std::to_string(a.tab) + " but is not visible"});
+        }
+    }
+}
+
+// ---- b) regions must agree with the page viewport --------------------------
+// A control that the app wants to show must be visible EXACTLY where its
+// rectangle is; a control it wants to hide or clip must be regioned to the
+// expected clip. Any other region is a rendering bug that no rect-based check
+// can see.
+void checkRegions(const Audit& a, const std::vector<Ctl>& ctls) {
+    if (!a.prefix.empty()) { return; }   // scroll steps move the page on purpose
+    for (const Ctl& c : ctls) {
+        if (c.tabpage < 0 || c.tabpage != a.tab) { continue; }
+        if (!c.shown) { continue; }
+        ++g_checks;
+        const RECT want = intersectRect(RECT{c.x, c.y, c.x + c.w, c.y + c.h}, a.page);
+        if (!c.hasRegion) {
+            if (!rectEmpty(want)) { continue; }      // shown in full: correct
+            a.findings->push_back({"region",
+                "id " + std::to_string(c.id) + " (" + c.klass + ") is beyond the page (" +
+                rectStr(c.x, c.y, c.w, c.h) + " vs page " + rectStr(a.page) +
+                ") but has NO region, so it paints outside the viewport"});
+            continue;
+        }
+        const RECT got = c.regionEmpty
+            ? RECT{0, 0, 0, 0}
+            : RECT{c.x + c.region.left, c.y + c.region.top,
+                   c.x + c.region.right, c.y + c.region.bottom};
+        if (rectEmpty(want) == c.regionEmpty) { continue; }
+        if (std::abs(got.left - want.left) <= 1 && std::abs(got.top - want.top) <= 1 &&
+            std::abs(got.right - want.right) <= 1 && std::abs(got.bottom - want.bottom) <= 1) {
+            continue;
+        }
+        a.findings->push_back({"region",
+            "id " + std::to_string(c.id) + " (" + c.klass + ") at " +
+            rectStr(c.x, c.y, c.w, c.h) + " shows " +
+            (c.regionEmpty ? std::string("nothing") : rectStr(got)) +
+            " but the page " + rectStr(a.page) + " allows " +
+            (rectEmpty(want) ? std::string("nothing") : rectStr(want))});
+    }
+}
+
+// ---- c) no two visible controls overlap ------------------------------------
+void checkOverlaps(const Audit& a, const std::vector<Ctl>& ctls) {
+    const auto isChrome = [](const Ctl& c) { return c.tabpage < 0; };
+    for (std::size_t i = 0; i < ctls.size(); ++i) {
+        const Ctl& ci = ctls[i];
+        if (!ci.onScreen || ci.groupBox) { continue; }
+        for (std::size_t j = i + 1; j < ctls.size(); ++j) {
+            const Ctl& cj = ctls[j];
+            if (!cj.onScreen || cj.groupBox) { continue; }
+            if (isChrome(ci) != isChrome(cj)) { continue; }
+            ++g_checks;
+            const int ix = std::min(ci.ex + ci.ew, cj.ex + cj.ew) - std::max(ci.ex, cj.ex);
+            const int iy = std::min(ci.ey + ci.eh, cj.ey + cj.eh) - std::max(ci.ey, cj.ey);
+            if (ix > kTouchTolerancePx && iy > kTouchTolerancePx) {
+                a.findings->push_back({"overlap",
+                    a.prefix + "id " + std::to_string(ci.id) + " (" + ci.klass + ") " +
+                    rectStr(ci.ex, ci.ey, ci.ew, ci.eh) + " and id " +
+                    std::to_string(cj.id) + " (" + cj.klass + ") " +
+                    rectStr(cj.ex, cj.ey, cj.ew, cj.eh) + " overlap by " +
+                    std::to_string(ix) + "x" + std::to_string(iy) + " px"});
+            }
+        }
+        // A group box may contain its children, but it must never cover a
+        // control it does not contain: that is the "text under a grey band"
+        // the user sees and every rect-only audit misses.
+        if (ci.onScreen && ci.groupBox) {
+            for (const Ctl& cj : ctls) {
+                if (&cj == &ci || !cj.onScreen || cj.groupBox) { continue; }
+                if (cj.tabpage != ci.tabpage) { continue; }
+                ++g_checks;
+                const bool inside = cj.x >= ci.x && cj.y >= ci.y &&
+                                    cj.x + cj.w <= ci.x + ci.w &&
+                                    cj.y + cj.h <= ci.y + ci.h;
+                if (inside) { continue; }
+                if (ci.x < cj.x + cj.w && cj.x < ci.x + ci.w &&
+                    ci.y < cj.y + cj.h && cj.y < ci.y + ci.h) {
+                    a.findings->push_back({"group_overlap",
+                        a.prefix + "group box id " + std::to_string(ci.id) + " " +
+                        rectStr(ci.x, ci.y, ci.w, ci.h) + " covers id " +
+                        std::to_string(cj.id) + " (" + cj.klass + ") " +
+                        rectStr(cj.x, cj.y, cj.w, cj.h)});
+                }
+            }
+        }
+    }
+}
+
+// ---- d) everything reachable ----------------------------------------------
+void checkReach(const Audit& a, const std::vector<Ctl>& ctls, int travelPx) {
+    const int reachableBottom = a.page.bottom + travelPx;
+    int contentBottom = a.page.top;
+    for (const Ctl& c : ctls) {
+        if (c.tabpage != a.tab || !c.shown) { continue; }
+        contentBottom = std::max(contentBottom, c.y + c.h);
+        ++g_checks;
+        const bool beyond = c.y + c.h > reachableBottom + 1 || c.x + c.w > a.client.right + 1 ||
+                            c.x < a.client.left - 1 || c.y < a.page.top - 1;
+        if (beyond) {
+            a.findings->push_back({"outside_page",
+                "id " + std::to_string(c.id) + " (" + c.klass + ") at " +
+                rectStr(c.x, c.y, c.w, c.h) + " is outside the reachable page (page " +
+                rectStr(a.page) + " + " + std::to_string(travelPx) + " px of scroll)"});
+        }
+    }
+    // The scrollbar must be usable exactly when the page overflows, and the
+    // deepest content must be reachable at the end of its travel.
+    SCROLLINFO si{};
+    si.cbSize = sizeof(si);
+    si.fMask = SIF_ALL;
+    const bool have = ::GetScrollInfo(a.dlg, SB_VERT, &si) != FALSE;
+    const bool enabled = have && si.nPage > 0 && si.nMax > static_cast<int>(si.nPage) - 1;
+    const bool wanted = contentBottom > a.page.bottom + 1;
+    ++g_checks;
+    if (enabled != wanted) {
+        a.findings->push_back({"scrollbar",
+            std::string("scrollbar ") + (enabled ? "enabled" : "disabled") +
+            " but the page content ends at y=" + std::to_string(contentBottom) +
+            ", the viewport ends at y=" + std::to_string(a.page.bottom) +
+            (wanted ? " (content unreachable)" : " (no overflow)")});
+    }
+}
+
+// ---- e) the visible text fits its (visible) box ----------------------------
+void checkTextFit(const Audit& a, const std::vector<Ctl>& ctls) {
+    for (const Ctl& c : ctls) {
+        if (c.text.empty() || c.groupBox || !c.onScreen) { continue; }
+        const std::wstring wtext = toWide(c.text);
+        ++g_checks;
+        int need = 0;
+        if (c.eh <= c.fontHeight + 4) {
+            need = textWidth(c.hwnd, wtext);
+            if (need > c.ew + 2) {
+                a.findings->push_back({"clip",
+                    a.prefix + "id " + std::to_string(c.id) + " (" + c.klass + ") needs " +
+                    std::to_string(need) + "px (app solver says " +
+                    std::to_string(KieeKeyProbeMeasureStaticHeight(a.dlg, c.id)) +
+                    "), shows " + std::to_string(c.ew) + "px of " + std::to_string(c.w) +
+                    " (box " + rectStr(c.x, c.y, c.w, c.h) + "): " + c.text.substr(0, 60)});
+            }
+        } else {
+            need = wrappedTextHeight(c.hwnd, wtext, c.ew);
+            if (need > c.eh + 2) {
+                a.findings->push_back({"clip",
+                    a.prefix + "id " + std::to_string(c.id) + " (" + c.klass + ") wraps to " +
+                    std::to_string(need) + "px (app solver says " +
+                    std::to_string(KieeKeyProbeMeasureStaticHeight(a.dlg, c.id)) +
+                    ") in " + rectStr(c.ex, c.ey, c.ew, c.eh) + " (box " +
+                    rectStr(c.x, c.y, c.w, c.h) + "): " + c.text.substr(0, 60)});
+            }
+        }
+    }
+}
+
+// ---- f) every visible interactive control owns its centre ------------------
+void checkHitTests(const Audit& a, const std::vector<Ctl>& ctls) {
+    for (const Ctl& c : ctls) {
+        if (!c.onScreen || !c.interactive || c.groupBox || c.ew <= 0 || c.eh <= 0) { continue; }
+        const POINT pt{c.ex + c.ew / 2, c.ey + c.eh / 2};
+        if (pt.x >= a.client.right || pt.y >= a.client.bottom || pt.x < 0 || pt.y < 0) { continue; }
+        ++g_checks;
+        POINT screenPt{pt.x, pt.y};
+        ::ClientToScreen(a.dlg, &screenPt);
+        const HWND hit = ::WindowFromPoint(screenPt);
+        if (hit == nullptr) { continue; }
+        if (hit == c.hwnd || ::IsChild(c.hwnd, hit) != FALSE) { continue; }
+        a.findings->push_back({"hittest",
+            a.prefix + "id " + std::to_string(c.id) + " (" + c.klass + ") centre (" +
+            std::to_string(pt.x) + "," + std::to_string(pt.y) + ") hits id " +
+            std::to_string(::GetDlgCtrlID(hit)) + " (" + className(hit) + ")"});
+    }
+}
+
+// ---- g) the tab headers are readable ---------------------------------------
+void checkTabHeaders(const Audit& a, int tabCount, std::vector<Finding>* findings) {
+    if (a.tabsCtl == nullptr) { return; }
+    for (int i = 0; i < tabCount; ++i) {
+        wchar_t label[128]{};
+        TCITEMW item{};
+        item.mask = TCIF_TEXT;
+        item.pszText = label;
+        item.cchTextMax = static_cast<int>(sizeof(label) / sizeof(label[0]));
+        RECT ir{};
+        ++g_checks;
+        if (::SendMessageW(a.tabsCtl, TCM_GETITEMW, static_cast<WPARAM>(i),
+                           reinterpret_cast<LPARAM>(&item)) == FALSE ||
+            ::SendMessageW(a.tabsCtl, TCM_GETITEMRECT, static_cast<WPARAM>(i),
+                           reinterpret_cast<LPARAM>(&ir)) == FALSE) {
+            continue;
+        }
+        const int need = textWidth(a.tabsCtl, label);
+        if (need + 8 > static_cast<int>(ir.right - ir.left)) {
+            findings->push_back({"tab_header",
+                "tab " + std::to_string(i) + " needs " + std::to_string(need) +
+                "px in " + std::to_string(static_cast<int>(ir.right - ir.left)) + "px"});
+        }
+    }
+    (void)findings;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -370,8 +715,7 @@ int main(int argc, char** argv) {
     if (argc > 1 && argv[1] != nullptr && argv[1][0] != '\0') { outDir = argv[1]; }
     (void)::SetConsoleOutputCP(CP_UTF8);
 
-    // Per-monitor v2 so the app scales exactly as it does for a real user (the
-    // runner reports its own DPI; see the header for what stays MODELLED).
+    // Per-monitor v2 so the app scales exactly as it does for a real user.
     (void)::SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     INITCOMMONCONTROLSEX ice{};
     ice.dwSize = sizeof(ice);
@@ -384,10 +728,10 @@ int main(int argc, char** argv) {
         std::printf("ui_probe: FAIL — the settings dialog could not be created\n");
         return 3;
     }
-    const UINT dpi = ::GetDpiForWindow(dlg);
+    const UINT nativeDpi = ::GetDpiForWindow(dlg);
     std::printf("ui_probe: settings dialog %p, dpi=%u (%d%%)\n",
-                static_cast<void*>(dlg), static_cast<unsigned>(dpi),
-                static_cast<int>((dpi * 100U) / 96U));
+                static_cast<void*>(dlg), static_cast<unsigned>(nativeDpi),
+                static_cast<int>((nativeDpi * 100U) / 96U));
 
     std::vector<std::pair<std::string, int>> byKind;
     const auto noteKind = [&byKind](const std::string& kind) {
@@ -397,344 +741,190 @@ int main(int argc, char** argv) {
         byKind.emplace_back(kind, 1);
     };
 
-    std::string json;
-    json += "{\n \"tool\": \"kieekey_ui_probe\",\n";
-    json += " \"dpi\": " + std::to_string(static_cast<unsigned>(dpi)) + ",\n";
-    json += " \"scalePercent\": " + std::to_string(static_cast<int>((dpi * 100U) / 96U)) + ",\n";
-    json += " \"note\": \"virtual 150% stays MODELLED (audit_layout.py CA-01a + manual M1)\",\n";
-    json += " \"tabs\": [\n";
-
     const HWND tabsCtl = ::GetDlgItem(dlg, IDC_TAB);
     LRESULT tabCount = tabsCtl != nullptr ? ::SendMessageW(tabsCtl, TCM_GETITEMCOUNT, 0, 0) : 0;
     if (tabCount <= 0) { tabCount = 9; }
 
+    // The scale pass list: the runner's own DPI first, then the 150 % layout
+    // through the app's real DPI-change path (the scale most users run).
+    struct ScalePass { int percent; UINT dpi; };
+    std::vector<ScalePass> passes;
+    passes.push_back({static_cast<int>((nativeDpi * 100U) / 96U), nativeDpi});
+    if (nativeDpi != 144U) { passes.push_back({150, 144U}); }
+
+    std::string json;
+    json += "{\n \"tool\": \"kieekey_ui_probe\",\n";
+    json += " \"nativeDpi\": " + std::to_string(static_cast<unsigned>(nativeDpi)) + ",\n";
+    json += " \"tabs\": [\n";
     int totalControls = 0;
-    for (int tab = 0; tab < static_cast<int>(tabCount); ++tab) {
-        if (KieeKeyProbeSelectTab(dlg, tab) != 0) { break; }
-        ::Sleep(25);
+    bool firstTabEntry = true;
 
-        RECT client{};
-        ::GetClientRect(dlg, &client);
-        RECT page{0, 0, client.right, client.bottom};
-        if (tabsCtl != nullptr) {
-            // TCM_GETITEMRECT returns the tab HEADER button, not the page: the
-            // display rectangle comes from TCM_ADJUSTRECT over the tab control's
-            // own client rect (the first CI run used the header rect and reported
-            // every control as "outside the page 99x112" — a probe bug, not a
-            // product bug). The header rects are still used for the tab_header
-            // check further down.
-            RECT display{};
-            ::GetClientRect(tabsCtl, &display);
-            const RECT before = display;
-            // TCM_ADJUSTRECT documents NO return value (it returns 0), so the
-            // result must be trusted and sanity-checked — testing the return
-            // value silently kept the fallback rectangle, i.e. the WHOLE dialog
-            // client, which made every page check vacuous.
-            (void)::SendMessageW(tabsCtl, TCM_ADJUSTRECT, FALSE,
-                                 reinterpret_cast<LPARAM>(&display));
-            const bool sane = display.right > display.left && display.bottom > display.top &&
-                              display.left >= before.left && display.top >= before.top &&
-                              display.right <= before.right && display.bottom <= before.bottom;
-            if (sane) {
-                POINT tl{display.left, display.top};
-                POINT br{display.right, display.bottom};
-                ::ClientToScreen(tabsCtl, &tl);
-                ::ClientToScreen(tabsCtl, &br);
-                ::ScreenToClient(dlg, &tl);
-                ::ScreenToClient(dlg, &br);
-                page = RECT{tl.x, tl.y, br.x, br.y};
-            }
+    for (const ScalePass& pass : passes) {
+        if (pass.dpi != nativeDpi) {
+            const int ok = KieeKeyProbeSimulateDpi(dlg, pass.dpi);
+            std::printf("ui_probe: simulated DPI change -> %u (%d)\n",
+                        static_cast<unsigned>(pass.dpi), ok);
+            if (ok <= 0) { continue; }
+            ::Sleep(25);
         }
+        for (int tab = 0; tab < static_cast<int>(tabCount); ++tab) {
+            if (KieeKeyProbeSelectTab(dlg, tab) != 0) { break; }
+            ::Sleep(25);
 
-        // The always-visible chrome lives OUTSIDE the tab page by design: the
-        // header strip (icon/title/status), the in-app ON/OFF toggle and the
-        // OK/Cancel/Apply row. `outside_page` must not count it — the second CI
-        // run reported the three header statics as findings for exactly this
-        // reason. Keep in sync with the always-visible controls in main.cpp.
-        static const int kChromeIds[] = {IDOK, IDCANCEL, IDC_BTN_TOGGLE, IDC_BTN_APPLY,
-                                         IDC_STAT_HEAD_ICON, IDC_STAT_HEAD_TITLE,
-                                         IDC_STAT_HEAD_STATUS};
-        const auto isChrome = [](int id) {
-            for (const int chrome : kChromeIds) {
-                if (chrome == id) { return true; }
-            }
-            return false;
-        };
-
-        std::vector<Ctl> ctls;
-        std::vector<Finding> findings;
-
-        // ---- collect ------------------------------------------------------
-        for (HWND child = ::GetWindow(dlg, GW_CHILD); child != nullptr;
-             child = ::GetWindow(child, GW_HWNDNEXT)) {
-            if (child == tabsCtl || ::IsWindowVisible(child) == FALSE) { continue; }
-            Ctl c;
-            c.id = ::GetDlgCtrlID(child);
-            c.klass = className(child);
-            c.text = windowText(child);
-            const RECT r = clientRectOf(dlg, child);
-            c.x = r.left;
-            c.y = r.top;
-            c.w = static_cast<int>(r.right - r.left);
-            c.h = static_cast<int>(r.bottom - r.top);
-            const LONG_PTR style = ::GetWindowLongPtrW(child, GWL_STYLE);
-            // BS_GROUPBOX is 0x7 (a triplet of flag bits), so `style & BS_GROUPBOX`
-            // is ALSO true for BS_DEFPUSHBUTTON (0x1) — which silently excluded the
-            // OK button from the overlap and hit-test checks (a false negative that
-            // hid the fourth stacked button of BS-09).
-            c.groupBox = c.klass == "Button" && (style & BS_TYPEMASK) == BS_GROUPBOX;
-            c.interactive = c.klass == "Button" || c.klass == "Edit" || c.klass == "ComboBox" ||
-                            c.klass == "ListBox";
-            HDC dc = ::GetDC(child);
-            if (dc != nullptr) {
-                TEXTMETRICW tm{};
-                HFONT font = reinterpret_cast<HFONT>(::SendMessageW(child, WM_GETFONT, 0, 0));
-                HGDIOBJ oldFont = font != nullptr ? ::SelectObject(dc, font) : nullptr;
-                if (::GetTextMetricsW(dc, &tm) != FALSE) {
-                    c.fontHeight = static_cast<int>(tm.tmHeight);
-                }
-                if (oldFont != nullptr) { ::SelectObject(dc, oldFont); }
-                ::ReleaseDC(child, dc);
-            }
-            ctls.push_back(c);
-        }
-        totalControls += static_cast<int>(ctls.size());
-
-        // ---- 1. inside the tab page ---------------------------------------
-        // The page is a VIEWPORT: content below it is reachable through the
-        // vertical scrollbar (BS-01), so the bottom bound is the reachable end
-        // of the scroll range, not page.bottom. Anything deeper than that is
-        // painted but unreachable — the beta7 complaint class.
-        SCROLLINFO siReach{};
-        siReach.cbSize = sizeof(siReach);
-        siReach.fMask = SIF_RANGE | SIF_PAGE;
-        const bool haveScroll = ::GetScrollInfo(dlg, SB_VERT, &siReach) != FALSE;
-        const int travelPx = haveScroll
-            ? std::max(0, (siReach.nMax + 1) - static_cast<int>(siReach.nPage))
-            : 0;
-        const int reachableBottom = page.bottom + travelPx;
-        // Horizontal bound: the DIALOG's client rectangle — the only place
-        // where a control can actually be clipped or covered (a window with
-        // WS_VSCROLL, as this dialog has, keeps the scrollbar OUT of its client
-        // rect). The tab control's own frame may legitimately sit under the
-        // page: the app fills the authored page width (audited against the
-        // authored page area) even when TCM_ADJUSTRECT's display rectangle is
-        // narrower because the control reserves scrollbar space. Bounding by the
-        // display rect flagged 17 group boxes for that 4 px difference.
-        for (const Ctl& c : ctls) {
-            if (isChrome(c.id)) { continue; }
-            ++g_checks;
-            if (c.x + c.w > client.right + 1 || c.y + c.h > reachableBottom + 1 ||
-                c.x < client.left - 1 || c.y < page.top - 1) {
-                findings.push_back({"outside_page",
-                    "id " + std::to_string(c.id) + " (" + c.klass + ") at " +
-                    std::to_string(c.x) + "," + std::to_string(c.y) + " " +
-                    std::to_string(c.w) + "x" + std::to_string(c.h) +
-                    " is outside the reachable page (page " + std::to_string(page.left) +
-                    "," + std::to_string(page.top) + ".." + std::to_string(client.right) +
-                    "," + std::to_string(reachableBottom) + ") x=" + std::to_string(c.x) +
-                    (c.y + c.h > reachableBottom + 1 && travelPx > 0
-                         ? " (deeper than the scroll range by " +
-                               std::to_string(c.y + c.h - reachableBottom) + " px)"
-                         : "")});
-            }
-        }
-
-        // ---- 2. no overlaps ------------------------------------------------
-        for (std::size_t i = 0; i < ctls.size(); ++i) {
-            if (ctls[i].groupBox) { continue; }
-            for (std::size_t j = i + 1; j < ctls.size(); ++j) {
-                if (ctls[j].groupBox) { continue; }
-                // A page control MAY sit under the floating chrome when the page
-                // scrolls (that is what the fixed bottom row is for), so only
-                // page-vs-page and chrome-vs-chrome pairs are compared.
-                if (isChrome(ctls[i].id) != isChrome(ctls[j].id)) { continue; }
-                ++g_checks;
-                const int ix = std::min(ctls[i].x + ctls[i].w, ctls[j].x + ctls[j].w) -
-                               std::max(ctls[i].x, ctls[j].x);
-                const int iy = std::min(ctls[i].y + ctls[i].h, ctls[j].y + ctls[j].h) -
-                               std::max(ctls[i].y, ctls[j].y);
-                if (ix > kTouchTolerancePx && iy > kTouchTolerancePx) {
-                    const auto at = [](const Ctl& c) {
-                        return "at " + std::to_string(c.x) + "," + std::to_string(c.y) + " " +
-                               std::to_string(c.w) + "x" + std::to_string(c.h);
-                    };
-                    findings.push_back({"overlap",
-                        "id " + std::to_string(ctls[i].id) + " (" + ctls[i].klass + ") " +
-                        at(ctls[i]) + " and id " + std::to_string(ctls[j].id) + " (" +
-                        ctls[j].klass + ") " + at(ctls[j]) + " overlap by " +
-                        std::to_string(ix) + "x" + std::to_string(iy) + " px"});
+            RECT client{};
+            ::GetClientRect(dlg, &client);
+            RECT page{0, 0, client.right, client.bottom};
+            if (tabsCtl != nullptr) {
+                RECT display{};
+                ::GetClientRect(tabsCtl, &display);
+                const RECT before = display;
+                // TCM_ADJUSTRECT documents NO return value (it returns 0), so the
+                // result is trusted and sanity-checked: anything outside the tab
+                // control's own client rect would make the page checks vacuous.
+                ::SendMessageW(tabsCtl, TCM_ADJUSTRECT, FALSE,
+                               reinterpret_cast<LPARAM>(&display));
+                const bool sane = display.right > display.left && display.bottom > display.top &&
+                                  display.left >= before.left && display.top >= before.top &&
+                                  display.right <= before.right && display.bottom <= before.bottom;
+                if (sane) {
+                    POINT tl{display.left, display.top};
+                    POINT br{display.right, display.bottom};
+                    ::ClientToScreen(tabsCtl, &tl);
+                    ::ClientToScreen(tabsCtl, &br);
+                    ::ScreenToClient(dlg, &tl);
+                    ::ScreenToClient(dlg, &br);
+                    page = RECT{tl.x, tl.y, br.x, br.y};
                 }
             }
-        }
 
-        // ---- 3. real-font text fit -----------------------------------------
-        for (const Ctl& c : ctls) {
-            if (c.text.empty() || c.groupBox) { continue; }
-            const HWND self = ::GetDlgItem(dlg, c.id);
-            const std::wstring wtext = toWide(c.text);
-            ++g_checks;
-            if (c.h <= c.fontHeight + 4) {
-                const int need = textWidth(self, wtext);
-                if (need > c.w + 2) {
-                    findings.push_back({"clip",
-                        "id " + std::to_string(c.id) + " (" + c.klass + ") needs " +
-                        std::to_string(need) + "px (app solver says " +
-                        std::to_string(KieeKeyProbeMeasureStaticHeight(dlg, c.id)) +
-                        "), has " + std::to_string(c.w) + "px (fontH " +
-                        std::to_string(c.fontHeight) + "): " + c.text.substr(0, 60)});
+            // Stable child list for this tab (geometry is re-read per check).
+            std::vector<HWND> all;
+            for (HWND c = ::GetWindow(dlg, GW_CHILD); c != nullptr;
+                 c = ::GetWindow(c, GW_HWNDNEXT)) {
+                if (c == tabsCtl) { continue; }
+                if (::GetDlgCtrlID(c) == 0) { continue; }
+                all.push_back(c);
+            }
+
+            std::vector<Ctl> ctls;
+            std::vector<Finding> findings;
+            Audit a;
+            a.dlg = dlg;
+            a.tabsCtl = tabsCtl;
+            a.client = client;
+            a.page = page;
+            a.tab = tab;
+            a.scalePercent = pass.percent;
+            a.findings = &findings;
+
+            readCtls(dlg, all, tab, page, ctls);
+            totalControls += static_cast<int>(ctls.size());
+
+            // Scroll travel available to the user right now.
+            SCROLLINFO siAll{};
+            siAll.cbSize = sizeof(siAll);
+            siAll.fMask = SIF_RANGE | SIF_PAGE;
+            const bool haveScroll = ::GetScrollInfo(dlg, SB_VERT, &siAll) != FALSE;
+            const int travelPx = haveScroll
+                ? std::max(0, (siAll.nMax + 1) - static_cast<int>(siAll.nPage))
+                : 0;
+
+            checkSinglePage(a, ctls);
+            checkRegions(a, ctls);
+            checkOverlaps(a, ctls);
+            checkReach(a, ctls, travelPx);
+            checkTextFit(a, ctls);
+            checkHitTests(a, ctls);
+            checkTabHeaders(a, static_cast<int>(tabCount), &findings);
+
+            // ---- the scroll path: the user's "khi kéo thì chữ loạn lên" -----
+            if (travelPx > 0) {
+                for (int step = 1; step <= 4; ++step) {
+                    const int want = travelPx * step / 4;
+                    ::SendMessageW(dlg, WM_VSCROLL, MAKEWPARAM(SB_THUMBTRACK, want), 0);
+                    ::Sleep(5);
+                    SCROLLINFO si{};
+                    si.cbSize = sizeof(si);
+                    si.fMask = SIF_POS;
+                    ++g_checks;
+                    const bool got = ::GetScrollInfo(dlg, SB_VERT, &si) != FALSE;
+                    if (!got || static_cast<int>(si.nPos) != want) {
+                        findings.push_back({"scroll_pos",
+                            "asked for offset " + std::to_string(want) + ", the app moved to " +
+                            std::to_string(got ? static_cast<int>(si.nPos) : -1)});
+                    }
+                    readCtls(dlg, all, tab, page, ctls);
+                    Audit sa = a;
+                    sa.prefix = "at scroll " + std::to_string(want) + "/" +
+                                std::to_string(travelPx) + ": ";
+                    checkRegions(sa, ctls);
+                    checkOverlaps(sa, ctls);
+                    checkHitTests(sa, ctls);
                 }
-            } else {
-                const int need = wrappedTextHeight(self, wtext, c.w);
-                if (need > c.h + 2) {
-                    findings.push_back({"clip",
-                        "id " + std::to_string(c.id) + " (" + c.klass + ") wraps to " +
-                        std::to_string(need) + "px (app solver says " +
-                        std::to_string(KieeKeyProbeMeasureStaticHeight(dlg, c.id)) +
-                        ") in a " + std::to_string(c.h) + "px box (w " + std::to_string(c.w) +
-                        ", fontH " + std::to_string(c.fontHeight) + "): " +
-                        c.text.substr(0, 60)});
-                }
+                // Back to the top: the next tab (and the screenshot) expect it.
+                ::SendMessageW(dlg, WM_VSCROLL, MAKEWPARAM(SB_TOP, 0), 0);
+                ::Sleep(5);
+                readCtls(dlg, all, tab, page, ctls);
             }
-        }
 
-        // ---- 4. the scrollbar tells the truth (BS-01) ----------------------
-        {
-            ++g_checks;
-            // PAGE content only: the floating chrome (bottom button row) sits
-            // below the viewport BY DESIGN and is excluded from the depth the app
-            // compares against the viewport, so including it here produced eight
-            // "scrollbar disabled but content ends at y=677" findings whose 677 was
-            // the button row's own bottom edge.
-            int contentBottom = page.top;
-            for (const Ctl& c : ctls) {
-                if (isChrome(c.id)) { continue; }
-                contentBottom = std::max(contentBottom, c.y + c.h);
+            for (const Finding& f : findings) { noteKind(f.kind); }
+            g_findings += static_cast<int>(findings.size());
+
+            const std::wstring shot = toWide(outDir) + L"\\tab" + std::to_wstring(tab) +
+                                      (pass.percent == 100 ? L"" :
+                                       L"_" + std::to_wstring(pass.percent)) + L".png";
+            int capW = 0;
+            int capH = 0;
+            const bool shotOk = captureWindow(dlg, shot, &capW, &capH);
+            const std::string shotName = toUtf8(shot.substr(toWide(outDir).size() + 1));
+
+            if (!firstTabEntry) { json += ",\n"; }
+            firstTabEntry = false;
+            json += "  {\"tab\": " + std::to_string(tab) + ", \"scale\": " +
+                    std::to_string(pass.percent) + ", \"controls\": " +
+                    std::to_string(ctls.size()) + ", \"dialog\": [" +
+                    std::to_string(client.right) + "," + std::to_string(client.bottom) +
+                    "], \"page\": [" + std::to_string(page.left) + "," +
+                    std::to_string(page.top) + "," + std::to_string(page.right) + "," +
+                    std::to_string(page.bottom) + "], \"scrollTravel\": " +
+                    std::to_string(travelPx) + ", \"screenshot\": \"" +
+                    (shotOk ? jsonEscape(shotName) : std::string()) + "\", \"findings\": [";
+            for (std::size_t i = 0; i < findings.size(); ++i) {
+                json += std::string(i > 0 ? ", " : "") + std::string("{\"kind\": \"") +
+                        findings[i].kind + "\", \"detail\": \"" +
+                        jsonEscape(findings[i].detail) + "\"}";
             }
-            SCROLLINFO si{};
-            si.cbSize = sizeof(si);
-            si.fMask = SIF_ALL;
-            const bool have = ::GetScrollInfo(dlg, SB_VERT, &si) != FALSE;
-            const bool enabled = have && si.nPage > 0 && si.nMax > static_cast<int>(si.nPage) - 1;
-            const bool wanted = contentBottom > page.bottom + 1;
-            if (enabled != wanted) {
-                findings.push_back({"scrollbar",
-                    std::string("scrollbar ") + (enabled ? "enabled" : "disabled") +
-                    " but content ends at y=" + std::to_string(contentBottom) +
-                    ", viewport ends at y=" + std::to_string(page.bottom) +
-                    (wanted ? " — content is unreachable" : " — no overflow")});
+            // Compact geometry digest: what is where, so the layout can be
+            // reconstructed (and diffed against a screenshot) without the PNG.
+            json += "], \"geometry\": [";
+            for (std::size_t i = 0; i < ctls.size(); ++i) {
+                const Ctl& c = ctls[i];
+                if (!c.shown) { continue; }
+                json += std::string(i > 0 && !json.empty() ? ", " : "") ;
+                json += "\"" + std::to_string(c.id) + ": " +
+                        rectStr(c.x, c.y, c.w, c.h) +
+                        (c.hasRegion ? (" r" + rectStr(c.region)) : std::string()) +
+                        (c.tabpage < 0 ? " chrome" : "") + "\"";
             }
-        }
+            json += "]}";
 
-        // ---- 5. hit-test: every interactive control owns its centre --------
-        for (const Ctl& c : ctls) {
-            if (!c.interactive || c.groupBox || c.w <= 0 || c.h <= 0) { continue; }
-            ++g_checks;
-            // c.x/c.y are dialog client coordinates already (clientRectOf), so
-            // the point is absolute — the first CI run added page.left/top on
-            // top of them, which sent every probe point to the wrong control.
-            const POINT pt{c.x + c.w / 2, c.y + c.h / 2};
-            // Only the part of the page that is on screen right now can be
-            // clicked: a control scrolled below the viewport (BS-01 keeps them
-            // there on purpose) has no reachable centre until the user scrolls.
-            // Its reachability is the scrollbar check's business.
-            if (pt.y >= client.bottom || pt.x >= client.right || pt.x < 0 || pt.y < 0) {
-                continue;
+            std::printf("  tab %d @%d%%: %d controls, %d findings%s (page %d,%d..%d,%d "
+                        "dialog %dx%d travel %d)\n",
+                        tab, pass.percent, static_cast<int>(ctls.size()),
+                        static_cast<int>(findings.size()),
+                        shotOk ? "" : " (screenshot failed)", static_cast<int>(page.left),
+                        static_cast<int>(page.top), static_cast<int>(page.right),
+                        static_cast<int>(page.bottom), static_cast<int>(client.right),
+                        static_cast<int>(client.bottom), travelPx);
+            for (const Finding& f : findings) {
+                std::printf("    [%s] %s\n", f.kind.c_str(), f.detail.c_str());
             }
-            POINT screenPt{pt.x, pt.y};
-            ::ClientToScreen(dlg, &screenPt);
-            // WindowFromPoint is the API the mouse input path itself uses (screen
-            // coordinates; hidden and disabled windows are skipped). The second
-            // CI run used RealChildWindowFromPoint, which answers inside the tab
-            // control's own (larger) window rectangle and produced a batch of
-            // "hits id 500 (SysTabControl32)" findings that no click could
-            // reproduce. When the two APIs disagree the detail says so.
-            const HWND hit = ::WindowFromPoint(screenPt);
-            const HWND real = ::RealChildWindowFromPoint(dlg, pt);
-            const HWND self = ::GetDlgItem(dlg, c.id);
-            if (hit != nullptr && self != nullptr && hit != self && ::IsChild(self, hit) == FALSE) {
-                std::string detail = "id " + std::to_string(c.id) + " centre (" +
-                    std::to_string(pt.x) + "," + std::to_string(pt.y) + ") hits id " +
-                    std::to_string(::GetDlgCtrlID(hit)) + " (" + className(hit) + ")";
-                if (real != nullptr && real != hit) {
-                    detail += "; RealChildWindowFromPoint says id " +
-                              std::to_string(::GetDlgCtrlID(real));
-                }
-                findings.push_back({"hittest", detail});
-            }
-        }
-
-        // ---- 6. tab headers -------------------------------------------------
-        if (tabsCtl != nullptr) {
-            for (int i = 0; i < static_cast<int>(tabCount); ++i) {
-                wchar_t label[128]{};
-                TCITEMW item{};
-                item.mask = TCIF_TEXT;
-                item.pszText = label;
-                item.cchTextMax = static_cast<int>(sizeof(label) / sizeof(label[0]));
-                RECT ir{};
-                ++g_checks;
-                if (::SendMessageW(tabsCtl, TCM_GETITEMW, static_cast<WPARAM>(i),
-                                   reinterpret_cast<LPARAM>(&item)) == FALSE ||
-                    ::SendMessageW(tabsCtl, TCM_GETITEMRECT, static_cast<WPARAM>(i),
-                                   reinterpret_cast<LPARAM>(&ir)) == FALSE) {
-                    continue;
-                }
-                const int need = textWidth(tabsCtl, label);
-                if (need + 8 > static_cast<int>(ir.right - ir.left)) {
-                    findings.push_back({"tab_header",
-                        "tab " + std::to_string(i) + " needs " + std::to_string(need) +
-                        "px in " + std::to_string(static_cast<int>(ir.right - ir.left)) + "px"});
-                }
-            }
-        }
-
-        // ---- screenshot + JSON ---------------------------------------------
-        int capW = 0;
-        int capH = 0;
-        const std::wstring shot = toWide(outDir) + L"\\tab" + std::to_wstring(tab) + L".png";
-        const bool shotOk = captureWindow(dlg, shot, &capW, &capH);
-
-        for (const Finding& f : findings) { noteKind(f.kind); }
-        g_findings += static_cast<int>(findings.size());
-        json += "  {\"tab\": " + std::to_string(tab) + ", \"controls\": " +
-                std::to_string(ctls.size()) + ", \"dialog\": [" +
-                std::to_string(client.right) + "," + std::to_string(client.bottom) +
-                "], \"page\": [" + std::to_string(page.left) +
-                "," + std::to_string(page.top) + "," + std::to_string(page.right) + "," +
-                std::to_string(page.bottom) + "], \"screenshot\": \"" +
-                (shotOk ? "tab" + std::to_string(tab) + ".png" : "") + "\", \"findings\": [";
-        for (std::size_t i = 0; i < findings.size(); ++i) {
-            json += std::string(i > 0 ? ", " : "") + std::string("{\"kind\": \"") +
-                    findings[i].kind + "\", \"detail\": \"" +
-                    jsonEscape(findings[i].detail) + "\"}";
-        }
-        json += "], \"controls_detail\": [";
-        for (std::size_t i = 0; i < ctls.size(); ++i) {
-            const Ctl& c = ctls[i];
-            json += std::string(i > 0 ? ", " : "") + "{\"id\": " + std::to_string(c.id) +
-                    ", \"class\": \"" + jsonEscape(c.klass) + "\", \"rect\": [" +
-                    std::to_string(c.x) + "," + std::to_string(c.y) + "," +
-                    std::to_string(c.w) + "," + std::to_string(c.h) + "], \"fontH\": " +
-                    std::to_string(c.fontHeight) + ", \"text\": \"" +
-                    jsonEscape(c.text.substr(0, 120)) + "\"}";
-        }
-        json += "]}";
-        json += tab + 1 < static_cast<int>(tabCount) ? ",\n" : "\n";
-
-        std::printf("  tab %d: %d controls, %d findings%s (page %d,%d..%d,%d dialog %dx%d)\n",
-                    tab, static_cast<int>(ctls.size()), static_cast<int>(findings.size()),
-                    shotOk ? "" : " (screenshot failed)", static_cast<int>(page.left),
-                    static_cast<int>(page.top), static_cast<int>(page.right),
-                    static_cast<int>(page.bottom), static_cast<int>(client.right),
-                    static_cast<int>(client.bottom));
-        for (const Finding& f : findings) {
-            std::printf("    [%s] %s\n", f.kind.c_str(), f.detail.c_str());
-            if (f.kind == "overlap" || f.kind == "hittest") { std::printf("\n"); }
         }
     }
-    json += " ],\n \"controls\": " + std::to_string(totalControls) + ",\n \"checks\": " +
-            std::to_string(g_checks) + ",\n \"findings\": " + std::to_string(g_findings) +
+
+    json += "\n ],\n \"controls\": " + std::to_string(totalControls) +
+            ",\n \"checks\": " + std::to_string(g_checks) +
+            ",\n \"findings\": " + std::to_string(g_findings) +
             ",\n \"findingsByKind\": {";
     for (std::size_t i = 0; i < byKind.size(); ++i) {
         json += std::string(i > 0 ? ", " : "") + "\"" + byKind[i].first + "\": " +

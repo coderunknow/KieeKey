@@ -374,13 +374,21 @@ jobs:
           }
           exit $testCode
 
-      # v1.3.0-beta8 (CA-03): the Windows UI probe. It opens the REAL settings
-      # dialog through the app's own creation path (probe-only entry points,
-      # -DKIEEKEY_UI_PROBE) and measures every control on all nine tabs with the
-      # real font: no overlap, nothing outside its tab page, every label fits
-      # its box, the scrollbar is enabled exactly when content overflows, and
-      # every interactive control's centre hit-tests back to itself. Exits
-      # non-zero on any finding; ui_probe.json + one PNG per tab are uploaded.
+      # v1.3.0-beta8 (CA-03/CA-05): the Windows UI probe. It opens the REAL
+      # settings dialog through the app's own creation path (probe-only entry
+      # points, -DKIEEKEY_UI_PROBE) and audits what the USER sees — not just the
+      # rectangles Windows reports:
+      #
+      #   * the EFFECTIVE rectangle of every control (window rect translated by
+      #     its window region), so a hidden or mis-clipped control cannot pass;
+      #   * one page at a time (a control of another tab may never be visible);
+      #   * the real scroll path (WM_VSCROLL/thumb through the whole range), which
+      #     the runner's large 96-dpi desktop otherwise never exercises;
+      #   * the 150 % layout, driven through the app's own DPI-change path
+      #     (KieeKeyProbeSimulateDpi) after the native pass.
+      #
+      # Exits non-zero on any finding; ui_probe.json + one PNG per tab/scale are
+      # uploaded.
       - name: UI probe (real HWNDs, real font metrics)
         if: matrix.platform == 'x64'
         shell: pwsh
@@ -392,16 +400,20 @@ jobs:
           if (Test-Path "$dir/ui_probe.json") {
             $json = Get-Content "$dir/ui_probe.json" -Raw | ConvertFrom-Json
             $kinds = ($json.findingsByKind.PSObject.Properties | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join ' '
-            Write-Host "::notice title=UI probe::$($json.controls) controls, $($json.checks) checks, $($json.findings) findings [$kinds] at DPI $($json.dpi) ($($json.note))"
-            # GitHub keeps at most 10 annotations per step, so each tab gets ONE
-            # annotation carrying every finding of that tab — a partial list of
-            # examples is what made the first two runs hard to act on. The full
-            # detail (every control, every rect) stays in ui_probe.json.
+            Write-Host "::notice title=UI probe::$($json.controls) controls, $($json.checks) checks, $($json.findings) findings [$kinds] (native DPI $($json.nativeDpi), scales $(($json.tabs | Select-Object -ExpandProperty scale -Unique) -join '/'))"
+            # GitHub keeps at most 10 annotations per step, so each tab (and each
+            # scale) gets ONE annotation carrying every finding of that run — a
+            # partial list of examples is what made the first runs hard to act
+            # on. The full detail (every control, every rect, every region) stays
+            # in ui_probe.json.
             foreach ($tab in $json.tabs) {
               if ($tab.findings.Count -eq 0) { continue }
               $parts = @()
               foreach ($f in $tab.findings) { $parts += "[$($f.kind)] $($f.detail)" }
-              Write-Host "::error::tab $($tab.tab) dialog=$($tab.dialog -join 'x') page=[$($tab.page -join ',')] $($tab.findings.Count) finding(s): $($parts -join ' | ')"
+              $geo = @()
+              foreach ($g in $tab.geometry) { $geo += $g }
+              Write-Host "::error::tab $($tab.tab) @$($tab.scale)% dialog=$($tab.dialog -join 'x') page=[$($tab.page -join ',')] travel=$($tab.scrollTravel) $($tab.findings.Count) finding(s): $($parts -join ' | ')"
+              Write-Host "::warning title=geometry tab $($tab.tab) @$($tab.scale)%::$($geo -join ' | ')"
             }
           } else {
             Write-Host "::error::the UI probe did not write ui_probe.json"

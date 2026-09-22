@@ -216,3 +216,14 @@ one-frame cosmetic latency in the live-effects overlay (risk R2); geometric
 ---
 
 *SPDX-License-Identifier: GPL-3.0-or-later*
+
+## CI now checks what the screen shows, not just the rectangles
+
+The Windows UI probe (x64 job) used to compare window rectangles. A real desktop at
+150 % still showed overlapping text while it was green, so the probe now audits the
+**visible** rectangle: window rect ∩ window region ∩ tab page. It also proves that
+only one page is on screen at a time, drives the real vertical-scroll path through
+its whole range and re-checks the geometry at every step, and repeats the entire
+audit at 150 % using the application's own DPI-change path. Everything it finds is
+reported per tab with the numbers (`id: x,y wxh`), so a finding can be reproduced
+without the screenshot.

@@ -3845,11 +3845,13 @@ BOOL CALLBACK rescaleChild(HWND child, LPARAM lp) noexcept {
 }
 } // namespace
 
-// Re-scale an open settings dialog after its DPI changed (WM_DPICHANGED,
-// WM_DISPLAYCHANGE). No-op when the dialog is closed or the DPI is unchanged.
-void refreshSettingsDpi() noexcept {
+// Re-scale an open settings dialog to `newDpi` (rects in place + the matching
+// per-DPI fonts). Shared by the WM_DPICHANGED / WM_DISPLAYCHANGE path and by
+// the CA-03 probe, which needs to audit the 125/150 % layouts on a 96-dpi CI
+// runner: the probe must drive the SAME code a real monitor change drives, not
+// a re-implementation of it.
+void applySettingsDpiScale(UINT newDpi) noexcept {
     if (!g.hSettings) { return; }
-    const UINT newDpi = windowDpi(g.hSettings);
     if (newDpi == 0 || newDpi == g_settingsDpi) { return; }
 
     // Snapshot the OLD fonts (they are still alive — the cache never
@@ -3866,6 +3868,13 @@ void refreshSettingsDpi() noexcept {
     ::EnumChildWindows(g.hSettings, &rescaleChild,
                        reinterpret_cast<LPARAM>(&full));
     ::InvalidateRect(g.hSettings, nullptr, TRUE);
+}
+
+// Re-scale an open settings dialog after its DPI changed (WM_DPICHANGED,
+// WM_DISPLAYCHANGE). No-op when the dialog is closed or the DPI is unchanged.
+void refreshSettingsDpi() noexcept {
+    if (!g.hSettings) { return; }
+    applySettingsDpiScale(windowDpi(g.hSettings));
 }
 
 HWND mkCtl(HWND parent, LPCWSTR cls, LPCWSTR text, DWORD style, int x, int y,
@@ -6841,6 +6850,36 @@ extern "C" int KieeKeyProbeMeasureStaticHeight(HWND dlg, int id) {
     RECT rc{};
     ::GetClientRect(child, &rc);
     return measureStaticTextHeightPx(child, static_cast<int>(rc.right - rc.left));
+}
+
+// CA-03: which tab page does the APP assign this control id to? -1 means the
+// always-visible chrome (header strip, ON/OFF toggle, OK/Cancel/Apply row).
+// The probe uses it to prove that a page control can never be visible while a
+// different page is selected — the failure mode where two tabs' controls are
+// painted on top of each other and every label looks overwritten.
+extern "C" int KieeKeyProbeTabOfControl(HWND dlg, int id) {
+    (void)dlg;
+    const int* const pages[9] = {kTab0, kTab1, kTab2, kTab3, kTab4,
+                                 kTab5, kTab6, kTab7, kTab8};
+    for (int t = 0; t < 9; ++t) {
+        for (const int* p = pages[t]; *p != 0; ++p) {
+            if (*p == id) { return t; }
+        }
+    }
+    return ok::layout::ControlSpec::kAlwaysVisible;
+}
+
+// CA-03: run the REAL DPI-change path (rescale every child in place, then
+// re-solve the layout) with a forced DPI, so the probe can audit the 100/125/
+// 150 % layouts that the CI runner's 96-dpi desktop cannot produce. Without it
+// the high-DPI layout is only MODELLED (scripts/audit_layout.py) and the
+// runtime half — measurement, reflow, refit, scroll fallback — is never
+// exercised at the scales most users actually run.
+extern "C" int KieeKeyProbeSimulateDpi(HWND dlg, UINT dpi) {
+    if (dlg == nullptr || dpi == 0) { return -1; }
+    applySettingsDpiScale(dpi);
+    solveSettingsLayout(dlg);
+    return static_cast<int>(g_settingsDpi);
 }
 
 // The probe switches tabs through the same notification the tab control sends,

@@ -391,7 +391,10 @@ jobs:
           $code = $LASTEXITCODE
           if (Test-Path "$dir/ui_probe.json") {
             $json = Get-Content "$dir/ui_probe.json" -Raw | ConvertFrom-Json
-            Write-Host "::notice title=UI probe::$($json.controls) controls, $($json.checks) checks, $($json.findings) findings at DPI $($json.dpi) ($($json.note))"
+            $kinds = ($json.findingsByKind.PSObject.Properties | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join ' '
+            Write-Host "::notice title=UI probe::$($json.controls) controls, $($json.checks) checks, $($json.findings) findings [$kinds] at DPI $($json.dpi) ($($json.note))"
+            # GitHub keeps at most 10 annotations per step, so the per-kind
+            # totals above are the reliable signal; these are the examples.
             foreach ($tab in $json.tabs) {
               foreach ($f in $tab.findings) {
                 Write-Host "::error::tab $($tab.tab) [$($f.kind)] $($f.detail)"

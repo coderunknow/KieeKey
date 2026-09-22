@@ -375,6 +375,14 @@ int main(int argc, char** argv) {
                 static_cast<void*>(dlg), static_cast<unsigned>(dpi),
                 static_cast<int>((dpi * 100U) / 96U));
 
+    std::vector<std::pair<std::string, int>> byKind;
+    const auto noteKind = [&byKind](const std::string& kind) {
+        for (auto& entry : byKind) {
+            if (entry.first == kind) { ++entry.second; return; }
+        }
+        byKind.emplace_back(kind, 1);
+    };
+
     std::string json;
     json += "{\n \"tool\": \"kieekey_ui_probe\",\n";
     json += " \"dpi\": " + std::to_string(static_cast<unsigned>(dpi)) + ",\n";
@@ -395,12 +403,18 @@ int main(int argc, char** argv) {
         ::GetClientRect(dlg, &client);
         RECT page{0, 0, client.right, client.bottom};
         if (tabsCtl != nullptr) {
-            RECT item{};
-            const LRESULT cur = ::SendMessageW(tabsCtl, TCM_GETCURSEL, 0, 0);
-            if (::SendMessageW(tabsCtl, TCM_GETITEMRECT, static_cast<WPARAM>(cur),
-                               reinterpret_cast<LPARAM>(&item)) != FALSE) {
-                POINT tl{item.left, item.top};
-                POINT br{item.right, item.bottom};
+            // TCM_GETITEMRECT returns the tab HEADER button, not the page: the
+            // display rectangle comes from TCM_ADJUSTRECT over the tab control's
+            // own client rect (the first CI run used the header rect and reported
+            // every control as "outside the page 99x112" — a probe bug, not a
+            // product bug). The header rects are still used for the tab_header
+            // check further down.
+            RECT display{};
+            ::GetClientRect(tabsCtl, &display);
+            if (::SendMessageW(tabsCtl, TCM_ADJUSTRECT, FALSE,
+                               reinterpret_cast<LPARAM>(&display)) != FALSE) {
+                POINT tl{display.left, display.top};
+                POINT br{display.right, display.bottom};
                 ::ClientToScreen(tabsCtl, &tl);
                 ::ClientToScreen(tabsCtl, &br);
                 ::ScreenToClient(dlg, &tl);
@@ -526,7 +540,10 @@ int main(int argc, char** argv) {
         for (const Ctl& c : ctls) {
             if (!c.interactive || c.groupBox || c.w <= 0 || c.h <= 0) { continue; }
             ++g_checks;
-            const POINT pt{page.left + c.x + c.w / 2, page.top + c.y + c.h / 2};
+            // c.x/c.y are dialog client coordinates already (clientRectOf), so
+            // the point is absolute — the first CI run added page.left/top on
+            // top of them, which sent every probe point to the wrong control.
+            const POINT pt{c.x + c.w / 2, c.y + c.h / 2};
             const HWND hit = ::RealChildWindowFromPoint(dlg, pt);
             const HWND self = ::GetDlgItem(dlg, c.id);
             if (hit != nullptr && self != nullptr && hit != self && ::IsChild(self, hit) == FALSE) {
@@ -568,6 +585,7 @@ int main(int argc, char** argv) {
         const std::wstring shot = toWide(outDir) + L"\\tab" + std::to_wstring(tab) + L".png";
         const bool shotOk = captureWindow(dlg, shot, &capW, &capH);
 
+        for (const Finding& f : findings) { noteKind(f.kind); }
         g_findings += static_cast<int>(findings.size());
         json += "  {\"tab\": " + std::to_string(tab) + ", \"controls\": " +
                 std::to_string(ctls.size()) + ", \"page\": [" + std::to_string(page.left) +
@@ -601,11 +619,20 @@ int main(int argc, char** argv) {
         }
     }
     json += " ],\n \"controls\": " + std::to_string(totalControls) + ",\n \"checks\": " +
-            std::to_string(g_checks) + ",\n \"findings\": " + std::to_string(g_findings) + "\n}\n";
+            std::to_string(g_checks) + ",\n \"findings\": " + std::to_string(g_findings) +
+            ",\n \"findingsByKind\": {";
+    for (std::size_t i = 0; i < byKind.size(); ++i) {
+        json += std::string(i > 0 ? ", " : "") + "\"" + byKind[i].first + "\": " +
+                std::to_string(byKind[i].second);
+    }
+    json += "}\n}\n";
 
     const std::wstring jsonPath = toWide(outDir) + L"\\ui_probe.json";
     const bool jsonOk = writeAll(jsonPath, json.data(), json.size());
     std::printf("ui_probe: %d findings over %d controls / %d checks; json %s\n",
                 g_findings, totalControls, g_checks, jsonOk ? "written" : "FAILED");
+    for (const auto& entry : byKind) {
+        std::printf("  %-14s %d\n", entry.first.c_str(), entry.second);
+    }
     return g_findings == 0 ? 0 : 1;
 }

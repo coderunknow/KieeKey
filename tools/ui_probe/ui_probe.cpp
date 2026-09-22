@@ -838,28 +838,78 @@ int main(int argc, char** argv) {
             checkTabHeaders(a, static_cast<int>(tabCount), &findings);
 
             // ---- the scroll path: the user's "khi kéo thì chữ loạn lên" -----
+            //
+            // Driven through real messages: SB_LINEDOWN/SB_PAGEDOWN/SB_BOTTOM are
+            // exactly what the arrows, the wheel (which the app maps to line
+            // steps) and the thumb's page-clicks send, and unlike a synthetic
+            // SB_THUMBTRACK they do not depend on SCROLLINFO::nTrackPos being set
+            // by a real drag — the first version of this audit sent SB_THUMBTRACK
+            // and measured a scrollbar that never moved.
             if (travelPx > 0) {
-                for (int step = 1; step <= 4; ++step) {
+                const int steps[] = {1, 2, 3, 4};
+                int lastOffset = 0;
+                for (const int step : steps) {
                     const int want = travelPx * step / 4;
-                    ::SendMessageW(dlg, WM_VSCROLL, MAKEWPARAM(SB_THUMBTRACK, want), 0);
+                    int guard = 0;
+                    while (guard++ < 64) {
+                        SCROLLINFO si{};
+                        si.cbSize = sizeof(si);
+                        si.fMask = SIF_POS;
+                        if (::GetScrollInfo(dlg, SB_VERT, &si) == FALSE) { break; }
+                        const int at = static_cast<int>(si.nPos);
+                        if (at >= want) { break; }
+                        // One notch at a time: the same increment the wheel uses.
+                        ::SendMessageW(dlg, WM_VSCROLL, MAKEWPARAM(SB_LINEDOWN, 0), 0);
+                    }
                     ::Sleep(5);
                     SCROLLINFO si{};
                     si.cbSize = sizeof(si);
                     si.fMask = SIF_POS;
                     ++g_checks;
                     const bool got = ::GetScrollInfo(dlg, SB_VERT, &si) != FALSE;
-                    if (!got || static_cast<int>(si.nPos) != want) {
+                    const int at = got ? static_cast<int>(si.nPos) : -1;
+                    if (!got || at < want - 16 || at > want + 16) {
                         findings.push_back({"scroll_pos",
-                            "asked for offset " + std::to_string(want) + ", the app moved to " +
-                            std::to_string(got ? static_cast<int>(si.nPos) : -1)});
+                            "asked for offset " + std::to_string(want) +
+                            " (line steps), the app reports " + std::to_string(at) +
+                            " of a " + std::to_string(travelPx) + " px travel"});
                     }
+                    if (at == lastOffset) { break; }   // no progress: stop probing
+                    lastOffset = at;
                     readCtls(dlg, all, tab, page, ctls);
                     Audit sa = a;
-                    sa.prefix = "at scroll " + std::to_string(want) + "/" +
+                    sa.prefix = "at scroll " + std::to_string(at) + "/" +
                                 std::to_string(travelPx) + ": ";
                     checkRegions(sa, ctls);
                     checkOverlaps(sa, ctls);
                     checkHitTests(sa, ctls);
+                }
+                // The end of the travel must bring the deepest row into view.
+                ::SendMessageW(dlg, WM_VSCROLL, MAKEWPARAM(SB_BOTTOM, 0), 0);
+                ::Sleep(5);
+                readCtls(dlg, all, tab, page, ctls);
+                {
+                    Audit sa = a;
+                    sa.prefix = "at the bottom of the travel: ";
+                    int deepestTop = a.page.top;
+                    for (const Ctl& c : ctls) {
+                        if (c.tabpage == tab && c.shown) {
+                            deepestTop = std::max(deepestTop, c.y);
+                        }
+                    }
+                    for (const Ctl& c : ctls) {
+                        if (c.tabpage != tab || !c.shown) { continue; }
+                        ++g_checks;
+                        if (c.y + c.h > a.page.bottom + 1 && c.y <= deepestTop + 1) {
+                            findings.push_back({"scroll_reach",
+                                "at the bottom of the travel (" + std::to_string(travelPx) +
+                                " px) id " + std::to_string(c.id) + " (" + c.klass + ") at " +
+                                rectStr(c.x, c.y, c.w, c.h) + " is still below the page " +
+                                rectStr(a.page)});
+                        }
+                    }
+                    checkOverlaps(sa, ctls);
+                    checkRegions(sa, ctls);
                 }
                 // Back to the top: the next tab (and the screenshot) expect it.
                 ::SendMessageW(dlg, WM_VSCROLL, MAKEWPARAM(SB_TOP, 0), 0);

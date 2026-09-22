@@ -6877,6 +6877,22 @@ extern "C" int KieeKeyProbeTabOfControl(HWND dlg, int id) {
 // exercised at the scales most users actually run.
 extern "C" int KieeKeyProbeSimulateDpi(HWND dlg, UINT dpi) {
     if (dlg == nullptr || dpi == 0) { return -1; }
+    const UINT oldDpi = g_settingsDpi;
+    if (oldDpi == 0 || oldDpi == dpi) { return static_cast<int>(g_settingsDpi); }
+    // WM_DPICHANGED first applies the monitor's suggested WINDOW rect and only
+    // then rescales the children. Skipping that step (the first version of this
+    // hook did) scales 1.5x content inside an unscaled window: every page child
+    // is then outside a page that never grew, and the audit reports 80 phantom
+    // `outside_page` findings instead of the layout the user sees.
+    RECT rc{};
+    if (::GetWindowRect(dlg, &rc)) {
+        const int w = ::MulDiv(rc.right - rc.left, static_cast<int>(dpi),
+                               static_cast<int>(oldDpi));
+        const int h = ::MulDiv(rc.bottom - rc.top, static_cast<int>(dpi),
+                               static_cast<int>(oldDpi));
+        ::SetWindowPos(dlg, nullptr, rc.left, rc.top, w, h,
+                       SWP_NOZORDER | SWP_NOACTIVATE);
+    }
     applySettingsDpiScale(dpi);
     solveSettingsLayout(dlg);
     return static_cast<int>(g_settingsDpi);

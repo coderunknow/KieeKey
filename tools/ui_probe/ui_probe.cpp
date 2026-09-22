@@ -837,6 +837,42 @@ int main(int argc, char** argv) {
             checkHitTests(a, ctls);
             checkTabHeaders(a, static_cast<int>(tabCount), &findings);
 
+            // ---- v1.3.0-beta8 (bug BS-12): the scroll path may MOVE, never ---
+            //      RESIZE. Rows whose runtime text grows (the 500 ms timer's
+            //      verdict / arcade / AI / coach lines ask for more height than
+            //      the solver gave them) have to KEEP that height when the user
+            //      scrolls: beta8 re-applied the SOLVED height on every step,
+            //      so the line the user had just read was cut in half again —
+            //      "khi kéo thì chữ loạn lên".
+            //
+            //      The app's timer would re-grow such a row mid-sweep, so the
+            //      probe stops it first (it owns this dialog) and then does what
+            //      the runtime growth path does: make ONE page control 20 px
+            //      taller. The control is the deepest one that still fits in the
+            //      reachable page, so its extra 20 px cannot overlap anything
+            //      and cannot go out of reach — and its height is then measured
+            //      at every scroll offset below.
+            int grownId = 0;
+            int grownH = 0;
+            if (travelPx > 0) {
+                ::KillTimer(dlg, 1);   // the app's 500 ms text/layout timer
+                ::Sleep(10);
+                const Ctl* victim = nullptr;
+                for (const Ctl& c : ctls) {
+                    if (c.tabpage != tab || !c.shown || c.id == 0 || c.groupBox) { continue; }
+                    if (c.hwnd == nullptr) { continue; }
+                    if (c.y + c.h + 20 > a.page.bottom + travelPx) { continue; }
+                    if (victim == nullptr || c.y > victim->y) { victim = &c; }
+                }
+                if (victim != nullptr) {
+                    ::SetWindowPos(victim->hwnd, nullptr, 0, 0, victim->w, victim->h + 20,
+                                   SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+                    grownId = victim->id;
+                    grownH = victim->h + 20;
+                    readCtls(dlg, all, tab, page, ctls);
+                }
+            }
+
             // ---- the scroll path: the user's "khi kéo thì chữ loạn lên" -----
             //
             // Driven through real messages: SB_LINEDOWN/SB_PAGEDOWN/SB_BOTTOM are
@@ -877,6 +913,21 @@ int main(int argc, char** argv) {
                     if (at == lastOffset) { break; }   // no progress: stop probing
                     lastOffset = at;
                     readCtls(dlg, all, tab, page, ctls);
+                    if (grownId != 0) {   // BS-12: the runtime height must survive
+                        for (const Ctl& c : ctls) {
+                            if (c.id != grownId) { continue; }
+                            ++g_checks;
+                            if (c.h < grownH) {
+                                findings.push_back({"scroll_resize",
+                                    "id " + std::to_string(c.id) + " (" + c.klass + ") was " +
+                                    std::to_string(grownH) + "px tall before scrolling and is " +
+                                    std::to_string(c.h) + "px at offset " + std::to_string(at) +
+                                    " of " + std::to_string(travelPx) +
+                                    " — the scroll path RESIZED a control (the app owns the "
+                                    "rects; runtime growth must survive)"});
+                            }
+                        }
+                    }
                     Audit sa = a;
                     sa.prefix = "at scroll " + std::to_string(at) + "/" +
                                 std::to_string(travelPx) + ": ";

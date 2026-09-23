@@ -310,6 +310,8 @@ build test_progression_persist -std=c++2b -O2 -Isrc/app -Isrc/core -pthread $INC
 # v1.3.0-beta8 (DS-01/02/05): the diagnostics TEXT layer — quick-check token
 # mapping, the one builder shared by the pane and the export, truth markers.
 build test_diag_report_text -std=c++2b -O2 -Isrc/app $INC tests/test_diag_report_text.cpp || rc=1
+# v1.3.0-beta8 (RS-06): the digest the app prints about itself (FIPS 180-4).
+build test_sha256           -std=c++2b -O2 $INC tests/test_sha256.cpp || rc=1
 # v1.3.0-beta8 (CA-06): the app measures its own layout into the report the
 # user sends — overlap / clipped / cut / unreachable, pure rectangle math.
 build test_diag_self_check -std=c++2b -O2 -Isrc/app $INC tests/test_diag_self_check.cpp || rc=1

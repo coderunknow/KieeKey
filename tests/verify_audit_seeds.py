@@ -165,11 +165,11 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "WS_CLIPSIBLINGS",
     ),
     (
-        "BS-16c  the dialog back to an uncomposited frame",
+        "BS-17  a DPI rescale that keeps the stale baselines",
         "src/app/main.cpp",
-        'CreateWindowExW(WS_EX_COMPOSITED, L"KieeKeySettings"',
-        'CreateWindowExW(0, L"KieeKeySettings"',
-        "WS_EX_COMPOSITED",
+        "    dropSettingsLayoutBaseline();\n",
+        "    /* seeded: stale baselines kept */\n",
+        "drops the layout baseline",
     ),
     (
         "BS-16a  a tab switch that leaves the old tab on screen",
@@ -184,6 +184,27 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "!ok::layout::shouldRequestReflow(asked, need)",
         "(need > asked)",
         "dedupes by required height",
+    ),
+    (
+        "BS-17  the solver reading the live (scrolled) rectangle again",
+        "src/app/main.cpp",
+        "            spec.rect.y = y;",
+        "            spec.rect.y = live.y;",
+        "solverInputRect",
+    ),
+    (
+        "RS-06  a report without the build identity",
+        "src/app/main.cpp",
+        "    out = buildIdentityUtf8() + out;",
+        "    /* seeded: no identity */",
+        "no longer part of the diagnostics report",
+    ),
+    (
+        "BS-17  the probe's blank-page invariant deleted",
+        "tools/ui_probe/ui_probe.cpp",
+        "void checkEmptyPage(const Audit& a, const std::vector<Ctl>& ctls, int travelPx) {",
+        "void checkEmptyPageRemoved(const Audit& a, const std::vector<Ctl>& ctls, int travelPx) {",
+        "checkEmptyPage",
     ),
     (
         "BS-16e  the probe's z-order rule deleted",

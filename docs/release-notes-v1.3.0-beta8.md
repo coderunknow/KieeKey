@@ -151,6 +151,51 @@ the manual checklist below.
 
 ---
 
+## Vòng 6 — sửa ĐÚNG NGUYÊN NHÂN GỐC: bố cục bị "trôi" khi cuộn rồi giải lại
+
+**Triệu chứng bạn báo:** hàng hiện hai lần ở hai vị trí, chữ bị kéo lên trên, rồi
+mất sạch nội dung và không còn thanh cuộn.
+
+**Nguyên nhân (BS-17).** Cuộn trang trong hộp thoại Cài đặt chỉ là thao tác VẼ:
+nó đẩy các control lên rồi cắt theo khung trang, bố cục không đổi. Nhưng bộ giải
+bố cục lại đọc hình chữ nhật HIỆN TẠI (đã bị cuộn) làm đầu vào, mà bộ giải chỉ
+có thể đẩy control XUỐNG. Hệ quả: mỗi lần giải lại (xảy ra khi một dòng chữ sống
+cần thêm chỗ — nhịp 0,5 giây), toàn bộ trang bị đẩy LÊN đúng bằng vị trí cuộn, và
+"độ sâu nội dung" — con số dùng để dựng thanh cuộn — ngắn đi tương ứng. Lặp vài
+lần: nội dung trôi ra khỏi khung, độ sâu còn 0, thanh cuộn biến mất. Đây chính là
+"mất nội dung, không hiện scrollbar" trong ảnh bạn gửi.
+
+Vì sao CI vẫn xanh: mọi phép đo đều đo một hộp thoại VỪA giải xong và CHƯA cuộn.
+Chỉ cần cuộn rồi bắt app giải lại là lộ — và trước đây không lớp kiểm nào làm
+điều đó.
+
+**Đã sửa:**
+* Bộ giải lấy đầu vào từ **bố cục gốc đã lưu** (`g_settingsScroll.solved`), chỉ
+  dùng hình chữ nhật hiện tại cho lần giải đầu tiên; cuộn không còn ảnh hưởng tới
+  bố cục (`ok::layout::solverInputRect`).
+* Đổi DPI thì xoá bố cục gốc (nó thuộc tỉ lệ cũ) trước khi giải lại.
+* Hai phép kiểm mới trong probe chạy trên Windows thật: `empty_page` (một tab mà
+  không control nào nhìn thấy = lỗi) và `reflow_moved` (cuộn tới nửa trang, gọi
+  đúng đường giải lại của app, rồi yêu cầu: không control nào đi LÊN, độ sâu nội
+  dung không giảm, vị trí cuộn giữ nguyên).
+* `tests/test_dialog_layout.cpp` mô phỏng đúng vòng lặp đó và ghi lại số liệu
+  TRƯỚC khi sửa (dòng 160 → 120, độ sâu giảm 2×vị trí cuộn) — ĐỎ nếu lỗi quay lại.
+* Bỏ `WS_EX_COMPOSITED` (đã thử ở vòng 5): nhấp nháy đã được sửa từ gốc, không cần
+  đổi cả mô hình vẽ.
+
+## Vòng 6 — SHA-256 của bản dựng, hiện ngay trong app (RS-06)
+
+Ba vòng liên tiếp phải điều tra lại vì báo cáo mô tả một bản dựng khác với bản
+đang chạy (tiến trình cũ còn trong khay). Nay app tự băm chính file .exe của nó:
+
+* **Thanh tiêu đề** cửa sổ Cài đặt in 8 ký tự đầu, ví dụ
+  `KieeKey — Cài đặt & Thông tin  [e615db2e]` — ảnh chụp nào cũng có.
+* **Đầu file báo cáo** (tab Chẩn đoán → Xuất báo cáo) in **đầy đủ 64 ký tự**
+  SHA-256, kèm đường dẫn file và phiên bản PE, trong mục `=== Bản dựng ===`.
+  Đối chiếu với `SHA256SUMS.txt` của bản phát hành: khớp = đúng bản đang thử.
+* Kèm `tests/test_sha256.cpp` (vector chuẩn FIPS 180-4, biên đệm 55/56/63/64/65
+  byte, vector một triệu ký tự, đọc từng khối == đọc một lần).
+
 ## 3. Manual Windows checklist (please tick each item)
 
 Nothing Windows-only is claimed as verified on Linux or CI evidence alone. Ten

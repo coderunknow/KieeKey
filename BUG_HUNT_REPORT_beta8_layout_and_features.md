@@ -713,6 +713,89 @@ different GPU driver could still leave a difference. The user's screenshot after
 this build is the authority — which is exactly what `TESTING.txt` §V1–V4 asks
 for.
 
+## 1f. BS-17 — the root cause behind every screenshot: a reflow folded the scroll offset into the layout
+
+This is the defect the beta8 layout round was looking for, and it explains **all
+three** field screenshots — rows drawn twice at two offsets, "text pulled
+upwards", and finally the empty page with no scrollbar — as one mechanism.
+
+### The mechanism
+
+Scrolling here is a *render* operation: `scrollChildRect()` moves the page
+children up by the offset and clips them to the viewport. The layout does not
+change. But `solveSettingsLayout()` took its input geometry from the **live
+window rectangles**, and `autoFit()` may only ever move a control **down**. So:
+
+1. the user scrolls by `offset` → every page child sits at `baseline − offset`;
+2. a live row needs more room (the 500 ms tick asks for a reflow) → the solver
+   reads those rectangles as the authored layout and solves from there;
+3. the plan **replaces the baseline**, and `reflowSettingsLayoutPreservingScroll()`
+   then re-applies the scroll offset on top of it — subtracting it twice.
+
+Net effect of one reflow: the whole page moves **up by up to `offset` px**, and
+the content depth (`perTabContentBottom` — the number the scroll range is built
+from) shrinks by the same amount. Let it happen a few times and the content
+marches out of the viewport: the page is empty, the range collapses to 0 and the
+scrollbar has nothing left to scroll — "mất nội dung, không hiện scrollbar".
+
+| Field report | What the user saw | What the mechanism was doing |
+|---|---|---|
+| r3/r4 screenshot | rows visible **twice** at two offsets, tab labels over rows, text pulled up | the drift in progress + the stale pixels it left behind (BS-16a) |
+| r5 screenshot | **empty page, no scrollbar** | the drift finished: content above the viewport, range 0 |
+| "không kéo thì giật giật" | the dialog twitching while idle | every reflow MOVED every page child (on top of the earlier 2 Hz re-solve, BS-16d) |
+
+### Why four green CI rounds sat on top of it
+
+The static audit models the authored rectangles. The portable suites model the
+solver in isolation. The probe measures a **freshly solved** dialog: it scrolls,
+re-reads, scrolls back — but nothing ever asked the app to *re-solve while
+scrolled*, which is the only way to reach the drift.
+
+### The fix
+
+* `ok::layout::solverInputRect(live, offset)` — the one case with no baseline yet
+  (the first solve) adds the offset back;
+* the solver's input for a page child is the **baseline it produced last time**
+  (`g_settingsScroll.solved`), with x/w/h taken from the live rectangle (the axes
+  scrolling does not touch);
+* `dropSettingsLayoutBaseline()` on a DPI rescale — the baselines are in the old
+  scale's pixels;
+* probe, on real Windows: **`empty_page`** (a tab whose controls are all invisible
+  is a defect, and the drifted variant says so explicitly) and **`reflow_moved`**
+  (scroll to half travel, drive the app's own reflow entry point, then require:
+  nothing moved up, the content depth did not shrink, the scroll position
+  survived);
+* `scripts/check_dialog_paint_rules.py` rule 6 + two seeded mutations in
+  `verify_audit_seeds.py`;
+* `tests/test_dialog_layout.cpp::testReflowWhileScrolledKeepsTheLayout` — RED on
+  the pre-fix input (the row moves 160 → 120 = up by the offset, and the depth
+  shrinks by 2 × offset, which is what empties the scrollbar), green with the
+  baseline input.
+
+### Also reverted: WS_EX_COMPOSITED
+
+The r5 blank page was first attacked with `WS_EX_COMPOSITED`. It is **reverted**:
+it changes the painting model of the whole subtree, and the jitter it was meant
+to hide has a cause (the reflow) and a fix at the source (BS-16d + BS-16a). A
+change that broad has to earn its place with evidence.
+
+## 1g. RS-06 — the build must be able to say which build it is
+
+Three rounds in a row went into reports describing a build the reporter was not
+running (an older process was still in the tray), so "which build produced this?"
+has to be answerable from the artefact itself.
+
+* `src/core/Sha256.hpp` — FIPS 180-4, header-only, no dependencies; the app hashes
+  its **own** executable once, lazily, cached, never on the input path;
+* the digest is in the **settings window title** (`[e615db2e]` — in every
+  screenshot) and, in full 64-character form with the executable path and the PE
+  version, as the **first block of the diagnostics report**, where it can be
+  compared byte for byte against the published `SHA256SUMS.txt`;
+* `tests/test_sha256.cpp` — the four FIPS vectors, the 55/56/63/64/65-byte padding
+  boundaries, the million-`a` vector, `digest()` as a pure function, `reset()`
+  reuse, and binary input with embedded NULs (a PE file is full of them);
+* gate rule 7 + a seed keep the report block from disappearing.
+
 ## 2. Verification layers
 
 | Layer | What it proves | Result |

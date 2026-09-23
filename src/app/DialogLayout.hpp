@@ -112,6 +112,39 @@ struct Rect {
 }
 
 //---------------------------------------------------------------------------
+// v1.3.0-beta8 (bug BS-17) — THE SOLVER MUST START FROM THE UNSCOLLED LAYOUT.
+//
+// "Scrolling" in this dialog is a RENDER operation: it moves the page children
+// up by the offset and clips them to the viewport (scrollChildRect below). It
+// is not a layout change — but the solver took its input geometry from the live
+// window rectangles, and `autoFit` may only ever move a control DOWN. So every
+// re-solve that happened while the user was scrolled re-absorbed the scroll
+// offset as a layout change:
+//
+//   * the row that scrolling had pushed ABOVE the page top was `pageTopShiftPx`'s
+//     `authoredTop`, so the shift became `offset + (realGap)` and the whole page
+//     was dragged back down by the offset it should not have known about;
+//   * the plan then REPLACED the baseline, so the next reflow started from the
+//     drifted geometry and drifted again — up to `offset` px per reflow.
+//
+// The timer asks for a reflow every time a live row needs more room, so on a
+// 150 % desktop with a scrolled page this marched the whole page upward: rows
+// left the top of the viewport, the reported content depth shrank with them, the
+// scroll range collapsed to 0 and the page ended up empty with no scrollbar at
+// all ("mất nội dung, không hiện scrollbar"), while every portable check and the
+// CI probe — both of which measure a freshly solved, unscrolled dialog — stayed
+// green.
+//
+// The rule: the solver's input for a page child is the BASELINE it produced last
+// time (the layout, at offset 0) — never the live rectangle, which is the
+// render. A child with no baseline yet (the first solve, before any scroll can
+// exist) uses its live rectangle with the current offset added back; this
+// function is that one case, shared by the app and by tests.
+[[nodiscard]] inline Rect solverInputRect(const Rect& live, int scrollOffsetPx) noexcept {
+    return Rect{live.x, live.y + scrollOffsetPx, live.w, live.h};
+}
+
+//---------------------------------------------------------------------------
 // v1.3.0-beta8 (bug BS-09) — the bottom chrome row keeps its X when the
 // dialog grows.
 //

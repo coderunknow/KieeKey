@@ -750,6 +750,85 @@ void testScrollModelNeverResizesAChild() {
     std::cout << "  [PASS] BS-12: scrolling moves a child and never resizes it\n";
 }
 
+// v1.3.0-beta8 (bug BS-17): A REFLOW WHILE THE PAGE IS SCROLLED MUST NOT MOVE
+// THE LAYOUT.
+//
+// This models the app's loop with the real model functions: solve (offset 0) ->
+// scroll by `offset` -> a live row needs more room -> re-solve -> restore the
+// offset. What changed in the fix is the solver's INPUT: the pre-fix code fed it
+// the live rectangle (the render, already moved up by the offset), the fix feeds
+// it the baseline (the layout, at offset 0).
+void testReflowWhileScrolledKeepsTheLayout() {
+    const int pageTop = 100;
+    const int offset = 40;
+    // Two rows of one page, both below the page top (the normal authored gap).
+    const ok::layout::Rect baseTop{20, 200, 400, 28};
+    const ok::layout::Rect baseDeep{20, 600, 400, 28};
+    // What the user sees after scrolling: both rows are `offset` px higher.
+    const ok::layout::Rect liveTop{20, baseTop.y - offset, 400, 28};
+    const ok::layout::Rect liveDeep{20, baseDeep.y - offset, 400, 28};
+
+    // --- pre-fix: the live rectangle is the solver's input ---
+    const int shiftFromLive = ok::layout::pageTopShiftPx(liveTop.y, pageTop);
+    assert(shiftFromLive == 0);            // the live row is still below the top
+    std::vector<ok::layout::ControlSpec> liveSpecs;
+    for (const ok::layout::Rect& r : {liveTop, liveDeep}) {
+        ok::layout::ControlSpec c;
+        c.id = static_cast<int>(liveSpecs.size()) + 1;
+        c.rect = r;
+        c.tab = 0;
+        c.growable = true;
+        c.requiredHeight = 28;             // the text still fits: no real growth
+        liveSpecs.push_back(c);
+    }
+    const ok::layout::LayoutPlan livePlan =
+        ok::layout::autoFit(liveSpecs, pageTop, 700);
+    assert(livePlan.rects[0].y == 160);    // solved at the live position
+    // The solve writes that plan as the new BASELINE and then restores the scroll
+    // offset, which subtracts the offset a SECOND time:
+    const int renderedTopAfterReflow = livePlan.rects[0].y - offset;
+    assert(renderedTopAfterReflow == 120); // was 160 on screen: moved UP by 40...
+    assert(renderedTopAfterReflow == liveTop.y - offset);   // ...the offset again
+    // ...and the page's depth -- the number the scroll range is built from --
+    // shrank by the same amount, so repeating this empties the scrollbar:
+    const int depthBefore = baseDeep.bottom();
+    const int depthAfter = livePlan.rects[1].y - offset + livePlan.rects[1].h;
+    assert(depthBefore - depthAfter == 2 * offset);
+    assert(ok::layout::scrollMetrics(400, depthBefore - pageTop).enabled);
+    assert(!ok::layout::scrollMetrics(400, depthAfter - pageTop).enabled ==
+           (depthAfter - pageTop <= 400));
+
+    // --- the fix: the baseline is the input, the offset is render-only ---
+    const ok::layout::Rect startTop = ok::layout::solverInputRect(liveTop, offset);
+    assert(startTop.y == baseTop.y);       // 200: the scroll is undone
+    std::vector<ok::layout::ControlSpec> baseSpecs;
+    for (const ok::layout::Rect& r : {startTop, ok::layout::solverInputRect(liveDeep, offset)}) {
+        ok::layout::ControlSpec c;
+        c.id = static_cast<int>(baseSpecs.size()) + 1;
+        c.rect = r;
+        c.tab = 0;
+        c.growable = true;
+        c.requiredHeight = 28;
+        baseSpecs.push_back(c);
+    }
+    const ok::layout::LayoutPlan basePlan = ok::layout::autoFit(baseSpecs, pageTop, 700);
+    assert(basePlan.rects[0].y == baseTop.y);         // the layout is untouched
+    assert(basePlan.rects[1].y == baseDeep.y);
+    // The render still applies the offset, so the user sees exactly what they
+    // saw before the reflow: nothing moves.
+    assert(basePlan.rects[0].y - offset == liveTop.y);
+    assert(basePlan.rects[1].y - offset == liveDeep.y);
+
+    // A row that really did grow still grows, still only downwards, and the
+    // rows below it keep their distance.
+    baseSpecs[0].requiredHeight = 60;
+    const ok::layout::LayoutPlan grown = ok::layout::autoFit(baseSpecs, pageTop, 700);
+    assert(grown.rects[0].y == baseTop.y && grown.rects[0].h == 60);
+    assert(grown.rects[1].y == baseDeep.y + (60 - 28));
+    std::cout << "  [PASS] BS-17: a reflow while scrolled keeps the layout\n";
+}
+
+
 // v1.3.0-beta8 (bug BS-12): a runtime text change that needs more room is a
 // REFLOW request, not a local resize: the controls below the row have to move
 // with it (and the scroll range has to grow), or the text runs under them.
@@ -808,6 +887,9 @@ int main() {
     // growth is a reflow request, not a local resize.
     testScrollModelNeverResizesAChild();
     testRuntimeGrowthRequestsAReflow();
+    // v1.3.0-beta8 (bug BS-17): a reflow while the page is scrolled must not
+    // move the layout (the solver starts from the baseline, not from the render).
+    testReflowWhileScrolledKeepsTheLayout();
     std::cout << "=== ALL DIALOG LAYOUT TESTS PASSED ===\n";
     return 0;
 }

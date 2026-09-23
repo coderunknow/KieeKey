@@ -418,6 +418,7 @@ std::string rectStr(const RECT& r) {
 }
 
 extern "C" void KieeKeyProbeFreezeUi(HWND dlg);   // main.cpp, probe build only
+extern "C" void KieeKeyProbeReflowNow(HWND dlg);   // the app's growth reflow (BS-17)
 
 // Reads the live geometry of every child of the dialog. `all` is the stable
 // child list (refreshed geometry re-reads it after a scroll).
@@ -902,6 +903,144 @@ void checkStalePixels(const Audit& a) {
         " hidden or painted-through controls were left behind"});
 }
 
+// ---- j) a page with nothing on it (BS-17) ---------------------------------
+//
+// The single most visible defect a user can report: the page area is empty. It
+// is also invisible to every other check here — "no overlap", "nothing outside
+// the page" and "no stale pixels" are all satisfied by a page that draws
+// nothing at all, and the geometry digest happily lists 120 controls that are
+// each off screen for a reason of their own. One of them has to be visible: a
+// tab with content and an empty viewport is a defect, not a layout.
+void checkEmptyPage(const Audit& a, const std::vector<Ctl>& ctls, int travelPx) {
+    int visible = 0;
+    int pageControls = 0;
+    int firstTop = -1;      // the top-most control of the tab, visible or not
+    for (const Ctl& c : ctls) {
+        if (c.tabpage != a.tab) { continue; }
+        ++pageControls;
+        firstTop = (firstTop < 0) ? c.y : std::min(firstTop, c.y);
+        if (c.onScreen) { ++visible; }
+    }
+    if (pageControls == 0) { return; }     // a tab with no controls is not blank
+    ++g_checks;
+    if (visible == 0) {
+        // The most specific message wins: content that starts BELOW the page is
+        // the signature of a layout that drifted away (BS-17), content spread
+        // around with nothing showing is a region/geometry defect.
+        const std::string where =
+            (firstTop > a.page.bottom)
+                ? ("the whole tab starts below the page bottom (first control at y=" +
+                   std::to_string(firstTop) + ", page " +
+                   rectStr(a.page.left, a.page.top, a.page.right - a.page.left,
+                           a.page.bottom - a.page.top) +
+                   ") — the content has drifted out of the viewport")
+                : std::string("the controls of this tab are all outside the page"
+                              " rectangle for a reason of their own");
+        a.findings->push_back({"empty_page",
+            a.prefix + "none of the " + std::to_string(pageControls) +
+            " controls of this tab is visible (scroll travel " +
+            std::to_string(travelPx) + "px): " + where});
+    }
+}
+
+// ---- k) a reflow while the page is scrolled (BS-17) ------------------------
+//
+// The app re-solves the layout whenever a live row needs more room, and it does
+// so at whatever scroll offset the user is at. That re-solve must be a function
+// of the LAYOUT, never of the render: the pre-fix solver read its input geometry
+// from the live window rectangles, so the scroll offset was folded into the
+// layout and every reflow dragged the page up by up to `offset` px (and shrank
+// the reported content depth with it, until the range collapsed to nothing and
+// the page was empty). CI never saw it: every other measurement here happens on
+// a freshly solved dialog at offset 0.
+//
+// The check drives the app's own reflow entry point at half travel and asserts
+// what the user's eyes assert: nothing moved up, no control disappeared, the
+// content depth did not shrink, and the scroll position survived.
+void checkReflowWhileScrolled(const Audit& a, HWND dlg, const std::vector<HWND>& all,
+                              const RECT& page, std::vector<Ctl>& ctls, int travelPx) {
+    if (a.dlg == nullptr || travelPx <= 0) { return; }
+    const int want = travelPx / 2;
+    int guard = 0;
+    while (guard++ < 128) {
+        SCROLLINFO si{};
+        si.cbSize = sizeof(si);
+        si.fMask = SIF_POS;
+        if (::GetScrollInfo(dlg, SB_VERT, &si) == FALSE) { return; }
+        if (static_cast<int>(si.nPos) >= want) { break; }
+        ::SendMessageW(dlg, WM_VSCROLL, MAKEWPARAM(SB_LINEDOWN, 0), 0);
+    }
+    SCROLLINFO at{};
+    at.cbSize = sizeof(at);
+    at.fMask = SIF_POS;
+    if (::GetScrollInfo(dlg, SB_VERT, &at) == FALSE) { return; }
+    const int offsetBefore = static_cast<int>(at.nPos);
+    if (offsetBefore <= 0) { return; }
+
+    readCtls(dlg, all, a.tab, page, ctls);
+    std::vector<Ctl> before = ctls;
+    KieeKeyProbeReflowNow(dlg);          // the app's own growth reflow path
+    ::Sleep(20);
+    readCtls(dlg, all, a.tab, page, ctls);
+
+    SCROLLINFO afterSc{};
+    afterSc.cbSize = sizeof(afterSc);
+    afterSc.fMask = SIF_POS;
+    const int offsetAfter = (::GetScrollInfo(dlg, SB_VERT, &afterSc) != FALSE)
+                                ? static_cast<int>(afterSc.nPos) : -1;
+    ++g_checks;
+    if (offsetAfter < 0 || offsetAfter < offsetBefore - 2) {
+        a.findings->push_back({"reflow_moved",
+            a.prefix + "the reflow dropped the scroll position from " +
+            std::to_string(offsetBefore) + " to " + std::to_string(offsetAfter)});
+    }
+
+    int movedUp = 0;
+    int firstUp = 0;
+    int firstUpBy = 0;
+    int depthBefore = page.top;
+    int depthAfter = page.top;
+    for (const Ctl& b : before) {
+        if (b.tabpage != a.tab || !b.onScreen) { continue; }
+        depthBefore = std::max(depthBefore, b.y + b.h);
+        for (const Ctl& f : ctls) {
+            if (f.id != b.id) { continue; }
+            depthAfter = std::max(depthAfter, f.y + f.h);
+            // Growing a row pushes what is below it DOWN; nothing may move up,
+            // and it may not move sideways at all.
+            if (f.y < b.y - 2 || f.x != b.x) {
+                ++movedUp;
+                if (firstUp == 0) { firstUp = b.id; firstUpBy = b.y - f.y; }
+            }
+            break;
+        }
+    }
+    ++g_checks;
+    if (movedUp > 0) {
+        a.findings->push_back({"reflow_moved",
+            a.prefix + std::to_string(movedUp) + " control(s) moved UP when the app "
+            "re-solved the layout at scroll offset " + std::to_string(offsetBefore) +
+            " (first: id " + std::to_string(firstUp) + " by " +
+            std::to_string(firstUpBy) + "px) — the reflow folded the scroll offset "
+            "into the layout: the page drifts away and the content depth shrinks "
+            "with it until the page is empty and the range collapses"});
+    }
+    ++g_checks;
+    if (depthAfter < depthBefore - 2) {
+        a.findings->push_back({"reflow_moved",
+            a.prefix + "the content depth shrank from " + std::to_string(depthBefore) +
+            " to " + std::to_string(depthAfter) + "px across a reflow at offset " +
+            std::to_string(offsetBefore) + " — the scroll range loses exactly what "
+            "the page loses"});
+    }
+    // NOTE: a reflow may legitimately hide a row (a row that GREW pushes one
+    // past the fold). The invariant is about the layout, not about the count:
+    // nothing moves up and the content depth never shrinks.
+    ::SendMessageW(dlg, WM_VSCROLL, MAKEWPARAM(SB_TOP, 0), 0);
+    ::Sleep(10);
+    readCtls(dlg, all, a.tab, page, ctls);
+}
+
 // ---- g) the tab headers are readable ---------------------------------------
 void checkTabHeaders(const Audit& a, int tabCount, std::vector<Finding>* findings) {
     if (a.tabsCtl == nullptr) { return; }
@@ -1142,6 +1281,8 @@ int main(int argc, char** argv) {
             checkTextFit(a, ctls);
             checkHitTests(a, ctls);
             checkSiblingClobber(a, ctls);
+            checkEmptyPage(a, ctls, travelPx);
+            checkReflowWhileScrolled(a, dlg, all, page, ctls, travelPx);
             checkTabHeaders(a, static_cast<int>(tabCount), &findings);
             // Last, so the screenshot below records the cleaned frame.
             checkStalePixels(a);

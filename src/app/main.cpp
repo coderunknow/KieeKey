@@ -144,6 +144,7 @@
 #include "Profiler.hpp"
 #include "TextEngine.hpp"
 #include "Diagnostics.hpp"   // v1.3.0-beta4: recorder wiring + control panel
+#include "Sha256.hpp"        // v1.3.0-beta8 (RS-06): the build reports itself
 #include "TsfComposer.hpp"
 #include "Win32RAII.hpp"
 #include "win32_wrapper.hpp"   // v3.3.1: pipeline (OutputRing 1024, batched
@@ -198,6 +199,60 @@ constexpr wchar_t kAppVersion[]     = L"1.3.0";           // numeric, 3-part
 // title/version forms. Keeping it zero-maintenance and warning-clean.
 [[maybe_unused]] constexpr wchar_t kAppVersionFull[] = L"1.3.0-beta8";  // with channel
 constexpr wchar_t kAppTitle[]       = L"KieeKey v1.3.0-beta8";  // sync with kAppVersionFull
+
+//---------------------------------------------------------------------------
+// v1.3.0-beta8 (RS-06) — WHICH BUILD IS THIS?
+//
+// Three test rounds were spent on reports that described a build the reporter
+// was not running (an older process was still in the tray: the screenshot and
+// the numbers came from the previous revision). The question has to be
+// answerable from the artefact itself, so the app hashes its own executable
+// once, prints the digest in the window title (which is in every screenshot)
+// and in full inside the diagnostics report — where it can be compared byte for
+// byte against the published SHA-256 of the build.
+//
+// Cost: one pass over ~2 MB, done lazily on first use and cached; never on the
+// input path, never at boot.
+//---------------------------------------------------------------------------
+std::string g_exeSha256Hex;          // cached; empty = not computed yet
+std::wstring g_exePath;              // cached GetModuleFileNameW result
+
+const std::wstring& exePathCached() {
+    if (g_exePath.empty()) {
+        wchar_t buf[MAX_PATH * 4]{};
+        const DWORD n = ::GetModuleFileNameW(nullptr, buf, static_cast<DWORD>(std::size(buf)));
+        if (n > 0 && n < std::size(buf)) { g_exePath.assign(buf, n); }
+    }
+    return g_exePath;
+}
+
+// SHA-256 of the running executable (lower-case hex, 64 chars). Empty when the
+// file cannot be read (never fatal — the callers just print "không đọc được").
+const std::string& exeSha256Hex() {
+    if (!g_exeSha256Hex.empty()) { return g_exeSha256Hex; }
+    const std::wstring& path = exePathCached();
+    if (path.empty()) { return g_exeSha256Hex; }
+    std::ifstream in(path.c_str(), std::ios::binary);
+    if (!in) { return g_exeSha256Hex; }
+    ok::crypto::Sha256 hasher;
+    std::vector<char> chunk(64 * 1024);
+    while (in) {
+        in.read(chunk.data(), static_cast<std::streamsize>(chunk.size()));
+        const std::streamsize got = in.gcount();
+        if (got > 0) { hasher.update(chunk.data(), static_cast<std::size_t>(got)); }
+    }
+    if (in.bad()) { return g_exeSha256Hex; }
+    g_exeSha256Hex = ok::crypto::toHexLower(hasher.digest());
+    return g_exeSha256Hex;
+}
+
+// The first 8 hex characters: short enough for a title bar, and still a
+// 1-in-4-billion fingerprint of the build.
+std::wstring exeSha256ShortW() {
+    const std::string& hex = exeSha256Hex();
+    if (hex.size() < 8) { return L"?"; }
+    return std::wstring(hex.begin(), hex.begin() + 8);
+}
 
 //===========================================================================
 // Output item: what the consumer thread must emit (trivially copyable → can
@@ -3901,6 +3956,15 @@ BOOL CALLBACK rescaleChild(HWND child, LPARAM lp) noexcept {
 // the CA-03 probe, which needs to audit the 125/150 % layouts on a 96-dpi CI
 // runner: the probe must drive the SAME code a real monitor change drives, not
 // a re-implementation of it.
+// v1.3.0-beta8 (bug BS-17): the layout baseline (the scroll state's solved
+// rectangles) is only valid for the geometry it was solved at. Anything that
+// rewrites the child rectangles from scratch — a DPI rescale — must drop it, or
+// the solver would feed the old scale's pixels back in. Defined with the scroll
+// state below; declared here because the DPI path runs before it in the file.
+namespace {
+void dropSettingsLayoutBaseline() noexcept;
+}  // namespace
+
 void applySettingsDpiScale(UINT newDpi) noexcept {
     if (!g.hSettings) { return; }
     if (newDpi == 0 || newDpi == g_settingsDpi) { return; }
@@ -3918,6 +3982,11 @@ void applySettingsDpiScale(UINT newDpi) noexcept {
         uiFont(), uiFontBold(), uiFontTitle()};
     ::EnumChildWindows(g.hSettings, &rescaleChild,
                        reinterpret_cast<LPARAM>(&full));
+    // v1.3.0-beta8 (bug BS-17): the baseline rectangles are in the OLD scale's
+    // pixels, and the solve that follows a DPI change measures at the new one.
+    // Dropping them is what makes the solver re-read the (just rescaled) live
+    // rectangles for this one pass; the caller solves immediately after.
+    dropSettingsLayoutBaseline();
     ::InvalidateRect(g.hSettings, nullptr, TRUE);
 }
 
@@ -4426,6 +4495,13 @@ struct SettingsScrollState {
 };
 SettingsScrollState g_settingsScroll;
 
+// Defined here (declared above applySettingsDpiScale); see BS-17.
+void dropSettingsLayoutBaseline() noexcept {
+    g_settingsScroll.solved.clear();
+    g_settingsScroll.viewport = ok::layout::Rect{};
+    g_settingsScroll.viewportBottom = 0;
+}
+
 // v1.3.0-beta8 (bug BS-14): the solver measures every label at the width the
 // control has RIGHT THEN, and then the refit resizes the tab control (the
 // scrollbar appearing or leaving costs the page ~17 px). A label measured on
@@ -4697,6 +4773,25 @@ void solveSettingsLayout(HWND hwnd) {
         spec.id = id;
         spec.rect = {rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top};
         spec.tab = pageOf(id);
+        // v1.3.0-beta8 (bug BS-17): the solver starts from the UNSCOLLED layout,
+        // never from the rendered one — see ok::layout::solverInputRect(). The
+        // baseline (g_settingsScroll.solved) is the layout this function
+        // produced last time; a page child that scrolling has since moved up
+        // must be solved as if it were still at its baseline, or every reflow
+        // folds the scroll offset into the layout and the page drifts away.
+        // The live rectangle still supplies x/w/h (a DPI rescale changes them,
+        // and the baseline is dropped on a DPI change for exactly that reason).
+        if (spec.tab != ok::layout::ControlSpec::kAlwaysVisible) {
+            const ok::layout::Rect live = spec.rect;
+            const ok::layout::Rect* base = nullptr;
+            for (const auto& entry : g_settingsScroll.solved) {
+                if (entry.first == c) { base = &entry.second; break; }
+            }
+            const int y = (base != nullptr)
+                              ? base->y
+                              : ok::layout::solverInputRect(live, g_settingsScroll.offset).y;
+            spec.rect.y = y;
+        }
         const int clsLen = ::GetClassNameW(c, cls, 32);
         // v1.3.0-beta8 (bug BS-11): the predefined Win32 classes report MIXED
         // case from GetClassNameW ("Static", "Button", ...), so comparing them
@@ -5406,10 +5501,39 @@ std::wstring g_lastDiagExportPath;
 // Both call this, so "what the user reads in the app" and "what the user
 // mails to support" are byte-identical by construction (the export adds only
 // the UTF-8 BOM). tests/test_diag_report_text.cpp pins this contract.
+//---------------------------------------------------------------------------
+// v1.3.0-beta8 (RS-06) — the build identity block, FIRST in the report.
+//
+// Everything the reporter and the maintainer need to agree on which binary is
+// in front of them: version, the PE file version the installer/RC carries, the
+// full SHA-256 of the executable, and its path. The digest is the same value
+// the release publishes in SHA256SUMS.txt, so "which build is this?" is a
+// byte-for-byte comparison instead of a guess.
+//---------------------------------------------------------------------------
+std::string buildIdentityUtf8() {
+    const std::string& hex = exeSha256Hex();
+    std::string out = "\n=== Bản dựng (build identity) ===\n";
+    out += "Ứng dụng      : KieeKey ";
+    out += OPENKEY_KIEEKEY_VERSION_STRING;
+    out += " (PE file version 1.3.0.9)\n";
+    out += "SHA-256       : ";
+    out += hex.empty() ? "không đọc được file đang chạy" : hex;
+    out += "\n";
+    out += "Đường dẫn     : ";
+    out += utf16ToUtf8(exePathCached());
+    out += "\n";
+    out += "Đối chiếu SHA-256 với SHA256SUMS.txt của bản phát hành (hoặc với giá trị "
+           "trong thông báo phát hành); khớp = đúng bản đang được thử.\n";
+    return out;
+}
+
 std::string buildDiagReportUtf8() {
     std::string out = ok::apptext::diagReportPayload(
         ok::diag::Diagnostics::instance().report(40),
         utf16ToUtf8(liveGateStatusText()));
+    // v1.3.0-beta8 (RS-06): identity first — the reader of the report gets to
+    // know which build it came from before reading anything else.
+    out = buildIdentityUtf8() + out;
     // v1.3.0-beta8 (CA-06): the layout self-check rides along in both the pane
     // and the export (one builder, DS-05), so a report from a machine we
     // cannot reproduce carries the numbers instead of a description.
@@ -6838,15 +6962,18 @@ void openSettingsDialog(int tab) {
     }
     if (!g.hInst) { return; }
     g_settingsOpenTab = tab;
-    // v1.3.0-beta8 (bug BS-16c): bottom-up compositing for the whole subtree.
-    // The 500 ms telemetry tick rewrites ~30 live rows, and every rewrite used
-    // to be a visible erase+draw on the desktop at 2 Hz ("không kéo thì giật
-    // giật"). WS_EX_COMPOSITED makes the subtree paint into one buffer, so the
-    // user sees finished frames only. The dialog has no animation of its own,
-    // so there is nothing to lose by compositing it (the arcade windows are
-    // separate top-level windows and are untouched).
-    const HWND created = ::CreateWindowExW(WS_EX_COMPOSITED, L"KieeKeySettings",
-                                    L"KieeKey — Cài đặt & Thông tin",
+    // v1.3.0-beta8 (bug BS-16c): the tick's jitter is fixed at its SOURCE (see
+    // BS-16d: the reflow no longer fires twice a second, and BS-16a repaints the
+    // dialog's own pixels after it does). WS_EX_COMPOSITED was tried here as a
+    // blanket cure and deliberately reverted: it changes the painting model of
+    // the entire subtree, and a change that broad has to earn its place with
+    // evidence rather than hide a symptom.
+    // v1.3.0-beta8 (RS-06): the digest of the running executable rides in the
+    // title bar, so every screenshot says which build produced it.
+    const std::wstring settingsTitle =
+        L"KieeKey — Cài đặt & Thông tin  [" + exeSha256ShortW() + L"]";
+    const HWND created = ::CreateWindowExW(0, L"KieeKeySettings",
+                                    settingsTitle.c_str(),
                                     WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU |
                                     WS_MINIMIZEBOX |
                                     // v1.3.0-beta8 (bug BS-13): a hand-rolled
@@ -7436,6 +7563,15 @@ extern "C" int KieeKeyProbeSimulateDpi(HWND dlg, UINT dpi) {
     applySettingsDpiScale(dpi);
     solveSettingsLayout(dlg);
     return static_cast<int>(g_settingsDpi);
+}
+
+// BS-17: let the probe drive the app's OWN reflow path while the page is
+// scrolled. The drift this guards against is only reachable that way — every
+// other measurement the probe takes happens on a freshly solved dialog.
+extern "C" void KieeKeyProbeReflowNow(HWND dlg) {
+    if (dlg == nullptr) { return; }
+    reflowSettingsLayoutPreservingScroll(dlg);
+    ::UpdateWindow(dlg);
 }
 
 // The probe switches tabs through the same notification the tab control sends,

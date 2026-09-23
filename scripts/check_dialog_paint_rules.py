@@ -68,15 +68,11 @@ def check(repo: Path):
     created = re.search(r'CreateWindowExW\s*\(([^,]+),\s*L"KieeKeySettings"', main)
     if not created:
         failures.append("main.cpp: the KieeKeySettings CreateWindowExW call is gone")
-    else:
-        extended = created.group(1)
-        if 'WS_EX_COMPOSITED' not in extended:
-            failures.append(
-                "main.cpp: the settings window is created without WS_EX_COMPOSITED — "
-                "the 500 ms telemetry tick then repaints controls straight onto the "
-                "desktop (the 'giật giật' report, BS-16c)")
-    style_at = main.find('L"KieeKey — Cài đặt & Thông tin"')
-    style_block = main[style_at:style_at + 900] if style_at >= 0 else ''
+    # (BS-16c was reverted on purpose: WS_EX_COMPOSITED changed the painting
+    # model of the whole subtree, and the tick's jitter is fixed at its source —
+    # see rule 4 / BS-16d. The gate therefore does NOT require the style.)
+    style_at = main.find('L"KieeKeySettings"')
+    style_block = main[style_at:style_at + 1400] if style_at >= 0 else ''
     if 'WS_CLIPCHILDREN' not in style_block:
         failures.append(
             "main.cpp: the settings window no longer carries WS_CLIPCHILDREN "
@@ -125,8 +121,45 @@ def check(repo: Path):
         failures.append("src/app/DialogLayout.hpp: the reflow policy "
                         "shouldRequestReflow() is gone (BS-16d)")
 
+    # 6. the solver starts from the UNSCOLLED layout (BS-17). Reading the live
+    #    page rectangle is the bug: 'scrolling' only renders, so a re-solve that
+    #    takes the render as its input folds the scroll offset into the layout.
+    try:
+        solve = function_body(main, r'void solveSettingsLayout\s*\(HWND hwnd\)')
+    except ValueError:
+        failures.append("main.cpp: solveSettingsLayout() not found")
+    else:
+        if ('solverInputRect' not in solve or
+                'g_settingsScroll.solved' not in solve or
+                'spec.rect.y = y;' not in solve):
+            failures.append(
+                "main.cpp: solveSettingsLayout() no longer derives the page children's "
+                "input from the saved baseline / solverInputRect (the y it applies to "
+                "the spec) — a reflow while the user is scrolled then folds the scroll "
+                "offset into the layout and the page drifts away (BS-17)")
+    if 'void dropSettingsLayoutBaseline() noexcept' not in main:
+        failures.append("main.cpp: dropSettingsLayoutBaseline() is gone — a DPI "
+                        "rescale would feed the old scale's baselines back in (BS-17)")
+    elif 'dropSettingsLayoutBaseline();' not in main.split('void applySettingsDpiScale')[1][:1200]:
+        failures.append("main.cpp: the DPI rescale no longer drops the layout "
+                        "baseline (BS-17)")
+    layout_src = (repo / 'src/app/DialogLayout.hpp').read_text(encoding='utf-8')
+    if 'solverInputRect' not in layout_src:
+        failures.append("src/app/DialogLayout.hpp: solverInputRect() is gone (BS-17)")
+
+    # 7. the build identity (RS-06): the app must be able to say which build it
+    #    is, from the artefact itself.
+    if 'buildIdentityUtf8' not in main or 'exeSha256Hex' not in main:
+        failures.append("main.cpp: the build identity block is gone — a report can "
+                        "no longer be tied to a revision (RS-06)")
+    elif 'buildIdentityUtf8() + out' not in main:
+        failures.append("main.cpp: the build identity is no longer part of the "
+                        "diagnostics report (RS-06)")
+
     probe = (repo / 'tools/ui_probe/ui_probe.cpp').read_text(encoding='utf-8')
     for needle, why in (
+            ('void checkEmptyPage(', 'the blank-page invariant (BS-17)'),
+            ('void checkReflowWhileScrolled(', 'the scroll-then-reflow check (BS-17)'),
             ('void checkSiblingClobber(',
              'the z-order rule that let a sibling paint through the page (BS-16b)'),
             ('void checkStalePixels(',
@@ -148,8 +181,9 @@ def main() -> int:
         for f in failures:
             print(f"  - {f}")
         return 1
-    print("PAINT RULES OK — 4 rules: sibling clipping, window styles, "
-          "repaint-after-change, need-deduped reflow (+ the probe's pixel checks)")
+    print("PAINT RULES OK — 5 rules: sibling clipping, window styles, "
+          "repaint-after-change, need-deduped reflow, unscrolled solver input "
+          "(+ the probe's blank-page, reflow and pixel checks)")
     return 0
 
 

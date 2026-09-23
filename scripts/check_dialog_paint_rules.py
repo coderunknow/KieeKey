@@ -207,10 +207,43 @@ def check(repo: Path):
                 "no-op, the scrollbar keeps a geometry that no longer exists and the "
                 "page loses its content until the dialog is reopened")
     try:
+        unscroll_body = function_body(main, r'void settingsScrollToTop\s*\(\)\s*noexcept')
+    except ValueError:
+        failures.append(
+            "main.cpp: settingsScrollToTop() not found (BS-18, part two) — nothing "
+            "returns the page to its baseline, so whoever rewrites the live "
+            "rectangles (the DPI rescale) or discards the baseline (the drop) bakes "
+            "the scroll offset into the geometry one scroll position at a time")
+    else:
+        for needle, what in (('g_settingsScroll.offset = 0;', 'clears the offset'),
+                             ('applySettingsScrollOffset(', 're-applies the offset')):
+            if needle not in unscroll_body:
+                failures.append(
+                    f"main.cpp: settingsScrollToTop() no longer {what} (BS-18, part "
+                    f"two) — zeroing the offset without moving the children back to "
+                    f"the baseline is the ratchet itself")
+    try:
         drop_body = function_body(main, r'void dropSettingsLayoutBaseline\s*\(\)\s*noexcept')
     except ValueError:
         failures.append("main.cpp: dropSettingsLayoutBaseline() not found (BS-18)")
     else:
+        if 'settingsScrollToTop();' not in drop_body:
+            failures.append(
+                "main.cpp: dropSettingsLayoutBaseline() may not discard the baseline "
+                "while the page is scrolled away from it (BS-18, part two) — the "
+                "live rectangles are the only geometry a later solve can plan from, "
+                "so dropping them scrolled ratchets the page out of its viewport "
+                "(empty page, no scrollbar, until the dialog is reopened)")
+        if 'settingsScrollToTop();' not in dpi_body:
+            failures.append(
+                "main.cpp: applySettingsDpiScale() rescales the LIVE rectangles "
+                "(rescaleChild multiplies them) — it must put the page back on its "
+                "baseline first (BS-18, part two), or the scroll offset is scaled "
+                "into the geometry and the drop that follows makes it permanent")
+        elif dpi_body.index('settingsScrollToTop();') > dpi_body.index('EnumChildWindows'):
+            failures.append(
+                "main.cpp: applySettingsDpiScale() un-scrolls AFTER it has already "
+                "rescaled the children (BS-18, part two) — the order is the fix")
         for needle, what in (('g_settingsScroll.offset = 0;', 'the scroll position'),
                              ('g_settingsScroll.range = 0;', 'the scroll range'),
                              ('g_settingsScroll.enabled = false;', "the bar's latch"),

@@ -3980,11 +3980,20 @@ void dropSettingsLayoutBaseline() noexcept;
 // v1.3.0-beta8fix1 (bug BS-18): the DPI transition needs the solver, and it is
 // defined with the rest of the solve machinery further down the file.
 void solveSettingsLayout(HWND hwnd);
+// v1.3.0-beta8fix1 (bug BS-18, part two): and it needs the page to be sitting
+// on its baseline before it rewrites the live rectangles.
+void settingsScrollToTop() noexcept;
 }  // namespace
 
 void applySettingsDpiScale(UINT newDpi) noexcept {
     if (!g.hSettings) { return; }
     if (newDpi == 0 || newDpi == g_settingsDpi) { return; }
+
+    // v1.3.0-beta8fix1 (bug BS-18, part two): rescaleChild multiplies the LIVE
+    // rectangles, so the page must be sitting on its baseline first — otherwise
+    // the scroll offset is scaled into the geometry, and the baseline drop that
+    // follows makes it permanent (see settingsScrollToTop()).
+    settingsScrollToTop();
 
     // Snapshot the OLD fonts (they are still alive — the cache never
     // deletes an in-use font) so each control can be re-classified.
@@ -4541,8 +4550,39 @@ struct SettingsScrollState {
 };
 SettingsScrollState g_settingsScroll;
 
+void applySettingsScrollOffset(HWND hwnd);   // defined below showTab
+
+// v1.3.0-beta8fix1 (bug BS-18, part two): PUT THE PAGE BACK ON ITS BASELINE
+// BEFORE ANYTHING FORGETS WHERE THE BASELINE WAS.
+//
+// A scrolled page lives at `solved - offset` (applySettingsScrollOffset). Every
+// consumer of the geometry that is not the scrollbar itself reads those LIVE
+// rectangles and undoes the offset to recover the baseline: the DPI rescale
+// multiplies them (rescaleChild), and the solver un-scrolls them
+// (solverInputRect(live, offset), BS-17). So the moment the offset is set to 0
+// WITHOUT re-applying it, the live rectangles silently BECOME the baseline: the
+// page ratchets by one scroll offset. Repeat it (scroll, display change,
+// scroll, display change) and the content ends up thousands of pixels above its
+// viewport; the per-tab depth is then reported below the viewport top, the
+// solver correctly concludes there is nothing to scroll, and the user gets an
+// EMPTY page with NO scrollbar until the dialog is closed and reopened — the
+// reported "mất nội dung". The CI harness reached exactly that state: after
+// commit "a rescaled dialog is a solved dialog" the sequence pass still failed
+// with inv_I1=2253 (offset 0, not one visible control) and every tab at 150 %
+// measured 6..20 controls parked at y ≈ -11000 with travel 0.
+void settingsScrollToTop() noexcept {
+    if (g_settingsScroll.solved.empty()) { return; }
+    if (g_settingsScroll.offset == 0) { return; }
+    g_settingsScroll.offset = 0;
+    applySettingsScrollOffset(g.hSettings);
+}
+
 // Defined here (declared above applySettingsDpiScale); see BS-17.
 void dropSettingsLayoutBaseline() noexcept {
+    // The baseline may not be discarded while the page is scrolled away from
+    // it (BS-18, part two): the live rectangles are the only thing a later
+    // solve or rescale can plan from.
+    settingsScrollToTop();
     g_settingsScroll.solved.clear();
     g_settingsScroll.viewport = ok::layout::Rect{};
     g_settingsScroll.viewportBottom = 0;

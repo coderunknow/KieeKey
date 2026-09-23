@@ -212,6 +212,20 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "checkEmptyPage",
     ),
     (
+        "BS-18  the baseline drop forgets the scroll position",
+        "src/app/main.cpp",
+        "    settingsScrollToTop();\n    g_settingsScroll.solved.clear();",
+        "    g_settingsScroll.solved.clear();",
+        "may not discard the baseline while the page is scrolled",
+    ),
+    (
+        "BS-18  the DPI rescale scales the scrolled rectangles",
+        "src/app/main.cpp",
+        "    settingsScrollToTop();\n\n    // Snapshot the OLD fonts",
+        "\n\n    // Snapshot the OLD fonts",
+        "must put the page back on its baseline first",
+    ),
+    (
         "BS-18  the DPI rescale stops re-solving",
         "src/app/main.cpp",
         "    ::InvalidateRect(g.hSettings, nullptr, TRUE);\n"

@@ -69,6 +69,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -88,6 +89,29 @@ extern "C" int  KieeKeyProbeTabOfControl(HWND dlg, int id);
 // CA-03: drive the REAL DPI-change path (child rescale + re-solve) with a forced
 // DPI so the probe can audit the 125/150 % layouts a 96-dpi runner cannot make.
 extern "C" int  KieeKeyProbeSimulateDpi(HWND dlg, UINT dpi);
+
+// v1.3.0-beta8fix1 — the STATE-SEQUENCE surface. Four green rounds measured a
+// settled dialog; these are what let the harness drive the app's own operations
+// in a seeded order and read the app's OWN numbers back after each one.
+struct ProbeScrollStateT {          // mirrors KieeKeyProbeScrollStateT (main.cpp)
+    int haveBaseline;               // 0 => the scroll machinery has no layout
+    int solvedCount;
+    int offset;
+    int range;
+    int enabled;
+    int styleVScroll;
+    int viewportX, viewportY, viewportW, viewportH, viewportBottom;
+    int contentBottom[9];
+    int barPos, barPage, barMax;
+    UINT dpi;
+};
+extern "C" void KieeKeyProbeScrollState(HWND dlg, ProbeScrollStateT* out);
+extern "C" int  KieeKeyProbeSetOffset(HWND dlg, int pos);
+extern "C" int  KieeKeyProbeDisplayChange(HWND dlg);
+extern "C" void KieeKeyProbeSetWindowDpiOverride(UINT dpi);
+extern "C" int  KieeKeyProbeResize(HWND dlg, int clientW, int clientH);
+extern "C" int  KieeKeyProbeFontScale(HWND dlg, int percent);
+extern "C" void KieeKeyProbeTypeRow(HWND dlg, int id, const wchar_t* text);
 
 namespace {
 
@@ -1068,11 +1092,724 @@ void checkTabHeaders(const Audit& a, int tabCount, std::vector<Finding>* finding
     (void)findings;
 }
 
+//===========================================================================
+// v1.3.0-beta8fix1 (BS-18) — THE OPERATION-SEQUENCE HARNESS.
+//
+// WHY. Four consecutive CI rounds were green on a screen the user had
+// photographed as corrupted: every check in this file measured a SETTLED dialog
+// (solve, then look), and the defect lives in the ORDER of operations — one
+// operation leaves the dialog coherent, the next leaves it with NO layout
+// baseline and a scroll state from the previous geometry, and from then on the
+// page is unreachable: nothing re-solves, every scroll step is a silent no-op
+// (the thumb moves, the page does not), the scrollbar either lies or is gone,
+// and the content keeps whatever rectangles the last operation gave it.
+//
+// WHAT. After EVERY operation the harness asserts the page invariants on the
+// app's OWN numbers (KieeKeyProbeScrollState) plus the live rectangles and
+// window regions:
+//
+//   I1  offset 0 => at least one page control of the current tab is visible
+//   I2  no visible page control starts above the page top
+//   I3  the app's stored content depth matches its own deepest control
+//   I4  range == contentBottom - viewportBottom (recomputed, never latched)
+//   I5  the bar latch, the WS_VSCROLL bit and Win32's own enable rule agree
+//   I6  a control inside the viewport is never region-clipped to nothing
+//   I7  at offset 0 a control fully inside the viewport carries no region
+//   I8  a forced full repaint changes zero client pixels      (scenario, screen)
+//   I9  a reflow never moves a control up/sideways, never shrinks the depth
+//   I10 returning to offset 0 restores the settled visible set
+//   I11 the page paints content, not background only          (scenario, screen)
+//   I12 the app's own text measurement fits the control's box
+//
+// The operations are the app's own paths: real messages (WM_VSCROLL,
+// WM_MOUSEWHEEL, WM_TIMER, TCN_SELCHANGE), the touchpad-default tail of the
+// thumb drag (KieeKeyProbeSetOffset), the DPI path, the display-change response
+// and the tick's growth request. Seeded and fixed-count: no wall clock, no
+// runner influence, same trace for the same build.
+//===========================================================================
+
+int g_fuzzSteps = 0;
+int g_fuzzChecks = 0;
+int g_fuzzFailures = 0;
+int g_scenarioRuns = 0;
+int g_scenarioFailures = 0;
+int g_traceLines = 0;
+int g_invChecks[13] = {};
+int g_invFailures[13] = {};
+std::string g_trace;
+
+void harnessTrace(const std::string& line) {
+    if (g_traceLines >= 500) { return; }
+    ++g_traceLines;
+    g_trace += line;
+    g_trace += "\n";
+}
+
+void harnessKind(std::vector<std::pair<std::string, int>>* byKind,
+                 const std::string& kind) {
+    for (auto& e : *byKind) {
+        if (e.first == kind) { ++e.second; return; }
+    }
+    byKind->emplace_back(kind, 1);
+}
+
+// Deterministic xorshift32 with a fixed seed list: the harness must reproduce
+// the same sequence on every machine and every run.
+struct HarnessRng {
+    unsigned s = 1;
+    explicit HarnessRng(unsigned seed) : s(seed != 0U ? seed : 1U) {}
+    unsigned next() {
+        s ^= s << 13; s ^= s >> 17; s ^= s << 5;
+        return s;
+    }
+    int pick(int lo, int hi) {
+        if (hi <= lo) { return lo; }
+        return lo + static_cast<int>(next() % static_cast<unsigned>(hi - lo + 1));
+    }
+};
+
+struct HarnessCtl {
+    HWND hwnd = nullptr;
+    int  id = 0;
+    bool shown = false;
+    bool hasRegion = false;
+    bool regionEmpty = false;
+    int  x = 0, y = 0, w = 0, h = 0;       // window rect, dialog client coords
+    int  rl = 0, rt = 0, rr = 0, rb = 0;   // region box (child-local)
+    int  ex = 0, ey = 0, ew = 0, eh = 0;   // region box ∩ page
+};
+
+struct HarnessState {
+    RECT page{};
+    RECT client{};
+    ProbeScrollStateT app{};
+    std::vector<HarnessCtl> ctls;
+    int  tab = 0;
+    int  deepestUnscrolledBottom = 0;
+    int  visibleCount = 0;
+    bool havePage = false;
+};
+
+bool livePageRect(HWND dlg, RECT* page, RECT* client) {
+    HWND tabs = ::GetDlgItem(dlg, IDC_TAB);
+    if (tabs == nullptr) { return false; }
+    RECT disp = clientRectOf(dlg, tabs);
+    if (disp.right <= disp.left || disp.bottom <= disp.top) { return false; }
+    ::SendMessageW(tabs, TCM_ADJUSTRECT, FALSE, reinterpret_cast<LPARAM>(&disp));
+    RECT cli{};
+    if (::GetClientRect(dlg, &cli) == FALSE) { return false; }
+    *client = cli;
+    page->left = disp.left;
+    page->top = disp.top;
+    page->right = std::min<LONG>(disp.right, cli.right);
+    page->bottom = std::min<LONG>(disp.bottom, cli.bottom);
+    return page->right > page->left && page->bottom > page->top;
+}
+
+void readHarnessState(HWND dlg, const std::vector<HWND>& all, int tab,
+                      HarnessState* out) {
+    KieeKeyProbeScrollState(dlg, &out->app);
+    out->tab = tab;
+    out->ctls.clear();
+    out->deepestUnscrolledBottom = 0;
+    out->visibleCount = 0;
+    out->havePage = livePageRect(dlg, &out->page, &out->client);
+    const RECT page = out->havePage ? out->page : RECT{0, 0, 0, 0};
+    for (HWND child : all) {
+        const int id = ::GetDlgCtrlID(child);
+        if (KieeKeyProbeTabOfControl(dlg, id) != tab) { continue; }
+        HarnessCtl c;
+        c.hwnd = child;
+        c.id = id;
+        const RECT r = clientRectOf(dlg, child);
+        c.x = r.left; c.y = r.top;
+        c.w = static_cast<int>(r.right - r.left);
+        c.h = static_cast<int>(r.bottom - r.top);
+        c.shown = ::IsWindowVisible(child) != FALSE;
+        HRGN rgn = ::CreateRectRgn(0, 0, 0, 0);
+        if (rgn != nullptr) {
+            const int type = ::GetWindowRgn(child, rgn);
+            RECT box{};
+            if (type != ERROR) {
+                c.hasRegion = true;
+                if (::GetRgnBox(rgn, &box) == NULLREGION) {
+                    c.regionEmpty = true;
+                    box = RECT{0, 0, 0, 0};
+                }
+                c.rl = box.left; c.rt = box.top; c.rr = box.right; c.rb = box.bottom;
+            }
+            ::DeleteObject(rgn);
+        }
+        const int rx = c.hasRegion ? c.x + c.rl : c.x;
+        const int ry = c.hasRegion ? c.y + c.rt : c.y;
+        const int rw = c.hasRegion ? (c.rr - c.rl) : c.w;
+        const int rh = c.hasRegion ? (c.rb - c.rt) : c.h;
+        const RECT eff = intersectRect(RECT{rx, ry, rx + rw, ry + rh}, page);
+        c.ex = eff.left; c.ey = eff.top;
+        c.ew = eff.right - eff.left; c.eh = eff.bottom - eff.top;
+        if (c.shown && !rectEmpty(eff)) { ++out->visibleCount; }
+        const int unscrolledBottom = c.y + c.h + out->app.offset;
+        out->deepestUnscrolledBottom =
+            std::max(out->deepestUnscrolledBottom, unscrolledBottom);
+        out->ctls.push_back(c);
+    }
+}
+
+std::string harnessStateStr(const HarnessState& s, const char* op, int step,
+                            int seed, int fontPct) {
+    const ProbeScrollStateT& a = s.app;
+    return "step " + std::to_string(step) + " seed " + std::to_string(seed) +
+           " op " + op + " tab " + std::to_string(s.tab) + " font " +
+           std::to_string(fontPct) + "% dpi " + std::to_string(a.dpi) +
+           " offset " + std::to_string(a.offset) + "/" + std::to_string(a.range) +
+           " baseline " + (a.haveBaseline != 0 ? "yes(" + std::to_string(a.solvedCount) + ")"
+                                               : std::string("NO")) +
+           " latch " + (a.enabled != 0 ? "on" : "off") +
+           " style " + (a.styleVScroll != 0 ? "VSCROLL" : "-") +
+           " info " + std::to_string(a.barPos) + "/" + std::to_string(a.barPage) +
+           "/" + std::to_string(a.barMax) +
+           " viewport " + rectStr(a.viewportX, a.viewportY, a.viewportW, a.viewportH) +
+           " viewportBottom " + std::to_string(a.viewportBottom) +
+           " page " + rectStr(s.page) +
+           " ctls " + std::to_string(s.ctls.size()) +
+           " visible " + std::to_string(s.visibleCount) +
+           " contentBottom[" + std::to_string(s.tab) + "] " +
+           std::to_string(a.contentBottom[s.tab]) +
+           " deepestUnscrolled " + std::to_string(s.deepestUnscrolledBottom);
+}
+
+// One invariant violation: a finding (so the probe exits non-zero and the CI
+// digest shows the count) plus one line of state for ui_probe_trace.jsonl.
+void harnessFail(int inv, std::vector<Finding>* findings, const std::string& why,
+                 const std::string& state) {
+    ++g_invFailures[inv];
+    ++g_fuzzFailures;
+    const std::string kind = std::string("inv_I") + std::to_string(inv);
+    findings->push_back({kind, why + " — " + state});
+    harnessTrace("{\"invariant\": \"I" + std::to_string(inv) + "\", \"why\": \"" +
+                 jsonEscape(why) + "\", \"state\": \"" + jsonEscape(state) + "\"}");
+}
+
+void harnessAssert(HWND dlg, const HarnessState& s, const char* op, int step,
+                   int seed, int fontPct, std::vector<Finding>* findings) {
+    const ProbeScrollStateT& a = s.app;
+    const std::string state = harnessStateStr(s, op, step, seed, fontPct);
+    const auto fail = [&](int inv, const std::string& why) {
+        harnessFail(inv, findings, why, state);
+    };
+    const int tab = s.tab;
+    const int contentBottom = a.contentBottom[tab];
+
+    // I1 — the page must never be blank at the top of the scroll.
+    if (a.offset == 0 && !s.ctls.empty()) {
+        ++g_invChecks[1];
+        if (s.visibleCount == 0) {
+            fail(1, "page is EMPTY at offset 0 (page " + rectStr(s.page) + ")");
+        }
+    }
+    // I2 — nothing visible starts above the page it belongs to.
+    if (s.havePage) {
+        for (const HarnessCtl& c : s.ctls) {
+            if (!c.shown || c.regionEmpty) { continue; }
+            ++g_invChecks[2];
+            const int top = c.hasRegion ? c.y + c.rt : c.y;
+            if (top < s.page.top - 1) {
+                fail(2, "id " + std::to_string(c.id) + " starts at y=" +
+                        std::to_string(top) + ", above the page top " +
+                        std::to_string(s.page.top));
+                break;
+            }
+        }
+    }
+    // I3 — the stored content depth must agree with the app's own rectangles.
+    // The current tab only: another tab's stored depth is measured against the
+    // page rectangle of ITS solve, and a row-level difference to the live one is
+    // the tab strip, not a defect. For the tab on screen the app's own deepest
+    // control is the truth.
+    if (s.havePage && !s.ctls.empty()) {
+        ++g_invChecks[3];
+        if (contentBottom < s.page.top) {
+            fail(3, "contentBottom[" + std::to_string(tab) + "]=" +
+                    std::to_string(contentBottom) + " is above the page top " +
+                    std::to_string(s.page.top));
+        }
+    }
+    ++g_invChecks[3];
+    if (a.haveBaseline == 0 || s.deepestUnscrolledBottom > contentBottom + 1) {
+        fail(3, "contentBottom[" + std::to_string(tab) + "]=" +
+                std::to_string(contentBottom) + " but the tab's own deepest control "
+                "reaches " + std::to_string(s.deepestUnscrolledBottom) +
+                (a.haveBaseline == 0 ? " (and there is NO layout baseline)" : ""));
+    }
+    // I4 — the range is RECOMPUTED, never latched.
+    ++g_invChecks[4];
+    const int wantRange = std::max(0, contentBottom - a.viewportBottom);
+    if (a.range != wantRange) {
+        fail(4, "range " + std::to_string(a.range) + " != contentBottom " +
+                std::to_string(contentBottom) + " - viewportBottom " +
+                std::to_string(a.viewportBottom) + " = " + std::to_string(wantRange));
+    }
+    // I5 — the latch, the style bit and Win32's own enable rule agree.
+    ++g_invChecks[5];
+    if ((a.enabled != 0) != (a.styleVScroll != 0)) {
+        fail(5, std::string("the app's bar latch says ") +
+                (a.enabled != 0 ? "on" : "off") + " but WS_VSCROLL is " +
+                (a.styleVScroll != 0 ? "set" : "clear"));
+    }
+    {
+        ++g_invChecks[5];
+        const bool winUsable = a.barPage < a.barMax + 1;
+        bool needBar = false;
+        for (int t = 0; t < 9; ++t) {
+            if (a.contentBottom[t] > s.page.bottom) { needBar = true; }
+        }
+        if (winUsable != needBar) {
+            fail(5, std::string("Win32 says the bar is ") +
+                    (winUsable ? "usable" : "dead") + " (page " +
+                    std::to_string(a.barPage) + " max " + std::to_string(a.barMax) +
+                    ") but the content overflows the page " +
+                    (needBar ? "does need it" : "does not"));
+        }
+    }
+    // I6 — content inside the app's own viewport is never clipped to nothing.
+    if (s.havePage && a.viewportW > 0 && a.viewportH > 0) {
+        const RECT vp{a.viewportX, a.viewportY, a.viewportX + a.viewportW,
+                      a.viewportY + a.viewportH};
+        const RECT truth = intersectRect(vp, s.page);
+        if (!rectEmpty(truth)) {
+            for (const HarnessCtl& c : s.ctls) {
+                if (!c.shown || !c.regionEmpty) { continue; }
+                ++g_invChecks[6];
+                const RECT live{c.x, c.y, c.x + c.w, c.y + c.h};
+                if (!rectEmpty(intersectRect(live, truth))) {
+                    fail(6, "id " + std::to_string(c.id) + " is inside the viewport " +
+                            rectStr(truth) + " but its window region is EMPTY "
+                            "(rect " + rectStr(live) + ")");
+                    break;
+                }
+            }
+        }
+    }
+    // I7 — at offset 0 a control fully inside the viewport carries no region.
+    if (a.offset == 0 && s.havePage) {
+        const RECT vp{a.viewportX, a.viewportY, a.viewportX + a.viewportW,
+                      a.viewportY + a.viewportH};
+        const RECT truth = intersectRect(vp, s.page);
+        if (!rectEmpty(truth)) {
+            for (const HarnessCtl& c : s.ctls) {
+                if (!c.shown || !c.hasRegion) { continue; }
+                const bool inside = c.x >= truth.left && c.y >= truth.top &&
+                                    c.x + c.w <= truth.right && c.y + c.h <= truth.bottom;
+                if (!inside) { continue; }
+                ++g_invChecks[7];
+                fail(7, "id " + std::to_string(c.id) + " sits fully inside the viewport " +
+                        rectStr(truth) + " at offset 0 but still carries a window region");
+                break;
+            }
+        }
+    }
+    // I12 — the app's own measurement must fit the box it was applied to.
+    if (s.havePage) {
+        int judged = 0;
+        for (const HarnessCtl& c : s.ctls) {
+            if (judged >= 8) { break; }
+            if (!c.shown || c.regionEmpty || c.ew <= 0 || c.eh <= 0) { continue; }
+            if (c.h <= 0) { continue; }
+            const int need = KieeKeyProbeMeasureStaticHeight(dlg, c.id);
+            if (need <= 0) { continue; }
+            ++judged;
+            ++g_invChecks[12];
+            if (need > c.h + 2) {
+                fail(12, "id " + std::to_string(c.id) + " needs " +
+                        std::to_string(need) + "px but its box is " +
+                        std::to_string(c.h) + "px tall");
+                break;
+            }
+        }
+    }
+}
+
+// The operation set. Every one of these is a path the app itself runs.
+enum HarnessOp {
+    kOpScrollDown, kOpWheelDown, kOpScrollTop, kOpScrollBottom, kOpSelectTab,
+    kOpReflow, kOpTick, kOpDpi, kOpDisplayChange, kOpResize, kOpFontScale,
+    kOpTypeRow, kOpWheelUp, kOpReselectTab, kOpCount
+};
+
+const char* harnessOpName(int op) {
+    switch (op) {
+        case kOpScrollDown:    return "scroll_down";
+        case kOpWheelDown:     return "wheel_down";
+        case kOpScrollTop:     return "scroll_top";
+        case kOpScrollBottom:  return "scroll_bottom";
+        case kOpSelectTab:     return "select_tab";
+        case kOpReflow:        return "reflow";
+        case kOpTick:          return "tick";
+        case kOpDpi:           return "dpi_change";
+        case kOpDisplayChange: return "display_change";
+        case kOpResize:        return "resize";
+        case kOpFontScale:     return "font_scale";
+        case kOpTypeRow:       return "type_row";
+        case kOpWheelUp:       return "wheel_up";
+        case kOpReselectTab:   return "reselect_tab";
+        default:               return "?";
+    }
+}
+
+// The app's live rows (the 500 ms tick rewrites each of them). Typing a longer
+// text into one is the app's own growth request, and the tick that follows
+// consumes the pending reflow and puts the app's own text back.
+int liveRowForTab(HWND dlg, int tab) {
+    static const int kRows[] = {IDC_STAT_INFO_STATUS, IDC_STAT_ARCADE_STATUS,
+                                IDC_STAT_AI_STATS, IDC_STAT_COACH_ADVICE};
+    for (int id : kRows) {
+        if (KieeKeyProbeTabOfControl(dlg, id) == tab) { return id; }
+    }
+    return 0;
+}
+
+std::vector<HWND> stableChildren(HWND dlg) {
+    std::vector<HWND> all;
+    for (HWND c = ::GetWindow(dlg, GW_CHILD); c != nullptr;
+         c = ::GetWindow(c, GW_HWNDNEXT)) {
+        all.push_back(c);
+    }
+    return all;
+}
+
+void sendWheel(HWND dlg, int notches, const RECT& page) {
+    if (notches == 0) { return; }
+    POINT pt{page.left + (page.right - page.left) / 2,
+             page.top + (page.bottom - page.top) / 2};
+    ::ClientToScreen(dlg, &pt);
+    const int delta = -WHEEL_DELTA * notches;
+    ::SendMessageW(dlg, WM_MOUSEWHEEL,
+                   MAKEWPARAM(0, static_cast<WORD>(static_cast<short>(delta))),
+                   MAKELPARAM(pt.x, pt.y));
+}
+
+// Run one operation from the app's own paths, then assert every invariant.
+void harnessStep(HWND dlg, const std::vector<HWND>& all, int tabCount, int* curTab,
+                 int* fontPct, unsigned nativeDpi, const RECT& origClient,
+                 HarnessRng& rng, int op, int step, int seed,
+                 std::vector<Finding>* findings) {
+    (void)nativeDpi;
+    const char* opName = harnessOpName(op);
+    switch (op) {
+        case kOpScrollDown: {
+            ProbeScrollStateT st{};
+            KieeKeyProbeScrollState(dlg, &st);
+            KieeKeyProbeSetOffset(dlg, st.offset + rng.pick(8, 120));
+            break;
+        }
+        case kOpWheelDown: {
+            HarnessState s;
+            readHarnessState(dlg, all, *curTab, &s);
+            sendWheel(dlg, rng.pick(1, 3), s.havePage ? s.page : RECT{0, 0, 40, 40});
+            break;
+        }
+        case kOpWheelUp: {
+            HarnessState s;
+            readHarnessState(dlg, all, *curTab, &s);
+            sendWheel(dlg, -rng.pick(1, 3), s.havePage ? s.page : RECT{0, 0, 40, 40});
+            break;
+        }
+        case kOpScrollTop:
+            ::SendMessageW(dlg, WM_VSCROLL, MAKEWPARAM(SB_TOP, 0), 0);
+            break;
+        case kOpScrollBottom:
+            ::SendMessageW(dlg, WM_VSCROLL, MAKEWPARAM(SB_BOTTOM, 0), 0);
+            break;
+        case kOpSelectTab:
+        case kOpReselectTab:
+            *curTab = (op == kOpSelectTab) ? rng.pick(0, tabCount - 1) : *curTab;
+            KieeKeyProbeSelectTab(dlg, *curTab);
+            break;
+        case kOpReflow: {
+            HarnessState before;
+            readHarnessState(dlg, all, *curTab, &before);
+            KieeKeyProbeReflowNow(dlg);
+            HarnessState after;
+            readHarnessState(dlg, all, *curTab, &after);
+            // I9 — a reflow may grow the page, never move it up/sideways and
+            // never make it shallower.
+            ++g_invChecks[9];
+            if (after.deepestUnscrolledBottom < before.deepestUnscrolledBottom - 1) {
+                harnessFail(9, findings,
+                            "the reflow made the page shallower (" +
+                                std::to_string(before.deepestUnscrolledBottom) +
+                                " -> " + std::to_string(after.deepestUnscrolledBottom) + ")",
+                            harnessStateStr(after, opName, step, seed, *fontPct));
+            } else {
+                for (std::size_t i = 0; i < after.ctls.size(); ++i) {
+                    const HarnessCtl& b = before.ctls[i];
+                    const HarnessCtl& a = after.ctls[i];
+                    if (b.hwnd != a.hwnd) { continue; }
+                    if (a.x < b.x - 1 || (a.y + after.app.offset) <
+                                         (b.y + before.app.offset) - 1) {
+                        harnessFail(9, findings,
+                                    "the reflow moved id " + std::to_string(a.id) +
+                                        " up/sideways (" + rectStr(b.x, b.y, b.w, b.h) +
+                                        " -> " + rectStr(a.x, a.y, a.w, a.h) + ")",
+                                    harnessStateStr(after, opName, step, seed, *fontPct));
+                        break;
+                    }
+                }
+            }
+            break;
+        }
+        case kOpTick:
+            ::SendMessageW(dlg, WM_TIMER, 1, 0);
+            break;
+        case kOpDpi: {
+            static const UINT kDpis[] = {96U, 120U, 144U, 192U};
+            const UINT d = kDpis[static_cast<std::size_t>(rng.pick(0, 3))];
+            KieeKeyProbeSimulateDpi(dlg, d);
+            *fontPct = 100;   // the rescale re-mints the app's own fonts
+            break;
+        }
+        case kOpDisplayChange:
+            // The app's own response to a monitor topology / resolution / scale
+            // change. The runner's desktop cannot change its DPI, so the scale
+            // mismatch the user's machine produces (the app solved at one scale,
+            // the monitor now reports another) is driven by the harness.
+            KieeKeyProbeSetWindowDpiOverride(nativeDpi != 144U ? 144U : 120U);
+            KieeKeyProbeDisplayChange(dlg);
+            KieeKeyProbeSetWindowDpiOverride(0);
+            *fontPct = 100;
+            break;
+        case kOpResize: {
+            const int w = std::max(320, ::MulDiv(origClient.right, rng.pick(70, 130), 100));
+            const int h = std::max(240, ::MulDiv(origClient.bottom, rng.pick(70, 130), 100));
+            KieeKeyProbeResize(dlg, w, h);
+            // The dialog has no WM_SIZE handler: what a work-area change ends in
+            // is the app's own re-solve.
+            KieeKeyProbeReflowNow(dlg);
+            break;
+        }
+        case kOpFontScale: {
+            static const int kScales[] = {100, 125, 150};
+            *fontPct = kScales[static_cast<std::size_t>(rng.pick(0, 2))];
+            KieeKeyProbeFontScale(dlg, *fontPct);
+            break;
+        }
+        case kOpTypeRow: {
+            const int id = liveRowForTab(dlg, *curTab);
+            if (id != 0) {
+                std::wstring text;
+                for (int i = 0; i < 6; ++i) {
+                    text += L"Dòng chẩn đoán mở rộng ";
+                    text += std::to_wstring(i + 1);
+                    text += L": bộ gõ vẫn đang chạy bình thường.\r\n";
+                }
+                KieeKeyProbeTypeRow(dlg, id, text.c_str());
+                ::SendMessageW(dlg, WM_TIMER, 1, 0);   // consume the pending reflow
+            }
+            break;
+        }
+        default: break;
+    }
+
+    HarnessState s;
+    readHarnessState(dlg, all, *curTab, &s);
+    ++g_fuzzChecks;
+    harnessAssert(dlg, s, opName, step, seed, *fontPct, findings);
+}
+
+// The named, deterministic scenario: what a display change does to a dialog the
+// user is reading mid-scroll. It is the sequence the four green rounds never
+// drove, and it is the one the user's report is about.
+int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
+                    unsigned nativeDpi, const RECT& origClient,
+                    std::vector<Finding>* findings) {
+    ++g_scenarioRuns;
+    const int before = g_fuzzFailures;
+
+    ProbeScrollStateT st{};
+    KieeKeyProbeScrollState(dlg, &st);
+    int deepestTab = 0;
+    for (int t = 1; t < tabCount; ++t) {
+        if (st.contentBottom[t] > st.contentBottom[deepestTab]) { deepestTab = t; }
+    }
+    KieeKeyProbeSelectTab(dlg, deepestTab);
+    KieeKeyProbeScrollState(dlg, &st);
+    KieeKeyProbeSetOffset(dlg, st.range > 1 ? st.range / 2 : 1);
+    KieeKeyProbeSimulateDpi(dlg, nativeDpi);      // the app believes the runner's scale
+
+    KieeKeyProbeSetWindowDpiOverride(nativeDpi != 144U ? 144U : 120U);
+    KieeKeyProbeDisplayChange(dlg);               // the monitor now reports 150 %
+    {
+        HarnessState s;
+        readHarnessState(dlg, all, deepestTab, &s);
+        ++g_fuzzChecks;
+        harnessAssert(dlg, s, "scenario_display_change_mid_scroll", 0, 0, 100, findings);
+    }
+    // The app's own recovery paths: a reflow, a return to the top, a tab switch.
+    KieeKeyProbeReflowNow(dlg);
+    KieeKeyProbeSetOffset(dlg, 0);
+    KieeKeyProbeSelectTab(dlg, deepestTab);
+    KieeKeyProbeSetWindowDpiOverride(0);
+    {
+        HarnessState s;
+        readHarnessState(dlg, all, deepestTab, &s);
+        ++g_fuzzChecks;
+        harnessAssert(dlg, s, "scenario_after_recovery_ops", 0, 0, 100, findings);
+    }
+
+    // I8/I11 — the real screen, not a WM_PRINTCLIENT render: a forced full
+    // repaint must not change one pixel, and the page must paint content.
+    std::vector<std::uint32_t> beforePx, afterPx;
+    int w = 0, h = 0;
+    if (readScreenClient(dlg, &beforePx, &w, &h) && screenIsUsable(beforePx)) {
+        ::RedrawWindow(dlg, nullptr, nullptr,
+                       RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW |
+                           RDW_FRAME);
+        ::Sleep(30);
+        if (readScreenClient(dlg, &afterPx, &w, &h) &&
+            afterPx.size() == beforePx.size()) {
+            ++g_invChecks[8];
+            int diff = 0;
+            for (std::size_t i = 0; i < beforePx.size(); ++i) {
+                if (beforePx[i] != afterPx[i]) { ++diff; }
+            }
+            if (diff != 0) {
+                harnessFail(8, findings,
+                            "a forced full repaint changed " + std::to_string(diff) +
+                                " client pixels (stale frame)",
+                            "scenario_forced_repaint dpi " + std::to_string(st.dpi) +
+                                " client " + std::to_string(w) + "x" + std::to_string(h));
+            }
+        }
+        // I11: sample the middle row of up to 8 visible page controls; the page
+        // background is the pixel just outside the page rect.
+        HarnessState s;
+        readHarnessState(dlg, all, deepestTab, &s);
+        if (s.havePage && w > 0 && h > 0) {
+            const std::uint32_t bg =
+                beforePx[static_cast<std::size_t>(2) * static_cast<std::size_t>(w) + 2];
+            int judged = 0;
+            int painted = 0;
+            for (const HarnessCtl& c : s.ctls) {
+                if (judged >= 8) { break; }
+                if (!c.shown || c.regionEmpty || c.ew < 24 || c.eh < 8) { continue; }
+                ++judged;
+                const int y = c.ey + c.eh / 2;
+                bool differs = false;
+                for (int k = 1; k <= 3; ++k) {
+                    const int x = c.ex + c.ew * k / 4;
+                    if (x < 0 || y < 0 || x >= w || y >= h) { continue; }
+                    const std::uint32_t px =
+                        beforePx[static_cast<std::size_t>(y) * static_cast<std::size_t>(w) +
+                                 static_cast<std::size_t>(x)];
+                    if (px != bg) { differs = true; }
+                }
+                if (differs) { ++painted; }
+            }
+            ++g_invChecks[11];
+            if (judged >= 3 && painted == 0) {
+                harnessFail(11, findings,
+                            "the page paints background only: " + std::to_string(judged) +
+                                " visible controls, none of their middle rows differs "
+                                "from the page background",
+                            "scenario_screen_paint tab " + std::to_string(deepestTab) +
+                                " client " + std::to_string(w) + "x" + std::to_string(h));
+            }
+        }
+    } else {
+        ++g_screenUnavailable;
+    }
+
+    // Leave the dialog as the app's own state machine wants it: the runner's
+    // scale, the original client size, the first tab, the top of the page.
+    KieeKeyProbeFontScale(dlg, 100);
+    KieeKeyProbeResize(dlg, static_cast<int>(origClient.right),
+                       static_cast<int>(origClient.bottom));
+    KieeKeyProbeReflowNow(dlg);
+    KieeKeyProbeSetOffset(dlg, 0);
+    KieeKeyProbeSelectTab(dlg, 0);
+
+    const int failures = g_fuzzFailures - before;
+    if (failures > 0) { ++g_scenarioFailures; }
+    harnessTrace("{\"scenario\": \"display_change_mid_scroll\", \"tab\": " +
+                 std::to_string(deepestTab) + ", \"dpi\": " + std::to_string(st.dpi) +
+                 ", \"violations\": " + std::to_string(failures) + "}");
+    return failures;
+}
+
+// The seeded fuzz pass: fixed seeds, a fixed number of steps per tab and scale,
+// every step asserting the invariants. The step budget is in the JSON counters,
+// so "0 findings" can never mean "it never ran".
+int runSequenceHarness(HWND dlg, int tabCount, unsigned nativeDpi,
+                       int stepsPerTab,
+                       std::vector<std::pair<std::string, int>>* byKind) {
+    std::vector<HWND> all = stableChildren(dlg);
+    RECT origClient{};
+    origClient.right = 800;
+    origClient.bottom = 600;
+    ::GetClientRect(dlg, &origClient);
+    std::vector<Finding> findings;
+    const int before = g_fuzzFailures;
+
+    const int scenarioFailures =
+        harnessScenario(dlg, all, tabCount, nativeDpi, origClient, &findings);
+
+    static const int kFontScales[] = {100, 125, 150};
+    for (int fontPct : kFontScales) {
+        KieeKeyProbeFontScale(dlg, fontPct);
+        for (int seed = 1; seed <= 8; ++seed) {
+            HarnessRng rng(static_cast<unsigned>(seed) * 2654435761U + 7U);
+            int curTab = rng.pick(0, tabCount - 1);
+            KieeKeyProbeSelectTab(dlg, curTab);
+            int font = fontPct;
+            for (int step = 0; step < stepsPerTab; ++step) {
+                const int op = rng.pick(0, static_cast<int>(kOpCount) - 1);
+                harnessStep(dlg, all, tabCount, &curTab, &font, nativeDpi, origClient,
+                            rng, op, step, seed, &findings);
+                ++g_fuzzSteps;
+                all = stableChildren(dlg);   // a solve can create/destroy children
+            }
+        }
+    }
+    KieeKeyProbeFontScale(dlg, 100);
+    KieeKeyProbeResize(dlg, static_cast<int>(origClient.right),
+                       static_cast<int>(origClient.bottom));
+    KieeKeyProbeReflowNow(dlg);
+    KieeKeyProbeSetOffset(dlg, 0);
+    KieeKeyProbeSelectTab(dlg, 0);
+
+    const int failures = g_fuzzFailures - before;
+    for (const Finding& f : findings) { harnessKind(byKind, f.kind); }
+    harnessTrace("{\"harness\": \"summary\", \"steps\": " + std::to_string(g_fuzzSteps) +
+                 ", \"checks\": " + std::to_string(g_fuzzChecks) +
+                 ", \"violations\": " + std::to_string(failures) +
+                 ", \"scenarioFailures\": " + std::to_string(scenarioFailures) +
+                 ", \"seeds\": 8, \"fontScales\": \"100/125/150\", \"stepsPerTab\": " +
+                 std::to_string(stepsPerTab) + "}");
+    for (std::size_t i = 1; i <= 12; ++i) {
+        if (g_invChecks[i] > 0) {
+            std::printf("  [inv] I%-2zu %6d checks, %d violations\n", i,
+                        g_invChecks[i], g_invFailures[i]);
+        }
+    }
+    for (const Finding& f : findings) {
+        std::printf("    [%s] %s\n", f.kind.c_str(), f.detail.c_str());
+    }
+    g_findings += static_cast<int>(findings.size());
+    return failures;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     std::string outDir = ".";
     if (argc > 1 && argv[1] != nullptr && argv[1][0] != '\0') { outDir = argv[1]; }
+    // Steps per tab per (DPI, text scale) for the state-sequence harness. The
+    // count is FIXED (not time-based) so two runs of one build are identical.
+    int fuzzSteps = 60;
+    if (argc > 2 && argv[2] != nullptr) {
+        const int parsed = std::atoi(argv[2]);
+        if (parsed > 0 && parsed <= 4000) { fuzzSteps = parsed; }
+    }
     (void)::SetConsoleOutputCP(CP_UTF8);
 
     // Per-monitor v2 so the app scales exactly as it does for a real user.
@@ -1552,6 +2289,23 @@ int main(int argc, char** argv) {
                 std::printf("    [%s] %s\n", f.kind.c_str(), f.detail.c_str());
             }
         }
+
+        // v1.3.0-beta8fix1: the state-sequence half — the named display-change
+        // scenario plus the seeded fuzz pass, for THIS scale pass.
+        runSequenceHarness(dlg, static_cast<int>(tabCount), nativeDpi, fuzzSteps,
+                           &byKind);
+    }
+
+    // The harness's own counters (v1.3.0-beta8fix1). They exist so a green run
+    // cannot mean "the operation-sequence checks never ran": the step count, the
+    // number of evaluated invariant instances and the violations per invariant
+    // are all in the report, and the same numbers ride in the CI digest line.
+    std::string invSummary;
+    for (std::size_t i = 1; i <= 12; ++i) {
+        if (g_invChecks[i] == 0 && g_invFailures[i] == 0) { continue; }
+        invSummary += std::string(invSummary.empty() ? "" : " ") + "I" +
+                      std::to_string(i) + ":" + std::to_string(g_invChecks[i]) + "/" +
+                      std::to_string(g_invFailures[i]);
     }
 
     json += "\n ],\n \"controls\": " + std::to_string(totalControls) +
@@ -1559,6 +2313,13 @@ int main(int argc, char** argv) {
             ",\n \"findings\": " + std::to_string(g_findings) +
             ",\n \"screenCaptures\": " + std::to_string(g_screenCaptures) +
             ",\n \"screenUnavailable\": " + std::to_string(g_screenUnavailable) +
+            ",\n \"fuzzSteps\": " + std::to_string(g_fuzzSteps) +
+            ",\n \"fuzzChecks\": " + std::to_string(g_fuzzChecks) +
+            ",\n \"fuzzViolations\": " + std::to_string(g_fuzzFailures) +
+            ",\n \"scenarios\": " + std::to_string(g_scenarioRuns) +
+            ",\n \"scenarioViolations\": " + std::to_string(g_scenarioFailures) +
+            ",\n \"invariants\": \"" + jsonEscape(invSummary) + "\"" +
+            ",\n \"traceLines\": " + std::to_string(g_traceLines) +
             ",\n \"findingsByKind\": {";
     for (std::size_t i = 0; i < byKind.size(); ++i) {
         json += std::string(i > 0 ? ", " : "") + "\"" + byKind[i].first + "\": " +
@@ -1568,8 +2329,20 @@ int main(int argc, char** argv) {
 
     const std::wstring jsonPath = toWide(outDir) + L"\\ui_probe.json";
     const bool jsonOk = writeAll(jsonPath, json.data(), json.size());
+    // The operation-sequence trace: every invariant violation with the whole
+    // state (offset, range, latch, style bit, viewport, page, depths, baseline)
+    // plus a summary line, so a red run is diagnosable from the artefact alone.
+    const std::wstring tracePath = toWide(outDir) + L"\\ui_probe_trace.jsonl";
+    const bool traceOk = writeAll(tracePath, g_trace.data(), g_trace.size());
     std::printf("ui_probe: %d findings over %d controls / %d checks; json %s\n",
                 g_findings, totalControls, g_checks, jsonOk ? "written" : "FAILED");
+    std::printf("ui_probe: harness %d steps / %d invariant checks / %d violations "
+                "(%d scenarios, %d with violations); trace %s (%d lines)\n",
+                g_fuzzSteps, g_fuzzChecks, g_fuzzFailures, g_scenarioRuns,
+                g_scenarioFailures, traceOk ? "written" : "FAILED", g_traceLines);
+    if (!invSummary.empty()) {
+        std::printf("ui_probe: invariants (checks/violations) %s\n", invSummary.c_str());
+    }
     for (const auto& entry : byKind) {
         std::printf("  %-14s %d\n", entry.first.c_str(), entry.second);
     }

@@ -3466,7 +3466,21 @@ void showTab(int tab);   // fwd (defined below; used by settingsToControls)
 
 // Per-monitor DPI of the window (GetDpiForWindow when available; the
 // classic LOGPIXELSX fallback keeps MinGW/older SDKs compiling).
+#if defined(KIEEKEY_UI_PROBE)
+// v1.3.0-beta8fix1 (harness): the CI runner's desktop has ONE real DPI (96), so
+// the probe cannot make the monitor command 150 % — but the user's report is
+// about exactly that direction (the app believes 96, the monitor now says
+// 150 %, and the display-change path rescales every child by 1.5 with nothing
+// re-solving). The harness therefore lies to the ONE function that answers
+// "what scale is this window at". Probe-only: without -DKIEEKEY_UI_PROBE this
+// global and this branch do not exist.
+UINT g_probeWindowDpiOverride = 0;
+#endif
+
 UINT windowDpi(HWND hwnd) noexcept {
+#if defined(KIEEKEY_UI_PROBE)
+    if (g_probeWindowDpiOverride != 0) { return g_probeWindowDpiOverride; }
+#endif
     if (const HMODULE user32 = ::GetModuleHandleW(L"user32.dll")) {
         using GetDpiForWindowFn = UINT(WINAPI*)(HWND);
         const auto fn = reinterpret_cast<GetDpiForWindowFn>(
@@ -7590,5 +7604,171 @@ extern "C" int KieeKeyProbeSelectTab(HWND dlg, int tab) {
                    reinterpret_cast<LPARAM>(&hdr));
     ::UpdateWindow(dlg);
     return 0;
+}
+
+//===========================================================================
+// v1.3.0-beta8fix1 — STATE-SEQUENCE entry points (the fuzz harness's hands).
+//
+// WHY THIS EXISTS. The CA-03 probe could already select a tab, scroll, force a
+// reflow and simulate a DPI change, and it was GREEN in four consecutive CI
+// rounds while the user's screen showed a settings page that had lost its
+// content and its scrollbar. Every one of those checks measured a SETTLED
+// dialog: solve, then look. The defect lives in the ORDER OF OPERATIONS — an
+// operation that leaves the dialog coherent, followed by another one that
+// leaves it incoherent — so the harness has to drive the app's own operations
+// in a seeded random order and assert an invariant after EVERY one of them.
+//
+// These entry points are what makes that possible without the harness ever
+// re-implementing app logic:
+//
+//   * KieeKeyProbeSetOffset runs the SAME clamp + SetScrollInfo + region apply
+//     the user's thumb drag and wheel end in (WM_VSCROLL / WM_MOUSEWHEEL).
+//   * KieeKeyProbeDisplayChange runs the app's display-change response. That is
+//     the code under test — the harness must not model it.
+//   * KieeKeyProbeScrollState hands the app's OWN numbers back (offset, range,
+//     enabled, the clamped viewport, per-tab solved content depth, the real
+//     SCROLLINFO), so an invariant is asserted on the state the app believes in
+//     and not on a second opinion computed by the probe.
+//   * KieeKeyProbeResize / KieeKeyProbeFontScale drive the two axes the user's
+//     machine varies and the CI runner's desktop cannot.
+//
+// All of them exist only under -DKIEEKEY_UI_PROBE; KieeKeyApp.exe is unchanged.
+//===========================================================================
+struct KieeKeyProbeScrollStateT {
+    int haveBaseline;                 // 0 => the scroll machinery has no layout
+    int solvedCount;                  // baseline entries (page children)
+    int offset;                       // the app's own scroll position
+    int range;                        // current tab's range (px)
+    int enabled;                      // the app's own "bar is on" latch
+    int styleVScroll;                 // WS_VSCROLL on the dialog right now
+    int viewportX, viewportY;         // the page rect the solve CLAMPED to
+    int viewportW, viewportH;
+    int viewportBottom;
+    int contentBottom[9];             // per-tab deepest SOLVED bottom
+    int barPos, barPage, barMax;      // Win32's answer (GetScrollInfo)
+    UINT dpi;                         // the scale the solve used
+};
+
+extern "C" void KieeKeyProbeScrollState(HWND dlg, KieeKeyProbeScrollStateT* out) {
+    if (out == nullptr) { return; }
+    *out = KieeKeyProbeScrollStateT{};
+    for (int t = 0; t < 9; ++t) { out->contentBottom[t] = 0; }
+    out->haveBaseline = g_settingsScroll.solved.empty() ? 0 : 1;
+    out->solvedCount  = static_cast<int>(g_settingsScroll.solved.size());
+    out->offset       = g_settingsScroll.offset;
+    out->range        = g_settingsScroll.range;
+    out->enabled      = g_settingsScroll.enabled ? 1 : 0;
+    out->viewportX    = g_settingsScroll.viewport.x;
+    out->viewportY    = g_settingsScroll.viewport.y;
+    out->viewportW    = g_settingsScroll.viewport.w;
+    out->viewportH    = g_settingsScroll.viewport.h;
+    out->viewportBottom = g_settingsScroll.viewportBottom;
+    for (int t = 0; t < 9; ++t) { out->contentBottom[t] = g_settingsScroll.perTabContentBottom[t]; }
+    out->dpi = g_settingsDpi != 0 ? g_settingsDpi : 96;
+    if (dlg != nullptr) {
+        out->styleVScroll =
+            (::GetWindowLongPtrW(dlg, GWL_STYLE) & WS_VSCROLL) != 0 ? 1 : 0;
+        SCROLLINFO si{};
+        si.cbSize = sizeof(si);
+        si.fMask = SIF_ALL;
+        if (::GetScrollInfo(dlg, SB_VERT, &si) != FALSE) {
+            out->barPos  = si.nPos;
+            out->barPage = static_cast<int>(si.nPage);
+            out->barMax  = si.nMax;
+        }
+    }
+}
+
+// The tail of the app's own scroll path (WM_VSCROLL SB_THUMBTRACK / the wheel):
+// the APP clamps, updates the scrollbar and re-applies the regions. A harness
+// that wrote the offset itself could reach a state no user drag can produce.
+extern "C" int KieeKeyProbeSetOffset(HWND dlg, int pos) {
+    if (dlg == nullptr) { return -1; }
+    const int clamped = std::clamp(pos, 0, std::max(0, g_settingsScroll.range));
+    if (clamped != g_settingsScroll.offset) {
+        g_settingsScroll.offset = clamped;
+        SCROLLINFO si{};
+        si.cbSize = sizeof(si);
+        si.fMask = SIF_POS;
+        si.nPos = clamped;
+        ::SetScrollInfo(dlg, SB_VERT, &si, TRUE);
+        applySettingsScrollOffset(dlg);
+    }
+    return g_settingsScroll.offset;
+}
+
+// The app's response to a display change (monitor topology, resolution, scale).
+// The main window's WM_DISPLAYCHANGE handler calls exactly this when the
+// settings dialog is open, and it is the whole of the dialog's own reaction
+// today — so this is the code under test, not a model of it.
+extern "C" int KieeKeyProbeDisplayChange(HWND dlg) {
+    if (dlg == nullptr || g.hSettings == nullptr) { return -1; }
+    refreshSettingsDpi();
+    return 0;
+}
+
+// The harness's ability to say "the monitor now reports this scale" — see the
+// note above windowDpi(). Probe-only, and cleared by the harness after the
+// scenario so no later check runs with a faked scale.
+extern "C" void KieeKeyProbeSetWindowDpiOverride(UINT dpi) {
+    g_probeWindowDpiOverride = dpi;
+}
+
+// Resize the dialog to a target CLIENT size (a work-area / monitor change).
+extern "C" int KieeKeyProbeResize(HWND dlg, int clientW, int clientH) {
+    if (dlg == nullptr || clientW <= 0 || clientH <= 0) { return -1; }
+    RECT rc{0, 0, clientW, clientH};
+    const LONG_PTR style = ::GetWindowLongPtrW(dlg, GWL_STYLE);
+    const LONG_PTR exStyle = ::GetWindowLongPtrW(dlg, GWL_EXSTYLE);
+    ::AdjustWindowRectEx(&rc, static_cast<DWORD>(style), FALSE,
+                         static_cast<DWORD>(exStyle));
+    ::SetWindowPos(dlg, nullptr, 0, 0, rc.right - rc.left, rc.bottom - rc.top,
+                   SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    return 0;
+}
+
+// A larger system text size reaches the controls as larger metrics. The dialog
+// creates its own font, so the harness supplies the scaled faces THROUGH THE
+// APP'S OWN FONT FACTORY and then asks the app to re-solve: the geometry the
+// solver has to cope with is the real one for that text scale.
+struct KieeKeyProbeFontCtx {
+    HFONT normal, bold, title;
+    HFONT oldNormal, oldBold, oldTitle;
+};
+static BOOL CALLBACK kieeKeyProbeApplyFont(HWND child, LPARAM lp) {
+    const auto* ctx = reinterpret_cast<const KieeKeyProbeFontCtx*>(lp);
+    if (ctx == nullptr) { return TRUE; }
+    const HFONT cur = reinterpret_cast<HFONT>(
+        ::SendMessageW(child, WM_GETFONT, 0, 0));
+    HFONT replacement = nullptr;
+    if (cur == ctx->oldTitle)       { replacement = ctx->title; }
+    else if (cur == ctx->oldBold)   { replacement = ctx->bold; }
+    else if (cur == ctx->oldNormal) { replacement = ctx->normal; }
+    if (replacement != nullptr && replacement != cur) {
+        ::SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(replacement), TRUE);
+    }
+    return TRUE;
+}
+
+extern "C" int KieeKeyProbeFontScale(HWND dlg, int percent) {
+    if (dlg == nullptr || percent < 100 || percent > 400) { return -1; }
+    const int px = percent == 100 ? 13 : std::max(8, 13 * percent / 100);
+    const KieeKeyProbeFontCtx ctx{
+        cachedFont(px, FW_NORMAL), cachedFont(px, FW_SEMIBOLD),
+        cachedFont(std::max(12, 20 * percent / 100), FW_SEMIBOLD),
+        uiFont(), uiFontBold(), uiFontTitle()};
+    ::EnumChildWindows(dlg, &kieeKeyProbeApplyFont, reinterpret_cast<LPARAM>(&ctx));
+    // The controls changed size underneath the solved layout: everything the
+    // solver measured is stale, which is exactly the condition the layout must
+    // survive.
+    dropSettingsLayoutBaseline();
+    solveSettingsLayout(dlg);
+    return percent;
+}
+
+// The app's own runtime-growth path for a live row (the 500 ms tick's).
+extern "C" void KieeKeyProbeTypeRow(HWND dlg, int id, const wchar_t* text) {
+    if (dlg == nullptr || text == nullptr) { return; }
+    refreshGrowingRow(dlg, id, std::wstring(text));
 }
 #endif // KIEEKEY_UI_PROBE

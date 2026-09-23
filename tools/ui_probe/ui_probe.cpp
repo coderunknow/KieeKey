@@ -1134,8 +1134,8 @@ int g_fuzzFailures = 0;
 int g_scenarioRuns = 0;
 int g_scenarioFailures = 0;
 int g_traceLines = 0;
-int g_invChecks[13] = {};
-int g_invFailures[13] = {};
+int g_invChecks[14] = {};
+int g_invFailures[14] = {};
 std::string g_trace;
 
 void harnessTrace(const std::string& line) {
@@ -1280,9 +1280,23 @@ std::string harnessStateStr(const HarnessState& s, const char* op, int step,
 
 // One invariant violation: a finding (so the probe exits non-zero and the CI
 // digest shows the count) plus one line of state for ui_probe_trace.jsonl.
+// v1.3.0-beta8fix1 (bug BS-19): the FIRST violating state of every invariant.
+// The trace file has all of them, but the CI annotation only carries the digest
+// line, and a count without a state is not a diagnosis: this keeps one example
+// per invariant so the red run names the operation, the seed, the DPI, the
+// offset and the page rectangle that produced it. Bounded (one per invariant,
+// 420 chars) so the digest stays a line.
+std::string g_invExample[14];
+std::vector<std::string> g_handoverNotes;   // one per scale pass, for the digest
+
 void harnessFail(int inv, std::vector<Finding>* findings, const std::string& why,
                  const std::string& state) {
     ++g_invFailures[inv];
+    if (inv >= 0 && inv < 14 && g_invExample[inv].empty()) {
+        std::string ex = why + " || " + state;
+        if (ex.size() > 420) { ex.resize(417); ex += "..."; }
+        g_invExample[inv] = std::move(ex);
+    }
     ++g_fuzzFailures;
     const std::string kind = std::string("inv_I") + std::to_string(inv);
     findings->push_back({kind, why + " — " + state});
@@ -1762,7 +1776,7 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
 // The seeded fuzz pass: fixed seeds, a fixed number of steps per tab and scale,
 // every step asserting the invariants. The step budget is in the JSON counters,
 // so "0 findings" can never mean "it never ran".
-int runSequenceHarness(HWND dlg, int tabCount, unsigned nativeDpi,
+int runSequenceHarness(HWND dlg, int tabCount, unsigned nativeDpi, unsigned passDpi,
                        int stepsPerTab,
                        std::vector<std::pair<std::string, int>>* byKind) {
     std::vector<HWND> all = stableChildren(dlg);
@@ -1799,6 +1813,73 @@ int runSequenceHarness(HWND dlg, int tabCount, unsigned nativeDpi,
     KieeKeyProbeReflowNow(dlg);
     KieeKeyProbeSetOffset(dlg, 0);
     KieeKeyProbeSelectTab(dlg, 0);
+
+    // ---- R1 — THE HANDOVER (v1.3.0-beta8fix1, bug BS-19) --------------------
+    //
+    // This harness runs BETWEEN the scale passes (main() calls it at the end of
+    // each pass), and the fuzz drives the dialog through 96/120/144/192 dpi,
+    // text scales 100/125/150 % and window sizes 70..130 % of the pass's client.
+    // Whatever is left here IS the dialog the next scale pass audits, so the
+    // handover is part of the measurement and is asserted like one.
+    //
+    // It was not, and CI run 35866022217 shows what that costs: the fuzz's last
+    // DPI op could leave the app at 192 dpi while the cleanup restored the
+    // 96-dpi CLIENT SIZE (KieeKeyProbeResize sets a size, it does not change a
+    // scale) — a dialog whose content was laid out at 2x inside a window sized
+    // for 1x. The 150 % pass then rescaled that by 144/192 = 0.75 and audited
+    // the result: children 720 px wide (480 x 2 x 0.75 — exactly 1.5 x the
+    // AUTHORED 480) in a 399 px client, i.e. 100 `outside_page`, 513 I12 and 7
+    // `clip` findings that describe the harness's leftover, not the app's 150 %
+    // layout — with the audit's red light pointing at the product.
+    // The pass that follows must get the state its own DPI declares: same DPI,
+    // same client size, font scale 100, offset 0, tab 0, solved.
+    {
+        HarnessState handed;
+        readHarnessState(dlg, all, 0, &handed);
+        const std::string handover =
+            "pass dpi=" + std::to_string(passDpi) + " handed over: app dpi=" +
+            std::to_string(handed.app.dpi) + " client " +
+            std::to_string(handed.client.right) + "x" +
+            std::to_string(handed.client.bottom) + " (pass started with " +
+            std::to_string(origClient.right) + "x" +
+            std::to_string(origClient.bottom) + ") page " +
+            rectStr(handed.page) + " offset " + std::to_string(handed.app.offset) +
+            " range " + std::to_string(handed.app.range) +
+            " baseline " + (handed.app.haveBaseline != 0 ? "yes" : "NO") +
+            " visible " + std::to_string(handed.visibleCount);
+        g_handoverNotes.push_back(handover);
+        std::printf("ui_probe: [handover] %s\n", handover.c_str());
+
+        ++g_invChecks[13];
+        if (handed.app.dpi != passDpi) {
+            harnessFail(13, &findings,
+                        "the harness handed the next step a dialog solved at dpi " +
+                            std::to_string(handed.app.dpi) + " but this pass audits dpi " +
+                            std::to_string(passDpi) +
+                            " — the cleanup restores the client SIZE, the font scale, the "
+                            "offset and the tab, but not the DPI, so every finding measured "
+                            "after this point describes the fuzz's leftover layout",
+                        harnessStateStr(handed, "restore", stepsPerTab, 0, 100));
+        }
+        ++g_invChecks[13];
+        if (std::abs(handed.client.right - origClient.right) > 2 ||
+            std::abs(handed.client.bottom - origClient.bottom) > 2) {
+            harnessFail(13, &findings,
+                        "the harness handed the next step a dialog of " +
+                            std::to_string(handed.client.right) + "x" +
+                            std::to_string(handed.client.bottom) +
+                            " but this pass started at " +
+                            std::to_string(origClient.right) + "x" +
+                            std::to_string(origClient.bottom) +
+                            " — the pass would audit a window size no operation of this "
+                            "pass ever set",
+                        harnessStateStr(handed, "restore", stepsPerTab, 0, 100));
+        }
+        // The restored state is judged by the same I1..I12 battery every
+        // operation is: a handover that is scaled right but incoherent is not a
+        // handover.
+        harnessAssert(dlg, handed, "restore", stepsPerTab, 0, 100, &findings);
+    }
 
     const int failures = g_fuzzFailures - before;
     for (const Finding& f : findings) { harnessKind(byKind, f.kind); }
@@ -1870,6 +1951,11 @@ int main(int argc, char** argv) {
     struct ScalePass { int percent; UINT dpi; };
     std::vector<ScalePass> passes;
     passes.push_back({static_cast<int>((nativeDpi * 100U) / 96U), nativeDpi});
+    // v1.3.0-beta8fix1 (bug BS-19): the three scales the regression contract
+    // names — 100 %, 125 % and 150 % — are each audited as their own pass,
+    // with their own client size and their own operation-sequence harness, so
+    // a leak between passes is measured instead of assumed away.
+    if (nativeDpi != 120U) { passes.push_back({125, 120U}); }
     if (nativeDpi != 144U) { passes.push_back({150, 144U}); }
 
     std::string json;
@@ -2315,8 +2401,8 @@ int main(int argc, char** argv) {
 
         // v1.3.0-beta8fix1: the state-sequence half — the named display-change
         // scenario plus the seeded fuzz pass, for THIS scale pass.
-        runSequenceHarness(dlg, static_cast<int>(tabCount), nativeDpi, fuzzSteps,
-                           &byKind);
+        runSequenceHarness(dlg, static_cast<int>(tabCount), nativeDpi, pass.dpi,
+                           fuzzSteps, &byKind);
     }
 
     // The harness's own counters (v1.3.0-beta8fix1). They exist so a green run
@@ -2324,10 +2410,14 @@ int main(int argc, char** argv) {
     // number of evaluated invariant instances and the violations per invariant
     // are all in the report, and the same numbers ride in the CI digest line.
     std::string invSummary;
-    for (std::size_t i = 1; i <= 12; ++i) {
+    for (std::size_t i = 1; i <= 13; ++i) {
         if (g_invChecks[i] == 0 && g_invFailures[i] == 0) { continue; }
-        invSummary += std::string(invSummary.empty() ? "" : " ") + "I" +
-                      std::to_string(i) + ":" + std::to_string(g_invChecks[i]) + "/" +
+        // Slot 13 is the handover contract ("R1"): it is not an app invariant
+        // but it is measured, counted and reported the same way, because a
+        // handover violation is what turns every finding after it into noise.
+        invSummary += std::string(invSummary.empty() ? "" : " ") +
+                      (i == 13 ? std::string("R1") : ("I" + std::to_string(i))) + ":" +
+                      std::to_string(g_invChecks[i]) + "/" +
                       std::to_string(g_invFailures[i]);
     }
 
@@ -2342,8 +2432,27 @@ int main(int argc, char** argv) {
             ",\n \"scenarios\": " + std::to_string(g_scenarioRuns) +
             ",\n \"scenarioViolations\": " + std::to_string(g_scenarioFailures) +
             ",\n \"invariants\": \"" + jsonEscape(invSummary) + "\"" +
+            ",\n \"handover\": ["
             ",\n \"traceLines\": " + std::to_string(g_traceLines) +
             ",\n \"findingsByKind\": {";
+    // v1.3.0-beta8fix1 (bug BS-19): the handover notes and one example state per
+    // violated invariant ride in the JSON, so the CI digest can carry the state
+    // that produced a count (see the workflow's operation-sequence line).
+    for (std::size_t i = 0; i < g_handoverNotes.size() && i < 4; ++i) {
+        json += std::string(i > 0 ? ", " : "") + "\"" + jsonEscape(g_handoverNotes[i]) + "\"";
+    }
+    json += "],\n \"firstViolations\": [";
+    {
+        bool firstEx = true;
+        for (std::size_t i = 0; i < 14; ++i) {
+            if (g_invExample[i].empty()) { continue; }
+            json += std::string(firstEx ? "" : ", ") + "{\"inv\": \"" +
+                    (i == 13 ? std::string("R1") : ("I" + std::to_string(i))) +
+                    "\", \"state\": \"" + jsonEscape(g_invExample[i]) + "\"}";
+            firstEx = false;
+        }
+    }
+    json += "],\n \"findingsByKind\": {";
     for (std::size_t i = 0; i < byKind.size(); ++i) {
         json += std::string(i > 0 ? ", " : "") + "\"" + byKind[i].first + "\": " +
                 std::to_string(byKind[i].second);

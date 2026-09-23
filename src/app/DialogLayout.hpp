@@ -94,6 +94,94 @@ struct Rect {
 }
 
 //---------------------------------------------------------------------------
+// v1.3.0-beta8 (bug BS-10) — page content must start BELOW the tab strip.
+//
+// The nine tab labels wrap to a SECOND row when the dialog is narrow or the
+// font is larger (TCS_MULTILINE, planned by ok::layout::planTabs). The display
+// rectangle then starts one row lower — and the authored page rectangles were
+// solved for a single-row strip, so the top of the page (group boxes at y=100,
+// labels at y=110) ended up hidden UNDER the tab labels. The CA-03 probe found
+// it on the CI runner: `page=[16,114,...]` with `id 555 at 24,100` etc.
+//
+// The rule is deliberately data-driven and idempotent: a page whose first
+// control already starts at/below the display rectangle shifts by 0, so
+// re-solving an already-solved dialog changes nothing.
+//---------------------------------------------------------------------------
+[[nodiscard]] inline int pageTopShiftPx(int authoredTopPx, int viewportTopPx) noexcept {
+    return std::max(0, viewportTopPx - authoredTopPx);
+}
+
+//---------------------------------------------------------------------------
+// v1.3.0-beta8 (bug BS-17) — THE SOLVER MUST START FROM THE UNSCOLLED LAYOUT.
+//
+// "Scrolling" in this dialog is a RENDER operation: it moves the page children
+// up by the offset and clips them to the viewport (scrollChildRect below). It
+// is not a layout change — but the solver took its input geometry from the live
+// window rectangles, and `autoFit` may only ever move a control DOWN. So every
+// re-solve that happened while the user was scrolled re-absorbed the scroll
+// offset as a layout change:
+//
+//   * the row that scrolling had pushed ABOVE the page top was `pageTopShiftPx`'s
+//     `authoredTop`, so the shift became `offset + (realGap)` and the whole page
+//     was dragged back down by the offset it should not have known about;
+//   * the plan then REPLACED the baseline, so the next reflow started from the
+//     drifted geometry and drifted again — up to `offset` px per reflow.
+//
+// The timer asks for a reflow every time a live row needs more room, so on a
+// 150 % desktop with a scrolled page this marched the whole page upward: rows
+// left the top of the viewport, the reported content depth shrank with them, the
+// scroll range collapsed to 0 and the page ended up empty with no scrollbar at
+// all ("mất nội dung, không hiện scrollbar"), while every portable check and the
+// CI probe — both of which measure a freshly solved, unscrolled dialog — stayed
+// green.
+//
+// The rule: the solver's input for a page child is the BASELINE it produced last
+// time (the layout, at offset 0) — never the live rectangle, which is the
+// render. A child with no baseline yet (the first solve, before any scroll can
+// exist) uses its live rectangle with the current offset added back; this
+// function is that one case, shared by the app and by tests.
+[[nodiscard]] inline Rect solverInputRect(const Rect& live, int scrollOffsetPx) noexcept {
+    return Rect{live.x, live.y + scrollOffsetPx, live.w, live.h};
+}
+
+//---------------------------------------------------------------------------
+// v1.3.0-beta8 (bug BS-09) — the bottom chrome row keeps its X when the
+// dialog grows.
+//
+// The in-app ON/OFF toggle and the OK/Cancel/Apply row are authored BELOW the
+// tab control's viewport, so they are not page content: the caller anchors them
+// to the window refit by moving them DOWN with `clientDelta`. The beta7 apply
+// loop handed SetWindowPos an X of 0 with SWP_NOSIZE but WITHOUT SWP_NOMOVE —
+// on real Windows that moves every button in the row to the left edge and
+// stacks the four of them on top of each other (and SetWindowPos applies X and
+// Y whenever SWP_NOMOVE is absent; SWP_NOSIZE only suppresses cx/cy). Nothing
+// caught it: scripts/audit_layout.py models rectangles, not SetWindowPos flags,
+// and the defect only shows up when the refit actually grows the dialog — i.e.
+// on a real monitor with a real font. The first CI run of tools/ui_probe (CA-03)
+// found it: four buttons at x=0, three of them overlapping by 76x30/80x30 px.
+//
+// The decision is modelled here so it is unit-testable and cannot regress:
+// a chrome rectangle at/below `tabBottom - slackPx` moves down by `clientDelta`
+// and keeps its authored X; anything above that line (the header) does not move.
+//---------------------------------------------------------------------------
+struct BottomRowMove {
+    bool moves = false;   // this chrome control sits in the bottom button row
+    Rect rect{};          // where it must end up (equals the input when !moves)
+};
+
+[[nodiscard]] inline BottomRowMove bottomRowMove(const Rect& chrome, int tabBottom,
+                                                int slackPx, int clientDelta) noexcept {
+    BottomRowMove m;
+    m.rect = chrome;
+    if (chrome.y < tabBottom - slackPx) { return m; }
+    m.moves = true;
+    m.rect.y = chrome.y + clientDelta;
+    m.rect.x = chrome.x;   // never sideways: the row slides down, not left
+    return m;
+}
+
+
+//---------------------------------------------------------------------------
 // One control as authored, plus what the runtime measurement said about it.
 //---------------------------------------------------------------------------
 struct ControlSpec {
@@ -519,19 +607,112 @@ struct ScrolledChild {
     return out;
 }
 
-// Standard scrollbar metrics for the fallback: range = the pixels of content
-// below the viewport, page = 90 % of the viewport (one "page" of scroll).
+// v1.3.0-beta8 (bug BS-12) — a runtime text change is a LAYOUT change.
+//
+// The 500 ms timer writes four rows with live text (diagnostics verdict, arcade
+// status, AI stats, coaching advice) whose height the solver could not know
+// when it solved the page. The beta8 build grew those rows ON THE SPOT: the
+// neighbours below stayed where they were (the row ran under them) and the
+// solver's baseline kept the OLD height, so the next scroll step resized the
+// row back down — the line the user had just read was cut in half again
+// (measured by the CI probe: 188px -> 168px at offset 7 on tab 6 @150%).
+//
+// The rule this models: if the text needs more room than the row has, the
+// DIALOG must be re-solved (grown row + everything below shifted + window
+// refitted + scroll range recomputed), never the row alone. 2 px of tolerance
+// so a rounding difference never starts a reflow loop.
+[[nodiscard]] inline bool rowNeedsReflow(int currentH, int neededH) noexcept {
+    return neededH > currentH + 2;
+}
+
+// v1.3.0-beta8 (bug BS-16d) -- ASK ONCE PER REQUIREMENT, NOT ONCE PER TEXT.
+//
+// The timer asks for a reflow when a live row's text outgrew its box. The first
+// version remembered the TEXT HASH, so a row whose text changes every tick (a
+// counter, a hook latency, "đang gõ"/"nhàn rỗi") but whose REQUIRED HEIGHT does
+// not re-solved the whole dialog -- all 121 children moved, the window refitted,
+// the scroll range recomputed -- at 2 Hz, forever. The measured height is the
+// only thing the solver acts on, so it is the only thing worth deduping: the
+// caller asks again only when the row needs MORE room than the height it last
+// asked for (plus the same 2 px the fit test tolerates). A row that can no
+// longer be satisfied (window at the work-area clamp, growth applied as far as
+// it goes) stops asking instead of looping.
+[[nodiscard]] inline bool shouldRequestReflow(int lastRequestedNeedPx,
+                                              int neededPx) noexcept {
+    return neededPx > lastRequestedNeedPx + 2;
+}
+
+// v1.3.0-beta8 (bug BS-10) — THE WINDOW IS NOT ALWAYS AS TALL AS THE CONTENT.
+//
+// 150 % on a 1080p work area is the NORMAL case, not an edge: the refit grows
+// the client by what the work area allows and the rest is supposed to become
+// scroll. The beta8 arithmetic grew the TAB CONTROL by the intended client
+// delta anyway, so at 150 % its display rectangle — and every page child inside
+// it — ended far below the window, while the bottom chrome row, moved by the
+// same delta, landed off-screen with it: the CI probe measured the button row
+// at y=911 inside a 689-pixel window, i.e. OK / Huỷ / Áp dụng were not on the
+// screen at all and the page could not scroll (the "viewport" claimed the
+// content fit). Two rules, both pure:
+//
+//   * the tab control is never taller than the space left above the chrome row
+//     INSIDE the client;
+//   * the chrome row sits just below the tab display rectangle, but never below
+//     the client.
+[[nodiscard]] inline int tabHeightForClient(int tabTopPx, int clientBottomPx,
+                                           int chromeBandPx) noexcept {
+    const int available = clientBottomPx - tabTopPx - chromeBandPx;
+    return (available > 0) ? available : 0;   // 0 => the caller keeps its minimum
+}
+
+[[nodiscard]] inline int chromeRowTopInClient(int belowTabTopPx, int clientBottomPx,
+                                             int rowHeightPx) noexcept {
+    const int maxTop = clientBottomPx - rowHeightPx;
+    return (belowTabTopPx < maxTop) ? belowTabTopPx : maxTop;
+}
+
+// Standard scrollbar metrics for the fallback.
+//
+// v1.3.0-beta8 (bug BS-01) — THE OLD MODEL MADE THE BAR UNREACHABLE.
+// It shipped as `nMax = overflow - 1` with `nPage = 90 % of the viewport`
+// (beta5..beta7). Win32 DISABLES a scrollbar whenever `nPage >= nMax + 1`, so
+// with a ~470 px viewport (nPage ~423) and the tens-of-pixels overflows this
+// dialog actually produces (one wrapped label = +17 px) the bar was dead in
+// exactly the cases it exists for — while `applySettingsScrollOffset()` had
+// already region-clipped every child below the viewport. The user's text was
+// invisible AND unreachable ("chữ bị che, không thể kéo").
+//
+// Correct model, used by src/app/main.cpp verbatim:
+//   * 1 scroll unit == 1 px, so SCROLLINFO::nMax + 1 == the whole content;
+//   * nPage == the viewport height (one page), never a fraction of it;
+//   * the bar is therefore enabled iff `maxTravelPx > 0`;
+//   * the thumb fraction is viewport / content — what every native scrollbar
+//     shows — and the drag travel is exactly the overflow, so the last pixel
+//     row of the page is reachable.
 struct ScrollMetrics {
-    int rangeMax = 0;
-    int pagePx   = 0;
-    int linePx   = 16;
+    int  contentPx   = 0;      // total content height == nMax + 1
+    int  pagePx      = 0;      // one page == the viewport height
+    int  linePx      = 16;     // arrow-key / wheel step
+    int  maxTravelPx = 0;      // largest legal scroll offset == the overflow
+    int  rangeMaxPx  = 0;      // SCROLLINFO::nMax (contentPx - 1, inclusive)
+    bool enabled     = false;  // nPage < nMax + 1  <=>  maxTravelPx > 0
+
+    [[nodiscard]] double thumbFraction() const noexcept {
+        return contentPx > 0
+                   ? static_cast<double>(pagePx) / static_cast<double>(contentPx)
+                   : 1.0;
+    }
 };
 
 [[nodiscard]] inline ScrollMetrics scrollMetrics(int viewportHeightPx,
                                                  int scrollRangePx) noexcept {
     ScrollMetrics m;
-    m.rangeMax = std::max(0, scrollRangePx);
-    m.pagePx = std::max(1, viewportHeightPx * 9 / 10);
+    m.pagePx      = std::max(1, viewportHeightPx);   // never 0: Win32 would
+                                                     // drop the page info and
+                                                     // hide the thumb entirely
+    m.maxTravelPx = std::max(0, scrollRangePx);
+    m.contentPx   = m.pagePx + m.maxTravelPx;
+    m.rangeMaxPx  = m.contentPx - 1;
+    m.enabled     = m.maxTravelPx > 0;
     return m;
 }
 

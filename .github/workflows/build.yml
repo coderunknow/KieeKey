@@ -215,7 +215,7 @@ jobs:
           fetch-depth: 1
 
       - name: Configure (CMake, Visual Studio generator — no dev prompt needed)
-        run: cmake -S . -B out/${{ matrix.platform }} ${{ matrix.cmake_args }} -DCMAKE_BUILD_TYPE=Release -DKIEEKEY_BUILD_TESTS=ON -DKIEEKEY_BUILD_UI=none
+        run: cmake -S . -B out/${{ matrix.platform }} ${{ matrix.cmake_args }} -DCMAKE_BUILD_TYPE=Release -DKIEEKEY_BUILD_TESTS=ON -DKIEEKEY_BUILD_UI=none -DKIEEKEY_BUILD_UI_PROBE=${{ matrix.platform == 'x64' && 'ON' || 'OFF' }}
 
       - name: Build
         shell: pwsh
@@ -290,7 +290,7 @@ jobs:
             # (KIEEKEY_WERROR=OFF) and report the FULL inventory, deduplicated —
             # one push then tells the whole story instead of one warning per run.
             Write-Host "::notice::re-running the build with KIEEKEY_WERROR=OFF to list every warning"
-            cmake -S . -B out/diag ${{ matrix.cmake_args }} -DCMAKE_BUILD_TYPE=Release -DKIEEKEY_BUILD_TESTS=ON -DKIEEKEY_BUILD_UI=none -DKIEEKEY_WERROR=OFF | Out-Null
+            cmake -S . -B out/diag ${{ matrix.cmake_args }} -DCMAKE_BUILD_TYPE=Release -DKIEEKEY_BUILD_TESTS=ON -DKIEEKEY_BUILD_UI=none -DKIEEKEY_BUILD_UI_PROBE=OFF -DKIEEKEY_WERROR=OFF | Out-Null
             $diagLog = "build-${{ matrix.platform }}-diag.log"
             cmake --build out/diag --config Release --parallel 2>&1 | Tee-Object -FilePath $diagLog | Out-Null
             $seenDiag = @{}
@@ -373,6 +373,77 @@ jobs:
             throw 'CTest succeeded but the JUnit report is missing'
           }
           exit $testCode
+
+      # v1.3.0-beta8 (CA-03/CA-05): the Windows UI probe. It opens the REAL
+      # settings dialog through the app's own creation path (probe-only entry
+      # points, -DKIEEKEY_UI_PROBE) and audits what the USER sees — not just the
+      # rectangles Windows reports:
+      #
+      #   * the EFFECTIVE rectangle of every control (window rect translated by
+      #     its window region), so a hidden or mis-clipped control cannot pass;
+      #   * one page at a time (a control of another tab may never be visible);
+      #   * the real scroll path (WM_VSCROLL/thumb through the whole range), which
+      #     the runner's large 96-dpi desktop otherwise never exercises;
+      #   * the 150 % layout, driven through the app's own DPI-change path
+      #     (KieeKeyProbeSimulateDpi) after the native pass.
+      #
+      # Exits non-zero on any finding; ui_probe.json + one PNG per tab/scale are
+      # uploaded.
+      - name: UI probe (real HWNDs, real font metrics)
+        if: matrix.platform == 'x64'
+        shell: pwsh
+        run: |
+          $dir = "ui-probe"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          & "out/x64/Release/kieekey_ui_probe.exe" $dir
+          $code = $LASTEXITCODE
+          if (Test-Path "$dir/ui_probe.json") {
+            $json = Get-Content "$dir/ui_probe.json" -Raw | ConvertFrom-Json
+            $kinds = ($json.findingsByKind.PSObject.Properties | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join ' '
+            # One line per (tab, scale) INSIDE the notice: the per-tab detail
+            # lives in the annotations below, which GitHub caps at 10 per step —
+            # so the digest is the only channel that always lists EVERY measured
+            # tab (travel included), even when findings push annotations out.
+            $digest = @()
+            foreach ($tab in $json.tabs) {
+              $digest += ('t' + $tab.tab + '@' + $tab.scale + '%=' + $tab.findings.Count)
+            }
+            Write-Host "::notice title=UI probe::$($json.controls) controls, $($json.checks) checks, $($json.findings) findings [$kinds] (native DPI $($json.nativeDpi), scales $(($json.tabs | Select-Object -ExpandProperty scale -Unique) -join '/'), screen checks $($json.screenCaptures) run / $($json.screenUnavailable) unavailable) :: $($digest -join ' ')"
+            # v1.3.0-beta8 (CA-05): ONE annotation per TAB, carrying both scales
+            # (findings AND the geometry digest) — 9 tabs + the notice == the
+            # 10-annotation budget exactly, so no measured tab is ever dropped.
+            # 150 % comes first inside each: it is the scale that reproduces the
+            # user's report on a 1920x1080 desktop, and it is read first.
+            foreach ($group in ($json.tabs | Group-Object tab)) {
+              $lines = @()
+              $bad = 0
+              foreach ($tab in ($group.Group | Sort-Object -Property @{Expression={-$_.scale}})) {
+                $bad += [int]$tab.findings.Count
+                $geo = @()
+                foreach ($g in $tab.geometry) { $geo += $g }
+                $lines += "tab $($tab.tab) @$($tab.scale)% dialog=$($tab.dialog -join 'x') page=[$($tab.page -join ',')] travel=$($tab.scrollTravel) $($tab.findings.Count) finding(s) [$($tab.findings.Count)]"
+                foreach ($f in $tab.findings) { $lines += "  [$($f.kind)] $($f.detail)" }
+                if ($geo.Count -gt 0) { $lines += "  geometry: $($geo -join ' | ')" }
+              }
+              if ($bad -eq 0) { continue }
+              # GitHub annotations need the newline ESCAPED — a literal one
+              # truncates the command to its first line.
+              $msg = ($lines -join '%0A')
+              Write-Host "::error title=tab $($group.Name)::$msg"
+            }
+          } else {
+            Write-Host "::error::the UI probe did not write ui_probe.json"
+          }
+          exit $code
+
+      - name: Upload UI probe artifacts
+        if: always() && matrix.platform == 'x64'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ui-probe-${{ matrix.platform }}
+          path: ui-probe/
+          if-no-files-found: warn
+          retention-days: 14
 
       # v1.2.2 RC4 (B-5): the SHA256 release manifest must stay in sync with
       # the tree it ships from — the same gate tests/run_all_tests.sh runs.

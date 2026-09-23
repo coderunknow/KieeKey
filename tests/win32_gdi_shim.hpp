@@ -300,6 +300,10 @@ struct TRACKMOUSEEVENT {
 // misc
 #define CP_UTF8          65001
 #define GWLP_USERDATA    (-21)
+// v1.3.0-beta8 (bug BS-06): ChaosLabWindow::fitLabWindowToDesign() reads the
+// window's own style back to re-run AdjustWindowRectEx on a DPI change.
+#define GWL_STYLE        (-16)
+#define GWL_EXSTYLE      (-20)
 #define SW_SHOW          5
 #define IDC_ARROW        ((LPCWSTR)32512)
 #define ERROR_CLASS_ALREADY_EXISTS 1410
@@ -349,6 +353,13 @@ static_assert(sizeof(LONG) == 4, "Win32 LONG must be 32-bit");
 #endif
 #ifndef MB_ICONERROR
 #define MB_ICONERROR   0x00000010L
+#endif
+// v1.3.0-beta8 (FT-02): the Lab's refused-activation dialog is a WARNING.
+#ifndef MB_ICONWARNING
+#define MB_ICONWARNING 0x00000030L
+#endif
+#ifndef MB_ICONINFORMATION
+#define MB_ICONINFORMATION 0x00000040L
 #endif
 #ifndef IDOK
 #define IDOK           1

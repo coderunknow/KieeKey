@@ -50,6 +50,11 @@ set(KIEEKEY_PROFILE 0 CACHE STRING "Compile in the QPC stage profiler (0=off/def
 # diagnostic CI build turns it OFF so that a failing build can print the FULL
 # warning inventory in one pass instead of stopping at the first one per file.
 set(KIEEKEY_WERROR ON CACHE BOOL "Treat compiler warnings as errors (/WX on MSVC)")
+# v1.3.0-beta8 (CA-03): the Windows UI probe — opt-in, CI-only. It compiles
+# src/app/main.cpp with -DKIEEKEY_UI_PROBE (probe-only entry points) and drives
+# the REAL settings dialog: real HWNDs, real font metrics, per-tab screenshots.
+# OFF by default so the shipped build never contains the probe code paths.
+set(KIEEKEY_BUILD_UI_PROBE OFF CACHE BOOL "Build the Windows UI probe (tools/ui_probe)")
 # Low-latency engine profile (PR15 port): when ON, the engine compiles with
 # the grammar-repair pass and the per-key undo snapshot removed (opt-in
 # behavioural trade-off — see TextEngine.hpp). Default OFF = strict build,
@@ -286,6 +291,26 @@ if(WIN32)
     # LoadIconW/LoadCursorW calls fail to compile. Both branches are now
     # explicit and identical.
     target_compile_definitions(openkey PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+
+    # v1.3.0-beta8 (CA-03) — the Windows UI probe (CI-only, x64). It links the
+    # app's own sources so the dialog it walks is the dialog that ships; the
+    # probe-only entry points exist only under -DKIEEKEY_UI_PROBE.
+    if(KIEEKEY_BUILD_UI_PROBE)
+        add_executable(kieekey_ui_probe
+            tools/ui_probe/ui_probe.cpp
+            src/app/main.cpp
+            src/app/ArcadeWindow.hpp
+            src/app/ArcadeWindow.cpp
+            src/app/ChaosLabWindow.hpp
+            src/app/ChaosLabWindow.cpp
+            src/app/resource.h
+        )
+        target_include_directories(kieekey_ui_probe PRIVATE src/core src/tsf src/app tools/ui_probe)
+        target_compile_features(kieekey_ui_probe PRIVATE cxx_std_23)
+        target_link_libraries(kieekey_ui_probe PRIVATE ok_core ok_tsf shell32 comctl32 ole32)
+        target_compile_definitions(kieekey_ui_probe PRIVATE
+            UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN KIEEKEY_UI_PROBE)
+    endif()
     if(MSVC)
         # /MANIFEST:NO (see the INVARIANT comment above): the manifest comes
         # ONLY from KieeKeyApp.rc via the RC rule. Without this, MSVC's

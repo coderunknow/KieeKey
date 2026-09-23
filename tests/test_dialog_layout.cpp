@@ -44,6 +44,7 @@
 #include "DialogLayout.hpp"
 
 #include <cassert>
+#include <cmath>
 #include <cstdio>
 #include <iostream>
 #include <string>
@@ -519,14 +520,11 @@ void testScrollChildRectClipsAtViewportEdges() {
     assert(!gone.visible && gone.clip.h == 0);
     const ScrolledChild below = scrollChildRect(Rect{44, 700, 460, 100}, 0, viewport);
     assert(!below.visible);
-    // Scroll metrics: range == the overflow, page == 90 % of the viewport.
-    const ScrollMetrics m = scrollMetrics(viewport.h, 122);
-    assert(m.rangeMax == 122);
-    assert(m.pagePx == viewport.h * 9 / 10);
-    const ScrollMetrics none = scrollMetrics(viewport.h, 0);
-    assert(none.rangeMax == 0);
-    std::cout << "  [PASS] scrollChildRect clips at the viewport edges;"
-                 " scroll metrics follow the standard\n";
+    // Scroll metrics are covered by the dedicated BS-01 test below: the old
+    // expectations that used to live here (`rangeMax == overflow`,
+    // `pagePx == viewport * 9 / 10`) ENCODED THE BUG — see
+    // testScrollMetricsEnableTheBarExactlyWhenContentOverflows().
+    std::cout << "  [PASS] scrollChildRect clips at the viewport edges\n";
 }
 
 void testDpiSweepEveryControlInsideOrScrollable() {
@@ -585,7 +583,280 @@ void testDpiSweepEveryControlInsideOrScrollable() {
                  " the client area or scroll-reachable, no chrome overlap\n";
 }
 
+void testScrollMetricsEnableTheBarExactlyWhenContentOverflows() {
+    // v1.3.0-beta8 (bug BS-01) — "chữ bị che, không thể kéo".
+    //
+    // The scroll fallback shipped (beta5, bug B1) as
+    //     nMax  = overflow - 1          (overflow == content below the viewport)
+    //     nPage = 90 % of the viewport
+    // Win32 DISABLES a scrollbar whenever nPage >= nMax + 1. With a viewport of
+    // ~470 px nPage is ~423, while the overflows this dialog actually produces
+    // are tens of pixels (one wrapped label = +17 px). 423 >= 18 => the bar was
+    // dead in exactly the cases it exists for, while applySettingsScrollOffset()
+    // had already region-clipped the children below the viewport: the text was
+    // invisible AND unreachable.
+    //
+    // Correct model: 1 scroll unit = 1 px, nMax + 1 == the whole content,
+    // nPage == the viewport. The bar is then enabled iff there IS overflow,
+    // the thumb fraction is viewport/content (as every native scrollbar shows
+    // it) and the drag travel is exactly the overflow.
+    const int viewports[] = {300, 470};
+    const int overflows[] = {1, 15, 150, 1000};
+    for (const int v : viewports) {
+        const ScrollMetrics fits = scrollMetrics(v, 0);
+        assert(!fits.enabled);                      // nothing to scroll => disabled
+        assert(fits.pagePx == v);
+        assert(fits.maxTravelPx == 0);
+        assert(fits.contentPx == v);
+        assert(fits.rangeMaxPx + 1 == v);           // nMax + 1 == content
+        assert(fits.thumbFraction() == 1.0);
+        for (const int r : overflows) {
+            const ScrollMetrics m = scrollMetrics(v, r);
+            assert(m.enabled);                      // <-- RED on the old formula
+            assert(m.pagePx == v);                  // one page == the viewport
+            assert(m.maxTravelPx == r);             // drag travel == the overflow
+            assert(m.contentPx == v + r);
+            assert(m.rangeMaxPx == m.contentPx - 1);
+            // The Win32 enable condition, verbatim: nPage < nMax + 1.
+            assert(m.pagePx < m.rangeMaxPx + 1);
+            // Thumb fraction == viewport / content (what the user sees).
+            const double expected = static_cast<double>(v) / static_cast<double>(v + r);
+            assert(std::fabs(m.thumbFraction() - expected) < 1e-9);
+            // The thumb travel maps exactly onto the scroll range.
+            assert(std::fabs((1.0 - m.thumbFraction()) * m.contentPx - r) < 1e-9);
+        }
+        // A negative range (model misuse) must clamp to "no scrolling", never
+        // to a negative nMax that would make the bar's position meaningless.
+        const ScrollMetrics neg = scrollMetrics(v, -5);
+        assert(!neg.enabled && neg.maxTravelPx == 0 && neg.rangeMaxPx + 1 == v);
+        // A degenerate viewport (measured before the first solve) must never
+        // produce nPage == 0 — Win32 treats that as "no page info" and hides
+        // the thumb entirely.
+        const ScrollMetrics tiny = scrollMetrics(0, 40);
+        assert(tiny.pagePx >= 1 && tiny.enabled);
+        assert(tiny.pagePx < tiny.rangeMaxPx + 1);
+    }
+    std::cout << "  [PASS] BS-01: scrollbar enabled iff content overflows;"
+                 " thumb fraction == viewport/content; travel == overflow\n";
+}
+
+void testScrollOffsetIsAlwaysReachableAtBothEnds() {
+    // BS-01 follow-through: with the corrected metrics the LAST line of a page
+    // is reachable at max offset for every (viewport, overflow) pair — the
+    // property the user experiences as "I can finally read the bottom of the
+    // tab". Previously maxTravel was capped at nMax == overflow - 1, so the
+    // final pixel row of content was never reachable even with a live bar.
+    const int viewports[] = {300, 470};
+    const int overflows[] = {1, 15, 150, 1000};
+    for (const int v : viewports) {
+        for (const int r : overflows) {
+            const ScrollMetrics m = scrollMetrics(v, r);
+            const int contentBottom = v + r;                 // in viewport coords
+            const int lastVisibleRow = contentBottom - m.maxTravelPx;
+            assert(lastVisibleRow == v);                     // bottom row == viewport bottom
+            // Every offset in [0, maxTravel] is a legal, non-negative position
+            // and never overshoots the content.
+            for (int off = 0; off <= m.maxTravelPx; off += std::max(1, m.maxTravelPx / 7)) {
+                assert(off >= 0 && off <= r);
+                assert(contentBottom - off >= v);
+            }
+        }
+    }
+    std::cout << "  [PASS] BS-01: the deepest content row is reachable at max"
+                 " offset for every viewport/overflow pair\n";
+}
+
 } // namespace
+
+// v1.3.0-beta8 (bug BS-09): the bottom chrome row slides DOWN and keeps its X.
+// The beta7 apply loop called SetWindowPos(..., 0, y, 0, 0, SWP_NOSIZE | ...) —
+// no SWP_NOMOVE — so all four bottom buttons jumped to x=0 and stacked as soon
+// as the dialog grew. The probe caught it on real Windows; this is the portable
+// guard (see scratch/BS09 seed note in BUG_HUNT_REPORT_beta8...).
+void testBottomRowMovesDownOnly() {
+    // The row is chrome: the solver must never treat it as page content.
+    assert(ControlSpec::kAlwaysVisible == -1);
+    const ok::layout::Rect toggle{12, 580, 240, 30};
+    const ok::layout::Rect okBtn{300, 580, 76, 30};
+    const ok::layout::Rect cancel{384, 580, 76, 30};
+    const ok::layout::Rect apply{468, 580, 80, 30};
+    const ok::layout::Rect header{58, 12, 490, 18};
+    const int tabBottom = 572;   // authored tab control: S(66) + S(506), 96 dpi
+    const int slack = 4;
+    const int delta = 67;        // the CI refit grew the client by 67 px (probe: y=580 -> 647)
+
+    for (const ok::layout::Rect& r : {toggle, okBtn, cancel, apply}) {
+        const ok::layout::BottomRowMove m =
+            ok::layout::bottomRowMove(r, tabBottom, slack, delta);
+        assert(m.moves);
+        assert(m.rect.x == r.x);                 // BS-09: X is preserved
+        assert(m.rect.y == r.y + delta);         // and Y follows the refit
+        assert(m.rect.w == r.w && m.rect.h == r.h);
+        // The row must stay a row: the four controls keep the authored gaps.
+    }
+    const ok::layout::BottomRowMove a =
+        ok::layout::bottomRowMove(apply, tabBottom, slack, delta);
+    const ok::layout::BottomRowMove t =
+        ok::layout::bottomRowMove(toggle, tabBottom, slack, delta);
+    assert(a.rect.x - (t.rect.x + t.rect.w) == 468 - (12 + 240));   // gap preserved
+
+    // The header is ABOVE the tab bottom: it never moves with the refit.
+    const ok::layout::BottomRowMove h =
+        ok::layout::bottomRowMove(header, tabBottom, slack, delta);
+    assert(!h.moves);
+    assert(h.rect.x == header.x && h.rect.y == header.y);
+
+    // A dialog that did not grow must not move the row at all.
+    const ok::layout::BottomRowMove z =
+        ok::layout::bottomRowMove(okBtn, tabBottom, slack, 0);
+    assert(z.moves);
+    assert(z.rect.y == okBtn.y && z.rect.x == okBtn.x);
+
+    // A control exactly on the slack line counts as the row (>= tabBottom - slack).
+    const ok::layout::Rect edge{44, tabBottom - slack, 100, 20};
+    assert(ok::layout::bottomRowMove(edge, tabBottom, slack, delta).moves);
+    const ok::layout::Rect above{44, tabBottom - slack - 1, 100, 20};
+    assert(!ok::layout::bottomRowMove(above, tabBottom, slack, delta).moves);
+}
+
+// v1.3.0-beta8 (bug BS-10): a two-row tab strip must never hide the page's top.
+void testPageTopShiftKeepsContentBelowTheTabStrip() {
+    // The CI probe measured the display rectangle at y=114 (two rows of tabs)
+    // while the authored page starts at y=100 (group boxes) / 110 (labels).
+    assert(pageTopShiftPx(100, 114) == 14);
+    assert(pageTopShiftPx(110, 114) == 4);
+    // One-row strip: the authored tops were solved for exactly this, no shift.
+    assert(pageTopShiftPx(88, 88) == 0);
+    assert(pageTopShiftPx(100, 92) == 0);
+    // Idempotent: content already at/below the display rectangle never moves up.
+    assert(pageTopShiftPx(114, 114) == 0);
+    assert(pageTopShiftPx(200, 114) == 0);
+}
+
+// v1.3.0-beta8 (bug BS-12): the scroll path may MOVE a page child, never
+// RESIZE it. The app re-applied the baseline size on every step, which threw
+// away the height a row had grown at runtime — the CI probe measured a row
+// going 188px -> 168px at offset 7 of 7 (tab 6 @150 %). Whatever the offset,
+// the model must hand back the SOLVED size.
+void testScrollModelNeverResizesAChild() {
+    const Rect solved{40, 200, 300, 188};
+    const Rect viewport{16, 114, 510, 500};
+    for (int offset = 0; offset <= 600; offset += 37) {
+        const ScrolledChild c = scrollChildRect(solved, offset, viewport);
+        assert(c.rect.w == solved.w);
+        assert(c.rect.h == solved.h);
+        assert(c.clip.w <= solved.w && c.clip.h <= solved.h);
+    }
+    std::cout << "  [PASS] BS-12: scrolling moves a child and never resizes it\n";
+}
+
+// v1.3.0-beta8 (bug BS-17): A REFLOW WHILE THE PAGE IS SCROLLED MUST NOT MOVE
+// THE LAYOUT.
+//
+// This models the app's loop with the real model functions: solve (offset 0) ->
+// scroll by `offset` -> a live row needs more room -> re-solve -> restore the
+// offset. What changed in the fix is the solver's INPUT: the pre-fix code fed it
+// the live rectangle (the render, already moved up by the offset), the fix feeds
+// it the baseline (the layout, at offset 0).
+void testReflowWhileScrolledKeepsTheLayout() {
+    const int pageTop = 100;
+    const int offset = 40;
+    // Two rows of one page, both below the page top (the normal authored gap).
+    const ok::layout::Rect baseTop{20, 200, 400, 28};
+    const ok::layout::Rect baseDeep{20, 600, 400, 28};
+    // What the user sees after scrolling: both rows are `offset` px higher.
+    const ok::layout::Rect liveTop{20, baseTop.y - offset, 400, 28};
+    const ok::layout::Rect liveDeep{20, baseDeep.y - offset, 400, 28};
+
+    // --- pre-fix: the live rectangle is the solver's input ---
+    const int shiftFromLive = ok::layout::pageTopShiftPx(liveTop.y, pageTop);
+    assert(shiftFromLive == 0);            // the live row is still below the top
+    std::vector<ok::layout::ControlSpec> liveSpecs;
+    for (const ok::layout::Rect& r : {liveTop, liveDeep}) {
+        ok::layout::ControlSpec c;
+        c.id = static_cast<int>(liveSpecs.size()) + 1;
+        c.rect = r;
+        c.tab = 0;
+        c.growable = true;
+        c.requiredHeight = 28;             // the text still fits: no real growth
+        liveSpecs.push_back(c);
+    }
+    const ok::layout::LayoutPlan livePlan =
+        ok::layout::autoFit(liveSpecs, pageTop, 700);
+    assert(livePlan.rects[0].y == 160);    // solved at the live position
+    // The solve writes that plan as the new BASELINE and then restores the scroll
+    // offset, which subtracts the offset a SECOND time:
+    const int renderedTopAfterReflow = livePlan.rects[0].y - offset;
+    assert(renderedTopAfterReflow == 120); // was 160 on screen: moved UP by 40...
+    assert(renderedTopAfterReflow == liveTop.y - offset);   // ...the offset again
+    // ...and the page's depth -- the number the scroll range is built from --
+    // shrank by the same amount, so repeating this empties the scrollbar:
+    const int depthBefore = baseDeep.bottom();
+    const int depthAfter = livePlan.rects[1].y - offset + livePlan.rects[1].h;
+    assert(depthBefore - depthAfter == 2 * offset);
+    assert(ok::layout::scrollMetrics(400, depthBefore - pageTop).enabled);
+    assert(!ok::layout::scrollMetrics(400, depthAfter - pageTop).enabled ==
+           (depthAfter - pageTop <= 400));
+
+    // --- the fix: the baseline is the input, the offset is render-only ---
+    const ok::layout::Rect startTop = ok::layout::solverInputRect(liveTop, offset);
+    assert(startTop.y == baseTop.y);       // 200: the scroll is undone
+    std::vector<ok::layout::ControlSpec> baseSpecs;
+    for (const ok::layout::Rect& r : {startTop, ok::layout::solverInputRect(liveDeep, offset)}) {
+        ok::layout::ControlSpec c;
+        c.id = static_cast<int>(baseSpecs.size()) + 1;
+        c.rect = r;
+        c.tab = 0;
+        c.growable = true;
+        c.requiredHeight = 28;
+        baseSpecs.push_back(c);
+    }
+    const ok::layout::LayoutPlan basePlan = ok::layout::autoFit(baseSpecs, pageTop, 700);
+    assert(basePlan.rects[0].y == baseTop.y);         // the layout is untouched
+    assert(basePlan.rects[1].y == baseDeep.y);
+    // The render still applies the offset, so the user sees exactly what they
+    // saw before the reflow: nothing moves.
+    assert(basePlan.rects[0].y - offset == liveTop.y);
+    assert(basePlan.rects[1].y - offset == liveDeep.y);
+
+    // A row that really did grow still grows, still only downwards, and the
+    // rows below it keep their distance.
+    baseSpecs[0].requiredHeight = 60;
+    const ok::layout::LayoutPlan grown = ok::layout::autoFit(baseSpecs, pageTop, 700);
+    assert(grown.rects[0].y == baseTop.y && grown.rects[0].h == 60);
+    assert(grown.rects[1].y == baseDeep.y + (60 - 28));
+    std::cout << "  [PASS] BS-17: a reflow while scrolled keeps the layout\n";
+}
+
+
+// v1.3.0-beta8 (bug BS-12): a runtime text change that needs more room is a
+// REFLOW request, not a local resize: the controls below the row have to move
+// with it (and the scroll range has to grow), or the text runs under them.
+void testRuntimeGrowthRequestsAReflow() {
+    assert(ok::layout::rowNeedsReflow(188, 216));   // two more lines
+    assert(ok::layout::rowNeedsReflow(28, 31));
+    assert(!ok::layout::rowNeedsReflow(188, 188));  // the same text
+    assert(!ok::layout::rowNeedsReflow(188, 190));  // 2 px: measurement noise
+    assert(!ok::layout::rowNeedsReflow(188, 170));  // shorter: never shrink
+    // v1.3.0-beta8 (bug BS-16d): the reflow request is deduped by REQUIRED
+    // HEIGHT. A row whose text changes every tick but whose need does not must
+    // not re-solve the dialog; a strictly taller need must.
+    assert(ok::layout::shouldRequestReflow(0, 40));     // first ask
+    assert(!ok::layout::shouldRequestReflow(40, 40));   // the solver granted it
+    assert(!ok::layout::shouldRequestReflow(40, 41));   // noise: 2 px tolerance
+    assert(!ok::layout::shouldRequestReflow(40, 42));   // still noise
+    assert(ok::layout::shouldRequestReflow(40, 43));    // a real extra need
+    assert(ok::layout::shouldRequestReflow(40, 60));    // one more line
+    assert(!ok::layout::shouldRequestReflow(60, 40));   // never shrink
+    // ...and the reflow it triggers keeps every offset reachable (BS-01).
+    const ScrollMetrics before = ok::layout::scrollMetrics(500, 0);
+    const ScrollMetrics after = ok::layout::scrollMetrics(500, 28);
+    assert(before.maxTravelPx == 0);
+    assert(after.maxTravelPx == 28);
+    assert(after.pagePx == 500);
+    std::cout << "  [PASS] BS-12: runtime growth asks for a reflow, and the"
+                 " reflow grows the travel\n";
+}
 
 int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
@@ -602,7 +873,23 @@ int main() {
     testRefitWindowShrinksOversizedWindowToScroll();
     testFitRectToWorkArea();
     testScrollChildRectClipsAtViewportEdges();
+    // v1.3.0-beta8 (bug BS-01): the scrollbar must be enabled exactly when the
+    // content overflows — the beta5..beta7 model disabled it in every case the
+    // dialog actually produces.
+    testScrollMetricsEnableTheBarExactlyWhenContentOverflows();
+    testScrollOffsetIsAlwaysReachableAtBothEnds();
     testDpiSweepEveryControlInsideOrScrollable();
+    // v1.3.0-beta8 (bug BS-09): the bottom chrome row keeps its X.
+    testBottomRowMovesDownOnly();
+    // v1.3.0-beta8 (bug BS-10): the page starts below the tab strip, always.
+    testPageTopShiftKeepsContentBelowTheTabStrip();
+    // v1.3.0-beta8 (bug BS-12): scrolling moves, never resizes; runtime text
+    // growth is a reflow request, not a local resize.
+    testScrollModelNeverResizesAChild();
+    testRuntimeGrowthRequestsAReflow();
+    // v1.3.0-beta8 (bug BS-17): a reflow while the page is scrolled must not
+    // move the layout (the solver starts from the baseline, not from the render).
+    testReflowWhileScrolledKeepsTheLayout();
     std::cout << "=== ALL DIALOG LAYOUT TESTS PASSED ===\n";
     return 0;
 }

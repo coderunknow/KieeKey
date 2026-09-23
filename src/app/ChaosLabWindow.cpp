@@ -12,6 +12,7 @@
 #include "ChaosLabWindow.hpp"
 
 #include "ArcadeHubLaunch.hpp"
+#include "FlexSendOutcome.hpp"   // v1.3.0-beta8 (bug FT-02)
 #include "UnicodeText.hpp"
 
 #if !defined(_WIN32)
@@ -78,6 +79,9 @@ constexpr int kIdFlexInject = 4044;    // auto-inject every produced chunk
 constexpr int kIdFlexPrep = 4045;      // the prepared passage itself
 constexpr UINT_PTR kInjectionTimer = 0xC041;
 constexpr int kIdFlexSend = 4046;      // type the produced text into the app
+// v1.3.0-beta8 (bug FT-02): the row that says WHY nothing was typed. beta7 had
+// no such surface, so every failure looked exactly like success.
+constexpr int kIdStatus = 4047;
 
 std::wstring widen(const std::string& utf8) {
     if (utf8.empty()) {
@@ -128,6 +132,8 @@ struct ChaosLabWindow::Impl {
     HWND flexInput = nullptr;
     HWND flexInject = nullptr;
     HWND flexSend = nullptr;
+    HWND status = nullptr;             // FT-02: the "why nothing happened" row
+    bool statusAlerted = false;        // one dialog per session for a refused activation
     std::wstring flexProduced;        // everything the engine produced so far
     bool ownsFlexing = false;
     std::wstring pendingInjection;
@@ -140,6 +146,16 @@ struct ChaosLabWindow::Impl {
     // settings dialog), recreated on WM_DPICHANGED and freed on WM_DESTROY.
     HFONT uiFont = nullptr;
     UINT  fontDpi = 0;
+    // v1.3.0-beta8 (bug BS-06): the authored 96-DPI rect of every child, in
+    // creation order. WM_DPICHANGED used to rescale only the FONT, so at
+    // 125/150 % the glyphs grew 1.25/1.5x inside unchanged boxes and every
+    // label was clipped or overlapped ("chữ bị đè" inside the Lab).
+    // applyLabLayout() repositions all of them from this table.
+    struct ChildRect {
+        HWND hwnd;
+        RECT rc;      // authored rect at 96 DPI
+    };
+    std::vector<ChildRect> children;
 };
 
 std::u32string ChaosLabWindow::transformForPreview(std::u32string_view input,
@@ -332,12 +348,20 @@ void cancelInjection(ChaosLabWindow::Impl& impl) {
     impl.injectionTarget = nullptr;
 }
 
+// v1.3.0-beta8 (bug FT-02): pumpInjection() runs on the injection timer and
+// reports through the same single status/alert point as the buttons — declared
+// here because it is defined below, next to typeIntoFocusApp().
+flexsend::Outcome reportSendOutcome(ChaosLabWindow::Impl& impl, flexsend::Outcome outcome,
+                                    bool* alertShown);
+
 void pumpInjection(ChaosLabWindow::Impl& impl) {
     // Focus can change between chunks. Cancel instead of typing into the wrong
     // document, and never sleep/block the UI thread for a long passage.
     if (!isExternalTarget(impl.injectionTarget) ||
         ::GetForegroundWindow() != impl.injectionTarget ||
         ChaosLabWindow::emitCallback() == nullptr) {
+        // v1.3.0-beta8 (bug FT-02): say so instead of silently stopping.
+        (void)reportSendOutcome(impl, flexsend::Outcome::TargetLost, &impl.statusAlerted);
         cancelInjection(impl);
         return;
     }
@@ -350,28 +374,60 @@ void pumpInjection(ChaosLabWindow::Impl& impl) {
     const std::wstring chunk = impl.pendingInjection.substr(impl.injectionOffset,
                                                             end - impl.injectionOffset);
     if (ChaosLabWindow::emitCallback()(chunk) != chunk.size()) {
+        (void)reportSendOutcome(impl, flexsend::Outcome::EmitFailed, &impl.statusAlerted);
         cancelInjection(impl);
         return;
     }
     impl.injectionOffset = end;
-    if (end == impl.pendingInjection.size()) { cancelInjection(impl); }
+    if (end == impl.pendingInjection.size()) {
+        (void)reportSendOutcome(impl, flexsend::Outcome::Sent, &impl.statusAlerted);
+        cancelInjection(impl);
+    }
 }
 
-std::size_t typeIntoFocusApp(ChaosLabWindow::Impl& impl, const std::wstring& text, bool perChunk) {
+// v1.3.0-beta8 (bug FT-02): every exit now names its reason (ok::flexsend).
+// The behaviour is unchanged — still fail-closed, still no injection into a
+// window that is not the one we asked for — but the caller can tell the user
+// WHICH of the five causes happened instead of returning a bare 0 that looked
+// exactly like "queued".
+flexsend::Outcome typeIntoFocusApp(ChaosLabWindow::Impl& impl, const std::wstring& text, bool perChunk) {
     cancelInjection(impl);
-    if (text.empty() || !isExternalTarget(impl.target) || ChaosLabWindow::emitCallback() == nullptr) {
-        return 0;
-    }
+    if (text.empty()) { return flexsend::Outcome::Empty; }
+    if (!isExternalTarget(impl.target)) { return flexsend::Outcome::NoTarget; }
+    if (ChaosLabWindow::emitCallback() == nullptr) { return flexsend::Outcome::NoEmitter; }
     if (!::SetForegroundWindow(impl.target) || ::GetForegroundWindow() != impl.target) {
-        return 0;   // activation can be denied by Windows; fail closed
+        return flexsend::Outcome::ActivationDenied;   // Windows focus rules; fail closed
     }
-    if (!perChunk) { return ChaosLabWindow::emitCallback()(text); }
+    if (!perChunk) {
+        const std::size_t emitted = ChaosLabWindow::emitCallback()(text);
+        if (emitted != text.size()) { return flexsend::Outcome::EmitFailed; }
+        return flexsend::Outcome::Sent;
+    }
     impl.pendingInjection = text;
     impl.injectionTarget = impl.target;
     if (::SetTimer(impl.hwnd, kInjectionTimer, 60, nullptr) == 0) {
         cancelInjection(impl);
+        return flexsend::Outcome::EmitFailed;
     }
-    return 0;   // queued, not yet emitted
+    return flexsend::Outcome::Queued;
+}
+
+// The single reporting point: writes the reason into the status row, raises the
+// one-time dialog for a refused activation, and never blocks the emit path.
+flexsend::Outcome reportSendOutcome(ChaosLabWindow::Impl& impl, flexsend::Outcome outcome,
+                                    bool* alertShown) {
+    if (impl.status != nullptr) {
+        ::SetWindowTextW(impl.status, flexsend::statusLineVi(outcome).c_str());
+    }
+    if (flexsend::needsAlert(outcome) && (alertShown == nullptr || !*alertShown)) {
+        if (alertShown != nullptr) { *alertShown = true; }
+        const wchar_t* const detail = flexsend::detailVi(outcome);
+        ::MessageBoxW(impl.hwnd, detail != nullptr && detail[0] != L'\0'
+                                    ? detail : flexsend::reasonVi(outcome),
+                      L"KieeKey — không gõ được ra app đích",
+                      MB_OK | MB_ICONWARNING);
+    }
+    return outcome;
 }
 
 void syncChaosControls(ChaosLabWindow::Impl& impl) {
@@ -449,6 +505,50 @@ void applyLabFont(ChaosLabWindow::Impl& impl, UINT dpiOverride = 0) {
     // (a font still selected into a control cannot be deleted). On DPI change this
     // avoids leaking a GDI face per rescale.
     if (old != nullptr && old != next) { ::DeleteObject(old); }
+}
+
+// v1.3.0-beta8 (bug BS-06): the design is authored at 96 DPI (760x880 client)
+// and the Lab has no solver — a fixed table is the whole layout. Both halves
+// must scale together: the child rects (this function) and the window that has
+// to hold them (fitLabWindowToDesign) — the previous revision scaled only the
+// font, so at 125 % the "Mẹo: ..." note wrapped to three lines inside a
+// two-line box and the "Gõ từng nhịp" checkbox text ran past its rect.
+constexpr int kLabDesignW = 760;
+constexpr int kLabDesignH = 880;
+
+void applyLabLayout(ChaosLabWindow::Impl& impl, UINT dpiOverride = 0) {
+    if (impl.hwnd == nullptr) { return; }
+    const UINT dpi = dpiOverride ? dpiOverride : labWindowDpi(impl.hwnd);
+    const int d = static_cast<int>(dpi != 0 ? dpi : 96);
+    for (const auto& entry : impl.children) {
+        if (entry.hwnd == nullptr || ::IsWindow(entry.hwnd) == FALSE) { continue; }
+        ::SetWindowPos(entry.hwnd, nullptr,
+                       ::MulDiv(entry.rc.left, d, 96),
+                       ::MulDiv(entry.rc.top, d, 96),
+                       ::MulDiv(entry.rc.right - entry.rc.left, d, 96),
+                       ::MulDiv(entry.rc.bottom - entry.rc.top, d, 96),
+                       SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+}
+
+// Grow the window to the DPI-scaled design when it is smaller than that. A
+// window the user made LARGER is left alone; a smaller one would hide the
+// bottom of the table with no scrollbar to reach it.
+void fitLabWindowToDesign(HWND hwnd, UINT dpi) {
+    if (hwnd == nullptr) { return; }
+    const int d = static_cast<int>(dpi != 0 ? dpi : 96);
+    const int needW = ::MulDiv(kLabDesignW, d, 96);
+    const int needH = ::MulDiv(kLabDesignH, d, 96);
+    RECT client{};
+    ::GetClientRect(hwnd, &client);
+    if (client.right >= needW && client.bottom >= needH) { return; }
+    RECT wanted{0, 0, needW, needH};
+    const DWORD style = static_cast<DWORD>(::GetWindowLongPtrW(hwnd, GWL_STYLE));
+    const DWORD exStyle = static_cast<DWORD>(::GetWindowLongPtrW(hwnd, GWL_EXSTYLE));
+    ::AdjustWindowRectEx(&wanted, style, FALSE, exStyle);
+    ::SetWindowPos(hwnd, nullptr, 0, 0, wanted.right - wanted.left,
+                   wanted.bottom - wanted.top,
+                   SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
 void destroyLabFont(ChaosLabWindow::Impl& impl) noexcept {
@@ -536,7 +636,8 @@ LRESULT CALLBACK labWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
                 // user was in before opening the lab ("Flexing gõ thật ra ngoài").
                 const bool perChunk =
                     ::SendMessageW(impl->flexInject, BM_GETCHECK, 0, 0) == BST_CHECKED;
-                (void)typeIntoFocusApp(*impl, impl->flexProduced, perChunk);
+                reportSendOutcome(*impl, typeIntoFocusApp(*impl, impl->flexProduced, perChunk),
+                                  &impl->statusAlerted);
                 if (impl->flexProduced.empty() && impl->flexOutput != nullptr) {
                     ::SetWindowTextW(impl->flexOutput,
                                      L"(chua co chu nao — hay go vai phim vao o duoi cung)");
@@ -551,7 +652,10 @@ LRESULT CALLBACK labWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
                 const bool inject =
                     ::SendMessageW(impl->injectBox, BM_GETCHECK, 0, 0) == BST_CHECKED;
                 const std::wstring text = controlText(impl->preview);
-                if (inject) { (void)typeIntoFocusApp(*impl, text, false); }
+                if (inject) {
+                    reportSendOutcome(*impl, typeIntoFocusApp(*impl, text, false),
+                                      &impl->statusAlerted);
+                }
                 return 0;
             }
             break;
@@ -580,13 +684,25 @@ LRESULT CALLBACK labWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
             // v1.3.0-beta3 (bug #1): rescale the Segoe UI face to the new DPI,
             // re-apply it to every child, then adopt the system-suggested rect so
             // the window itself resizes on the new monitor.
-            if (impl != nullptr) { applyLabFont(*impl, static_cast<UINT>(HIWORD(wParam))); }
+            const UINT newDpi = static_cast<UINT>(HIWORD(wParam));
+            if (impl != nullptr) { applyLabFont(*impl, newDpi); }
             const RECT* suggested = reinterpret_cast<const RECT*>(lParam);
             if (suggested != nullptr) {
                 ::SetWindowPos(hwnd, nullptr, suggested->left, suggested->top,
                                suggested->right - suggested->left,
                                suggested->bottom - suggested->top,
                                SWP_NOZORDER | SWP_NOACTIVATE);
+            }
+            if (impl != nullptr) {
+                // v1.3.0-beta8 (bug BS-06): the CHILD RECTS must move with the
+                // font — rescaling only the face left every box at its 96-DPI
+                // geometry, so at 125/150 % the text outgrew it (clipped and
+                // overlapping labels, including the "Mẹo: ..." note and the
+                // "Gõ từng nhịp" checkbox). Re-lay out from the authored table,
+                // then guarantee the window is not smaller than the scaled
+                // design (the Lab has no scrollbars).
+                applyLabLayout(*impl, newDpi);
+                fitLabWindowToDesign(hwnd, newDpi);
             }
             return 0;
         }
@@ -657,12 +773,20 @@ bool ChaosLabWindow::open(void* owner) {
             return false;
         }
 
+        // v1.3.0-beta8 (bug BS-06): every child remembers its AUTHORED 96-DPI
+        // rect so the layout can be rescanned at the window's real DPI (and
+        // again on WM_DPICHANGED) without a solver.
         const auto create = [&](const wchar_t* klass, const wchar_t* text, DWORD style, int x,
                                 int y, int width, int height, int id) -> HWND {
-            return ::CreateWindowExW(
+            HWND child = ::CreateWindowExW(
                 0, klass, text, WS_CHILD | WS_VISIBLE | style, x, y, width, height,
                 m_impl->hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
                 ::GetModuleHandleW(nullptr), nullptr);
+            if (child != nullptr) {
+                m_impl->children.push_back(ChaosLabWindow::Impl::ChildRect{
+                    child, RECT{x, y, x + width, y + height}});
+            }
+            return child;
         };
 
         create(L"STATIC", L"Bạn gõ gì cũng được — ô dưới hiện chính xác thứ KieeKey sẽ phát ra:",
@@ -714,14 +838,20 @@ bool ChaosLabWindow::open(void* owner) {
         create(L"STATIC", L"🗿 FLEXING MODE — gõ gì cũng được, chữ chuẩn bị trước tự hiện ra:",
                SS_LEFT, 14, 478, 720, 18, -1);
         create(L"STATIC", L"Văn bản chuẩn bị trước:", SS_LEFT, 14, 500, 200, 18, -1);
+        // v1.3.0-beta8 (bug BS-06/BS-03): "Gõ chữ Flexing ra app" needs ~139 px
+        // at a realistic advance (21 chars) and 176 px at 150 % — the authored
+        // 114 px button clipped its own label, and it also reached under the
+        // granularity combo's invisible drop-down window (x 646..738). The
+        // prepared-text box gives up 80 px of width so both buttons sit in a
+        // clear column at 466, with the label at its full length.
         m_impl->flexPrep = create(L"EDIT", L"KieeKey Flexing Mode: ban go gi de tao ra dong chu nay!\r\n"
                                             L"Day la van ban duoc chuan bi truoc, engine C++ go ho ban.",
                                   WS_BORDER | ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN,
-                                  14, 520, 520, 66, kIdFlexPrep);
-        m_impl->flexLoad = create(L"BUTTON", L"Nạp văn bản", BS_PUSHBUTTON, 546, 520, 90, 26,
+                                  14, 520, 440, 66, kIdFlexPrep);
+        m_impl->flexLoad = create(L"BUTTON", L"Nạp văn bản", BS_PUSHBUTTON, 466, 520, 100, 26,
                                   kIdFlexLoad);
-        m_impl->flexSend = create(L"BUTTON", L"Gõ chữ Flexing ra app", BS_PUSHBUTTON, 546, 552,
-                                  114, 26, kIdFlexSend);
+        m_impl->flexSend = create(L"BUTTON", L"Gõ chữ Flexing ra app", BS_PUSHBUTTON, 466, 552,
+                                  150, 26, kIdFlexSend);
         create(L"STATIC", L"Mỗi phím sinh ra:", SS_LEFT, 610, 502, 128, 18, -1);
         m_impl->flexGran = create(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL, 646, 520, 92, 200,
                                   kIdFlexGran);
@@ -753,12 +883,23 @@ bool ChaosLabWindow::open(void* owner) {
         create(L"STATIC",
                L"Mẹo: gõ vài phím vào ô dưới, rồi bấm \"Gõ chữ Flexing ra app\" — chữ sẽ thật sự "
                L"được gõ vào ứng dụng bạn đang dùng (tick \"Gõ từng nhịp\" để gõ chậm như người thật).",
-               SS_LEFT, 14, 800, 720, 36, -1);
+               SS_LEFT, 14, 796, 720, 34, -1);
+        // v1.3.0-beta8 (bug FT-02): the status row. beta7 gave no feedback at
+        // all when the injection could not start, so "nothing happened" was
+        // indistinguishable from "no target app", "focus refused" and "the
+        // emitter failed". This row now carries the reason (ok::flexsend).
+        m_impl->status = create(L"STATIC", L"", SS_LEFT, 14, 840, 720, 20, kIdStatus);
 
         // v1.3.0-beta3 (bug #1): give every control the DPI-scaled Segoe UI face
         // BEFORE the window is shown, so the EDIT boxes render Vietnamese instead
         // of falling back to the raster SYSTEM_FIXED_FONT.
-        applyLabFont(*m_impl);
+        // v1.3.0-beta8 (bug BS-06): and lay the children out at that same DPI —
+        // opening the Lab on a 150 % monitor used to create 96-DPI rects with
+        // 150 % glyphs inside them (labels clipped from the first frame).
+        const UINT openDpi = labWindowDpi(m_impl->hwnd);
+        applyLabFont(*m_impl, openDpi);
+        applyLabLayout(*m_impl, openDpi);
+        fitLabWindowToDesign(m_impl->hwnd, openDpi);
 
         ::SetTimer(m_impl->hwnd, kTimerId, kTimerIntervalMs, nullptr);
     }

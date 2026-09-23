@@ -303,6 +303,26 @@ build test_arcade_beta5   -std=c++2b -O2 -pthread $INC tests/test_arcade_beta5.c
 build test_chaos          -std=c++2b -O2 $INC tests/test_chaos.cpp src/core/ChaosEngine.cpp || rc=1
 build test_ai_rival       -std=c++2b -O2 $INC tests/test_ai_rival.cpp src/core/AiRival.cpp || rc=1
 build test_progression    -std=c++2b -O2 $INC tests/test_progression.cpp src/core/Progression.cpp || rc=1
+# v1.3.0-beta8 (FT-01): the persistence RULES (file names, opt-in gate, 30 s
+# crash-safe sweep) plus a save -> restart -> load round trip through the
+# engines the app actually calls.
+build test_progression_persist -std=c++2b -O2 -Isrc/app -Isrc/core -pthread $INC tests/test_progression_persist.cpp src/core/Progression.cpp || rc=1
+# v1.3.0-beta8 (DS-01/02/05): the diagnostics TEXT layer — quick-check token
+# mapping, the one builder shared by the pane and the export, truth markers.
+build test_diag_report_text -std=c++2b -O2 -Isrc/app $INC tests/test_diag_report_text.cpp || rc=1
+# v1.3.0-beta8 (RS-06): the digest the app prints about itself (FIPS 180-4).
+build test_sha256           -std=c++2b -O2 $INC tests/test_sha256.cpp || rc=1
+# v1.3.0-beta8 (CA-06): the app measures its own layout into the report the
+# user sends — overlap / clipped / cut / unreachable, pure rectangle math.
+build test_diag_self_check -std=c++2b -O2 -Isrc/app $INC tests/test_diag_self_check.cpp || rc=1
+# v1.3.0-beta8 (BS-07): Arcade Hub footer/counter geometry — the hint band and
+# the FPS band come from one function, disjoint at 100-200 % for the longest
+# hints the games can produce.
+build test_arcade_chrome_layout -std=c++2b -O2 -Isrc/app $INC tests/test_arcade_chrome_layout.cpp || rc=1
+# v1.3.0-beta8 (FT-02): "Gõ chữ Flexing ra app" must never fail silently — every
+# outcome carries a Vietnamese reason, five are failures, only a refused
+# activation interrupts.
+build test_flex_send_outcome -std=c++2b -O2 -Isrc/app $INC tests/test_flex_send_outcome.cpp || rc=1
 build test_analytics      -std=c++2b -O2 $INC tests/test_analytics.cpp src/core/TypingAnalytics.cpp || rc=1
 build test_online_ghost   -std=c++2b -O2 $INC tests/test_online_ghost.cpp src/core/OnlineGhost.cpp || rc=1
 build arcade_cli          -std=c++2b -O2 $INC demo/arcade_cli.cpp src/core/Arcade.cpp src/core/ArcadeFrame.cpp src/core/ArcadeRender.cpp src/core/Progression.cpp src/core/ChaosEngine.cpp src/core/AiRival.cpp src/core/TypingAnalytics.cpp src/core/OnlineGhost.cpp $ENGINE23 -pthread || rc=1
@@ -352,6 +372,46 @@ if command -v python3 >/dev/null 2>&1; then
         cat "$OUT/logs/layout-strict.log"
         rc=1
     fi
+    # v1.3.0-beta8 (CA-01): the four new layout checks (multi-scale text fit,
+    # combo drop-down windows over lower-z-order siblings, group containment,
+    # one-line row fit) are only evidence if they can FAIL. This harness seeds
+    # one violation of each class into a throwaway copy of the tree and
+    # asserts the audit goes red — the audit cannot be vacuously green.
+    printf '  [check] %-22s' "layout audit seeds"
+    if ( cd "$REPO_ROOT" && python3 tests/verify_audit_seeds.py ) \
+            > "$OUT/logs/layout-seeds.log" 2>&1; then
+        printf ' ok\n'
+    else
+        printf ' FAILED — %s\n' "$OUT/logs/layout-seeds.log"
+        cat "$OUT/logs/layout-seeds.log"
+        rc=1
+    fi
+    # v1.3.0-beta8 (FT-01): the engines could always save — beta7 simply never
+    # called them from src/app/. main.cpp needs windows.h, so this grep-gate is
+    # what keeps the boot/exit/tick call sites alive.
+    printf '  [check] %-22s' "feature persistence"
+    if ( cd "$REPO_ROOT" && python3 scripts/audit_feature_persistence.py ) \
+            > "$OUT/logs/feature-persistence.log" 2>&1; then
+        printf ' ok\n'
+    else
+        printf ' FAILED — %s\n' "$OUT/logs/feature-persistence.log"
+        cat "$OUT/logs/feature-persistence.log"
+        rc=1
+    fi
+    # v1.3.0-beta8 (WS-D FT-03/FT-05): the Live-Effects tab must tell the truth
+    # — one gate model shared with the diagnostics report, the gate row on the
+    # BS-02 fit path, F9 gated on the arcade keyboard mirror (never on a call
+    # into the game singletons from the hook), and the cost note equal to the
+    # figure docs/PERFORMANCE.md measured.
+    printf '  [check] %-22s' "live effects truth"
+    if ( cd "$REPO_ROOT" && python3 scripts/audit_live_effects_truth.py ) \
+            > "$OUT/logs/live-effects-truth.log" 2>&1; then
+        printf ' ok\n'
+    else
+        printf ' FAILED — %s\n' "$OUT/logs/live-effects-truth.log"
+        cat "$OUT/logs/live-effects-truth.log"
+        rc=1
+    fi
     printf '  [check] %-22s' "dialog controls"
     if ( cd "$REPO_ROOT" && python3 scripts/audit_controls.py ) \
             > "$OUT/logs/dialog-controls.log" 2>&1; then
@@ -359,6 +419,20 @@ if command -v python3 >/dev/null 2>&1; then
     else
         printf ' FAILED — %s\n' "$OUT/logs/dialog-controls.log"
         cat "$OUT/logs/dialog-controls.log"
+        rc=1
+    fi
+
+    # v1.3.0-beta8 (BS-16): the paint layer of the hand-rolled dialog — sibling
+    # clipping, window styles, repaint-after-change and the reflow policy. The
+    # corruption the users photographed was invisible to every rectangle check;
+    # these rules pin the mechanisms so they cannot come back silently.
+    printf '  [check] %-22s' "dialog paint rules"
+    if ( cd "$REPO_ROOT" && python3 scripts/check_dialog_paint_rules.py --repo=. ) \
+            > "$OUT/logs/dialog-paint-rules.log" 2>&1; then
+        printf ' ok\n'
+    else
+        printf ' FAILED — %s\n' "$OUT/logs/dialog-paint-rules.log"
+        cat "$OUT/logs/dialog-paint-rules.log"
         rc=1
     fi
     # v1.3.0-beta6 (V3): the Chaos Lab window is a SECOND interactive surface
@@ -573,6 +647,11 @@ run test_arcade_beta5        90
 run test_chaos               60
 run test_ai_rival            60
 run test_progression         60
+run test_progression_persist 60
+run test_diag_report_text    30
+run test_diag_self_check     30
+run test_arcade_chrome_layout 30
+run test_flex_send_outcome   30
 run test_analytics           60
 run test_online_ghost        60
 run arcade_cli               60 --test

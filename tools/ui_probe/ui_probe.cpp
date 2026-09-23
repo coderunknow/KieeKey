@@ -1854,6 +1854,15 @@ int runSequenceHarness(HWND dlg, int tabCount, unsigned nativeDpi, unsigned pass
             }
         }
     }
+    // v1.3.0-beta8fix1 (bug BS-19 / R1): the fuzz ends on a RANDOM dpi
+    // (96/120/144/192) and the cleanup below restores everything that has a
+    // restore path — the font scale, the client SIZE, the offset, the tab — but a
+    // size is not a scale: KieeKeyProbeResize() sets the client rectangle, it does
+    // not change the app's dpi belief. So the dpi is restored explicitly, through
+    // the same app path the fuzz used, and the R1 assertion that follows is then a
+    // contract that can pass instead of a known failure (CI run 35875728560: R1
+    // 6/6, "handed over a dialog solved at dpi 192 but this pass audits dpi 96").
+    KieeKeyProbeSimulateDpi(dlg, passDpi);
     KieeKeyProbeFontScale(dlg, 100);
     KieeKeyProbeResize(dlg, static_cast<int>(origClient.right),
                        static_cast<int>(origClient.bottom));

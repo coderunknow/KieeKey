@@ -1372,7 +1372,21 @@ void harnessAssert(HWND dlg, const HarnessState& s, const char* op, int step,
     if (a.haveBaseline != 0 && a.offset == 0 && !s.ctls.empty()) {
         ++g_invChecks[1];
         if (s.visibleCount == 0) {
-            fail(1, "page is EMPTY at offset 0 (page " + rectStr(s.page) + ")");
+            // Name the controls: "the page is empty" is a symptom, and the state
+            // line alone cannot say whether the rows are BELOW the viewport, ABOVE
+            // it, or clipped to nothing by a stale region. Three of them, with
+            // their live rect and their region box, do.
+            std::string who;
+            for (const HarnessCtl& c : s.ctls) {
+                if (who.size() > 300) { break; }
+                who += std::string(who.empty() ? "" : " | ") + std::to_string(c.id) +
+                       " " + rectStr(c.x, c.y, c.w, c.h) +
+                       (c.hasRegion ? " r" + rectStr(c.rl, c.rt, c.rr - c.rl, c.rb - c.rt)
+                                    : std::string(" r-")) +
+                       (c.shown ? "" : " hidden");
+            }
+            fail(1, "page is EMPTY at offset 0 (page " + rectStr(s.page) + "): " +
+                    (who.empty() ? std::string("no controls of this tab") : who));
         }
     }
     // I2 — nothing visible starts above the page it belongs to.

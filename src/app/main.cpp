@@ -4950,6 +4950,23 @@ void solveSettingsLayout(HWND hwnd) {
             if (spec.tab == t) { spec.rect.y += shift; }
         }
     }
+    // v1.3.0-beta8fix1 (bug BS-20): and no page child may be wider than the page
+    // that clips it. The ruler is the tab control's right edge — the same bound
+    // the window itself uses (the tab is placed at S(12) with a width of
+    // client - S(24)), so a row can never be laid out into the strip the frame and
+    // the scrollbar own. The 125 % pass of the probe reported 620 px of group box
+    // in a 641 px client (the authored 496 rescaled), which is `outside_page` by
+    // construction; at 100 % the same row happens to fit and the defect was
+    // invisible for four rounds.
+    {
+        RECT cliPage{};
+        ::GetClientRect(hwnd, &cliPage);
+        const int limitRight = static_cast<int>(cliPage.right) - S(12);
+        for (ok::layout::ControlSpec& spec : specs) {
+            if (spec.tab == ok::layout::ControlSpec::kAlwaysVisible) { continue; }
+            spec.rect = ok::layout::clampPageChildWidth(spec.rect, limitRight, S(80));
+        }
+    }
     const ok::layout::LayoutPlan plan = ok::layout::autoFit(
         specs, disp.top, disp.bottom);
 

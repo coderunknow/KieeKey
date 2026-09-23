@@ -145,6 +145,41 @@ struct Rect {
 }
 
 //---------------------------------------------------------------------------
+// v1.3.0-beta8fix1 (bug BS-20) — A PAGE CHILD MAY NOT BE WIDER THAN THE PAGE.
+//
+// The audit's 125 % pass (the scale the beta8fix1 probe added, because the
+// regression contract names 100/125/150 %) reported what a wider page never
+// showed: at 641 px of client a group box authored 496 px wide rescaled to
+// 620 px at x=30, i.e. 650 px of content in a 641 px dialog — `outside_page`, and
+// with the neighbouring rows measured against a 603 px page, `overlap` and `clip`
+// as well. The solver grows a row to fit its text; it never SHRANK one to fit the
+// page it is clipped to, so the widths it is handed (authored at 96 dpi, rescaled
+// by the DPI path) are taken as truth. Nothing about the dialog makes that safe:
+// the page is a clip rectangle, so content wider than it is unreachable by
+// construction — the ruler the probe uses (client right) is a property of the
+// mechanism, not of the probe.
+//
+// The clamp is a pure decision so it can be asserted without Windows:
+//   * a child that fits is returned unchanged (idempotent, so re-solving cannot
+//     ratchet a row narrower every pass);
+//   * a child sticking out to the right is narrowed to end AT the limit, keeping
+//     its left edge — the row's text then wraps inside the page, which autoFit
+//     turns into height (never into clipping, which is the defect);
+//   * a child whose left edge is already past the limit keeps a sane minimum
+//     width instead of a negative one.
+//---------------------------------------------------------------------------
+[[nodiscard]] inline Rect clampPageChildWidth(const Rect& r, int limitRightPx,
+                                              int minWidthPx) noexcept {
+    if (limitRightPx <= 0) { return r; }
+    Rect out = r;
+    if (out.w < minWidthPx) { out.w = minWidthPx; }
+    const int room = limitRightPx - out.x;
+    if (room <= minWidthPx) { out.w = minWidthPx; return out; }
+    if (out.w > room) { out.w = room; }
+    return out;
+}
+
+//---------------------------------------------------------------------------
 // v1.3.0-beta8 (bug BS-09) — the bottom chrome row keeps its X when the
 // dialog grows.
 //

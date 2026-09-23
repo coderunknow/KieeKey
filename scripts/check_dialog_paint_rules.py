@@ -47,6 +47,18 @@ def function_body(source, signature):
     raise ValueError(f"unterminated function: {signature}")
 
 
+def read_or_empty(repo: Path, rel: str) -> str:
+    """Read a file if it exists (a gate must not break when it does not).
+
+    tests/verify_audit_seeds.py seeds ONE file into a temp tree, so a rule that
+    reads a second file has to survive its absence: a FileNotFoundError there is
+    not a gate failure, it is a broken gate, and it took the whole seed run down
+    when the BS-20 rule read tests/test_dialog_layout.cpp.
+    """
+    path = repo / rel
+    return path.read_text(encoding='utf-8') if path.is_file() else ""
+
+
 def check(repo: Path):
     failures = []
     main = (repo / 'src/app/main.cpp').read_text(encoding='utf-8')
@@ -321,6 +333,31 @@ def check(repo: Path):
             ('firstViolations', "the first violating state per invariant (BS-19)")):
         if needle not in probe:
             failures.append(f"tools/ui_probe/ui_probe.cpp: {needle} is gone — {why}")
+
+    # 10. v1.3.0-beta8fix1 (BS-20): A PAGE CHILD MAY NOT BE WIDER THAN THE PAGE.
+    #     The 125 % pass the probe added measured a 620 px group box at x=30 in a
+    #     641 px client — the authored 496 px rescaled — because the solver grows a
+    #     row for its text but never shrinks one to the page that clips it. At 100 %
+    #     the same rows happen to fit, which is how the defect survived four green
+    #     rounds. The rule pins the decision (the pure clamp), its application (the
+    #     solver uses it before the plan), and its unit test.
+    try:
+        solve_body = function_body(main, r'void solveSettingsLayout\s*\(HWND hwnd\)')
+    except ValueError:
+        solve_body = ''
+    if 'clampPageChildWidth(' not in solve_body:
+        failures.append(
+            "main.cpp: the solver no longer clamps page children to the page's "
+            "width (BS-20) — a row wider than the page it is clipped to is "
+            "unreachable by construction, and at 125 % the rescaled authored widths "
+            "are wider than the client (the audit's outside_page/overlap/clip "
+            "findings) while at 100 % they happen to fit")
+    if 'clampPageChildWidth(' not in read_or_empty(repo, 'src/app/DialogLayout.hpp'):
+        failures.append("src/app/DialogLayout.hpp: clampPageChildWidth() is gone (BS-20)")
+    if 'testPageChildWidthIsClampedToThePage()' not in read_or_empty(
+            repo, 'tests/test_dialog_layout.cpp'):
+        failures.append("tests/test_dialog_layout.cpp: the BS-20 clamp test is gone — "
+                        "the decision is portable, so it is asserted without Windows")
     return failures
 
 

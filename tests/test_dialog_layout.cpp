@@ -720,6 +720,56 @@ void testBottomRowMovesDownOnly() {
 }
 
 // v1.3.0-beta8 (bug BS-10): a two-row tab strip must never hide the page's top.
+// v1.3.0-beta8fix1 (bug BS-20) — A PAGE CHILD MAY NOT BE WIDER THAN THE PAGE.
+//
+// The 125 % pass of the UI probe (added by this release, because the regression
+// contract names 100/125/150 %) measured a group box whose authored 496 px became
+// 620 px after the DPI rescale, at x=30, in a 641 px client: 650 px of content in
+// a 641 px dialog. That is `outside_page` by construction — and invisible at
+// 100 %, where the same row happens to fit, which is why four green CI rounds and
+// a green local suite never saw it. The clamp is the model's answer; this asserts
+// its three properties at all three contract scales.
+void testPageChildWidthIsClampedToThePage() {
+    struct Case { int scale; int clientW; int x; int authoredW; };
+    // The authored geometry of the rows the audit flagged, plus the widest label
+    // rows: 496 px at x=30 (a group box), 480 px at x=24 (a big edit), 720 px at
+    // x=42 (a full-width row of the keyboard tab).
+    const Case cases[] = {
+        {100, kClientW96, 30, 496}, {100, kClientW96, 24, 480}, {100, kClientW96, 42, 720},
+        {125, 641, 30, 496},        {125, 641, 24, 480},        {125, 641, 42, 720},
+        {150, 919, 30, 496},        {150, 919, 24, 480},        {150, 919, 42, 720},
+    };
+    for (const Case& c : cases) {
+        const int limit = c.clientW - 12 * c.scale / 100;      // the tab's right edge
+        const int minW = 80 * c.scale / 100;
+        const Rect in{c.x * c.scale / 100, 0, c.authoredW * c.scale / 100, 40};
+        const Rect out = clampPageChildWidth(in, limit, minW);
+        assert(out.w >= minW);                                  // never degenerate
+        assert(out.x == in.x);                                  // the left edge is kept
+        assert(out.right() <= limit);                           // inside the page
+        if (in.right() <= limit) {
+            assert(out.w == in.w);                              // idempotent when it fits
+        } else {
+            // The case is not vacuous: this is the arithmetic the audit measured
+            // at 125 % (620 px of group box starting at x=30 in a 641 px client),
+            // so the bound really is violated before the clamp runs.
+            assert(out.w < in.w);
+        }
+        // Re-clamping an already-clamped row changes nothing: the solver may run
+        // many times per session and a ratchet would eat every row pixel by pixel.
+        const Rect again = clampPageChildWidth(out, limit, minW);
+        assert(again.w == out.w && again.x == out.x);
+    }
+    // A child whose left edge is already past the limit keeps its minimum width
+    // instead of collapsing to a negative one (a control of width <= 0 disappears
+    // from the layout entirely — worse than the overshoot it was clamped for).
+    const Rect past = clampPageChildWidth(Rect{700, 0, 200, 30}, 640, 80);
+    assert(past.w == 80);
+    // No limit (0) is "no information": the row is returned untouched.
+    const Rect untouched = clampPageChildWidth(Rect{10, 0, 500, 30}, 0, 80);
+    assert(untouched.w == 500);
+}
+
 void testPageTopShiftKeepsContentBelowTheTabStrip() {
     // The CI probe measured the display rectangle at y=114 (two rows of tabs)
     // while the authored page starts at y=100 (group boxes) / 110 (labels).
@@ -883,6 +933,8 @@ int main() {
     testBottomRowMovesDownOnly();
     // v1.3.0-beta8 (bug BS-10): the page starts below the tab strip, always.
     testPageTopShiftKeepsContentBelowTheTabStrip();
+    // v1.3.0-beta8fix1 (bug BS-20): the page's own width is a hard bound.
+    testPageChildWidthIsClampedToThePage();
     // v1.3.0-beta8 (bug BS-12): scrolling moves, never resizes; runtime text
     // growth is a reflow request, not a local resize.
     testScrollModelNeverResizesAChild();

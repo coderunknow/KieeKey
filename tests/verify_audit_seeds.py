@@ -212,6 +212,13 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "checkEmptyPage",
     ),
     (
+        "BS-20  the solver stops clamping rows to the page",
+        "src/app/main.cpp",
+        "            spec.rect = ok::layout::clampPageChildWidth(spec.rect, limitRight, S(80));",
+        "            /* seeded: the page's width is not a bound any more */",
+        "no longer clamps page children",
+    ),
+    (
         "BS-19  the scale-pass handover stops being asserted",
         "tools/ui_probe/ui_probe.cpp",
         # anchored on the DPI half of the contract: the counter alone appears

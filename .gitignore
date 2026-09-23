@@ -81,6 +81,8 @@ Desktop.ini
 
 # Local Python build/test tools
 .venv/
+__pycache__/
+*.pyc
 
 # ---------- Node (optional canvas dep for web-frames check) ----------
 node_modules/

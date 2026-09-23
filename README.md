@@ -19,7 +19,7 @@ The project may still be paused again in the future if development no longer pro
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20ARM64-0078D6.svg)
 ![Build](https://img.shields.io/badge/build-CMake%20%3E%3D%203.28-064FAD.svg)
 
-**KieeKey v1.3.0-beta8** is a modern, low-latency Vietnamese input method
+**KieeKey v1.3.0-beta8fix1** is a modern, low-latency Vietnamese input method
 engine (bộ gõ Tiếng Việt) for Windows, with a system-tray application, a TSF
 text-store composer and an optional WinUI 3 Fluent settings UI.
 
@@ -33,6 +33,48 @@ text-store composer and an optional WinUI 3 Fluent settings UI.
 ![KieeKey preview](src/app/KieeKeyApp-preview.png)
 
 ---
+
+## What's new in v1.3.0-beta8fix1 — the settings page that lost its content (file build 1.3.0.10)
+
+Beta8 shipped four green CI rounds and still left the settings dialog able to lose
+its whole page: the content area blank, the vertical scrollbar gone, and every
+scroll gesture (wheel, arrows, thumb drag) doing nothing. The reason was
+structural, not cosmetic: **every check we had measured a settled dialog**
+(solve, then look), and the defect lives in the order of operations.
+
+* **A rescaled dialog is a solved dialog.** `WM_DISPLAYCHANGE` (monitor hot-plug,
+  resolution change, a scale change that arrives before the window's own
+  `WM_DPICHANGED`, a session reconnect) reached `refreshSettingsDpi()`, which
+  multiplied every child rectangle by the new scale and **dropped the layout
+  baseline — and stopped there.** With no baseline, `applySettingsScrollOffset()`
+  returns immediately, so scrolling could no longer move anything; the scrollbar
+  kept the answer of a geometry that no longer existed (its existence is decided
+  only inside the solver); and the next solve took the rescaled, un-normalized
+  rectangles as its input, so the page drifted further out of its own viewport.
+  The rescale now owns its re-solve, the settings window also handles
+  `WM_DISPLAYCHANGE` itself (it is a top-level window — it no longer depends on
+  the main window's broadcast handling), and dropping the baseline now drops the
+  whole scroll state with it: no baseline may not claim an offset, a range, a
+  latch or a `WS_VSCROLL` bit.
+* **One owner for the scrollbar, both directions.** The fallback decision is
+  recomputed from the *clamped* viewport and corrected in either direction — a
+  missing bar for a page that overflows (content unreachable, BS-01) and a bar
+  kept for a page that fits (a thumb that cannot move) are both fixed by the same
+  correction, which re-reads the client width and keeps the tab control inside it.
+* **The harness that proves it, in CI.** The UI probe gained an
+  **operation-sequence** half: a named scenario (a dialog read mid-scroll, then a
+  display change, then the app's own recovery operations) plus a seeded fuzz pass
+  over the app's real paths, asserting twelve page invariants (I1–I12) **after
+  every single operation** on the app's own numbers, the live rectangles and the
+  window regions. On the pre-fix tree it goes red with **1724 `inv_I1`
+  violations** ("the page is EMPTY at offset 0"), 368 `inv_I3`, 368 `inv_I4`,
+  17 `inv_I5`, 98 `inv_I12` and one real-screen `inv_I11` (the page paints
+  background only), next to the probe's own `empty_page` findings — *"the whole
+  tab starts below the page bottom … the content has drifted out of the
+  viewport"* — at 150 %. Every violation writes its full state to
+  `ui_probe_trace.jsonl`, and the step/assertion/violation counters ride in
+  `ui_probe.json` and in the CI digest line, so a green run can never mean "the
+  sequence checks never ran".
 
 ## What's new in v1.3.0-beta8 — "Text you can actually read" + progression that survives a restart
 

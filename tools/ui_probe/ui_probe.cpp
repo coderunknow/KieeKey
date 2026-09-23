@@ -1300,8 +1300,29 @@ void harnessAssert(HWND dlg, const HarnessState& s, const char* op, int step,
     const int tab = s.tab;
     const int contentBottom = a.contentBottom[tab];
 
+    // v1.3.0-beta8fix1 (bug BS-18) — THE CONTRACT OF A DIALOG WITH NO LAYOUT.
+    // The rescale drops the baseline and re-solves in the SAME call, so a
+    // baseline-less dialog must never be observable. When it is (an invariant is
+    // asserted after EVERY operation, so this is a state some operation left
+    // behind), it may not claim a scroll state either: no range, no position, no
+    // latch, no WS_VSCROLL. Everything that describes the dropped geometry goes
+    // with it. That is the whole difference between "the page was just
+    // re-laid-out" and the user's report: content gone, scrollbar gone, and every
+    // wheel notch / arrow key / thumb drag a silent no-op because
+    // applySettingsScrollOffset() has no rectangle to move.
+    if (a.haveBaseline == 0) {
+        ++g_invChecks[4];
+        if (a.offset != 0 || a.range != 0 || a.enabled != 0 || a.styleVScroll != 0) {
+            fail(4, "there is NO layout baseline but the scroll state survived: offset " +
+                    std::to_string(a.offset) + " range " + std::to_string(a.range) +
+                    " latch " + (a.enabled != 0 ? "on" : "off") + " style " +
+                    (a.styleVScroll != 0 ? "VSCROLL" : "-") +
+                    " — nothing can apply it and nothing can re-solve it");
+        }
+    }
+
     // I1 — the page must never be blank at the top of the scroll.
-    if (a.offset == 0 && !s.ctls.empty()) {
+    if (a.haveBaseline != 0 && a.offset == 0 && !s.ctls.empty()) {
         ++g_invChecks[1];
         if (s.visibleCount == 0) {
             fail(1, "page is EMPTY at offset 0 (page " + rectStr(s.page) + ")");
@@ -1326,7 +1347,7 @@ void harnessAssert(HWND dlg, const HarnessState& s, const char* op, int step,
     // page rectangle of ITS solve, and a row-level difference to the live one is
     // the tab strip, not a defect. For the tab on screen the app's own deepest
     // control is the truth.
-    if (s.havePage && !s.ctls.empty()) {
+    if (a.haveBaseline != 0 && s.havePage && !s.ctls.empty()) {
         ++g_invChecks[3];
         if (contentBottom < s.page.top) {
             fail(3, "contentBottom[" + std::to_string(tab) + "]=" +
@@ -1335,19 +1356,21 @@ void harnessAssert(HWND dlg, const HarnessState& s, const char* op, int step,
         }
     }
     ++g_invChecks[3];
-    if (a.haveBaseline == 0 || s.deepestUnscrolledBottom > contentBottom + 1) {
+    if (s.deepestUnscrolledBottom > contentBottom + 1) {
         fail(3, "contentBottom[" + std::to_string(tab) + "]=" +
                 std::to_string(contentBottom) + " but the tab's own deepest control "
                 "reaches " + std::to_string(s.deepestUnscrolledBottom) +
                 (a.haveBaseline == 0 ? " (and there is NO layout baseline)" : ""));
     }
     // I4 — the range is RECOMPUTED, never latched.
-    ++g_invChecks[4];
-    const int wantRange = std::max(0, contentBottom - a.viewportBottom);
-    if (a.range != wantRange) {
-        fail(4, "range " + std::to_string(a.range) + " != contentBottom " +
-                std::to_string(contentBottom) + " - viewportBottom " +
-                std::to_string(a.viewportBottom) + " = " + std::to_string(wantRange));
+    if (a.haveBaseline != 0) {
+        ++g_invChecks[4];
+        const int wantRange = std::max(0, contentBottom - a.viewportBottom);
+        if (a.range != wantRange) {
+            fail(4, "range " + std::to_string(a.range) + " != contentBottom " +
+                    std::to_string(contentBottom) + " - viewportBottom " +
+                    std::to_string(a.viewportBottom) + " = " + std::to_string(wantRange));
+        }
     }
     // I5 — the latch, the style bit and Win32's own enable rule agree.
     ++g_invChecks[5];
@@ -1372,7 +1395,7 @@ void harnessAssert(HWND dlg, const HarnessState& s, const char* op, int step,
         }
     }
     // I6 — content inside the app's own viewport is never clipped to nothing.
-    if (s.havePage && a.viewportW > 0 && a.viewportH > 0) {
+    if (a.haveBaseline != 0 && s.havePage && a.viewportW > 0 && a.viewportH > 0) {
         const RECT vp{a.viewportX, a.viewportY, a.viewportX + a.viewportW,
                       a.viewportY + a.viewportH};
         const RECT truth = intersectRect(vp, s.page);
@@ -1391,7 +1414,7 @@ void harnessAssert(HWND dlg, const HarnessState& s, const char* op, int step,
         }
     }
     // I7 — at offset 0 a control fully inside the viewport carries no region.
-    if (a.offset == 0 && s.havePage) {
+    if (a.haveBaseline != 0 && a.offset == 0 && s.havePage) {
         const RECT vp{a.viewportX, a.viewportY, a.viewportX + a.viewportW,
                       a.viewportY + a.viewportH};
         const RECT truth = intersectRect(vp, s.page);

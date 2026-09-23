@@ -140,9 +140,20 @@ def check(repo: Path):
     if 'void dropSettingsLayoutBaseline() noexcept' not in main:
         failures.append("main.cpp: dropSettingsLayoutBaseline() is gone — a DPI "
                         "rescale would feed the old scale's baselines back in (BS-17)")
-    elif 'dropSettingsLayoutBaseline();' not in main.split('void applySettingsDpiScale')[1][:1200]:
-        failures.append("main.cpp: the DPI rescale no longer drops the layout "
-                        "baseline (BS-17)")
+    else:
+        # The check reads the function BODY (comments stripped) rather than a
+        # fixed-length window of the raw text: a comment that documents the
+        # mechanism must never be able to push the code out of the window the
+        # rule looks at (it did, on the beta8fix1 comment — a gate that fails
+        # because of a longer comment is a gate about comments).
+        try:
+            dpi_rescale_body = function_body(
+                main, r'void applySettingsDpiScale\s*\(UINT newDpi\)\s*noexcept')
+        except ValueError:
+            dpi_rescale_body = ''
+        if 'dropSettingsLayoutBaseline();' not in dpi_rescale_body:
+            failures.append("main.cpp: the DPI rescale no longer drops the layout "
+                            "baseline (BS-17)")
     layout_src = (repo / 'src/app/DialogLayout.hpp').read_text(encoding='utf-8')
     if 'solverInputRect' not in layout_src:
         failures.append("src/app/DialogLayout.hpp: solverInputRect() is gone (BS-17)")
@@ -168,6 +179,83 @@ def check(repo: Path):
             ('readScreenClient', 'the screen read the staleness check needs')):
         if needle not in probe:
             failures.append(f"tools/ui_probe/ui_probe.cpp: {needle} is gone — {why}")
+
+    # 8. v1.3.0-beta8fix1 (BS-18): A RESCALED DIALOG IS A SOLVED DIALOG, AND A
+    #    DIALOG WITHOUT A LAYOUT HAS NO SCROLL STATE.
+    #
+    #    Four green CI rounds measured a settled dialog while the user's screen
+    #    showed a page with no content and no scrollbar. The mechanism was an
+    #    operation that rescaled every child rectangle and dropped the layout
+    #    baseline without re-solving: from that state every scroll message is a
+    #    silent no-op (applySettingsScrollOffset() needs a baseline), the
+    #    scrollbar keeps the previous geometry's answer, and the next solve bakes
+    #    the un-normalized rectangles in. These rules pin the three mechanisms
+    #    that close it, plus the harness that reproduced it.
+    try:
+        dpi_body = function_body(main, r'void applySettingsDpiScale\s*\(UINT newDpi\)\s*noexcept')
+    except ValueError:
+        failures.append("main.cpp: applySettingsDpiScale() not found (BS-18)")
+    else:
+        if 'dropSettingsLayoutBaseline();' not in dpi_body:
+            failures.append("main.cpp: the DPI rescale no longer drops the layout "
+                            "baseline (BS-17)")
+        if 'solveSettingsLayout(' not in dpi_body:
+            failures.append(
+                "main.cpp: applySettingsDpiScale() scales the children without "
+                "re-solving (BS-18) — the caller that forgets (WM_DISPLAYCHANGE did) "
+                "leaves the dialog with NO baseline, so every scroll step becomes a "
+                "no-op, the scrollbar keeps a geometry that no longer exists and the "
+                "page loses its content until the dialog is reopened")
+    try:
+        drop_body = function_body(main, r'void dropSettingsLayoutBaseline\s*\(\)\s*noexcept')
+    except ValueError:
+        failures.append("main.cpp: dropSettingsLayoutBaseline() not found (BS-18)")
+    else:
+        for needle, what in (('g_settingsScroll.offset = 0;', 'the scroll position'),
+                             ('g_settingsScroll.range = 0;', 'the scroll range'),
+                             ('g_settingsScroll.enabled = false;', "the bar's latch"),
+                             ('WS_VSCROLL', 'the WS_VSCROLL style bit'),
+                             ('perTabContentBottom', 'the per-tab solved depths')):
+            if needle not in drop_body:
+                failures.append(
+                    f"main.cpp: dropSettingsLayoutBaseline() no longer clears {what} "
+                    f"(BS-18) — a dialog with no layout keeping a live scroll state is "
+                    f"the unrecoverable state the user sees as an empty page with a "
+                    f"dead or missing scrollbar")
+    try:
+        settings_proc = function_body(
+            main, r'LRESULT CALLBACK settingsProc\s*\(HWND hwnd, UINT msg, '
+                  r'WPARAM wParam, LPARAM lParam\)')
+    except ValueError:
+        failures.append("main.cpp: settingsProc() not found (BS-18)")
+    else:
+        # The main window's proc handles WM_DISPLAYCHANGE for its own reasons
+        # (foreground policy, monitor rects) — the rule is about the DIALOG.
+        if 'case WM_DISPLAYCHANGE:' not in settings_proc:
+            failures.append(
+                "main.cpp: settingsProc() no longer handles WM_DISPLAYCHANGE "
+                "(BS-18) — the dialog is a TOP-LEVEL window and the OS broadcasts the "
+                "event straight to it; it may not depend on the main window's handler "
+                "for its own layout (that dependency is exactly how the page lost its "
+                "content and its scrollbar until the dialog was reopened)")
+    try:
+        solve_body = function_body(main, r'void solveSettingsLayout\s*\(HWND hwnd\)')
+    except ValueError:
+        failures.append("main.cpp: solveSettingsLayout() not found (BS-18)")
+    else:
+        if 'finalOverflow' not in solve_body:
+            failures.append(
+                "main.cpp: the post-clamp scrollbar correction is gone (BS-18) — the "
+                "fallback decision must be recomputed from the CLAMPED viewport "
+                "(the planned one cannot know it) and corrected in BOTH directions")
+    for needle, why in (
+            ('int runSequenceHarness(', 'the seeded operation-sequence pass (BS-18)'),
+            ('void harnessAssert(', 'the I1..I12 invariant battery (BS-18)'),
+            ('void harnessFail(', 'the per-invariant violation record (BS-18)'),
+            ('display_change', 'the display-change operation that reproduced BS-18'),
+            ('KieeKeyProbeScrollState', "the app's own scroll-state read (BS-18)")):
+        if needle not in probe:
+            failures.append(f"tools/ui_probe/ui_probe.cpp: {needle} is gone — {why}")
     return failures
 
 
@@ -181,9 +269,11 @@ def main() -> int:
         for f in failures:
             print(f"  - {f}")
         return 1
-    print("PAINT RULES OK — 5 rules: sibling clipping, window styles, "
-          "repaint-after-change, need-deduped reflow, unscrolled solver input "
-          "(+ the probe's blank-page, reflow and pixel checks)")
+    print("PAINT RULES OK — 8 rules: sibling clipping, window styles, "
+          "repaint-after-change, need-deduped reflow, unscrolled solver input, "
+          "rescale-owns-its-resolve + total baseline drop (BS-18), symmetric "
+          "scrollbar correction (+ the probe's blank-page, reflow, pixel and "
+          "operation-sequence checks)")
     return 0
 
 

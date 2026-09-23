@@ -197,8 +197,8 @@ constexpr wchar_t kAppVersion[]     = L"1.3.0";           // numeric, 3-part
 // v1.2.2 RC1: [[maybe_unused]] — this is a documented VERSION CARRIER
 // (check_version.py reads it), not a code-level constant; the UI shows the
 // title/version forms. Keeping it zero-maintenance and warning-clean.
-[[maybe_unused]] constexpr wchar_t kAppVersionFull[] = L"1.3.0-beta8";  // with channel
-constexpr wchar_t kAppTitle[]       = L"KieeKey v1.3.0-beta8";  // sync with kAppVersionFull
+[[maybe_unused]] constexpr wchar_t kAppVersionFull[] = L"1.3.0-beta8fix1";  // with channel
+constexpr wchar_t kAppTitle[]       = L"KieeKey v1.3.0-beta8fix1";  // sync with kAppVersionFull
 
 //---------------------------------------------------------------------------
 // v1.3.0-beta8 (RS-06) — WHICH BUILD IS THIS?
@@ -3977,6 +3977,9 @@ BOOL CALLBACK rescaleChild(HWND child, LPARAM lp) noexcept {
 // state below; declared here because the DPI path runs before it in the file.
 namespace {
 void dropSettingsLayoutBaseline() noexcept;
+// v1.3.0-beta8fix1 (bug BS-18): the DPI transition needs the solver, and it is
+// defined with the rest of the solve machinery further down the file.
+void solveSettingsLayout(HWND hwnd);
 }  // namespace
 
 void applySettingsDpiScale(UINT newDpi) noexcept {
@@ -3999,9 +4002,38 @@ void applySettingsDpiScale(UINT newDpi) noexcept {
     // v1.3.0-beta8 (bug BS-17): the baseline rectangles are in the OLD scale's
     // pixels, and the solve that follows a DPI change measures at the new one.
     // Dropping them is what makes the solver re-read the (just rescaled) live
-    // rectangles for this one pass; the caller solves immediately after.
+    // rectangles for this one pass.
+    //
+    // v1.3.0-beta8fix1 (bug BS-18): AND THAT SOLVE HAPPENS HERE.
+    //
+    // The re-solve used to be the caller's job, and one caller never did it:
+    // WM_DISPLAYCHANGE (the monitor topology / resolution / scale change — a
+    // hot-plugged screen, an HDMI switch, a session reconnect, a scale change
+    // that arrives before the window's own WM_DPICHANGED) reached
+    // refreshSettingsDpi() -> this function and stopped. The dialog was then
+    // left in the one state nothing can recover from: every child multiplied by
+    // the new scale and the layout baseline DROPPED, with no solver run. From
+    // there
+    //   * applySettingsScrollOffset() starts with `if (solved.empty()) return;`
+    //     — so every scroll step (wheel, arrows, thumb drag) moves the thumb
+    //     and NOT the page;
+    //   * the scrollbar keeps the answer of a geometry that no longer exists
+    //     (its existence is decided inside the solver only), so it is dead when
+    //     the content is unreachable and absent when the page is empty;
+    //   * the next operation that reads the live rectangles — including the
+    //     next solve — takes the rescaled, un-normalized geometry as its input,
+    //     so the page drifts further out of its own viewport instead of back
+    //     into it.
+    // The user sees exactly that: the settings page loses its content and its
+    // scrollbar (BUG_HUNT_REPORT_beta8 §"mất nội dung" reports), and only
+    // closing and reopening the dialog brings it back.
+    //
+    // Rescaling the children and re-solving the layout are ONE operation: the
+    // geometry is only meaningful at the scale it was solved at, so this
+    // function may not return a dialog that is scaled but not solved.
     dropSettingsLayoutBaseline();
     ::InvalidateRect(g.hSettings, nullptr, TRUE);
+    solveSettingsLayout(g.hSettings);
 }
 
 // Re-scale an open settings dialog after its DPI changed (WM_DPICHANGED,
@@ -4514,6 +4546,33 @@ void dropSettingsLayoutBaseline() noexcept {
     g_settingsScroll.solved.clear();
     g_settingsScroll.viewport = ok::layout::Rect{};
     g_settingsScroll.viewportBottom = 0;
+    // v1.3.0-beta8fix1 (bug BS-18): THE BASELINE AND THE SCROLL STATE ARE ONE
+    // STATE, so they are dropped together.
+    //
+    // A baseline-less dialog with a live scroll state is unrecoverable state:
+    // the offset and the range describe a page that no longer exists, the
+    // latch/WS_VSCROLL keep a scrollbar whose every message is a no-op
+    // (applySettingsScrollOffset() cannot move a child it has no rectangle
+    // for), and the per-tab depths report content with nothing to back them.
+    // The CI harness drives exactly that state and records it — see the
+    // operation-sequence half of tools/ui_probe and the inv_I4 findings in the
+    // beta8fix1 pull request. What a dialog without a layout may claim is
+    // nothing; the caller re-solves immediately (applySettingsDpiScale is the
+    // only caller, and it now owns the re-solve).
+    for (int t = 0; t < 9; ++t) { g_settingsScroll.perTabContentBottom[t] = 0; }
+    g_settingsScroll.offset = 0;
+    g_settingsScroll.range = 0;
+    g_settingsScroll.enabled = false;
+    if (g.hSettings != nullptr) {
+        const LONG_PTR style = ::GetWindowLongPtrW(g.hSettings, GWL_STYLE);
+        if ((style & WS_VSCROLL) != 0) {
+            ::SetWindowLongPtrW(g.hSettings, GWL_STYLE,
+                                style & ~static_cast<LONG_PTR>(WS_VSCROLL));
+            ::SetWindowPos(g.hSettings, nullptr, 0, 0, 0, 0,
+                           SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE |
+                               SWP_FRAMECHANGED);
+        }
+    }
 }
 
 // v1.3.0-beta8 (bug BS-14): the solver measures every label at the width the
@@ -5013,36 +5072,45 @@ void solveSettingsLayout(HWND hwnd) {
         std::max(0, static_cast<int>(viewRight - disp2.left)),
         std::max(0, static_cast<int>(viewBottom - disp2.top))};
     g_settingsScroll.viewportBottom = g_settingsScroll.viewport.bottom();
-    // The scrollbar may have to appear because of the clamp above (the first
-    // decision used the intended growth); if so, apply it and re-measure the
-    // client width so the tab does not sit under the scrollbar.
-    if (!g_settingsScroll.enabled) {
-        bool stillOverflow = false;
-        for (int t = 0; t < 9; ++t) {
-            if (g_settingsScroll.perTabContentBottom[t] > g_settingsScroll.viewportBottom) {
-                stillOverflow = true;
-            }
+    // The scrollbar may have to appear — or disappear — because of the clamp
+    // above (the first decision used the intended growth):
+    //
+    // v1.3.0-beta8fix1 (bug BS-18): ONE OWNER, BOTH DIRECTIONS. The planned
+    // decision cannot know the clamped viewport, so the answer is recomputed
+    // here once and applied with the same correction in either direction:
+    //   * missing bar while content overflows -> the page hides text the user
+    //     cannot reach (BS-01);
+    //   * bar kept for a page that fits -> a thumb that cannot move, and the
+    //     page pays 17 px of width for it.
+    // The correction re-reads the client (a scrollbar is non-client) and keeps
+    // the tab control inside it, exactly as the appearing case always did.
+    bool finalOverflow = false;
+    for (int t = 0; t < 9; ++t) {
+        if (g_settingsScroll.perTabContentBottom[t] > g_settingsScroll.viewportBottom) {
+            finalOverflow = true;
         }
-        if (stillOverflow) {
-            g_settingsScroll.enabled = true;
-            const LONG_PTR st = ::GetWindowLongPtrW(hwnd, GWL_STYLE);
-            ::SetWindowLongPtrW(hwnd, GWL_STYLE, st | WS_VSCROLL);
-            ::SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
-                           SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE |
-                               SWP_FRAMECHANGED);
-            RECT cli2{};
-            ::GetClientRect(hwnd, &cli2);
-            RECT tabNow{};
-            ::GetWindowRect(tabCtl, &tabNow);
-            ::MapWindowPoints(nullptr, hwnd, reinterpret_cast<POINT*>(&tabNow), 2);
-            // Same rule as above (bug BS-15): cli2 is the client rect WITH the
-            // scrollbar already excluded.
-            const int w2 = std::max(S(200),
-                                    static_cast<int>(cli2.right - cli2.left) - S(24));
-            ::SetWindowPos(tabCtl, nullptr, S(12), S(66), w2,
-                           std::max(0, static_cast<int>(tabNow.bottom - tabNow.top)),
-                           SWP_NOZORDER | SWP_NOACTIVATE);
-        }
+    }
+    if (finalOverflow != g_settingsScroll.enabled) {
+        g_settingsScroll.enabled = finalOverflow;
+        const LONG_PTR st = ::GetWindowLongPtrW(hwnd, GWL_STYLE);
+        ::SetWindowLongPtrW(hwnd, GWL_STYLE,
+                            finalOverflow ? (st | WS_VSCROLL)
+                                          : (st & ~static_cast<LONG_PTR>(WS_VSCROLL)));
+        ::SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                       SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE |
+                           SWP_FRAMECHANGED);
+        RECT cli2{};
+        ::GetClientRect(hwnd, &cli2);
+        RECT tabNow{};
+        ::GetWindowRect(tabCtl, &tabNow);
+        ::MapWindowPoints(nullptr, hwnd, reinterpret_cast<POINT*>(&tabNow), 2);
+        // Same rule as above (bug BS-15): cli2 is the client rect WITH the
+        // scrollbar already excluded.
+        const int w2 = std::max(S(200),
+                                static_cast<int>(cli2.right - cli2.left) - S(24));
+        ::SetWindowPos(tabCtl, nullptr, S(12), S(66), w2,
+                       std::max(0, static_cast<int>(tabNow.bottom - tabNow.top)),
+                       SWP_NOZORDER | SWP_NOACTIVATE);
     }
     g_settingsScroll.solved.clear();
     for (std::size_t i = 0; i < specs.size(); ++i) {
@@ -5529,7 +5597,7 @@ std::string buildIdentityUtf8() {
     std::string out = "\n=== Bản dựng (build identity) ===\n";
     out += "Ứng dụng      : KieeKey ";
     out += OPENKEY_KIEEKEY_VERSION_STRING;
-    out += " (PE file version 1.3.0.9)\n";
+    out += " (PE file version 1.3.0.10)\n";
     out += "SHA-256       : ";
     out += hex.empty() ? "không đọc được file đang chạy" : hex;
     out += "\n";
@@ -6298,13 +6366,30 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             }
             refreshSettingsDpi();
             // v1.3.0-beta5 (bug B1): re-measure + re-solve at the new scale
-            // (refreshSettingsDpi only rescales rects/fonts in place; a label
-            // that wraps taller at the new DPI must GROW, and the window must
-            // refit against the new monitor's work area — including the
-            // scroll fallback when the new scale no longer fits).
+            // (a label that wraps taller at the new DPI must GROW, and the
+            // window must refit against the new monitor's work area — including
+            // the scroll fallback when the new scale no longer fits).
+            // v1.3.0-beta8fix1 (bug BS-18): refreshSettingsDpi() now owns that
+            // re-solve (a rescaled dialog that is not solved is unrecoverable),
+            // so this second call is only the belt to that suspenders — the
+            // solve is idempotent and the dialog is already coherent here.
             solveSettingsLayout(hwnd);
             return 0;
         }
+
+        case WM_DISPLAYCHANGE:
+            // v1.3.0-beta8fix1 (bug BS-18): the settings dialog is a TOP-LEVEL
+            // window, so the OS broadcasts a display change (monitor hot-plug,
+            // resolution, scale) straight to it — it must not depend on the
+            // main window's handler for its own layout. Before this, the dialog
+            // ignored the message and the rescale it needed arrived (if at all)
+            // through the main window's broadcast handling, which at
+            // beta8 stopped after resealing the children and dropping the
+            // layout baseline: the page lost its content and its scrollbar
+            // until the dialog was closed and reopened. refreshSettingsDpi()
+            // now rescales AND re-solves in one step.
+            refreshSettingsDpi();
+            return 0;
 
         // v1.3.0-beta8 (bug BS-01 follow-through): the scroll fallback had NO
         // mouse-wheel path at all, so the only way to move the page was the

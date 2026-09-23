@@ -167,8 +167,13 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
     (
         "BS-17  a DPI rescale that keeps the stale baselines",
         "src/app/main.cpp",
-        "    dropSettingsLayoutBaseline();\n",
-        "    /* seeded: stale baselines kept */\n",
+        # Anchored on the InvalidateRect that precedes it in applySettingsDpiScale:
+        # the probe's font-scale path drops the baseline too, so the bare call line
+        # is not unique any more (v1.3.0-beta8fix1).
+        "    dropSettingsLayoutBaseline();\n"
+        "    ::InvalidateRect(g.hSettings, nullptr, TRUE);",
+        "    /* seeded: stale baselines kept */\n"
+        "    ::InvalidateRect(g.hSettings, nullptr, TRUE);",
         "drops the layout baseline",
     ),
     (
@@ -205,6 +210,38 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "void checkEmptyPage(const Audit& a, const std::vector<Ctl>& ctls, int travelPx) {",
         "void checkEmptyPageRemoved(const Audit& a, const std::vector<Ctl>& ctls, int travelPx) {",
         "checkEmptyPage",
+    ),
+    (
+        "BS-18  the DPI rescale stops re-solving",
+        "src/app/main.cpp",
+        "    ::InvalidateRect(g.hSettings, nullptr, TRUE);\n"
+        "    solveSettingsLayout(g.hSettings);",
+        "    ::InvalidateRect(g.hSettings, nullptr, TRUE);\n"
+        "    /* seeded: scaled but not solved */",
+        "scales the children without",
+    ),
+    (
+        "BS-18  the baseline drop keeps the scroll range",
+        "src/app/main.cpp",
+        "    g_settingsScroll.range = 0;\n    g_settingsScroll.enabled = false;",
+        "    g_settingsScroll.enabled = false;",
+        "no longer clears the scroll range",
+    ),
+    (
+        "BS-18  the settings window stops handling WM_DISPLAYCHANGE",
+        "src/app/main.cpp",
+        "        case WM_DISPLAYCHANGE:\n"
+        "            // v1.3.0-beta8fix1 (bug BS-18): the settings dialog is a TOP-LEVEL",
+        "        case WM_DISPLAYCHANGE_IGNORED:\n"
+        "            // v1.3.0-beta8fix1 (bug BS-18): the settings dialog is a TOP-LEVEL",
+        "no longer handles WM_DISPLAYCHANGE",
+    ),
+    (
+        "BS-18  the probe's invariant battery deleted",
+        "tools/ui_probe/ui_probe.cpp",
+        "void harnessAssert(HWND dlg, const HarnessState& s, const char* op, int step,",
+        "void harnessAssertDisabled(HWND dlg, const HarnessState& s, const char* op, int step,",
+        "harnessAssert",
     ),
     (
         "BS-16e  the probe's z-order rule deleted",

@@ -63,8 +63,8 @@ import pathlib
 # word; the PE VERSIONINFO needs a 4-part number, the manifest needs 4 parts,
 # and the UI shows the 3-part form plus the channel.
 DEFAULT_EXPECT = "1.3.0"
-CHANNEL = "beta8"
-BUILD_REVISION = 9
+CHANNEL = "beta8fix1"
+BUILD_REVISION = 10
 
 
 def _fail(msg: str) -> None:
@@ -141,6 +141,19 @@ def main() -> int:
         if m and want_ui not in m.group(1):
             problems.append(f"main.cpp: kAppTitle {m.group(1)!r} does not contain {want_ui!r}")
 
+        # v1.3.0-beta8fix1: the BUILD IDENTITY the diagnostics report carries
+        # (RS-06) quotes the PE file version. That literal is what ties a
+        # screenshot or an exported report to the artefact that produced it, so
+        # it is now a version carrier like every other one: a build whose
+        # VERSIONINFO says 1.3.0.10 may not report "1.3.0.9" in the report the
+        # user sends back.
+        m = re.search(r'PE file version ([0-9][0-9.]*)[^"]*"', maincpp)
+        if not m:
+            problems.append("main.cpp: the build identity no longer names the PE "
+                            "file version (buildIdentityUtf8, RS-06)")
+        elif m.group(1) != want4:
+            problems.append(f"main.cpp: build identity PE version {m.group(1)} != {want4}")
+
         # The single-instance names must be VERSION-FREE: embedding a version
         # means an old and a new instance stop sharing the mutex, so both
         # install a keyboard hook and every keystroke is composed twice.
@@ -201,14 +214,14 @@ def main() -> int:
     # was RC1 — the first thing every visitor reads was a stale release.
     readme = read("README.md")
     if readme:
-        m = re.search(r"\*\*KieeKey v([0-9][0-9.]*(?:[ -](?:Stable|RC[0-9]+|dev[0-9]+|beta[0-9]+))?)\*\* is a modern", readme)
+        m = re.search(r"\*\*KieeKey v([0-9][0-9.]*(?:[ -](?:Stable|RC[0-9]+|dev[0-9]+|beta[0-9]+(?:fix[0-9]+)?))?)\*\* is a modern", readme)
         if not m:
             problems.append("README.md: headline '**KieeKey vX.Y.Z …** is a modern' not found")
         elif m.group(1) != want_ui:
             problems.append(f"README.md: headline version {m.group(1)!r} != {want_ui!r}")
 
         # The newest "What's new in vX" section must be THIS release.
-        secs = re.findall(r"^## What's new in v([0-9][0-9.]*(?:[ -](?:Stable|RC[0-9]+|dev[0-9]+|beta[0-9]+))?)",
+        secs = re.findall(r"^## What's new in v([0-9][0-9.]*(?:[ -](?:Stable|RC[0-9]+|dev[0-9]+|beta[0-9]+(?:fix[0-9]+)?))?)",
                           readme, re.M)
         if not secs:
             problems.append("README.md: no \"What's new in v…\" section found")

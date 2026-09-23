@@ -289,6 +289,38 @@ def check(repo: Path):
             ('KieeKeyProbeScrollState', "the app's own scroll-state read (BS-18)")):
         if needle not in probe:
             failures.append(f"tools/ui_probe/ui_probe.cpp: {needle} is gone — {why}")
+
+    # 9. v1.3.0-beta8fix1 (BS-19): THE HANDOVER BETWEEN SCALE PASSES, AND A REPORT
+    #    THAT CANNOT LIE ABOUT ITSELF.
+    #
+    #    runSequenceHarness() runs BETWEEN the scale passes and fuzzes the dialog
+    #    through 96/120/144/192 dpi, 100/125/150 % text scale and 70..130 %
+    #    client sizes. Its cleanup restores the font scale, the client SIZE, the
+    #    offset and the tab — but not the DPI — so the dialog it left behind was
+    #    the one the NEXT pass audited: the run 35866022217 red was measured on a
+    #    leftover layout (children 1.5x the authored width in a 399 px client),
+    #    and the probe blamed the product for it. The handover is now asserted
+    #    (invariant slot 13: app dpi == the pass's dpi, client size == the pass's
+    #    client size, and the restored state passes I1..I12), and the report
+    #    validates its own braces before writing — a missing '+' between two
+    #    adjacent literals is legal C++ and produced a ui_probe.json no parser
+    #    accepts (CI run 35874350649 died with no annotation at all).
+    for needle, why in (
+            ('g_handoverNotes', 'the handover note of every scale pass (BS-19)'),
+            ('jsonBalanced(', "the report's own brace check (BS-19)"),
+            ('++g_invChecks[13];\n        if (handed.app.dpi != passDpi) {',
+             'the handover assertion itself (BS-19: the DPI half of the contract)'),
+            ('harnessAssert(dlg, handed, "restore"',
+             'the restored state judged by the full invariant battery (BS-19)'),
+            ('{125, 120U}', 'the 125 % scale pass (BS-19: 100/125/150 % coverage)')):
+        if needle not in probe:
+            failures.append(f"tools/ui_probe/ui_probe.cpp: {needle} is gone — {why}")
+    for needle, why in (
+            ('if (!jsonBalanced(json))',
+             'the probe must refuse to publish an unparseable report (BS-19)'),
+            ('firstViolations', "the first violating state per invariant (BS-19)")):
+        if needle not in probe:
+            failures.append(f"tools/ui_probe/ui_probe.cpp: {needle} is gone — {why}")
     return failures
 
 

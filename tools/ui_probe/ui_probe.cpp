@@ -286,6 +286,38 @@ void putChunk(std::vector<std::uint8_t>& out, const char* tag,
     put32(out, crc32Of(out.data() + start, out.size() - start));
 }
 
+// v1.3.0-beta8fix1 (bug BS-19): THE REPORT VALIDATES ITSELF.
+//
+// A hand-built JSON is one typo away from making the whole report unusable: a
+// dropped '+' between two adjacent string literals is legal C++ (the literals
+// concatenate) and produces a file no parser accepts. That is not hypothetical —
+// growing this report with the BS-19 fields did exactly that, the workflow's
+// ConvertFrom-Json threw, and the run died reporting "exit code 1" with NO
+// annotation at all: a whole CI run lost to a missing '+'. The braces are
+// therefore checked (outside string literals, escapes honoured) before anything
+// is written; an unbalanced report is a LOUD failure with no file written, so
+// the workflow's "did not write ui_probe.json" branch names it.
+bool jsonBalanced(const std::string& s) {
+    int depth = 0;
+    bool inStr = false;
+    bool esc = false;
+    for (const char ch : s) {
+        if (inStr) {
+            if (esc) { esc = false; continue; }
+            if (ch == '\\') { esc = true; continue; }
+            if (ch == '"') { inStr = false; }
+            continue;
+        }
+        switch (ch) {
+            case '"': inStr = true; break;
+            case '{': case '[': ++depth; break;
+            case '}': case ']': --depth; if (depth < 0) { return false; } break;
+            default: break;
+        }
+    }
+    return depth == 0 && !inStr;
+}
+
 bool writeAll(const std::wstring& path, const void* data, std::size_t len) {
     HANDLE f = ::CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr,
                              CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -1288,6 +1320,7 @@ std::string harnessStateStr(const HarnessState& s, const char* op, int step,
 // 420 chars) so the digest stays a line.
 std::string g_invExample[14];
 std::vector<std::string> g_handoverNotes;   // one per scale pass, for the digest
+std::vector<std::string> g_passEntryNotes;  // what each pass started from
 
 void harnessFail(int inv, std::vector<Finding>* findings, const std::string& why,
                  const std::string& state) {
@@ -1966,13 +1999,62 @@ int main(int argc, char** argv) {
     bool firstTabEntry = true;
 
     for (const ScalePass& pass : passes) {
+        // The size this pass considers its own: whatever the window is at the
+        // moment the native pass starts, re-scaled for the other passes — the
+        // same relation KieeKeyProbeSimulateDpi() applies to the WINDOW when it
+        // changes the scale, so a pass is reproducible on its own.
+        RECT passClient{};
+        ::GetClientRect(dlg, &passClient);
         if (pass.dpi != nativeDpi) {
-            const int ok = KieeKeyProbeSimulateDpi(dlg, pass.dpi);
-            std::printf("ui_probe: simulated DPI change -> %u (%d)\n",
-                        static_cast<unsigned>(pass.dpi), ok);
-            if (ok <= 0) { continue; }
-            ::Sleep(25);
+            passClient.right = static_cast<LONG>(
+                ::MulDiv(passClient.right, static_cast<int>(pass.dpi),
+                         static_cast<int>(nativeDpi)));
+            passClient.bottom = static_cast<LONG>(
+                ::MulDiv(passClient.bottom, static_cast<int>(pass.dpi),
+                         static_cast<int>(nativeDpi)));
         }
+        // v1.3.0-beta8fix1 (bug BS-19): EVERY PASS ESTABLISHES ITS OWN STATE.
+        //
+        // A pass used to inherit whatever the previous pass's harness left behind
+        // (see the R1 handover contract at the end of runSequenceHarness). The
+        // handover is now asserted, but an assertion is not a remedy: the audit
+        // itself must not depend on it. So the pass states its own preconditions
+        // the same way the operation-sequence harness does after its cleanup —
+        // app dpi == this pass's dpi, font scale 100, client size == the pass's
+        // client size, offset 0, tab 0, and a solve of the app's own — and only
+        // then starts measuring. KieeKeyProbeResize() sizes the window; it does
+        // NOT change the app's DPI belief, which is exactly the asymmetry the
+        // leftover state lived in.
+        if (KieeKeyProbeSimulateDpi(dlg, pass.dpi) <= 0) {
+            std::printf("ui_probe: FAIL — the pass dpi %u could not be established\n",
+                        static_cast<unsigned>(pass.dpi));
+            return 5;
+        }
+        KieeKeyProbeFontScale(dlg, 100);
+        KieeKeyProbeResize(dlg, static_cast<int>(passClient.right),
+                           static_cast<int>(passClient.bottom));
+        KieeKeyProbeReflowNow(dlg);
+        KieeKeyProbeSetOffset(dlg, 0);
+        KieeKeyProbeSelectTab(dlg, 0);
+        {
+            HarnessState ready;
+            readHarnessState(dlg, stableChildren(dlg), 0, &ready);
+            const std::string entryNote =
+                "pass @%d%% start: app dpi " + std::to_string(ready.app.dpi) +
+                " client " + std::to_string(ready.client.right) + "x" +
+                std::to_string(ready.client.bottom) + " page " + rectStr(ready.page) +
+                " offset " + std::to_string(ready.app.offset) + " baseline " +
+                (ready.app.haveBaseline != 0 ? "yes" : "NO");
+            g_passEntryNotes.push_back(entryNote);
+            std::printf("ui_probe: pass @%d%% starts: app dpi %u client %ldx%ld page %s "
+                        "offset %d baseline %s\n",
+                        pass.percent, ready.app.dpi,
+                        static_cast<long>(ready.client.right),
+                        static_cast<long>(ready.client.bottom),
+                        rectStr(ready.page).c_str(),
+                        ready.app.offset, ready.app.haveBaseline != 0 ? "yes" : "NO");
+        }
+
         for (int tab = 0; tab < static_cast<int>(tabCount); ++tab) {
             if (KieeKeyProbeSelectTab(dlg, tab) != 0) { break; }
             ::Sleep(25);
@@ -2432,9 +2514,12 @@ int main(int argc, char** argv) {
             ",\n \"scenarios\": " + std::to_string(g_scenarioRuns) +
             ",\n \"scenarioViolations\": " + std::to_string(g_scenarioFailures) +
             ",\n \"invariants\": \"" + jsonEscape(invSummary) + "\"" +
-            ",\n \"handover\": ["
             ",\n \"traceLines\": " + std::to_string(g_traceLines) +
-            ",\n \"findingsByKind\": {";
+            ",\n \"passEntries\": [";
+    for (std::size_t i = 0; i < g_passEntryNotes.size() && i < 4; ++i) {
+        json += std::string(i > 0 ? ", " : "") + "\"" + jsonEscape(g_passEntryNotes[i]) + "\"";
+    }
+    json += "],\n \"handover\": [";
     // v1.3.0-beta8fix1 (bug BS-19): the handover notes and one example state per
     // violated invariant ride in the JSON, so the CI digest can carry the state
     // that produced a count (see the workflow's operation-sequence line).
@@ -2460,6 +2545,12 @@ int main(int argc, char** argv) {
     json += "}\n}\n";
 
     const std::wstring jsonPath = toWide(outDir) + L"\\ui_probe.json";
+    if (!jsonBalanced(json)) {
+        std::printf("ui_probe: FAIL - the report JSON does not balance (a missing '+' "
+                    "between two adjacent literals?). NOT writing ui_probe.json: the "
+                    "run must fail with this message instead of a parser exception.\n");
+        return 4;
+    }
     const bool jsonOk = writeAll(jsonPath, json.data(), json.size());
     // The operation-sequence trace: every invariant violation with the whole
     // state (offset, range, latch, style bit, viewport, page, depths, baseline)

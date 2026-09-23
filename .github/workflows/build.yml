@@ -401,7 +401,17 @@ jobs:
           & "out/x64/Release/kieekey_ui_probe.exe" $dir 60
           $code = $LASTEXITCODE
           if (Test-Path "$dir/ui_probe.json") {
-            $json = Get-Content "$dir/ui_probe.json" -Raw | ConvertFrom-Json
+            # v1.3.0-beta8fix1 (bug BS-19): a report the parser cannot read used
+            # to kill the step with a bare "exit code 1" and no annotation at all
+            # (raw text -> ConvertFrom-Json is a terminating error in PowerShell).
+            # Now it says WHAT is wrong with the report, which is a defect in the
+            # probe, not a finding.
+            try {
+              $json = Get-Content "$dir/ui_probe.json" -Raw | ConvertFrom-Json
+            } catch {
+              Write-Host "::error title=UI probe::ui_probe.json is not valid JSON ($($_.Exception.Message)) — the probe's report is unusable, the run cannot be judged"
+              exit 1
+            }
             $kinds = ($json.findingsByKind.PSObject.Properties | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join ' '
             # One line per (tab, scale) INSIDE the notice: the per-tab detail
             # lives in the annotations below, which GitHub caps at 10 per step —
@@ -428,8 +438,10 @@ jobs:
             $fx = @()
             foreach ($v in $json.firstViolations) { $fx += "[$($v.inv)] $($v.state)" }
             $ho = @($json.handover) -join ' || '
+            $en = @($json.passEntries) -join ' || '
             $seq = "harness $($json.fuzzSteps) steps / $($json.fuzzChecks) assertions / $($json.fuzzViolations) violations [$hv] | scenarios $($json.scenarios) run, $($json.scenarioViolations) with violations | invariants (checks/violations) $($json.invariants) | trace $($json.traceLines) lines (ui_probe_trace.jsonl)"
             if ($fx.Count -gt 0) { $seq += " | first: $($fx -join ' || ')" }
+            if ($en) { $seq += " | entries: $en" }
             if ($ho) { $seq += " | handover: $ho" }
             if ($json.fuzzViolations -gt 0) {
               Write-Host "::error title=UI probe (operation sequence)::$seq"

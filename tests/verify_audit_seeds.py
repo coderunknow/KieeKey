@@ -212,6 +212,22 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "checkEmptyPage",
     ),
     (
+        "BS-19  the scale-pass handover stops being asserted",
+        "tools/ui_probe/ui_probe.cpp",
+        # anchored on the DPI half of the contract: the counter alone appears
+        # twice (the handover asserts both the DPI and the client size)
+        "++g_invChecks[13];\n        if (handed.app.dpi != passDpi) {",
+        "if (handed.app.dpi != passDpi) {",
+        "the handover assertion itself",
+    ),
+    (
+        "BS-19  the report stops validating itself before writing",
+        "tools/ui_probe/ui_probe.cpp",
+        "if (!jsonBalanced(json)) {",
+        "if (false) {",
+        "the probe must refuse to publish an unparseable report",
+    ),
+    (
         "BS-18  the baseline drop forgets the scroll position",
         "src/app/main.cpp",
         "    settingsScrollToTop();\n    g_settingsScroll.solved.clear();",

@@ -1902,6 +1902,69 @@ void sendWheel(HWND dlg, int notches, const RECT& page) {
                    MAKELPARAM(pt.x, pt.y));
 }
 
+// v1.3.0-beta8fix1 (BS-22w follow-up, instrumentation only): THE STRIP'S OWN
+// SHAPE AT THIS INSTANT, as the CONTROL shows it — the row count from the item
+// rectangles (the same measurement the solver trusts, BS-22t), the item row
+// height, the display rectangle's top (TCM_ADJUSTRECT), the label font's pixel
+// height and the tab control's rectangle. A reflow that changes any of these
+// is a strip reshape riding the reflow — and the page moving up by exactly
+// that amount is the app's own BS-22d contract (the page comes back when the
+// strip does). The I9 finding has to carry these numbers so a bare
+// before/after pair cannot be read as drift when it is a reshape (and the
+// other way round).
+std::string reflowStripShape(HWND dlg) {
+    const HWND tabCtl = ::GetDlgItem(dlg, IDC_TAB);
+    if (tabCtl == nullptr) { return "tabctl n/a"; }
+    int rows = 0;
+    int rowH = 0;
+    int dispTop = -1;
+    int fontPx = 0;
+    RECT first{};
+    RECT last{};
+    const int count = static_cast<int>(
+        ::SendMessageW(tabCtl, TCM_GETITEMCOUNT, 0, 0));
+    if (count > 0 &&
+        ::SendMessageW(tabCtl, TCM_GETITEMRECT, 0,
+                       reinterpret_cast<LPARAM>(&first)) != FALSE) {
+        rows = 1;
+        rowH = static_cast<int>(first.bottom - first.top);
+        if (count > 1 &&
+            ::SendMessageW(tabCtl, TCM_GETITEMRECT,
+                           static_cast<WPARAM>(count - 1),
+                           reinterpret_cast<LPARAM>(&last)) != FALSE) {
+            const int dy = static_cast<int>(last.top) - static_cast<int>(first.top);
+            if (dy >= rowH / 2 || -dy >= rowH / 2) { rows = 2; }
+        }
+    }
+    RECT adj{};
+    ::GetWindowRect(tabCtl, &adj);
+    ::MapWindowPoints(nullptr, dlg, reinterpret_cast<POINT*>(&adj), 2);
+    const int tabX = static_cast<int>(adj.left);
+    const int tabY = static_cast<int>(adj.top);
+    const int tabW = static_cast<int>(adj.right - adj.left);
+    const int tabH = static_cast<int>(adj.bottom - adj.top);
+    // Same convention as solveSettingsLayout: the adjust runs on (and answers
+    // in) the dialog's client coordinates.
+    ::SendMessageW(tabCtl, TCM_ADJUSTRECT, FALSE, reinterpret_cast<LPARAM>(&adj));
+    dispTop = static_cast<int>(adj.top);
+    const HFONT f = reinterpret_cast<HFONT>(::SendMessageW(tabCtl, WM_GETFONT, 0, 0));
+    if (f != nullptr) {
+        if (const HDC dc = ::GetDC(tabCtl)) {
+            const HGDIOBJ old = ::SelectObject(dc, f);
+            TEXTMETRICW tm{};
+            if (::GetTextMetricsW(dc, &tm) != FALSE) {
+                fontPx = static_cast<int>(tm.tmHeight);
+            }
+            ::SelectObject(dc, old);
+            ::ReleaseDC(tabCtl, dc);
+        }
+    }
+    return "rows " + std::to_string(rows) + " rowH " + std::to_string(rowH) +
+           " dispTop " + std::to_string(dispTop) + " fontPx " +
+           std::to_string(fontPx) + " tabRect " +
+           rectStr(tabX, tabY, tabW, tabH);
+}
+
 // Run one operation from the app's own paths, then assert every invariant.
 void harnessStep(HWND dlg, const std::vector<HWND>& all, int tabCount, int* curTab,
                  int* fontPct, unsigned nativeDpi, const RECT& origClient,
@@ -1942,9 +2005,25 @@ void harnessStep(HWND dlg, const std::vector<HWND>& all, int tabCount, int* curT
         case kOpReflow: {
             HarnessState before;
             readHarnessState(dlg, all, *curTab, &before);
+            // v1.3.0-beta8fix1 (BS-22w follow-up, instrumentation only): the
+            // strip's own shape on both sides of the reflow. A reshape during
+            // the reflow moves the page BY DESIGN (BS-22d: the page comes back
+            // when the strip does), so the finding below has to be able to
+            // tell a reshape from a drift — both snapshots ride in the ground,
+            // and a reshape alone is traced even when nothing fails.
+            const std::string stripBefore = reflowStripShape(dlg);
             KieeKeyProbeReflowNow(dlg);
             HarnessState after;
             readHarnessState(dlg, all, *curTab, &after);
+            const std::string stripAfter = reflowStripShape(dlg);
+            if (stripBefore != stripAfter) {
+                harnessTrace("{\"scenario\": \"reflow_strip_shape\", \"tab\": " +
+                             std::to_string(*curTab) + ", \"step\": " +
+                             std::to_string(step) + ", \"seed\": " +
+                             std::to_string(seed) + ", \"before\": \"" +
+                             stripBefore + "\", \"after\": \"" + stripAfter +
+                             "\"}");
+            }
             // I9 — a reflow may grow the page, never move it up/sideways and
             // never make it shallower.
             ++g_invChecks[9];
@@ -1961,11 +2040,45 @@ void harnessStep(HWND dlg, const std::vector<HWND>& all, int tabCount, int* curT
                     if (b.hwnd != a.hwnd) { continue; }
                     if (a.x < b.x - 1 || (a.y + after.app.offset) <
                                          (b.y + before.app.offset) - 1) {
+                        // v1.3.0-beta8fix1 (BS-22w follow-up): the full state
+                        // around the move — the strip shape on both sides, the
+                        // app's recorded shift/rows/offset on both sides, and
+                        // the rectangle the solver applied afterwards — so the
+                        // annotation alone decides "the strip reshaped and the
+                        // page came back (the BS-22d contract)" vs "a drift".
+                        int solved[4] = {0, 0, 0, 0};
+                        const bool haveSolved =
+                            KieeKeyProbeSolvedRect(dlg, a.id, solved) == 0;
                         harnessFail(9, findings,
                                     "the reflow moved id " + std::to_string(a.id) +
                                         " up/sideways (" + rectStr(b.x, b.y, b.w, b.h) +
                                         " -> " + rectStr(a.x, a.y, a.w, a.h) + ")",
-                                    harnessStateStr(after, opName, step, seed, *fontPct));
+                                    "reflow-strip before {" + stripBefore +
+                                        "} after {" + stripAfter +
+                                        "} app-before {shift96 " +
+                                        std::to_string(before.app.stripShift[*curTab]) +
+                                        " seen96 " +
+                                        std::to_string(before.app.stripSeen[*curTab]) +
+                                        " stripRows " +
+                                        std::to_string(before.app.stripRows) +
+                                        " offset " +
+                                        std::to_string(before.app.offset) +
+                                        "} app-after {shift96 " +
+                                        std::to_string(after.app.stripShift[*curTab]) +
+                                        " seen96 " +
+                                        std::to_string(after.app.stripSeen[*curTab]) +
+                                        " stripRows " +
+                                        std::to_string(after.app.stripRows) +
+                                        " offset " +
+                                        std::to_string(after.app.offset) +
+                                        "} solved-after " +
+                                        (haveSolved
+                                             ? rectStr(solved[0], solved[1],
+                                                       solved[2], solved[3])
+                                             : std::string("n/a")) +
+                                        " || " +
+                                        harnessStateStr(after, opName, step, seed,
+                                                        *fontPct));
                         break;
                     }
                 }

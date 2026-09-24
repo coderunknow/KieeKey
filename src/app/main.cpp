@@ -8077,14 +8077,6 @@ struct KieeKeyProbeScrollStateT {
     int range;                        // current tab's range (px)
     int enabled;                      // the app's own "bar is on" latch
     int styleVScroll;                 // WS_VSCROLL on the dialog right now
-    // v1.3.0-beta8fix1 (bug BS-22c): WHICH call last wrote each half of the pair
-    // (and how often), so a divergence names its writer instead of costing a CI
-    // round of guessing. Probe-only state; empty strings outside the probe build.
-    const char* latchWriter;
-    const char* styleWriter;
-    int latchWrites;
-    int styleWrites;
-    int latchDrifts;                  // times the sync found the two disagreeing
     int viewportX, viewportY;         // the page rect the solve CLAMPED to
     int viewportW, viewportH;
     int viewportBottom;
@@ -8093,7 +8085,26 @@ struct KieeKeyProbeScrollStateT {
     int stripSeen[9];                 // the deepest that shift has ever been (96 dpi)
     int barPos, barPage, barMax;      // Win32's answer (GetScrollInfo)
     UINT dpi;                         // the scale the solve used
+    // v1.3.0-beta8fix1 (bug BS-22c): WHICH call last wrote each half of the bar
+    // pair (and how often), so a divergence names its writer instead of costing a
+    // CI round of guessing. MUST STAY LAST, in this order: tools/ui_probe carries
+    // a mirror of this struct and the two are compared at probe start-up
+    // (KieeKeyProbeScrollStateSize) — a field inserted in the middle reads as
+    // somebody else's bytes, which is a crash in the probe, not a finding.
+    const char* latchWriter;
+    const char* styleWriter;
+    int latchWrites;
+    int styleWrites;
+    int latchDrifts;                  // times the sync found the two disagreeing
 };
+
+// The probe's mirror of this struct must agree with it byte for byte: a field
+// added on one side only reads as another field's bytes (a `const char*` read out
+// of an `int` is a crash, not a finding). The probe asks for the size at start-up
+// and refuses to run when the two disagree.
+extern "C" unsigned KieeKeyProbeScrollStateSize(void) {
+    return static_cast<unsigned>(sizeof(KieeKeyProbeScrollStateT));
+}
 
 extern "C" void KieeKeyProbeScrollState(HWND dlg, KieeKeyProbeScrollStateT* out) {
     if (out == nullptr) { return; }

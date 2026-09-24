@@ -253,6 +253,13 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "imposes its own height on a COMBO BOX again",
     ),
     (
+        "BS-22c the probe's state mirror drifts from the app's",
+        "tools/ui_probe/ui_probe.cpp",
+        "    int barPos, barPage, barMax;\n    UINT dpi;",
+        "    UINT dpi;\n    int barPos, barPage, barMax;",
+        "does not mirror the app's",
+    ),
+    (
         "BS-22c the strip cycle stops proving it wrapped",
         "tools/ui_probe/ui_probe.cpp",
         "            if (wrapped.page.top <= basePageTop || wrapped.app.stripSeen[tab] <= 0) {",

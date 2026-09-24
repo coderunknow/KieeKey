@@ -47,6 +47,44 @@ def function_body(source, signature):
     raise ValueError(f"unterminated function: {signature}")
 
 
+def struct_fields(source: str, name: str) -> list[str]:
+    """Field names of `struct <name>` in declaration order (comments stripped).
+
+    The probe carries a MIRROR of the app's scroll-state struct across the
+    executable boundary (tools/ui_probe/ui_probe.cpp, main.cpp). The two are
+    passed as one bare struct pointer, so a field added, removed or moved on one
+    side only makes the other read another field's bytes: a `const char*` read out
+    of an `int` is an access violation. That happened while BS-22c was being built
+    — the probe died before it could write ui_probe.json and CI could only say
+    "the UI probe did not write ui_probe.json". This helper is what lets the gate
+    compare the two declarations field by field, in order.
+    """
+    stripped = re.sub(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"', '', source, flags=re.S)
+    m = re.search(r'struct\s+' + re.escape(name) + r'\s*\{([^}]*)\}', stripped, re.S)
+    if not m:
+        return []
+    out: list[str] = []
+    for decl in m.group(1).split(';'):
+        decl = decl.strip()
+        if not decl:
+            continue
+        # `int a, b, c[9];` and `const char* p;` both carry several names per
+        # declaration, so drop the leading type word and keep every name.
+        head = decl.split('=')[0].strip()
+        toks = head.split(None, 1)
+        if len(toks) < 2:
+            continue
+        names = toks[1].replace('*', ' ')
+        for part in names.split(','):
+            name_part = part.strip().split('[')[0].strip()
+            if not name_part:
+                continue
+            if len(name_part.split()) > 1:      # `char * latchWriter`
+                name_part = name_part.split()[-1]
+            out.append(name_part)
+    return out
+
+
 def read_or_empty(repo: Path, rel: str) -> str:
     """Read a file if it exists (a gate must not break when it does not).
 
@@ -497,6 +535,28 @@ def check(repo: Path):
             "design: the content starts at the display rect), so a `!= 0` test fails "
             "on a correct dialog, while the accumulation this contract exists for is "
             "a value that does not come back")
+    # 16. v1.3.0-beta8fix1 (bug BS-22c): THE PROBE'S STATE MIRROR MATCHES THE APP'S.
+    #     Two TUs on opposite sides of an extern "C" pointer, one struct: the two
+    #     declarations have to agree field for field, in order. A mismatch is not a
+    #     finding, it is a crash (the probe read `int viewportX` as a `const char*`
+    #     and died before writing its report). The app side answers with
+    #     KieeKeyProbeScrollStateSize(); this rule catches the drift before a
+    #     Windows runner is spent on it.
+    app_state = struct_fields(main, 'KieeKeyProbeScrollStateT')
+    probe_state = struct_fields(probe, 'ProbeScrollStateT')
+    if not app_state or not probe_state:
+        failures.append(
+            "main.cpp / tools/ui_probe/ui_probe.cpp: the probe's scroll-state struct "
+            "or its mirror could not be read (BS-22c) — the gate that keeps the two "
+            "in step is blind if either declaration is renamed")
+    elif app_state != probe_state:
+        failures.append(
+            "the probe's ProbeScrollStateT does not mirror the app's "
+            "KieeKeyProbeScrollStateT field for field (BS-22c): app=[" +
+            ", ".join(app_state) + "] probe=[" + ", ".join(probe_state) + "] — the "
+            "struct crosses an extern \"C\" boundary by pointer, so a difference "
+            "reads one field as another (a crash, not a finding)")
+
     # 15. v1.3.0-beta8fix1 (bug BS-22c): FOUR MECHANISMS FROM THE 77e8fea RUN.
     #     Each one is a state the probe measured, and each one has one owner:
     #       * the page clamp may NARROW a row, never widen it. Its first version

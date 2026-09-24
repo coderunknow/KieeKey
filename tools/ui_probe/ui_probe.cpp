@@ -115,6 +115,13 @@ struct ProbeScrollStateT {          // mirrors KieeKeyProbeScrollStateT (main.cp
     int latchDrifts;
 };
 extern "C" void KieeKeyProbeScrollState(HWND dlg, ProbeScrollStateT* out);
+// v1.3.0-beta8fix1 (bug BS-22c): the app answers with the size of ITS struct, and
+// this probe refuses to run when the two disagree — a field added on one side only
+// shifts every field after it, and a `const char*` read out of an `int` is an
+// access violation in the probe, not a finding. (That is exactly what happened to
+// the first build of this round: the probe died before it could write its report,
+// and the CI step said only "the UI probe did not write ui_probe.json".)
+extern "C" unsigned KieeKeyProbeScrollStateSize(void);
 extern "C" int  KieeKeyProbeSetOffset(HWND dlg, int pos);
 extern "C" int  KieeKeyProbeDisplayChange(HWND dlg);
 extern "C" void KieeKeyProbeSetWindowDpiOverride(UINT dpi);
@@ -2263,6 +2270,19 @@ int main(int argc, char** argv) {
     ::InitCommonControlsEx(&ice);
 
     KieeKeyProbeInit(::GetModuleHandleW(nullptr));
+    {
+        const unsigned appSize = KieeKeyProbeScrollStateSize();
+        const unsigned probeSize = static_cast<unsigned>(sizeof(ProbeScrollStateT));
+        if (appSize != probeSize) {
+            std::printf("ui_probe: FAIL — the app reports a scroll state of %u bytes, "
+                        "this probe expects %u: the mirror structs drifted (a field "
+                        "added on one side only). Refusing to run — reading a "
+                        "mismatched struct is a crash, not a measurement.\n",
+                        appSize, probeSize);
+            return 6;
+        }
+        std::printf("ui_probe: scroll state %u bytes (app == probe)\n", appSize);
+    }
     HWND dlg = KieeKeyProbeOpenSettings(0);
     if (dlg == nullptr) {
         std::printf("ui_probe: FAIL — the settings dialog could not be created\n");

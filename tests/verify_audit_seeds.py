@@ -298,8 +298,9 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
     (
         "BS-22c the strip cycle stops proving it wrapped",
         "tools/ui_probe/ui_probe.cpp",
-        "            if (wrapped.page.top <= basePageTop || wrapped.app.stripSeen[tab] <= 0) {",
-        "            if (false) {",
+        "            if (wrapped.app.stripRows <= 1 ||\n"
+        "                (wrapped.page.top <= basePageTop && wrapped.app.stripSeen[tab] <= 0)) {",
+        "            if (false) {   // seeded: no proof the labels wrapped",
         "the proof that the strip really pushed the page down",
     ),
     (
@@ -355,6 +356,20 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "        if (base.app.stripRows > 1) {",
         "        if (false) {   // seeded: a cycle from an already wrapped strip",
         "base.app.stripRows > 1 is gone",
+    ),
+    (
+        "BS-22g the strip cycle stops calibrating the client",
+        "tools/ui_probe/ui_probe.cpp",
+        "        stripW = stripW * 5 / 4;   // too narrow to show the strip as one row",
+        "        /* seeded: the client is never widened for a one-row strip */",
+        "stripW = stripW * 5 / 4; is gone",
+    ),
+    (
+        "BS-22g the blank-page finding stops cross-checking the render",
+        "tools/ui_probe/ui_probe.cpp",
+        "                std::to_string(renderPaintCountAt(dlg, samples, bg)) + \"/\" +",
+        "                std::to_string(0) + \"/\" +   // seeded: no cross-check",
+        "cross-check against the frame the app would draw",
     ),
     (
         "BS-22g the screen check counts controls its capture does not cover",

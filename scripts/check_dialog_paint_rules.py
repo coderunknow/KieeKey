@@ -871,13 +871,32 @@ def check(repo: Path):
             ('::MulDiv(wideW, static_cast<int>(passDpi), 96)',
              'the dpi-scaled client that lets a one-row strip exist at this pass '
              '(BS-22g)'),
+            ('stripW = stripW * 5 / 4;',
+             'the calibration that widens the client until the strip really is ONE '
+             'row at 100 % (BS-22g)'),
+            ('const bool wraps = probeState.app.stripRows > 1;',
+             'the calibration that proves the labels WRAP at 150 % (BS-22g) — a '
+             'client wide enough to hold them either way has no transition to '
+             'measure, which is the other half of the same 81 findings'),
+            ('wrapped.app.stripRows <= 1 ||',
+             'the app\'s own plan as the first proof that the labels really wrapped '
+             '(BS-22g)'),
+            ('back.app.stripRows > 1',
+             'the same proof in the shrink direction: "the page top came back" now '
+             'also requires the plan to have put the strip back in one row '
+             '(BS-22g)'),
             ('if (sampled == 0) { ++uncovered; continue; }',
              'the screen-paint check skipping a control its capture does not cover '
              '(a control off the captured frame is not evidence of a blank page) '
              '(BS-22g)'),
             ('if (judged < 3) {',
              'the screen-paint check refusing to report green when it could not '
-             'judge three whole controls (BS-22g)')):
+             'judge three whole controls (BS-22g)'),
+            ('renderPaintCountAt(dlg, samples, bg)',
+             "the screen-paint finding's cross-check against the frame the app would "
+             'draw (WM_PRINTCLIENT): a capture that reads as background everywhere is '
+             'either a blank page or somebody else\'s pixels, and only the render '
+             'tells the two apart (BS-22g)')):
         if needle not in probe:
             failures.append(f"tools/ui_probe/ui_probe.cpp: {needle} is gone — {why}")
     if 'KieeKeyProbeSolvedRect' not in main or 'KieeKeyProbeSolvedRect' not in probe:

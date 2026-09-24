@@ -952,6 +952,54 @@ bool readScreenClient(HWND hwnd, std::vector<std::uint32_t>* px, int* w, int* h)
     return ok;
 }
 
+// v1.3.0-beta8fix1 (bug BS-22g): WHAT THE APP WOULD DRAW AT THESE POINTS.
+// WM_PRINTCLIENT always answers with a correct frame — that is the whole reason
+// I11 reads the real screen — so it is the control for a screen capture that
+// reads as background everywhere: if the render paints where the screen does not,
+// the frame on the desktop is not the frame the app draws (occlusion, a sibling
+// that repainted over the page, a capture of another window), and if it paints
+// nothing either, the app really has no content there.
+int renderPaintCountAt(HWND hwnd, const std::vector<POINT>& pts, std::uint32_t bg) {
+    if (hwnd == nullptr || pts.empty()) { return 0; }
+    RECT client{};
+    if (::GetClientRect(hwnd, &client) == FALSE) { return 0; }
+    const int cw = static_cast<int>(client.right - client.left);
+    const int ch = static_cast<int>(client.bottom - client.top);
+    if (cw <= 0 || ch <= 0 || cw > 4096 || ch > 4096) { return 0; }
+    HDC screen = ::GetDC(nullptr);
+    if (screen == nullptr) { return 0; }
+    HDC mem = ::CreateCompatibleDC(screen);
+    BITMAPINFO bi{};
+    bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bi.bmiHeader.biWidth = cw;
+    bi.bmiHeader.biHeight = -ch;
+    bi.bmiHeader.biPlanes = 1;
+    bi.bmiHeader.biBitCount = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+    void* bits = nullptr;
+    HBITMAP bmp = ::CreateDIBSection(screen, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+    int painted = 0;
+    if (bmp != nullptr && bits != nullptr && mem != nullptr) {
+        HGDIOBJ old = ::SelectObject(mem, bmp);
+        ::SendMessageW(hwnd, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(mem),
+                       static_cast<LPARAM>(PRF_CLIENT | PRF_CHILDREN | PRF_ERASEBKGND));
+        ::GdiFlush();
+        const auto* px = static_cast<const std::uint32_t*>(bits);
+        for (const POINT& pt : pts) {
+            if (pt.x < 0 || pt.y < 0 || pt.x >= cw || pt.y >= ch) { continue; }
+            if ((px[static_cast<std::size_t>(pt.y) * cw + pt.x] & 0x00FFFFFFU) !=
+                (bg & 0x00FFFFFFU)) {
+                ++painted;
+            }
+        }
+        if (old != nullptr) { ::SelectObject(mem, old); }
+    }
+    if (bmp != nullptr) { ::DeleteObject(bmp); }
+    if (mem != nullptr) { ::DeleteDC(mem); }
+    ::ReleaseDC(nullptr, screen);
+    return painted;
+}
+
 // A uniform bitmap means the session has no visible desktop (or our window is
 // completely covered): the pixel comparison would compare nothing to nothing.
 bool screenIsUsable(const std::vector<std::uint32_t>& px) {
@@ -1898,6 +1946,7 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
             int judged = 0;
             int painted = 0;
             int uncovered = 0;
+            std::vector<POINT> samples;   // every sample the capture really covers
             std::string evidence;
             for (const HarnessCtl& c : s.ctls) {
                 if (judged >= 8) { break; }
@@ -1916,6 +1965,11 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
                 }
                 if (sampled == 0) { ++uncovered; continue; }
                 ++judged;
+                for (int k = 1; k <= 3; ++k) {
+                    const int x = c.ex + c.ew * k / 4;
+                    if (x < 0 || y < 0 || x >= w || y >= h) { continue; }
+                    samples.push_back(POINT{x, y});
+                }
                 if (differs > 0) { ++painted; }
                 if (evidence.size() < 220) {
                     evidence += " " + std::to_string(c.id) + " " +
@@ -1931,7 +1985,9 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
                 std::to_string(s.app.stripShift[deepestTab]) + "/" +
                 std::to_string(s.app.stripSeen[deepestTab]) + " rows " +
                 std::to_string(s.app.stripRows) + " judged " + std::to_string(judged) +
-                " uncovered " + std::to_string(uncovered) + evidence;
+                " uncovered " + std::to_string(uncovered) + " rendered " +
+                std::to_string(renderPaintCountAt(dlg, samples, bg)) + "/" +
+                std::to_string(samples.size()) + evidence;
             ++g_invChecks[11];
             if (judged >= 3 && painted == 0) {
                 harnessFail(11, findings,
@@ -2047,10 +2103,39 @@ int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCo
     // happened (the shift is the app's own record of the strip pushing the page).
     // The width is the pass client scaled to this dpi plus 15 % of slack, and the
     // cycle then PROVES its precondition (stripRows == 1) instead of assuming it.
-    const int stripW = std::max(
-        wideW, ::MulDiv(wideW, static_cast<int>(passDpi), 96) + ::MulDiv(wideW, 15, 100));
+    // ...and the client is CALIBRATED to this pass, because both halves of the
+    // transition have to be reachable at once: one row at 100 % (or the cycle
+    // starts inside a wrap it did not cause) and more than one at 150 % (or the
+    // cycle has no transition to measure). The pass client alone satisfies both
+    // only at 96 dpi: at 120 dpi it already wraps, and a client widened to fix
+    // that stops wrapping at 150 % (the 904334c run had 54 findings of the first
+    // kind, the eb68391 run 81 of the second, `rows 1`, `stripShift seen 0 px`).
+    // Six bounded steps, each one asking the APP's own plan (stripRows), and the
+    // per-tab cycle still proves both halves for every tab.
+    int stripW = std::max(wideW, ::MulDiv(wideW, static_cast<int>(passDpi), 96));
     KieeKeyProbeSimulateDpi(dlg, passDpi);
     KieeKeyProbeFontScale(dlg, 100);
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        KieeKeyProbeResize(dlg, stripW, clientH);
+        KieeKeyProbeReflowNow(dlg);
+        KieeKeyProbeSetOffset(dlg, 0);
+        HarnessState probeState;
+        readHarnessState(dlg, all, 0, &probeState);
+        if (probeState.app.stripRows <= 1) { break; }
+        stripW = stripW * 5 / 4;   // too narrow to show the strip as one row
+    }
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        KieeKeyProbeFontScale(dlg, kWrapFontPct);
+        KieeKeyProbeReflowNow(dlg);
+        KieeKeyProbeSetOffset(dlg, 0);
+        HarnessState probeState;
+        readHarnessState(dlg, all, 0, &probeState);
+        const bool wraps = probeState.app.stripRows > 1;
+        KieeKeyProbeFontScale(dlg, 100);
+        if (wraps) { break; }
+        // Wide enough that 150 % still fits one row: there is nothing to measure.
+        stripW = std::max(wideW, stripW * 4 / 5);
+    }
     KieeKeyProbeResize(dlg, stripW, clientH);
     KieeKeyProbeReflowNow(dlg);
     KieeKeyProbeSetOffset(dlg, 0);
@@ -2103,13 +2188,19 @@ int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCo
             HarnessState wrapped;
             readHarnessState(dlg, all, tab, &wrapped);
             ++g_fuzzChecks;
-            if (wrapped.page.top <= basePageTop || wrapped.app.stripSeen[tab] <= 0) {
+            // The proof has three parts and the app's own plan is the first: the
+            // labels really are in more than one row (stripRows), AND the page paid
+            // for it — either its display rectangle moved down or the content was
+            // shifted below the strip.
+            if (wrapped.app.stripRows <= 1 ||
+                (wrapped.page.top <= basePageTop && wrapped.app.stripSeen[tab] <= 0)) {
                 // A cycle that cannot reach the transition may not report it as
                 // corrected: the state below is one where the strip is still one
                 // row (or nothing was pushed down), so there is nothing to see.
                 harnessFail(1, findings,
                             "the nine tab labels did not wrap at font " +
-                                std::to_string(kWrapFontPct) + "% (page top " +
+                                std::to_string(kWrapFontPct) + "% (rows " +
+                                std::to_string(wrapped.app.stripRows) + ", page top " +
                                 std::to_string(wrapped.page.top) + " vs the one-row " +
                                 std::to_string(basePageTop) + ", stripShift seen " +
                                 std::to_string(wrapped.app.stripSeen[tab]) +
@@ -2135,15 +2226,18 @@ int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCo
             const std::string where =
                 whereOf(back, tab, passDpi, cycle, 0, stripW, clientH, 100);
 
-            // (a) the page top comes back
+            // (a) the page top comes back — and the app's own plan says the strip
+            //     is one row again, which is what "back" means
             ++g_fuzzChecks;
-            if (back.page.top != basePageTop) {
+            if (back.page.top != basePageTop || back.app.stripRows > 1) {
                 harnessFail(1, findings,
                             "the page top did not return to its one-row value: " +
                                 std::to_string(basePageTop) + " -> " +
                                 std::to_string(wrapped.page.top) + " (wrapped) -> " +
-                                std::to_string(back.page.top) + " — the display "
-                                "rectangle of the wrapped strip is still in force",
+                                std::to_string(back.page.top) + " with " +
+                                std::to_string(back.app.stripRows) + " strip row(s) — "
+                                "the display rectangle of the wrapped strip is still "
+                                "in force",
                             where + " " + harnessStateStr(back, "strip_cycle", cycle, 0, 100));
             }
             // (b) the tab-strip shift comes back to the value it had while the

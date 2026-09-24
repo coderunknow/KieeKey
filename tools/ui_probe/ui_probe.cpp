@@ -2052,17 +2052,31 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
             // window's frame at all — an occluded or off-screen dialog, where a
             // finding about the page would be a measurement of somebody else's
             // pixels. The render cross-check above says what the app WOULD draw.
+            // v1.3.0-beta8fix1 (bug BS-22k): AND THE CHROME IS READ FROM THE
+            // DIALOG, NOT FROM THE PAGE'S LIST. `s.ctls` holds the current TAB's
+            // page controls only (readHarnessState filters by tab), so the loop
+            // this replaces asked a list of page controls which of them was
+            // always-visible — never one — and every I11 finding printed
+            // `chrome 0/0`: the evidence the check is built on was never gathered.
+            // This walks the dialog's own children (skipping the tab control, whose
+            // middle row is the page area itself, not chrome).
             int chromeJudged = 0;
             int chromePainted = 0;
-            for (const HarnessCtl& c : s.ctls) {
-                if (chromeJudged >= 4) { break; }
-                if (!c.shown || c.regionEmpty || c.ew < 24 || c.eh < 8) { continue; }
-                if (KieeKeyProbeTabOfControl(dlg, c.id) >= 0) { continue; }
-                const int y = c.ey + c.eh / 2;
+            for (HWND c = ::GetWindow(dlg, GW_CHILD); c != nullptr && chromeJudged < 4;
+                 c = ::GetWindow(c, GW_HWNDNEXT)) {
+                const int cid = ::GetDlgCtrlID(c);
+                if (cid == 0 || cid == IDC_TAB) { continue; }
+                if (KieeKeyProbeTabOfControl(dlg, cid) >= 0) { continue; }
+                if (::IsWindowVisible(c) == FALSE) { continue; }
+                const RECT cr = clientRectOf(dlg, c);
+                const int cw = static_cast<int>(cr.right - cr.left);
+                const int chh = static_cast<int>(cr.bottom - cr.top);
+                if (cw < 24 || chh < 8) { continue; }
+                const int y = static_cast<int>(cr.top) + chh / 2;
                 int sampled = 0;
                 int differs = 0;
                 for (int k = 1; k <= 3; ++k) {
-                    const int x = c.ex + c.ew * k / 4;
+                    const int x = static_cast<int>(cr.left) + cw * k / 4;
                     if (x < 0 || y < 0 || x >= w || y >= h) { continue; }
                     ++sampled;
                     const std::uint32_t px =
@@ -2088,7 +2102,29 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
                 std::to_string(chromePainted) + "/" + std::to_string(chromeJudged) +
                 evidence;
             ++g_invChecks[11];
-            if (judged >= 3 && painted == 0) {
+            const int renderedPts = renderPaintCountAt(dlg, samples, bg);
+            if (judged >= 3 && painted == 0 && renderedPts > 0 &&
+                chromeJudged > 0 && chromePainted == 0) {
+                // v1.3.0-beta8fix1 (bug BS-22k): WHOSE FRAME IS THIS?
+                //
+                // The app's own render (WM_PRINTCLIENT, the same samples, the same
+                // background) paints text at `rendered` of these points, and the
+                // capture has no ink at all — not on the page and not on the
+                // always-visible chrome, which the same window draws in the same
+                // frame. A capture that shows neither is not this window's frame
+                // (occluded, off-screen, another window on top), and a finding
+                // about the page would be a statement about somebody else's
+                // pixels. That state is reported as an unusable capture — the
+                // digest carries `screenUnavailable`, and the trace names the
+                // state — while a capture WITH the chrome and not the page is
+                // still the blank page this check exists for, and a render that
+                // paints nothing is the app's own blank.
+                ++g_screenUnavailable;
+                harnessTrace("{\"scenario\": \"screen_capture_not_this_window\", "
+                             "\"rendered\": " + std::to_string(renderedPts) + ", "
+                             "\"pagePainted\": " + std::to_string(painted) + ", "
+                             "\"chromeJudged\": " + std::to_string(chromeJudged) + "}");
+            } else if (judged >= 3 && painted == 0) {
                 harnessFail(11, findings,
                             "the page paints background only: " + std::to_string(judged) +
                                 " visible controls, none of their middle rows differs "
@@ -3188,7 +3224,7 @@ int main(int argc, char** argv) {
             ",\n \"screenUnavailable\": " + std::to_string(g_screenUnavailable) +
             ",\n \"stripCycleUnavailable\": " +
                 std::to_string(g_stripCycleUnavailable) +
-            ",\n \"stripCycleNote\": \"" + g_stripCycleNote + "\"," +
+            ",\n \"stripCycleNote\": \"" + jsonEscape(g_stripCycleNote) + "\"" +
             ",\n \"fuzzSteps\": " + std::to_string(g_fuzzSteps) +
             ",\n \"fuzzChecks\": " + std::to_string(g_fuzzChecks) +
             ",\n \"fuzzViolations\": " + std::to_string(g_fuzzFailures) +

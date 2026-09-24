@@ -366,9 +366,9 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
     (
         "BS-22g the blank-page finding stops cross-checking the render",
         "tools/ui_probe/ui_probe.cpp",
-        "                std::to_string(renderPaintCountAt(dlg, samples, bg)) + \"/\" +",
-        "                std::to_string(0) + \"/\" +   // seeded: no cross-check",
-        "cross-check against the frame the app would draw",
+        "            const int renderedPts = renderPaintCountAt(dlg, samples, bg);",
+        "            const int renderedPts = 0;   // seeded: no cross-check",
+        "const int renderedPts = renderPaintCountAt(dlg, samples, bg); is gone",
     ),
     (
         "BS-22i the native pass stops requiring a measurable transition",
@@ -376,6 +376,22 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "        if (passDpi == nativeDpi) {",
         "        if (false) {   // seeded: nothing requires the native scale to measure",
         "MUST be measurable at the",
+    ),
+    (
+        "BS-22k the chrome evidence goes back to the page's control list",
+        "tools/ui_probe/ui_probe.cpp",
+        "            for (HWND c = ::GetWindow(dlg, GW_CHILD); c != nullptr && chromeJudged < 4;\n"
+        "                 c = ::GetWindow(c, GW_HWNDNEXT)) {",
+        "            for (const HarnessCtl& c : s.ctls) {",
+        "chromeJudged < 4; is gone",
+    ),
+    (
+        "BS-22k an unusable capture is reported as a blank page again",
+        "tools/ui_probe/ui_probe.cpp",
+        "            if (judged >= 3 && painted == 0 && renderedPts > 0 &&\n"
+        "                chromeJudged > 0 && chromePainted == 0) {",
+        "            if (judged >= 3 && painted == 0) {",
+        "renderedPts > 0 is gone",
     ),
     (
         "BS-22k the pass audit stops checking the window against the plan",

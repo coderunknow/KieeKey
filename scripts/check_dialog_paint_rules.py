@@ -922,7 +922,7 @@ def check(repo: Path):
             ('if (judged < 3) {',
              'the screen-paint check refusing to report green when it could not '
              'judge three whole controls (BS-22g)'),
-            ('renderPaintCountAt(dlg, samples, bg)',
+            ('const int renderedPts = renderPaintCountAt(dlg, samples, bg);',
              "the screen-paint finding's cross-check against the frame the app would "
              'draw (WM_PRINTCLIENT): a capture that reads as background everywhere is '
              'either a blank page or somebody else\'s pixels, and only the render '
@@ -937,6 +937,19 @@ def check(repo: Path):
             ('if (measurable) {',
              'the guard that runs the full invariant battery on the wrapped state '
              'even where the height growth is not measurable (BS-22i)'),
+            ('for (HWND c = ::GetWindow(dlg, GW_CHILD); c != nullptr && chromeJudged < 4;',
+             'the chrome half of the screen-paint evidence read from the DIALOG\'s '
+             'children (BS-22k) — asking the page\'s control list which of its '
+             'controls is always-visible never finds one, so `chrome 0/0` was the '
+             'only value that check could ever print'),
+            ('judged >= 3 && painted == 0 && renderedPts > 0',
+             'the rule that decides whose frame the capture is (BS-22k): the app\'s '
+             'own render paints text, the capture has no ink on the page AND none on '
+             'the always-visible chrome — that is not this window\'s frame, it is a '
+             'reported unavailable capture, not a blank page'),
+            ('++g_screenUnavailable;\n                harnessTrace(',
+             'the counted, traced record of that state (BS-22k) — an unusable capture '
+             'must be visible in the digest, never silent'),
             ('checkPlanHeld(a, ctls);',
              'the pass audit\'s half of the plan-vs-window check (BS-22k) — the '
              'harness sees the states it drives, the pass audit sees the pass\'s own '

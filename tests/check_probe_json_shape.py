@@ -75,6 +75,12 @@ BROKEN_VARIANTS = (
         '            ",\\n \\"traceLines\\": " + std::to_string(g_traceLines);',
     ),
     (
+        '            ",\\n \\"stripCycleNote\\": \\"" + jsonEscape(g_stripCycleNote) + "\\"" +\n'
+        '            ",\\n \\"fuzzSteps\\": " + std::to_string(g_fuzzSteps) +',
+        '            ",\\n \\"stripCycleNote\\": \\"" + jsonEscape(g_stripCycleNote) + "\\"," +\n'
+        '            ",\\n \\"fuzzSteps\\": " + std::to_string(g_fuzzSteps) +',
+    ),
+    (
         '    json += "],\\n \\"handover\\": [";\n'
         '    // v1.3.0-beta8fix1 (bug BS-19): the handover notes and one example state per',
         '    // v1.3.0-beta8fix1 (bug BS-19): the handover notes and one example state per',
@@ -181,11 +187,36 @@ def analyse(text: str) -> tuple[list[str], dict[tuple[str, int], int], int]:
     return problems, keys, max_depth
 
 
+# v1.3.0-beta8fix1 (bug BS-22k): THE COMMA BETWEEN TWO FIELD LINES IS WRITTEN
+# TWICE. Every field of this report opens with its own separator (`",\n \"key\":"`),
+# so a field line that ALSO ends its own literal with a comma compiles, walks the
+# brackets cleanly, passes every key check — and is invalid JSON. CI run
+# 35979237081 died exactly there (`Invalid property identifier character: ,. Path
+# 'stripCycleNote'`), which this gate had never looked for: it counted keys and
+# brackets and never punctuation. The pattern is read from the SOURCE (the
+# assembled text drops the `std::to_string(...)` arguments, so it cannot tell a
+# real double comma from the loop's own separators).
+DOUBLE_FIELD_COMMA_RE = re.compile(r'"\\","\s*\+\s*",[\\n ]')
+
+
+def punctuation_problems(source: str) -> list[str]:
+    problems = []
+    for match in DOUBLE_FIELD_COMMA_RE.finditer(source):
+        line = source.count("\n", 0, match.start()) + 1
+        problems.append(
+            f"line {line}: a field literal ends with its own comma and the next "
+            f"concatenated literal opens with the report's separator — that is one "
+            f"comma too many (`...\",\" +` then `\",\\n ...`), invalid JSON that "
+            f"compiles and passes every bracket and key check")
+    return problems
+
+
 def check_source(source: str) -> tuple[list[str], dict[tuple[str, int], int], int]:
     """All structural problems of one probe source text (empty list = sound)."""
     code = strip_comments(source)
     assembled = "".join(literals_of(report_region(code)))
     problems, keys, max_depth = analyse(assembled)
+    problems += punctuation_problems(report_region(code))
 
     for (name, depth), count in sorted(keys.items()):
         if count > 1:

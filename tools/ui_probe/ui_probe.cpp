@@ -2214,7 +2214,20 @@ int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCo
     ++g_scenarioRuns;
     const int before = g_fuzzFailures;
     const int wideW = static_cast<int>(origClient.right);
-    const int clientH = static_cast<int>(origClient.bottom);
+    // v1.3.0-beta8fix1 (bug BS-22m): AND THE HEIGHT SCALES WITH THE PASS, LIKE THE
+    // WIDTH AND LIKE THE PASS'S OWN CLIENT — the cycle used the 96-dpi pixel height
+    // at every scale. `refitWindow()`/`tabHeightForClient()` cap the tab control's
+    // height by the CLIENT's, so at 120/144 dpi inside a 96-dpi-tall window the tab
+    // control cannot grow: the strip's second row cannot push the page down and the
+    // grow half of the transition is unreachable BY CONSTRUCTION. The 35975743266
+    // run reports exactly that shape — `[I1] the nine tab labels did not wrap at
+    // font 150% (page top 161 vs the one-row 161, stripShift seen 29 px)` at 54
+    // states = 9 tabs x 3 cycles x the 2 non-native scales, while all 27 cycles at
+    // the native scale measured the transition they were written for. Scaling the
+    // height keeps every cycle running (nothing is skipped, no bound is loosened)
+    // and puts this pass's geometry back at the scale the pass audits.
+    const int clientH = std::max(240, ::MulDiv(static_cast<int>(origClient.bottom),
+                                               static_cast<int>(passDpi), 96));
     // v1.3.0-beta8fix1 (bug BS-22c): THE WRAP IS DRIVEN BY THE TEXT SCALE, NOT BY
     // A FIXED WIDTH. The first version of this scenario narrowed the client to 55 %
     // to make the nine tab labels wrap, which is a property of the labels' font: at

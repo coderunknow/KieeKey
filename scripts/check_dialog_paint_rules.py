@@ -1026,6 +1026,11 @@ def check(repo: Path):
              'grows them, so the app\'s own measurement is a contract for them and '
              'I12 must judge them (a check that skips the rows the clip class was '
              'made of is a check that never fires)'),
+            ('const int clientH = std::max(240, ::MulDiv(static_cast<int>(origClient.bottom),',
+             'the strip cycle\'s client HEIGHT scaled to the pass dpi (BS-22m) — the '
+             'tab control is capped by the client\'s height, so a 96-dpi-tall window '
+             'at 120/144 dpi cannot grow the strip and the grow half of the '
+             'transition becomes unreachable by construction'),
             ('int chromePainted = 0;',
              'the chrome half of that evidence (BS-22h) — a capture with the chrome '
              'and not the page is a page that was never painted, while one with '

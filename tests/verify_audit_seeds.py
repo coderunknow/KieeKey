@@ -320,6 +320,36 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "is not followed by settingsAdoptScrollbarVisibility",
     ),
     (
+        "BS-22f the factory answers a missing face with another",
+        "src/app/main.cpp",
+        # The exact shape the 8ba7da0 run's font walk ran into: mint the face,
+        # cache it if there is room, and otherwise hand back whatever is in slot 0.
+        "        if (freeSlot != FontCache::kSlots) {\n"
+        "            cache.slots[freeSlot] = FontCache::Entry{dpi, weight, px96, f};\n"
+        "        }\n"
+        "        return f;",
+        "        if (freeSlot != FontCache::kSlots) {\n"
+        "            cache.slots[freeSlot] = FontCache::Entry{dpi, weight, px96, f};\n"
+        "            return f;\n"
+        "        }\n"
+        "        return cache.slots[0].font;",
+        "answers a face it does not have with another face",
+    ),
+    (
+        "BS-22f the font cache shrinks below what a session asks for",
+        "src/app/main.cpp",
+        "    static constexpr std::size_t kSlots = 48;",
+        "    static constexpr std::size_t kSlots = 8;",
+        "the font cache holds 8 faces",
+    ),
+    (
+        "BS-22f the text scale forgets the app's own faces",
+        "src/app/main.cpp",
+        "        ctx.add(app[role], next[role]);            // what the app itself applies",
+        "        /* seeded: only the faces this probe applied are mapped */",
+        "no longer maps the app's own faces at the CURRENT dpi",
+    ),
+    (
         "BS-22c a tab switch stops re-deciding the bar",
         "src/app/main.cpp",
         "    settingsSyncScrollbarLatch(g.hSettings);",

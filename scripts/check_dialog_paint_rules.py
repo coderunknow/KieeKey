@@ -748,6 +748,78 @@ def check(repo: Path):
                 "hide the standard bar and clear WS_VSCROLL behind the app's back "
                 "(the range is per tab), so every write must re-read the bit into "
                 "the latch before the next solve or probe observation")
+    # v1.3.0-beta8fix1 (bug BS-22f): the font factory must answer a request with
+    # the face that was asked for, and the text-scale entry point must know every
+    # face the dialog can be wearing. Both were "unreachable" assumptions: the
+    # factory had 8 slots for the 9 faces three scale factors need (and 36 for the
+    # probe's own dpi x scale walk), and its full-cache fallback handed back the
+    # first face it ever created — so the app's 120 dpi faces were 13 px at 96 dpi
+    # and the probe's 150 % faces were the same OBJECT as the 100 % ones.
+    try:
+        font_body = function_body(read_or_empty(repo, 'src/app/main.cpp'),
+                                  r'HFONT cachedFont\s*\([^)]*\)\s*noexcept')
+    except ValueError:
+        failures.append("main.cpp: cachedFont() not found (BS-22f) — the dialog's "
+                        "faces come from it and the layout measures text with the "
+                        "font a control is actually wearing")
+        font_body = ''
+    if font_body:
+        if 'cache.slots[0].font' in font_body:
+            failures.append(
+                "main.cpp: cachedFont() answers a face it does not have with "
+                "another face (BS-22f) — layout measures text with the control's "
+                "LIVE font, so a request answered with a face of another "
+                "dpi/size/weight silently sizes rows for the wrong text; when the "
+                "ninth face was asked for and the cache had eight slots, every "
+                "later face came back 13 px at 96 dpi and the 150 % tab labels "
+                "stopped widening one dpi switch into the probe's walk (54 x I1)")
+        after_create = font_body.split('CreateFontW(', 1)[1] if 'CreateFontW(' in font_body else ''
+        if not after_create:
+            failures.append("main.cpp: cachedFont() no longer mints a face at all "
+                            "(BS-22f)")
+        else:
+            if 'if (freeSlot != FontCache::kSlots)' not in after_create:
+                failures.append(
+                    "main.cpp: cachedFont() no longer hands back the face it just "
+                    "minted when the cache has no room for it (BS-22f) — the "
+                    "freshly created face is the answer; the slot is bookkeeping")
+            if 'for (std::size_t i = 0; i < FontCache::kSlots; ++i)' not in after_create:
+                failures.append(
+                    "main.cpp: the out-of-GDI-handles fallback of cachedFont() is "
+                    "no longer a bounded walk of the cache (BS-22f)")
+        slots = re.search(r'kSlots\s*=\s*(\d+)', main)
+        if slots is None:
+            failures.append("main.cpp: FontCache::kSlots not found (BS-22f)")
+        elif int(slots.group(1)) < 36:
+            failures.append(
+                f"main.cpp: the font cache holds {slots.group(1)} faces (BS-22f) — "
+                "one session needs three faces per scale factor (13 normal, 13 "
+                "semibold, 20 semibold), and the UI probe walks four dpis "
+                "(96/120/144/192) at text scales 100/125/150 %, i.e. 4 x (3 + 3) = "
+                "36 distinct faces; a full cache is what made every later face "
+                "come back 13 px at 96 dpi")
+    try:
+        scale_body = function_body(read_or_empty(repo, 'src/app/main.cpp'),
+                                   r'int\s+KieeKeyProbeFontScale\s*\([^)]*\)')
+    except ValueError:
+        failures.append("main.cpp: KieeKeyProbeFontScale() not found (BS-22f) — the "
+                        "probe's text-scale path is how the strip transition is "
+                        "driven")
+        scale_body = ''
+    if scale_body:
+        for needle, why in (
+                ('ctx.add(app[role], next[role]);',
+                 "the app's own faces at the CURRENT dpi"),
+                ('ctx.add(g_probeFontHistory[role][i], next[role]);',
+                 'the faces this probe applied earlier (a dpi change re-applies the '
+                 "app's faces, a scale change leaves the probe's)")):
+            if needle not in scale_body:
+                failures.append(
+                    f"main.cpp: the probe's text scale no longer maps {why} "
+                    "(BS-22f) — the scale then matches nothing (the labels never "
+                    "widen: the strip never wraps and the transition is measured in "
+                    "a state that never reached it) or maps the wrong way (a 100 % "
+                    "call cannot undo a 150 % one)")
     if 'settingsSyncScrollbarLatch(' not in show_tab_body:
         failures.append(
             "main.cpp: showTab() no longer re-decides the bar (BS-22c) — switching "

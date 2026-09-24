@@ -3860,7 +3860,22 @@ int g_settingsOpenTab = 0;
 namespace {
 struct FontCache {
     struct Entry { UINT dpi = 0; int weight = 0; int px96 = 0; HFONT font = nullptr; };
-    static constexpr std::size_t kSlots = 8;
+    // v1.3.0-beta8fix1 (bug BS-22f): THE CACHE MUST HOLD EVERY FACE ONE SESSION
+    // CAN ASK FOR, and the old 8 slots did not. The key is (dpi, weight, px96)
+    // and the dialog asks for three roles — 13 normal, 13 semibold, 20 semibold —
+    // so a session that has seen three scale factors needs 9 faces before anything
+    // else runs; the UI probe's page walks 96/120/144/192 dpi at text scales
+    // 100/125/150 %, which is 4 x (3 roles + 2 scaled roles) = up to 36 distinct
+    // faces (13/16/19 normal and semibold, 20/25/30 semibold). The bug was quiet
+    // exactly as long as the fallback below was only reachable in theory: with the
+    // ninth request the factory began handing back the FIRST font it ever created,
+    // so every later face — the app's own 125 %/150 % faces included — came back
+    // 13 px tall at 96 dpi. That is the state the 8ba7da0 x64 run caught: at the
+    // 120 dpi pass the tab labels stopped widening at 150 % (labels and targets
+    // were the same object, so the scale was an identity), the strip never wrapped
+    // (54 x I1), and rows the solver had sized with the wrong face were reported
+    // as clipped at 150 % by the probe's own text-fit audit.
+    static constexpr std::size_t kSlots = 48;
     Entry slots[kSlots]{};
 };
 
@@ -3875,23 +3890,27 @@ HFONT cachedFont(int px96, int weight) noexcept {
         if (e.font == nullptr) { if (freeSlot == FontCache::kSlots) { freeSlot = i; } continue; }
         if (e.dpi == dpi && e.weight == weight && e.px96 == px96) { return e.font; }
     }
-    if (freeSlot == FontCache::kSlots) {
-        // Cache full (more than 8 distinct DPI/face combinations — not
-        // reachable on real hardware). Reuse a font that already exists
-        // rather than deleting one that is in use.
-        return cache.slots[0].font;
-    }
     const int px = -::MulDiv(px96, static_cast<int>(dpi), 96);
     HFONT f = ::CreateFontW(px, 0, 0, 0, weight, FALSE, FALSE, FALSE,
                             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
                             CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                             DEFAULT_PITCH, L"Segoe UI");
     if (f != nullptr) {
-        cache.slots[freeSlot] = FontCache::Entry{dpi, weight, px96, f};
+        // v1.3.0-beta8fix1 (bug BS-22f): a face is cached when there is room for
+        // it and handed back when there is not. The request is NEVER answered
+        // with a different face: layout measures text with the control's live
+        // font, so a wrong face is a wrong row — silently. (A font that does not
+        // get a slot lives as long as the process, like every other font here;
+        // slots are only ever taken by a DISTINCT dpi/weight/px96 face, so the
+        // bound is the number of distinct faces a session asks for.)
+        if (freeSlot != FontCache::kSlots) {
+            cache.slots[freeSlot] = FontCache::Entry{dpi, weight, px96, f};
+        }
         return f;
     }
     // CreateFont failed (out of GDI handles): fall back to any font we
-    // already own, else nullptr (controls then keep the system font).
+    // already own, else nullptr (controls then keep the system font). This is
+    // the ONLY path that may answer with a face that was not asked for.
     for (std::size_t i = 0; i < FontCache::kSlots; ++i) {
         if (cache.slots[i].font != nullptr) { return cache.slots[i].font; }
     }
@@ -8370,21 +8389,44 @@ extern "C" int KieeKeyProbeResize(HWND dlg, int clientW, int clientH) {
 // creates its own font, so the harness supplies the scaled faces THROUGH THE
 // APP'S OWN FONT FACTORY and then asks the app to re-solve: the geometry the
 // solver has to cope with is the real one for that text scale.
+// v1.3.0-beta8fix1 (bug BS-22f): THE SCALE KNOWS EVERY FACE THE DIALOG CAN WEAR.
+// The mapping used to be ONE old face per role, and whichever single face that
+// was, it was wrong half the time: a DPI change re-applies the app's own faces
+// (applySettingsDpiScale), while a text-scale cycle leaves the probe's faces on
+// the controls, so the "old" side has to be the UNION of both — the app's faces
+// at the CURRENT dpi and every face this probe has ever applied for that role.
+// With only the app's faces (before 76bef1a) a 100 % call could not undo a 150 %
+// call; with only the probe's last faces (76bef1a) a 150 % call after a DPI
+// change matched nothing and the labels never widened — the first violating state
+// of the 8ba7da0 x64 run, tab 0 cycle 1 at the 120 dpi pass ("the nine tab labels
+// did not wrap at font 150% (page top 109 vs the one-row 109)").
+struct KieeKeyProbeFontPair { HFONT from; HFONT to; };
 struct KieeKeyProbeFontCtx {
-    HFONT normal, bold, title;
-    HFONT oldNormal, oldBold, oldTitle;
+    static constexpr int kMaxPairs = 3 * (1 + 8);   // roles x (app face + history)
+    KieeKeyProbeFontPair pairs[kMaxPairs]{};
+    int count = 0;
+    void add(HFONT from, HFONT to) {
+        if (from == nullptr || to == nullptr || from == to || count >= kMaxPairs) {
+            return;   // already the target (or unclassifiable): leave it alone
+        }
+        for (int i = 0; i < count; ++i) {
+            if (pairs[i].from == from) { return; }
+        }
+        pairs[count++] = KieeKeyProbeFontPair{from, to};
+    }
 };
 static BOOL CALLBACK kieeKeyProbeApplyFont(HWND child, LPARAM lp) {
     const auto* ctx = reinterpret_cast<const KieeKeyProbeFontCtx*>(lp);
     if (ctx == nullptr) { return TRUE; }
     const HFONT cur = reinterpret_cast<HFONT>(
         ::SendMessageW(child, WM_GETFONT, 0, 0));
-    HFONT replacement = nullptr;
-    if (cur == ctx->oldTitle)       { replacement = ctx->title; }
-    else if (cur == ctx->oldBold)   { replacement = ctx->bold; }
-    else if (cur == ctx->oldNormal) { replacement = ctx->normal; }
-    if (replacement != nullptr && replacement != cur) {
-        ::SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(replacement), TRUE);
+    if (cur == nullptr) { return TRUE; }
+    for (int i = 0; i < ctx->count; ++i) {
+        if (ctx->pairs[i].from == cur) {
+            ::SendMessageW(child, WM_SETFONT,
+                           reinterpret_cast<WPARAM>(ctx->pairs[i].to), TRUE);
+            break;
+        }
     }
     return TRUE;
 }
@@ -8399,25 +8441,44 @@ static BOOL CALLBACK kieeKeyProbeApplyFont(HWND child, LPARAM lp) {
 // the tab strip stayed wrapped after the text scale returned to 100 % (87 x
 // `[I1] the page top did not return to its one-row value: 114 -> 130`).
 // The probe remembers what IT applied, so the next call can undo it.
-static HFONT g_probeFontNormal = nullptr;
+static HFONT g_probeFontNormal = nullptr;   // the newest face, for the report
 static HFONT g_probeFontBold = nullptr;
 static HFONT g_probeFontTitle = nullptr;
+// ...and the history of everything it ever applied, so a face left on a control
+// by an earlier pass (or by an earlier dpi) is still recognised.
+static HFONT g_probeFontHistory[3][8]{};
+static int g_probeFontHistoryCount[3] = {0, 0, 0};
+static void kieeKeyProbeRememberFont(int role, HFONT f) {
+    if (f == nullptr || role < 0 || role > 2) { return; }
+    if (role == 0) { g_probeFontNormal = f; }
+    else if (role == 1) { g_probeFontBold = f; }
+    else { g_probeFontTitle = f; }
+    int& n = g_probeFontHistoryCount[role];
+    for (int i = 0; i < n; ++i) {
+        if (g_probeFontHistory[role][i] == f) { return; }
+    }
+    if (n < 8) {   // sizeof(g_probeFontHistory[role]) / sizeof(HFONT)
+        g_probeFontHistory[role][n++] = f;
+    }
+}
 
 extern "C" int KieeKeyProbeFontScale(HWND dlg, int percent) {
     if (dlg == nullptr || percent < 100 || percent > 400) { return -1; }
     const int px = percent == 100 ? 13 : std::max(8, 13 * percent / 100);
-    HFONT nextNormal = cachedFont(px, FW_NORMAL);
-    HFONT nextBold = cachedFont(px, FW_SEMIBOLD);
-    HFONT nextTitle = cachedFont(std::max(12, 20 * percent / 100), FW_SEMIBOLD);
-    const KieeKeyProbeFontCtx ctx{
-        nextNormal, nextBold, nextTitle,
-        g_probeFontNormal != nullptr ? g_probeFontNormal : uiFont(),
-        g_probeFontBold != nullptr ? g_probeFontBold : uiFontBold(),
-        g_probeFontTitle != nullptr ? g_probeFontTitle : uiFontTitle()};
+    const HFONT next[3] = {
+        cachedFont(px, FW_NORMAL),
+        cachedFont(px, FW_SEMIBOLD),
+        cachedFont(std::max(12, 20 * percent / 100), FW_SEMIBOLD)};
+    const HFONT app[3] = {uiFont(), uiFontBold(), uiFontTitle()};
+    KieeKeyProbeFontCtx ctx;
+    for (int role = 0; role < 3; ++role) {
+        ctx.add(app[role], next[role]);            // what the app itself applies
+        for (int i = 0; i < g_probeFontHistoryCount[role]; ++i) {
+            ctx.add(g_probeFontHistory[role][i], next[role]);   // what we applied
+        }
+    }
     ::EnumChildWindows(dlg, &kieeKeyProbeApplyFont, reinterpret_cast<LPARAM>(&ctx));
-    g_probeFontNormal = nextNormal;
-    g_probeFontBold = nextBold;
-    g_probeFontTitle = nextTitle;
+    for (int role = 0; role < 3; ++role) { kieeKeyProbeRememberFont(role, next[role]); }
     // The controls changed size underneath the solved layout: everything the
     // solver measured is stale, which is exactly the condition the layout must
     // survive.

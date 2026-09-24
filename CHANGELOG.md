@@ -5,6 +5,16 @@ Keep a Changelog; versioning: SemVer.
 
 ## [Unreleased]
 
+## [1.3.0-beta8fix1] — 2026-09-23
+### The settings page that lost its content — operation-sequence harness + the rescale/re-solve fix (file build 1.3.0.10)
+Tester report: the settings page goes blank **and** the vertical scrollbar disappears; only closing and reopening the dialog brings it back. Four green CI rounds had not seen it, because every check measured a *settled* dialog (solve, then look).
+
+**Root cause (BS-18).** `WM_DISPLAYCHANGE` (monitor topology / resolution / scale — a hot-plugged screen, an HDMI switch, a scale change that arrives before the window's own `WM_DPICHANGED`, a session reconnect) reached `refreshSettingsDpi()` → `applySettingsDpiScale()`, which multiplies every child rectangle by the new scale and drops the layout baseline **and never re-solved**. In that state nothing can recover: `applySettingsScrollOffset()` starts with `if (solved.empty()) return;`, so every wheel notch, arrow key and thumb drag moves the scrollbar and not the page; the scrollbar keeps the previous geometry's answer because its existence is only ever decided inside the solver; and the next operation that reads the live rectangles — including the next solve — takes the rescaled, un-normalized geometry as its input, so the page drifts further out of its own viewport instead of back into it.
+
+**Fix.** `applySettingsDpiScale()` now completes the transition it starts (rescale → drop baseline → **re-solve**), so no caller can leave the dialog scaled-but-not-solved; `settingsProc()` handles `WM_DISPLAYCHANGE` itself (the dialog is a top-level window and receives the broadcast directly); `dropSettingsLayoutBaseline()` is now total — it clears the offset, the range, the latch, the per-tab depths **and the `WS_VSCROLL` bit**, because a dialog with no layout may not claim a scroll state; and the post-clamp scrollbar correction is symmetric (one owner, both directions), so a bar that should appear appears and a bar that should go goes.
+
+**Evidence.** `tools/ui_probe` gained the operation-sequence harness: a named deterministic scenario (mid-scroll display change, then the app's own recovery operations) plus a seeded fuzz pass (8 fixed seeds × 3 text scales × 3 DPI passes, 2880 steps, 2884 assertions) asserting I1–I12 **after every operation**. RED on the pre-fix tree in CI run 35863565160 (x64 job): `harness 2880 steps / 2884 assertions / 2576 violations [inv_I1=1724 inv_I3=368 inv_I4=368 inv_I5=17 inv_I11=1 inv_I12=98]`, next to the probe's `empty_page` ("the whole tab starts below the page bottom … the content has drifted out of the viewport") and `scroll_pos` findings — the user's report, reproduced deterministically. Violations write their whole state to `ui_probe_trace.jsonl`; the counters ride in `ui_probe.json` and in the CI digest line. New paint-rule guards pin the three mechanisms, with seed mutations in `tests/verify_audit_seeds.py` proving the guard can fail. No engine, hook, TSF or persistence behaviour changed.
+
 ## [1.3.0-beta8] — 2026-09-22
 ### Layout truth, readable diagnostics, Chaos-Lab DPI and the v1.3.0 persistence fix (file build 1.3.0.9)
 Every defect in the beta7 tester report is fixed, each with a regression that is RED on the pre-fix tree (`BUG_HUNT_REPORT_beta8_layout_and_features.md`).

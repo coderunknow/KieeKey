@@ -112,6 +112,68 @@ struct Rect {
 }
 
 //---------------------------------------------------------------------------
+// v1.3.0-beta8fix1 (bug BS-21) — THE STRIP SHIFT IS A STATE, NOT AN ACCUMULATOR.
+//
+// `pageTopShiftPx` is documented as idempotent, and it is — for the geometry it
+// is designed for, the AUTHORED page top. The runtime handed it the BASELINE of
+// the previous solve, which already carries the previous shift, so the properties
+// it was chosen for did not hold:
+//
+//   * growing the strip (narrowing the dialog, raising the scale, a bigger text
+//     size) moved the page down by `disp.top - shiftedTop` — correct, but written
+//     on top of the old shift;
+//   * SHRINKING it back (widening the dialog, the strip fits one row again) asked
+//     for a shift of 0 and changed nothing: `max(0, ...)` cannot pull a page UP.
+//     The content stayed as far below the page as the widest strip ever pushed it.
+//   * every cycle therefore accumulated: the CI harness measured `stripShift 228`
+//     px in a 494x497 page, and the tab's 20 controls parked 200+ px under a
+//     176 px page with none of them visible and the solver reporting a coherent
+//     layout (`inv_I1` / `[I1] page is EMPTY at offset 0`).
+//
+// The state is a replacement, not an addition: the input is the baseline MINUS the
+// shift already baked into it, and the answer replaces the record. The shift is
+// kept in 96-dpi pixels so a DPI rescale (which multiplies the live rectangles by
+// the same factor) does not have to rescale the record — `MulDiv` at the point of
+// use is the single conversion.
+//---------------------------------------------------------------------------
+// The model is portable (the Linux unit test includes this header, no windows.h),
+// so the DPI conversion is spelled out instead of using MulDiv. Round-half-up on
+// positive values is what Win32's MulDiv does for the values this dialog produces,
+// so the model and the dialog agree to the pixel.
+[[nodiscard]] inline int dpiScalePx(int px96, int dpi) noexcept {
+    const int d = dpi > 0 ? dpi : 96;
+    return (px96 * d + (px96 >= 0 ? 48 : -48)) / 96;
+}
+
+[[nodiscard]] inline int scaleTo96Px(int px, int dpi) noexcept {
+    const int d = dpi > 0 ? dpi : 96;
+    return (px * 96 + (px >= 0 ? d / 2 : -d / 2)) / d;
+}
+
+struct StripShift {
+    int authoredTopPx = 0;   // the baseline top with the previous shift removed
+    int shiftPx      = 0;    // the shift to apply for THIS solve (px at `dpi`)
+    int shift96      = 0;    // the same shift in 96-dpi px (the stored state)
+};
+
+[[nodiscard]] inline StripShift stripShiftFor(int baselineTopPx, int prevShift96,
+                                              int viewportTopPx, int dpi) noexcept {
+    const int denom = dpi > 0 ? dpi : 96;
+    StripShift out;
+    out.authoredTopPx = baselineTopPx - dpiScalePx(prevShift96, denom);
+    out.shiftPx = pageTopShiftPx(out.authoredTopPx, viewportTopPx);
+    out.shift96 = scaleTo96Px(out.shiftPx, denom);
+    return out;
+}
+
+// The inverse, for the DPI path: how far the live rectangles are below the
+// AUTHORED layout right now, at `dpi` (the amount that must be removed before a
+// rescale multiplies them, or the shift becomes part of the authored geometry).
+[[nodiscard]] inline int stripShiftPx(int shift96, int dpi) noexcept {
+    return dpiScalePx(shift96, dpi);
+}
+
+//---------------------------------------------------------------------------
 // v1.3.0-beta8 (bug BS-17) — THE SOLVER MUST START FROM THE UNSCOLLED LAYOUT.
 //
 // "Scrolling" in this dialog is a RENDER operation: it moves the page children
@@ -142,6 +204,57 @@ struct Rect {
 // function is that one case, shared by the app and by tests.
 [[nodiscard]] inline Rect solverInputRect(const Rect& live, int scrollOffsetPx) noexcept {
     return Rect{live.x, live.y + scrollOffsetPx, live.w, live.h};
+}
+
+//---------------------------------------------------------------------------
+// v1.3.0-beta8fix1 (bug BS-20/BS-22c) — A PAGE CHILD MAY NOT BE WIDER THAN THE
+// PAGE, AND THE CLAMP ONLY EVER NARROWS.
+//
+// The audit's 125 % pass (the scale the beta8fix1 probe added, because the
+// regression contract names 100/125/150 %) reported what a wider page never
+// showed: at 641 px of client a group box authored 496 px wide rescaled to
+// 620 px at x=30, i.e. 650 px of content in a 641 px dialog — `outside_page`, and
+// with the neighbouring rows measured against a 603 px page, `overlap` and `clip`
+// as well. The solver grows a row to fit its text; it never SHRANK one to fit the
+// page it is clipped to, so the widths it is handed (authored at 96 dpi, rescaled
+// by the DPI path) are taken as truth. Nothing about the dialog makes that safe:
+// the page is a clip rectangle, so content wider than it is unreachable by
+// construction — the ruler the probe uses (client right) is a property of the
+// mechanism, not of the probe.
+//
+// v1.3.0-beta8fix1 (bug BS-22c) — AND A MINIMUM WIDTH MAY NOT WIDEN A ROW.
+//
+// The first version of this rule also raised every row narrower than a minimum
+// (80 px @96) up to that minimum. Written to keep a degenerate row from
+// collapsing to nothing, it ran on EVERY row, and this dialog is full of rows
+// that are narrower than 80 px on purpose: the radio buttons "Telex" (74), "VNI"
+// (58), "Tắt" (54), "Tiêu điểm" (66), the checkbox "Từ điển" (68). Widened to the
+// minimum they ran into the neighbour, which is exactly the class the probe
+// reports as `overlap` — measured, not inferred: `id 502 (Button) 160,189 100x25
+// and id 503 (Button) 245,189 140x25 overlap by 15x25 px` at 125 %, where the
+// authored 58 px became 100 px (S(80) at that scale), and `id 569 ... at 560,772
+// 100x25 is outside the reachable page` for a 68 px checkbox the same rule pushed
+// past the client. A row's width is AUTHORED geometry: the solver may narrow one
+// to the page that clips it, and may grow one for the text it has to show, but it
+// may never invent width the author did not write.
+//
+// The clamp is a pure decision so it can be asserted without Windows:
+//   * a child that fits is returned unchanged (idempotent, so re-solving cannot
+//     ratchet a row narrower every pass);
+//   * a child sticking out to the right is narrowed to end AT the limit, keeping
+//     its left edge — the row's text then wraps inside the page, which autoFit
+//     turns into height (never into clipping, which is the defect);
+//   * a child whose own left edge is at or past the limit is returned unchanged:
+//     its position is authored, widening it could only push it further out.
+//---------------------------------------------------------------------------
+[[nodiscard]] inline Rect clampPageChildWidth(const Rect& r,
+                                              int limitRightPx) noexcept {
+    if (limitRightPx <= 0) { return r; }             // no information: leave it
+    Rect out = r;
+    const int room = limitRightPx - out.x;
+    if (room <= 0) { return out; }                   // starts past the bound
+    if (out.w > room) { out.w = room; }              // narrow, never widen
+    return out;
 }
 
 //---------------------------------------------------------------------------
@@ -195,9 +308,29 @@ struct ControlSpec {
     // Measured text height in pixels (DrawTextW DT_CALCRECT). 0 means "not a
     // text control" or "measured smaller than the authored box".
     int requiredHeight = 0;
+    // v1.3.0-beta8fix1 (bug BS-23): the width this control's own text needs in
+    // ONE line (GetTextExtentPoint32W with the control's font, plus the room its
+    // class needs — a check box draws its glyph before the text). 0 means "not a
+    // single-line text control" / "already fits". Measured by the Win32 layer; the
+    // solver only enforces the bounds (the page's right edge, the nearest sibling,
+    // the enclosing group box), so a row can never grow into its neighbour.
+    int requiredWidth = 0;
     // Only label-like controls may grow: a grown button/combobox/edit would
     // change its own semantics (a taller combo box is a taller drop-down).
     bool growable = false;
+    // v1.3.0-beta8fix1 (bug BS-22l): THE HEIGHT WINDOWS GAVE THE CONTROL.
+    //
+    // A CBS_DROPDOWNLIST combo sizes its own window to its item height plus its
+    // borders, and it does it again on every font change — the authored height
+    // is a wish, not the window. This is that measured height (0 = the control
+    // does not size itself). It is NOT `growable`: growth is something the
+    // solver decides for a label, this is something Win32 already did. The plan
+    // has to describe the window (the probe's I6: "the plan and the window
+    // disagree"), and every row below has to clear it — the authored table
+    // spaces its rows around the CLOSED height (scripts/audit_layout.py models
+    // exactly that with `_geometry_rect`), so a row placed against the authored
+    // 25 px lands 8 px inside the combo's real 33 px box.
+    int liveHeight = 0;
     // Group boxes never grow on their own; they are stretched to keep
     // containing their children.
     bool groupBox = false;
@@ -224,6 +357,11 @@ struct LayoutPlan {
 inline constexpr int kGroupBoxBottomPadPx = 10;
 
 //---------------------------------------------------------------------------
+// The gap a fitted row keeps to the sibling it grows towards (v1.3.0-beta8fix1,
+// bug BS-23). The audit treats an overlap of up to 4 px as touching, so 6 keeps a
+// fitted row clear of its neighbour by the same margin the rest of the dialog uses.
+inline constexpr int kRowGapPx = 6;
+
 // autoFit — grow labels to their measured height and reflow the page below
 // them.
 //
@@ -240,10 +378,20 @@ inline constexpr int kGroupBoxBottomPadPx = 10;
 //     row is therefore anchored by the caller via `pageBottom` growth, i.e.
 //     the caller moves the row by LayoutPlan::extraHeightPx.
 //   * Nothing is ever shrunk below its authored size.
+//   * v1.3.0-beta8fix1 (bug BS-23): a row WIDER-THAN-ITS-TEXT is grown to the
+//     width that text needs, bounded by the page's right edge, by the nearest
+//     sibling on the same row and by the enclosing group box. The dialog's
+//     labels are authored at 96 dpi and the fonts are not: at 125 % "Cho phép AI
+//     học nhịp gõ cá nhân (Opt-in an toàn, hoàn toàn cục bộ)" measures 579 px in a
+//     box the authored 450 px scales to 563 — 16 px of Vietnamese text that simply
+//     disappear (`[clip] id 601 (Button) needs 579px ... shows 563px of 563`).
+//     Width is the one direction a text control may grow in that does not move
+//     anything below it, so the bound is what keeps it safe.
 //---------------------------------------------------------------------------
 [[nodiscard]] inline LayoutPlan autoFit(const std::vector<ControlSpec>& controls,
                                         int pageTop,
-                                        int pageBottom) {
+                                        int pageBottom,
+                                        int pageRightPx = 0) {
     LayoutPlan plan;
     plan.rects.reserve(controls.size());
     for (const ControlSpec& c : controls) { plan.rects.push_back(c.rect); }
@@ -266,15 +414,33 @@ inline constexpr int kGroupBoxBottomPadPx = 10;
         parent[child] = best;
     }
 
-    // Growth per control, in authored order.
+    // Growth per control, in authored order: the height the solver decided
+    // (a growable label whose wrapped text needs more room) or the height the
+    // WINDOW already has (a combo that sizes itself). Both are "this control
+    // takes more space than the authored table gave it", and both have to move
+    // the rows below — that is what this pass computes, and the shift pass below
+    // is driven by it. (v1.3.0-beta8fix1, bug BS-22l: the live height used to be
+    // applied to the plan and then dropped here, so the rows below stayed where
+    // the authored table put them and the combo's real box overlapped them.)
     std::vector<int> growth(controls.size(), 0);
     for (std::size_t i = 0; i < controls.size(); ++i) {
         const ControlSpec& c = controls[i];
-        if (!c.growable || c.groupBox) { continue; }
-        const int needed = c.requiredHeight;
-        if (needed > c.rect.h) {
-            growth[i] = needed - c.rect.h;
-            plan.rects[i].h = needed;
+        if (c.groupBox) { continue; }
+        int want = c.rect.h;
+        if (c.growable && c.requiredHeight > want) { want = c.requiredHeight; }
+        // v1.3.0-beta8fix1 (bug BS-22p): AND THE WINDOW'S OWN SIZE WINS — IN BOTH
+        // DIRECTIONS. Taking it only when it was LARGER (the first BS-22l) left the
+        // plan describing a window that does not exist as soon as the control got
+        // SHORTER than the authored box, which is exactly what the 35983713630 run
+        // measured 306 times: `[I6] id 596 lives 420,550 330x36 but the solver's
+        // baseline is 420,550 330x38`. The plan describes the window, so the height
+        // is the measured one; only GROWTH moves the rows below (a control that got
+        // shorter does not pull its neighbours up, which would make the layout
+        // depend on the previous solve).
+        if (c.liveHeight > 0) { want = c.liveHeight; }
+        plan.rects[i].h = want;
+        if (want > c.rect.h) {
+            growth[i] = want - c.rect.h;          // only growth moves the rows below
             ++plan.grownControls;
             plan.totalGrowthPx += growth[i];
         }
@@ -315,6 +481,36 @@ inline constexpr int kGroupBoxBottomPadPx = 10;
             bottom = std::max(bottom, plan.rects[i].bottom() + kGroupBoxBottomPadPx);
         }
         plan.rects[g].h = bottom - plan.rects[g].y;
+    }
+
+    // Width fit (v1.3.0-beta8fix1, bug BS-23): see the note above the function.
+    // Runs after the vertical pass so the "same row" test uses final positions,
+    // and never moves anything: only `.w` changes.
+    for (std::size_t i = 0; i < controls.size(); ++i) {
+        const ControlSpec& c = controls[i];
+        if (c.requiredWidth <= 0 || c.groupBox) { continue; }
+        if (c.requiredWidth <= plan.rects[i].w) { continue; }
+        int limit = (pageRightPx > 0) ? pageRightPx : (plan.rects[i].x + c.requiredWidth);
+        for (std::size_t j = 0; j < controls.size(); ++j) {
+            if (j == i) { continue; }
+            const ControlSpec& o = controls[j];
+            if (o.tab != c.tab) { continue; }
+            const Rect& orc = plan.rects[j];
+            // Only a control that starts to the RIGHT of this one and shares its
+            // row (vertically overlapping) can be in the way.
+            if (orc.x < plan.rects[i].right()) { continue; }
+            const bool sameRow = orc.y < plan.rects[i].bottom() &&
+                                 plan.rects[i].y < orc.bottom();
+            if (!sameRow) { continue; }
+            limit = std::min(limit, orc.x - kRowGapPx);
+        }
+        if (parent[i] >= 0) {
+            limit = std::min(limit, plan.rects[static_cast<std::size_t>(parent[i])].right() -
+                                       kGroupBoxBottomPadPx);
+        }
+        const int room = limit - plan.rects[i].x;
+        if (room <= plan.rects[i].w) { continue; }
+        plan.rects[i].w = std::min(c.requiredWidth, room);
     }
 
     // Content bounds + the clip verdict.

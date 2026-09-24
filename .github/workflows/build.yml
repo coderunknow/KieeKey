@@ -395,10 +395,23 @@ jobs:
         run: |
           $dir = "ui-probe"
           New-Item -ItemType Directory -Force -Path $dir | Out-Null
-          & "out/x64/Release/kieekey_ui_probe.exe" $dir
+          # The second argument is the state-sequence harness's step budget per
+          # tab per seed (v1.3.0-beta8fix1). It is a FIXED count, not a timeout:
+          # two runs of one build produce the same trace.
+          & "out/x64/Release/kieekey_ui_probe.exe" $dir 60
           $code = $LASTEXITCODE
           if (Test-Path "$dir/ui_probe.json") {
-            $json = Get-Content "$dir/ui_probe.json" -Raw | ConvertFrom-Json
+            # v1.3.0-beta8fix1 (bug BS-19): a report the parser cannot read used
+            # to kill the step with a bare "exit code 1" and no annotation at all
+            # (raw text -> ConvertFrom-Json is a terminating error in PowerShell).
+            # Now it says WHAT is wrong with the report, which is a defect in the
+            # probe, not a finding.
+            try {
+              $json = Get-Content "$dir/ui_probe.json" -Raw | ConvertFrom-Json
+            } catch {
+              Write-Host "::error title=UI probe::ui_probe.json is not valid JSON ($($_.Exception.Message)) — the probe's report is unusable, the run cannot be judged"
+              exit 1
+            }
             $kinds = ($json.findingsByKind.PSObject.Properties | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join ' '
             # One line per (tab, scale) INSIDE the notice: the per-tab detail
             # lives in the annotations below, which GitHub caps at 10 per step —
@@ -409,6 +422,32 @@ jobs:
               $digest += ('t' + $tab.tab + '@' + $tab.scale + '%=' + $tab.findings.Count)
             }
             Write-Host "::notice title=UI probe::$($json.controls) controls, $($json.checks) checks, $($json.findings) findings [$kinds] (native DPI $($json.nativeDpi), scales $(($json.tabs | Select-Object -ExpandProperty scale -Unique) -join '/'), screen checks $($json.screenCaptures) run / $($json.screenUnavailable) unavailable) :: $($digest -join ' ')"
+            # v1.3.0-beta8fix1: the operation-sequence half gets its own digest,
+            # because a green settled-layout audit is exactly what the four
+            # earlier rounds produced while the user's screen was corrupted. The
+            # step/assertion counts are printed even when everything passes, so
+            # "0 violations" can never be an artefact of "it never ran".
+            $hv = @($json.findingsByKind.PSObject.Properties | Where-Object { $_.Name -like 'inv_I*' } | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join ' '
+            # v1.3.0-beta8fix1 (bug BS-19): a violation COUNT is not a
+            # diagnosis, and the raw job log is not always readable. The digest
+            # therefore carries the first violating state per invariant and the
+            # state each scale pass handed to the next one — the same shape the
+            # probe writes into ui_probe.json — so a red run names the operation,
+            # the seed, the DPI, the offset and the page rectangle that produced
+            # it. A clean handover for every pass is quoted even when green.
+            $fx = @()
+            foreach ($v in $json.firstViolations) { $fx += "[$($v.inv)] $($v.state)" }
+            $ho = @($json.handover) -join ' || '
+            $en = @($json.passEntries) -join ' || '
+            $seq = "harness $($json.fuzzSteps) steps / $($json.fuzzChecks) assertions / $($json.fuzzViolations) violations [$hv] | scenarios $($json.scenarios) run, $($json.scenarioViolations) with violations | invariants (checks/violations) $($json.invariants) | trace $($json.traceLines) lines (ui_probe_trace.jsonl)"
+            if ($fx.Count -gt 0) { $seq += " | first: $($fx -join ' || ')" }
+            if ($en) { $seq += " | entries: $en" }
+            if ($ho) { $seq += " | handover: $ho" }
+            if ($json.fuzzViolations -gt 0) {
+              Write-Host "::error title=UI probe (operation sequence)::$seq"
+            } else {
+              Write-Host "::notice title=UI probe (operation sequence)::$seq"
+            }
             # v1.3.0-beta8 (CA-05): ONE annotation per TAB, carrying both scales
             # (findings AND the geometry digest) — 9 tabs + the notice == the
             # 10-annotation budget exactly, so no measured tab is ever dropped.

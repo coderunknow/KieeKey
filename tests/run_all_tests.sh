@@ -435,6 +435,21 @@ if command -v python3 >/dev/null 2>&1; then
         cat "$OUT/logs/dialog-paint-rules.log"
         rc=1
     fi
+    # v1.3.0-beta8fix1 (BS-19): the UI probe's report is hand-built JSON, and a
+    # missing '+' between two literals compiles fine and produces a file no
+    # parser accepts — that cost an entire CI run (the step died with "exit code
+    # 1" and no annotation, run 35874350649) and it is invisible to every other
+    # gate here. This one reads the construction out of the source, proves the
+    # skeleton is sound, and runs a self-test that it rejects that exact edit.
+    printf '  [check] %-22s' "probe report JSON"
+    if ( cd "$REPO_ROOT" && python3 tests/check_probe_json_shape.py ) \
+            > "$OUT/logs/probe-json-shape.log" 2>&1; then
+        printf ' ok\n'
+    else
+        printf ' FAILED — %s\n' "$OUT/logs/probe-json-shape.log"
+        cat "$OUT/logs/probe-json-shape.log"
+        rc=1
+    fi
     # v1.3.0-beta6 (V3): the Chaos Lab window is a SECOND interactive surface
     # driving the engine singletons — same 3-layer contract as the settings
     # dialog: created + consumed + engine-connected + persisted.

@@ -720,6 +720,542 @@ void testBottomRowMovesDownOnly() {
 }
 
 // v1.3.0-beta8 (bug BS-10): a two-row tab strip must never hide the page's top.
+// v1.3.0-beta8fix1 (bug BS-20) — A PAGE CHILD MAY NOT BE WIDER THAN THE PAGE.
+//
+// The 125 % pass of the UI probe (added by this release, because the regression
+// contract names 100/125/150 %) measured a group box whose authored 496 px became
+// 620 px after the DPI rescale, at x=30, in a 641 px client: 650 px of content in
+// a 641 px dialog. That is `outside_page` by construction — and invisible at
+// 100 %, where the same row happens to fit, which is why four green CI rounds and
+// a green local suite never saw it. The clamp is the model's answer; this asserts
+// its three properties at all three contract scales.
+// v1.3.0-beta8fix1 (bug BS-21) — THE TAB STRIP RESHAPES, THE PAGE COMES BACK.
+//
+// The failing state the x64 probe recorded:
+//
+//   [I1] page is EMPTY at offset 0 (page 22,177 639x176): 580 36,383 259x1210 ...
+//        tab 5 dpi 144 offset 0/1048 contentBottom[5] 1401
+//
+// — a tab whose controls sit 200+ px BELOW a 176 px page, none of them visible,
+// while the app reports a coherent layout. The mechanism is the shift BS-10 added
+// to keep the page clear of a multi-row strip: it is computed from the previous
+// solve's baseline, and `pageTopShiftPx` can only push DOWN, so a strip that
+// wrapped once kept the page low forever (`stripShift 228` px in a 494x497 page by
+// the end of a fuzz walk). These assertions are the model's half of the fix:
+// grow -> shrink -> grow three times, at every scale the contract names, must
+// return the page to exactly its one-row position — and the accumulating rule the
+// code used must be shown to fail them (non-vacuity).
+// v1.3.0-beta8fix1 (bug BS-22) — THE SOLVE IS RECOMPUTED, NOT ACCUMULATED.
+//
+// The CI probe caught the additive behaviour with a plain sentence:
+//
+//     [I1] the page content did not return to its one-row position: id 555 was at
+//          y=114, is at y=158 after the strip fitted one row again (moved by 44 px)
+//
+// The row that wrapped at the narrow width had grown, pushed everything below it
+// down, and kept BOTH the height and the push when the dialog widened again —
+// because the solver's input was the previous solve's output (the live/baseline
+// rectangle), and `autoFit` only knows how to add growth. This test drives the
+// exact cycle on the portable model: a growable label with a width-dependent
+// required height, a sibling under it, a constrained page (the probe's 639x176
+// shape, scaled), and the requirement that a re-solve from the AUTHORED layout
+// returns the authored plan exactly — at every scale the contract names.
+void testReflowIsRecomputedFromAuthored() {
+    struct Scale { int dpi; };
+    const Scale scales[] = {{96}, {120}, {144}};
+
+    for (const Scale& sc : scales) {
+        const int narrowW = dpiScalePx(320, sc.dpi);
+        const int wideW   = dpiScalePx(640, sc.dpi);
+        // The page the probe measured at 150 %: 22,177 639x176 — 176 px tall.
+        const int pageTop = dpiScalePx(100, sc.dpi);
+        const int pageBottom = pageTop + dpiScalePx(176, sc.dpi);
+
+        const Rect authoredLabel{dpiScalePx(10, sc.dpi), pageTop,
+                                 dpiScalePx(300, sc.dpi), dpiScalePx(20, sc.dpi)};
+        const Rect authoredButton{dpiScalePx(10, sc.dpi), dpiScalePx(130, sc.dpi),
+                                  dpiScalePx(300, sc.dpi), dpiScalePx(20, sc.dpi)};
+
+        // The label's text: two lines at the narrow width, one at the wide one —
+        // i.e. exactly what the app's own measurement reports, and the only input
+        // the solver is entitled to use.
+        const auto specsAt = [&](int width, bool authoredInput, const LayoutPlan* prev) {
+            ControlSpec label;
+            label.id = 1;
+            label.tab = 0;
+            label.growable = true;
+            label.rect = authoredInput ? authoredLabel : prev->rects[0];
+            label.requiredHeight = (width < dpiScalePx(400, sc.dpi))
+                                       ? dpiScalePx(40, sc.dpi)   // two lines
+                                       : dpiScalePx(20, sc.dpi);  // one line
+            ControlSpec button;
+            button.id = 2;
+            button.tab = 0;
+            button.rect = authoredInput ? authoredButton : prev->rects[1];
+            button.requiredHeight = 0;
+            std::vector<ControlSpec> v{label, button};
+            return v;
+        };
+
+        // --- the narrow solve: the label grows, the button moves down ---------
+        std::vector<ControlSpec> narrow = specsAt(narrowW, true, nullptr);
+        const LayoutPlan narrowPlan = autoFit(narrow, pageTop, pageBottom);
+        assert(narrowPlan.rects[0].h == dpiScalePx(40, sc.dpi));
+        assert(narrowPlan.rects[1].y == dpiScalePx(150, sc.dpi));   // pushed down
+
+        // --- the wide solve, from the AUTHORED layout: back to the authored plan -
+        std::vector<ControlSpec> wide = specsAt(wideW, true, nullptr);
+        const LayoutPlan widePlan = autoFit(wide, pageTop, pageBottom);
+        assert(widePlan.rects[0].h == authoredLabel.h);              // shrank back
+        assert(widePlan.rects[0].y == authoredLabel.y);
+        assert(widePlan.rects[1].y == authoredButton.y);             // no push left
+        assert(widePlan.rects[1].h == authoredButton.h);
+
+        // --- and the accumulating rule must FAIL the same assertions ----------
+        // (what the solver did when its input was the previous plan: `autoFit`
+        // adds growth and cannot take it back, so both the height and the push
+        // stay for the rest of the session).
+        std::vector<ControlSpec> acc = specsAt(wideW, false, &narrowPlan);
+        const LayoutPlan accPlan = autoFit(acc, pageTop, pageBottom);
+        assert(accPlan.rects[0].h == dpiScalePx(40, sc.dpi));        // grew ... stayed
+        assert(accPlan.rects[1].y == dpiScalePx(150, sc.dpi));       // push ... stayed
+        assert(accPlan.rects[1].y != authoredButton.y);              // the defect
+
+        // --- three full cycles, authored-in: no drift at all -------------------
+        for (int cycle = 1; cycle <= 3; ++cycle) {
+            std::vector<ControlSpec> n = specsAt(narrowW, true, nullptr);
+            const LayoutPlan np = autoFit(n, pageTop, pageBottom);
+            assert(np.rects[1].y == dpiScalePx(150, sc.dpi));
+            std::vector<ControlSpec> w = specsAt(wideW, true, nullptr);
+            const LayoutPlan wp = autoFit(w, pageTop, pageBottom);
+            assert(wp.rects[0].h == authoredLabel.h);
+            assert(wp.rects[1].y == authoredButton.y);
+        }
+
+        // --- the constrained page (639x176-style) keeps the content reachable ---
+        // A page shorter than the content is a SCROLL situation, not a layout one:
+        // the authored positions are the truth and the rest is travel.
+        std::vector<ControlSpec> tall = specsAt(wideW, true, nullptr);
+        const LayoutPlan tallPlan = autoFit(tall, pageTop, pageTop + dpiScalePx(40, sc.dpi));
+        assert(tallPlan.rects[0].y == authoredLabel.y);              // not pushed up
+        assert(tallPlan.rects[1].y == authoredButton.y);             // nor down
+    }
+}
+
+// v1.3.0-beta8fix1 (bug BS-22, part 2) — THE ROW IS MEASURED AT THE WIDTH IT GETS.
+//
+// The 76f955a x64 run's I12, in its own numbers:
+//
+//     [I12] id 561 needs 352px but its box is 320px tall
+//           step 18 seed 1 op tick tab 4 font 125% dpi 144
+//
+// — a growable label grown for the lines that fit a WIDER box than the one it was
+// laid out in. The solver measures the text at `spec.rect.w` and BS-20 then clamps
+// that width to the page's right edge; measured first, clamped second, the extra
+// line has no room and is clipped. The model's half of the fix, at every scale the
+// regression contract names: the same label, one clamp and two measurement orders,
+// and the requirement that the box the solve produces holds what its OWN
+// measurement says at the width the row ends up with.
+void testGrowableIsMeasuredAtTheWidthItGets() {
+    struct Scale { int dpi; } ;
+    const Scale scales[] = {{96}, {120}, {144}};
+
+    // The authored row (id 561's geometry: x=28, 500 wide, a 7-line list at 96 dpi)
+    // and a page narrow enough that the clamp really bites — otherwise the test is
+    // vacuous, which the assertions below check for explicitly.
+    const Rect authored{28, 316, 500, 112};
+    // 4000 px of text at 96 dpi: 8 lines in a 500 px box, 9 in the 462 px box the
+    // clamp leaves — one line more, which is what the probe measured (352 in a box
+    // grown for 320). Bigger than the authored 112 px either way, so the growth
+    // path is exercised and not the authored height.
+    const int kTextPx = 4000;   // the label's text, one-line px at 96 dpi
+    const int kLineH  = 20;     // one wrapped line of that font at 96 dpi
+    const int limitRight = 490; // the page's own right edge at this client width
+
+    for (const Scale& sc : scales) {
+        const auto scaleRect = [&](const Rect& r) {
+            return Rect{dpiScalePx(r.x, sc.dpi), dpiScalePx(r.y, sc.dpi),
+                        dpiScalePx(r.w, sc.dpi), dpiScalePx(r.h, sc.dpi)};
+        };
+        // The app's measurement, modelled: DrawTextW DT_CALCRECT | DT_WORDBREAK at
+        // the given width decides how many lines the text needs.
+        const auto needAt = [&](int widthPx) {
+            const int text = dpiScalePx(kTextPx, sc.dpi);
+            const int line = dpiScalePx(kLineH, sc.dpi);
+            const int lines = (text + widthPx - 1) / widthPx;
+            return lines * line;
+        };
+        const Rect in = scaleRect(authored);
+        const int limit = dpiScalePx(limitRight, sc.dpi);
+        const Rect clamped = clampPageChildWidth(in, limit);
+        // Non-vacuity: the clamp narrows this row, and that narrowing costs it a
+        // line. If either were false the two orders would agree and the test would
+        // prove nothing.
+        assert(clamped.w < in.w);
+        assert(needAt(clamped.w) > needAt(in.w));
+
+        // --- measured BEFORE the clamp (what the code did): one line short -----
+        ControlSpec wrong;
+        wrong.id = 561; wrong.tab = 4; wrong.growable = true;
+        wrong.rect = clamped;
+        wrong.requiredHeight = needAt(in.w);           // the WIDE box's answer
+        std::vector<ControlSpec> wv{wrong};
+        const LayoutPlan wrongPlan =
+            autoFit(wv, clamped.y, clamped.bottom() + dpiScalePx(1000, sc.dpi));
+        assert(wrongPlan.rects[0].w == clamped.w);
+        assert(wrongPlan.rects[0].h == needAt(in.w));  // grown for the wide width
+        assert(wrongPlan.rects[0].h < needAt(wrongPlan.rects[0].w));   // ... too short
+        // That is the probe's sentence, in the model's numbers: the app's own
+        // measurement at the box the row GOT does not fit the box.
+
+        // --- measured AFTER the clamp (the fix): the box holds its own text -----
+        ControlSpec right;
+        right.id = 561; right.tab = 4; right.growable = true;
+        right.rect = clamped;
+        right.requiredHeight = needAt(right.rect.w);   // the width the row WILL get
+        std::vector<ControlSpec> rv{right};
+        const LayoutPlan rightPlan =
+            autoFit(rv, clamped.y, clamped.bottom() + dpiScalePx(1000, sc.dpi));
+        assert(rightPlan.rects[0].h >= needAt(rightPlan.rects[0].w));
+
+        // --- and the sibling below follows the extra line down ------------------
+        // The growth is not local: everything under the row moves with it, which is
+        // why measuring at the wrong width pushed the whole page down by the wrong
+        // amount as well (the state the strip-cycle checks read).
+        const int siblingY = dpiScalePx(450, sc.dpi);
+        wrong.rect.y = clamped.y;
+        right.rect.y = clamped.y;
+        ControlSpec wBelow;
+        wBelow.id = 627; wBelow.tab = 4;
+        wBelow.rect = Rect{dpiScalePx(44, sc.dpi), siblingY,
+                           dpiScalePx(450, sc.dpi), dpiScalePx(96, sc.dpi)};
+        ControlSpec rBelow = wBelow;
+        std::vector<ControlSpec> wSiblings{wrong, wBelow};
+        std::vector<ControlSpec> rSiblings{right, rBelow};
+        const LayoutPlan wPlan =
+            autoFit(wSiblings, clamped.y, clamped.bottom() + dpiScalePx(1000, sc.dpi));
+        const LayoutPlan rPlan =
+            autoFit(rSiblings, clamped.y, clamped.bottom() + dpiScalePx(1000, sc.dpi));
+        const int wPush = wPlan.rects[1].y - siblingY;
+        const int rPush = rPlan.rects[1].y - siblingY;
+        assert(wPush == needAt(in.w) - clamped.h);
+        assert(rPush == needAt(clamped.w) - clamped.h);
+        assert(rPush - wPush == needAt(clamped.w) - needAt(in.w));   // exactly the line
+        assert(rPlan.rects[1].y > wPlan.rects[1].y);                 // and it is lower
+    }
+}
+
+void testStripShiftReturnsToAuthoredOnShrink() {
+    struct Scale { int dpi; };
+    const Scale scales[] = {{96}, {120}, {144}};
+    // A constrained page at 150 %: the probe measured 22,177 639x176 — a short
+    // client whose strip has wrapped. The authored page top is what it is at one
+    // row; the wrapped strip pushes the viewport top DOWN.
+    const int authoredTop96 = 100;          // first page control, one-row strip
+    const int wrappedTop96  = 122;          // two rows of labels (+2 x 11 px)
+
+    for (const Scale& sc : scales) {
+        const int authoredTop = dpiScalePx(authoredTop96, sc.dpi);
+        const int wrappedTop  = dpiScalePx(wrappedTop96, sc.dpi);
+
+        int prevShift96 = 0;                 // the app's per-tab record
+        int top = authoredTop;               // the page top as laid out
+
+        // --- 1. one row: the shift is 0 and the page is at its authored top ---
+        {
+            StripShift s0 = stripShiftFor(top, prevShift96, authoredTop, sc.dpi);
+            assert(s0.authoredTopPx == authoredTop);
+            assert(s0.shiftPx == 0 && s0.shift96 == 0);
+            top = s0.authoredTopPx + s0.shiftPx;
+            prevShift96 = s0.shift96;
+        }
+        const int oneRowTop = top;
+        assert(oneRowTop == authoredTop);
+
+        for (int cycle = 1; cycle <= 3; ++cycle) {
+            // --- 2. the strip wraps: the page moves down to clear it ----------
+            {
+                StripShift sw = stripShiftFor(top, prevShift96, wrappedTop, sc.dpi);
+                assert(sw.authoredTopPx == authoredTop);       // recovered, not raw
+                assert(sw.shiftPx == wrappedTop - authoredTop);
+                top = sw.authoredTopPx + sw.shiftPx;
+                prevShift96 = sw.shift96;
+                assert(top == wrappedTop);
+            }
+            // --- 3. the strip fits one row again: the page comes BACK ---------
+            {
+                StripShift sb = stripShiftFor(top, prevShift96, authoredTop, sc.dpi);
+                assert(sb.shiftPx == 0);
+                assert(sb.shift96 == 0);
+                top = sb.authoredTopPx + sb.shiftPx;
+                prevShift96 = sb.shift96;
+                assert(top == oneRowTop);                      // cycle N == cycle 1
+            }
+        }
+
+        // --- the accumulating rule the code used must FAIL this -------------
+        // (what `g_settingsScroll.perTabStripShift96[t] += shift` did: the input
+        // was the already-shifted baseline, so the shrink-back asked for 0 and
+        // changed nothing).
+        int accTop = authoredTop;
+        int accShift = 0;
+        for (int cycle = 1; cycle <= 3; ++cycle) {
+            accShift += pageTopShiftPx(accTop, wrappedTop);     // +=, on the shifted top
+            accTop += pageTopShiftPx(accTop, wrappedTop);
+            accShift += pageTopShiftPx(accTop, authoredTop);    // the shrink: 0
+            accTop += pageTopShiftPx(accTop, authoredTop);
+        }
+        assert(accTop == wrappedTop);          // it never came back ...
+        assert(accTop != oneRowTop);           // ... which is exactly the defect
+    }
+
+    // --- the REAL one-row state is NOT zero, and that is by design -------------
+    // v1.3.0-beta8fix1 (bug BS-22, part 3): with the authored input the recorded
+    // shift is the distance between the authored first row and the DISPLAY
+    // rectangle. This dialog's authored rows start at y=100 while the one-row tab
+    // display rectangle starts at 114 (the frame's inset), so 14 px (96 dpi) is the
+    // correct one-row value — the content must start at the display rect, never
+    // above it (BS-10; the probe's I2 asserts the same thing). The 76f955a x64 run
+    // reported it as a defect 81 times because the check demanded 0; what must
+    // never happen is a value that GROWS and stays grown, which is what the cycles
+    // above prove the replacement rule prevents.
+    for (const Scale& sc : scales) {
+        const int displayTop96 = 114;                 // TCM_ADJUSTRECT, one row
+        const int inset = displayTop96 - authoredTop96;
+        assert(inset == 14);
+        const int liveTop = dpiScalePx(authoredTop96 + inset, sc.dpi);   // where rows ARE
+        for (int solveNo = 1; solveNo <= 3; ++solveNo) {
+            // The product's input (BS-22): the AUTHORED top with no previous shift.
+            // Every solve answers the same number — it does not depend on what the
+            // last solve did — and that number is the display rectangle's inset.
+            const StripShift s =
+                stripShiftFor(dpiScalePx(authoredTop96, sc.dpi), 0,
+                              dpiScalePx(displayTop96, sc.dpi), sc.dpi);
+            assert(s.shift96 == inset);               // stable, in 96-dpi px
+            assert(s.shiftPx == dpiScalePx(inset, sc.dpi));
+            // The input the record was read from BEFORE (the live rectangle, which
+            // already carries the inset) answers 0 for this very same geometry.
+            // That is where the probe's `!= 0` expectation came from — and why it
+            // is the wrong ruler for a record that now measures from the authored
+            // layout: it would fail on a correct dialog, while a record that GROWS
+            // and stays grown is caught by comparing with the cycle's own start.
+            const StripShift relative =
+                stripShiftFor(liveTop, 0, dpiScalePx(displayTop96, sc.dpi), sc.dpi);
+            assert(relative.shift96 == 0);
+        }
+    }
+
+    // The DPI record is in 96-dpi px and survives a rescale by construction: a
+    // shift applied at 96 dpi must come out as the same physical distance at 150 %.
+    const StripShift at96 = stripShiftFor(dpiScalePx(authoredTop96, 96), 0,
+                                          dpiScalePx(wrappedTop96, 96), 96);
+    assert(at96.shift96 == wrappedTop96 - authoredTop96);
+    assert(stripShiftPx(at96.shift96, 144) == dpiScalePx(wrappedTop96 - authoredTop96, 144));
+    assert(stripShiftPx(at96.shift96, 96) == at96.shiftPx);
+}
+
+void testPageChildWidthIsClampedToThePage() {
+    struct Case { int scale; int clientW; int x; int authoredW; };
+    // The authored geometry of the rows the audit flagged, plus the widest label
+    // rows: 496 px at x=30 (a group box), 480 px at x=24 (a big edit), 720 px at
+    // x=42 (a full-width row of the keyboard tab).
+    const Case cases[] = {
+        {100, kClientW96, 30, 496}, {100, kClientW96, 24, 480}, {100, kClientW96, 42, 720},
+        {125, 641, 30, 496},        {125, 641, 24, 480},        {125, 641, 42, 720},
+        {150, 919, 30, 496},        {150, 919, 24, 480},        {150, 919, 42, 720},
+    };
+    for (const Case& c : cases) {
+        const int limit = c.clientW - 12 * c.scale / 100;      // the tab's right edge
+        const Rect in{c.x * c.scale / 100, 0, c.authoredW * c.scale / 100, 40};
+        const Rect out = clampPageChildWidth(in, limit);
+        assert(out.x == in.x);                                  // the left edge is kept
+        assert(out.w > 0);                                      // never degenerate
+        assert(out.w <= in.w);                                  // v1.3.0-beta8fix1: NEVER wider
+        if (in.right() <= limit) {
+            assert(out.w == in.w);                              // idempotent when it fits
+        } else {
+            // The case is not vacuous: this is the arithmetic the audit measured
+            // at 125 % (620 px of group box starting at x=30 in a 641 px client),
+            // so the bound really is violated before the clamp runs.
+            assert(out.w < in.w);
+            assert(out.right() == limit);                       // and it ends AT the bound
+        }
+        // Re-clamping an already-clamped row changes nothing: the solver may run
+        // many times per session and a ratchet would eat every row pixel by pixel.
+        const Rect again = clampPageChildWidth(out, limit);
+        assert(again.w == out.w && again.x == out.x);
+    }
+
+    // v1.3.0-beta8fix1 (bug BS-22c) — A MINIMUM WIDTH MAY NOT WIDEN A ROW.
+    //
+    // The first version of this rule raised every row narrower than 80 px (S(80))
+    // to that minimum, and this dialog is full of deliberately narrow rows: the
+    // radio buttons "Telex" (74 px), "VNI" (58 px), "Tắt" (54 px), the check box
+    // "Từ điển" (68 px). Widened to the minimum they ran into the neighbour — the
+    // audit's `overlap` class, measured at 125 % as `id 502 (Button) 160,189
+    // 100x25 and id 503 (Button) 245,189 140x25 overlap by 15x25 px`, where the
+    // authored 58 px became 100 px (= S(80) at that scale) — and, for the row at
+    // the right edge, out of the page: `id 569 ... at 560,772 100x25 is outside
+    // the reachable page`.
+    {
+        const int limit = 626;               // the 125 % pass's tab right edge
+        const Rect telex{55, 189, 93, 25};   // authored 74 px @96, x=44
+        const Rect vni{160, 189, 73, 25};    // authored 58 px @96, x=128
+        const Rect simple{245, 189, 140, 25};
+        const Rect outTelex = clampPageChildWidth(telex, limit);
+        const Rect outVni = clampPageChildWidth(vni, limit);
+        const Rect outSimple = clampPageChildWidth(simple, limit);
+        assert(outTelex.w == telex.w);       // unchanged: it fits and it is narrow
+        assert(outVni.w == vni.w);
+        assert(outSimple.w == simple.w);
+        // The pair no longer overlaps — the assertion the widening failed.
+        assert(outTelex.right() <= outVni.x);
+        assert(outVni.right() <= outSimple.x);
+        // Non-vacuity: the old rule really did create the overlap. S(80) at 125 %
+        // is 100 px, so "Telex" (93), "VNI" (73) and "Từ điển" (85) were all
+        // widened; VNI then reached x=260 while "Simple Telex" starts at 245.
+        const int oldVniW = std::max(vni.w, 100);
+        assert(vni.x + oldVniW > simple.x);                    // 260 > 245: the defect
+        assert(vni.right() <= simple.x);                       // and the rule's result: no
+
+        // And the row at the right edge: 68 px authored became 100 px and stuck
+        // 34 px out of the page; kept at its authored width it ends at the bound.
+        const Rect dict{560, 772, 85, 25};   // authored 68 px @96, x=448
+        const Rect outDict = clampPageChildWidth(dict, limit);
+        assert(outDict.w == 66);             // narrowed to end at the bound
+        assert(outDict.right() == limit);
+        assert(dict.x + 100 > limit);        // the widening really did stick out
+    }
+
+    // A child whose own left edge is at or past the limit is returned unchanged:
+    // its position is authored, and widening it could only push it further out.
+    const Rect past = clampPageChildWidth(Rect{700, 0, 200, 30}, 640);
+    assert(past.w == 200 && past.x == 700);
+    // No limit (0) is "no information": the row is returned untouched.
+    const Rect untouched = clampPageChildWidth(Rect{10, 0, 500, 30}, 0);
+    assert(untouched.w == 500);
+}
+
+// v1.3.0-beta8fix1 (bug BS-22c) — A CONTROL'S REGION IS COMPUTED FROM THE RECT
+// THE WINDOW ACTUALLY HAS.
+//
+// The probe's I6 in the 77e8fea run, twice on combo boxes and six times overall:
+//
+//   [I6] id 623 is inside the viewport 22,177 564x442 but its window region is
+//        EMPTY (rect 264,139 326x40)
+//
+// A CBS_DROPDOWNLIST combo sizes its own closed window to its item height, so it
+// can be a few pixels TALLER than the rectangle the solver recorded. The region
+// was computed from the recorded rectangle, and the sliver between the two
+// rectangles was decided "fully outside the viewport" and clipped to nothing:
+// 2 px of a live control inside the page, painted as background. The model's half:
+// the same baseline, two live heights, and the requirement that the region
+// describes what is on screen.
+void testRegionFollowsTheLiveRectangleNotTheBaseline() {
+    const Rect viewport{16, 177, 564, 442};            // the probe's failing state
+    const Rect baseline{264, 696, 326, 36};            // the solver's rectangle
+    const int  offset = 557;                           // the bottom of the travel
+    const Rect liveTall{264, 696, 326, 40};            // Win32 gave it 4 more px
+
+    const ScrolledChild fromBaseline = scrollChildRect(baseline, offset, viewport);
+    const ScrolledChild fromLive = scrollChildRect(liveTall, offset, viewport);
+    // Both rectangles are the SOLVER's (scrollChildRect applies the offset):
+    // baseline 696..732 -> 139..175, i.e. 2 px ABOVE the viewport, which the old
+    // code called "fully outside" and clipped to nothing — while the window Win32
+    // gave back (40 px tall) reaches 179 and is 2 px inside the page.
+    assert(baseline.y - offset + baseline.h == 175);
+    assert(!fromBaseline.visible);
+    assert(fromLive.visible);                          // the truth: it is on screen
+    assert(fromLive.clipped);
+    assert(fromLive.clip.h > 0);                       // 179 - 177 = 2 px of it
+
+    // The invariant the probe asserts, at the model level: a control whose live
+    // rectangle intersects the viewport is never clipped to nothing.
+    const Rect truth{viewport.x, viewport.y,
+                     viewport.right() - viewport.x, viewport.bottom() - viewport.y};
+    const Rect live{liveTall.x, liveTall.y - offset, liveTall.w, liveTall.h};
+    const Rect inter = Rect{std::max(live.x, truth.x), std::max(live.y, truth.y),
+                            std::min(live.right(), truth.right()) -
+                                std::max(live.x, truth.x),
+                            std::min(live.bottom(), truth.bottom()) -
+                                std::max(live.y, truth.y)};
+    assert(inter.w > 0 && inter.h > 0);                // 2 px tall: content, not nothing
+}
+
+// v1.3.0-beta8fix1 (bug BS-23) — A ROW GROWS IN WIDTH TO FIT ITS OWN TEXT, WITHIN
+// BOUNDS IT CANNOT CROSS.
+//
+// The 7bbf474 x64 run, the last `clip` finding of the settled audit:
+//
+//   [clip] id 601 (Button) needs 579px (app solver says 50), shows 563px of 563
+//          (box 55,180 563x28): Cho phép AI học nhịp gõ cá nhân (Opt-in an toàn, ho
+//
+// A check box whose label is 16 px wider than the box the authored 450 px scales
+// to at 125 %. The page has room (the row starts at 55 in a page that reaches 648),
+// so the box grows — but never into the sibling to its right, never past the page,
+// never outside its group box, and never wider than the text needs. Height is
+// untouched: a width fit cannot move anything below it, which is what makes it safe
+// to apply after the vertical pass.
+void testRowWidthFitsItsTextWithinThePage() {
+    const auto checkbox = [](int x, int w, int y, int needW) {
+        ControlSpec c;
+        c.id = 601; c.tab = 7; c.growable = false; c.rect = Rect{x, y, w, 28};
+        c.requiredWidth = needW;
+        return c;
+    };
+    const auto sibling = [](int id, int x, int w, int y) {
+        ControlSpec c;
+        c.id = id; c.tab = 7; c.rect = Rect{x, y, w, 28};
+        return c;
+    };
+
+    // 1. nothing in the way: the box grows to exactly the measured width.
+    {
+        std::vector<ControlSpec> v{checkbox(55, 563, 180, 579)};
+        const LayoutPlan plan = autoFit(v, 100, 600, 648);
+        assert(plan.rects[0].w == 579);
+        assert(plan.rects[0].h == 28);            // height untouched
+        assert(plan.rects[0].y == 180);           // and no movement
+    }
+    // 2. a sibling on the same row: the fit stops kRowGapPx short of it.
+    {
+        std::vector<ControlSpec> v{checkbox(55, 400, 180, 700), sibling(602, 560, 200, 180)};
+        const LayoutPlan plan = autoFit(v, 100, 600, 900);
+        assert(plan.rects[0].w == 560 - 55 - kRowGapPx);
+        assert(plan.rects[1].x == 560);           // the neighbour never moves
+        // The non-vacuity: without the bound the row would have reached 700.
+        assert(plan.rects[0].w < 700);
+    }
+    // 3. the page's right edge: even with nothing else on the row.
+    {
+        std::vector<ControlSpec> v{checkbox(55, 400, 180, 900)};
+        const LayoutPlan plan = autoFit(v, 100, 600, 648);
+        assert(plan.rects[0].w == 648 - 55);
+    }
+    // 4. an enclosing group box is a bound too (a child may not grow out of it).
+    {
+        ControlSpec box;
+        box.id = 600; box.tab = 7; box.groupBox = true; box.rect = Rect{30, 147, 500, 350};
+        std::vector<ControlSpec> v{box, checkbox(55, 400, 180, 900)};
+        const LayoutPlan plan = autoFit(v, 100, 600, 2000);
+        assert(plan.rects[1].w == 500 + 30 - 55 - kGroupBoxBottomPadPx);
+    }
+    // 5. a row that already fits is left alone (idempotent, no ratchet).
+    {
+        std::vector<ControlSpec> v{checkbox(55, 300, 180, 250)};
+        const LayoutPlan plan = autoFit(v, 100, 600, 648);
+        assert(plan.rects[0].w == 300);
+    }
+    // 6. a row with NO room (the page is narrower than its text) keeps what it has:
+    //    the fit may not make it smaller, and the audit's `clip` is the honest
+    //    owner of that state (the label really does not fit).
+    {
+        std::vector<ControlSpec> v{checkbox(55, 300, 180, 900)};
+        const LayoutPlan plan = autoFit(v, 100, 600, 300);
+        assert(plan.rects[0].w == 300);
+    }
+}
+
 void testPageTopShiftKeepsContentBelowTheTabStrip() {
     // The CI probe measured the display rectangle at y=114 (two rows of tabs)
     // while the authored page starts at y=100 (group boxes) / 110 (labels).
@@ -731,6 +1267,120 @@ void testPageTopShiftKeepsContentBelowTheTabStrip() {
     // Idempotent: content already at/below the display rectangle never moves up.
     assert(pageTopShiftPx(114, 114) == 0);
     assert(pageTopShiftPx(200, 114) == 0);
+}
+
+// v1.3.0-beta8fix1 (bug BS-22l) — A COMBO BOX'S REAL HEIGHT IS PART OF THE PLAN,
+// AND THE ROWS BELOW CLEAR IT.
+//
+// The 35980164209 x64 run, twice over, from the same state:
+//
+//   [I6] id 504 lives 128,297 210x33 but the solver's baseline is 128,297 210x25
+//   [overlap] id 625 (ComboBox) 220,467 398x40 and id 627 (Static) 55,501 583x69
+//             overlap by 398x6 px
+//
+// A CBS_DROPDOWNLIST combo sizes its own window to its item height plus its
+// borders, and it does it again on every font change. The app took that height
+// but put it in the authored rectangle, and the plan (and the row below it)
+// stayed on the authored 25 px — so the combo's real box ran into the next row
+// and the plan described a window that does not exist. The rule now: the plan
+// describes the window, and every control below it moves down by the
+// difference. The authored table spaces its rows around the CLOSED height (that
+// is what scripts/audit_layout.py models with `_geometry_rect`), so this is the
+// runtime catching up with the layout the table was authored for.
+void testLiveHeightIsPlannedAndPushesTheRowsBelow() {
+    const auto combo = [](int y, int live) {
+        ControlSpec c;
+        c.id = 504; c.tab = 0;
+        c.rect = Rect{128, y, 210, 25};        // authored: one text line
+        c.liveHeight = live;                   // what Win32 gave the window
+        return c;
+    };
+    const auto label = [](int id, int y, int h) {
+        ControlSpec c;
+        c.id = id; c.tab = 0;
+        c.rect = Rect{128, y, 210, h};
+        return c;
+    };
+
+    // 1. the plan is the window's height, not the authored box.
+    {
+        std::vector<ControlSpec> v{combo(186, 33)};
+        const LayoutPlan plan = autoFit(v, 100, 600, 900);
+        assert(plan.rects[0].h == 33);
+        assert(plan.grownControls == 1);
+        assert(plan.totalGrowthPx == 8);
+    }
+    // 2. the row authored 2 px below the AUTHORED box moves down by the same 8,
+    //    and the non-vacuity is that without the live height they really DID
+    //    overlap: 186 + 33 against a row at 213 is 6 px of the next row's text.
+    {
+        std::vector<ControlSpec> v{combo(186, 33), label(627, 213, 20)};
+        const std::vector<ControlSpec> naive{combo(186, 0), label(627, 213, 20)};
+        const LayoutPlan before = autoFit(naive, 100, 600, 900);
+        assert(before.rects[0].h == 25);
+        assert(before.rects[0].bottom() == 211);
+        assert(before.rects[1].y == 213);                       // 2 px of air
+        assert(33 - (before.rects[1].y - before.rects[0].y) == 6);   // the measured overlap
+
+        const LayoutPlan plan = autoFit(v, 100, 600, 900);
+        assert(plan.rects[0].h == 33);
+        assert(plan.rects[1].y == 213 + 8);                     // moved down by the growth
+        assert(plan.rects[1].y >= plan.rects[0].bottom());
+        assert(plan.rects[1].bottom() == 241);
+    }
+    // 3. a control ABOVE the combo never moves: the shift is downward only.
+    {
+        std::vector<ControlSpec> v{label(600, 100, 20), combo(186, 40), label(627, 213, 20)};
+        const LayoutPlan plan = autoFit(v, 100, 600, 900);
+        assert(plan.rects[0].y == 100);
+        assert(plan.rects[1].h == 40);
+        assert(plan.rects[2].y == 213 + 15);
+    }
+    // 3b. v1.3.0-beta8fix1 (bug BS-22p): A WINDOW THAT IS SHORTER THAN THE AUTHORED
+    //     BOX IS PLANNED SHORTER TOO. The first BS-22l took the live height only
+    //     when it was larger, and the 35983713630 run measured the other direction
+    //     306 times (`id 596 lives 420,550 330x36 but the solver's baseline is
+    //     420,550 330x38`): the plan has to describe the window. Growth is still
+    //     measured against the AUTHORED box, so the rows below keep the spacing the
+    //     table gave them and a shorter window never pulls them up (a layout that
+    //     depended on the previous solve is the BS-22 defect).
+    {
+        ControlSpec shortCombo;
+        shortCombo.id = 504; shortCombo.tab = 0;
+        shortCombo.rect = Rect{128, 186, 210, 45};   // authored: taller than the window
+        shortCombo.liveHeight = 36;
+        std::vector<ControlSpec> v{shortCombo, label(627, 233, 20)};
+        const LayoutPlan plan = autoFit(v, 100, 600, 900);
+        assert(plan.rects[0].h == 36);          // the window, not the authored 45
+        assert(plan.rects[1].y == 233);         // and the row below does NOT move up
+        assert(plan.grownControls == 0);
+        assert(plan.totalGrowthPx == 0);
+    }
+    // 3c. and WHATEVER height the window reports (38 in one pass, 36 in the next) the
+    //     plan describes that window and the row below clears it — the shift follows
+    //     the real box by the same 2 px, which is the whole point: the alternative is
+    //     a row placed inside the combo's window (the 398x6 px overlap of
+    //     35980164209).
+    {
+        std::vector<ControlSpec> a{combo(186, 38), label(627, 213, 20)};
+        std::vector<ControlSpec> b{combo(186, 36), label(627, 213, 20)};
+        const LayoutPlan pa = autoFit(a, 100, 600, 900);
+        const LayoutPlan pb = autoFit(b, 100, 600, 900);
+        assert(pa.rects[0].h == 38 && pb.rects[0].h == 36);   // each pass describes its window
+        assert(pa.totalGrowthPx == 13 && pb.totalGrowthPx == 11);
+        assert(pa.rects[1].y == 213 + 13);
+        assert(pb.rects[1].y == 213 + 11);
+        assert(pa.rects[0].bottom() <= pa.rects[1].y);        // never inside the window
+        assert(pb.rects[0].bottom() <= pb.rects[1].y);
+    }
+    // 4. the page's depth follows the real bottom, so the scroll range covers it
+    //    (the row is not merely drawn lower — it is reachable).
+    {
+        std::vector<ControlSpec> v{combo(186, 33), label(627, 213, 20)};
+        const LayoutPlan plan = autoFit(v, 100, 220, 900);       // 220 px page
+        assert(plan.contentBottom == 241);
+        assert(plan.extraHeightPx == 21);
+    }
 }
 
 // v1.3.0-beta8 (bug BS-12): the scroll path may MOVE a page child, never
@@ -883,8 +1533,22 @@ int main() {
     testBottomRowMovesDownOnly();
     // v1.3.0-beta8 (bug BS-10): the page starts below the tab strip, always.
     testPageTopShiftKeepsContentBelowTheTabStrip();
+    // v1.3.0-beta8fix1 (bug BS-20): the page's own width is a hard bound.
+    testPageChildWidthIsClampedToThePage();
+    // v1.3.0-beta8fix1 (bug BS-21): the strip shift is replaced, never accumulated.
+    testStripShiftReturnsToAuthoredOnShrink();
+    // v1.3.0-beta8fix1 (bug BS-22): a solve is recomputed, not accumulated.
+    testReflowIsRecomputedFromAuthored();
+    // v1.3.0-beta8fix1 (bug BS-22, part 2): the row is measured at the width it gets.
+    testGrowableIsMeasuredAtTheWidthItGets();
+    // v1.3.0-beta8fix1 (bug BS-22c): the region follows the live rectangle.
+    testRegionFollowsTheLiveRectangleNotTheBaseline();
+    // v1.3.0-beta8fix1 (bug BS-23): a row grows in width to fit its text.
+    testRowWidthFitsItsTextWithinThePage();
     // v1.3.0-beta8 (bug BS-12): scrolling moves, never resizes; runtime text
     // growth is a reflow request, not a local resize.
+    // v1.3.0-beta8fix1 (bug BS-22l): the window's own height moves the rows below.
+    testLiveHeightIsPlannedAndPushesTheRowsBelow();
     testScrollModelNeverResizesAChild();
     testRuntimeGrowthRequestsAReflow();
     // v1.3.0-beta8 (bug BS-17): a reflow while the page is scrolled must not

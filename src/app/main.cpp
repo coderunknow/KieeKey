@@ -197,8 +197,8 @@ constexpr wchar_t kAppVersion[]     = L"1.3.0";           // numeric, 3-part
 // v1.2.2 RC1: [[maybe_unused]] — this is a documented VERSION CARRIER
 // (check_version.py reads it), not a code-level constant; the UI shows the
 // title/version forms. Keeping it zero-maintenance and warning-clean.
-[[maybe_unused]] constexpr wchar_t kAppVersionFull[] = L"1.3.0-beta8";  // with channel
-constexpr wchar_t kAppTitle[]       = L"KieeKey v1.3.0-beta8";  // sync with kAppVersionFull
+[[maybe_unused]] constexpr wchar_t kAppVersionFull[] = L"1.3.0-beta8fix1";  // with channel
+constexpr wchar_t kAppTitle[]       = L"KieeKey v1.3.0-beta8fix1";  // sync with kAppVersionFull
 
 //---------------------------------------------------------------------------
 // v1.3.0-beta8 (RS-06) — WHICH BUILD IS THIS?
@@ -649,6 +649,16 @@ int rowNeededHeightPx(HWND ctl) {
 
 // Set by the timer's row writers, consumed once per tick by the reflow below.
 bool g_settingsRowGrowthPending = false;
+// v1.3.0-beta8fix1 (bug BS-22n): set when a control RESIZED ITSELF and the size it
+// took no longer matches the plan (see comboWheelProc / settingsWindowFitsPlan).
+// The reflow is posted, so this flag is also what keeps a burst of child
+// notifications down to one request; the message handler clears it.
+bool g_settingsReflowPosted = false;
+// How deep the solver currently is. A control's own WM_WINDOWPOSCHANGED arrives
+// WHILE the solver is applying rectangles (SetWindowPos is synchronous), and the
+// baseline it would be compared against is half-written — so a resize seen from
+// inside a solve is not evidence of anything and asks for nothing.
+int g_settingsSolveDepth = 0;
 // id -> the required height this row last asked for. A row that still does not
 // fit after the solver has had its say must NOT keep asking every 500 ms:
 // re-solving is visible work (it moves every child and can move the window), and
@@ -3466,7 +3476,21 @@ void showTab(int tab);   // fwd (defined below; used by settingsToControls)
 
 // Per-monitor DPI of the window (GetDpiForWindow when available; the
 // classic LOGPIXELSX fallback keeps MinGW/older SDKs compiling).
+#if defined(KIEEKEY_UI_PROBE)
+// v1.3.0-beta8fix1 (harness): the CI runner's desktop has ONE real DPI (96), so
+// the probe cannot make the monitor command 150 % — but the user's report is
+// about exactly that direction (the app believes 96, the monitor now says
+// 150 %, and the display-change path rescales every child by 1.5 with nothing
+// re-solving). The harness therefore lies to the ONE function that answers
+// "what scale is this window at". Probe-only: without -DKIEEKEY_UI_PROBE this
+// global and this branch do not exist.
+UINT g_probeWindowDpiOverride = 0;
+#endif
+
 UINT windowDpi(HWND hwnd) noexcept {
+#if defined(KIEEKEY_UI_PROBE)
+    if (g_probeWindowDpiOverride != 0) { return g_probeWindowDpiOverride; }
+#endif
     if (const HMODULE user32 = ::GetModuleHandleW(L"user32.dll")) {
         using GetDpiForWindowFn = UINT(WINAPI*)(HWND);
         const auto fn = reinterpret_cast<GetDpiForWindowFn>(
@@ -3846,7 +3870,22 @@ int g_settingsOpenTab = 0;
 namespace {
 struct FontCache {
     struct Entry { UINT dpi = 0; int weight = 0; int px96 = 0; HFONT font = nullptr; };
-    static constexpr std::size_t kSlots = 8;
+    // v1.3.0-beta8fix1 (bug BS-22f): THE CACHE MUST HOLD EVERY FACE ONE SESSION
+    // CAN ASK FOR, and the old 8 slots did not. The key is (dpi, weight, px96)
+    // and the dialog asks for three roles — 13 normal, 13 semibold, 20 semibold —
+    // so a session that has seen three scale factors needs 9 faces before anything
+    // else runs; the UI probe's page walks 96/120/144/192 dpi at text scales
+    // 100/125/150 %, which is 4 x (3 roles + 2 scaled roles) = up to 36 distinct
+    // faces (13/16/19 normal and semibold, 20/25/30 semibold). The bug was quiet
+    // exactly as long as the fallback below was only reachable in theory: with the
+    // ninth request the factory began handing back the FIRST font it ever created,
+    // so every later face — the app's own 125 %/150 % faces included — came back
+    // 13 px tall at 96 dpi. That is the state the 8ba7da0 x64 run caught: at the
+    // 120 dpi pass the tab labels stopped widening at 150 % (labels and targets
+    // were the same object, so the scale was an identity), the strip never wrapped
+    // (54 x I1), and rows the solver had sized with the wrong face were reported
+    // as clipped at 150 % by the probe's own text-fit audit.
+    static constexpr std::size_t kSlots = 48;
     Entry slots[kSlots]{};
 };
 
@@ -3861,23 +3900,27 @@ HFONT cachedFont(int px96, int weight) noexcept {
         if (e.font == nullptr) { if (freeSlot == FontCache::kSlots) { freeSlot = i; } continue; }
         if (e.dpi == dpi && e.weight == weight && e.px96 == px96) { return e.font; }
     }
-    if (freeSlot == FontCache::kSlots) {
-        // Cache full (more than 8 distinct DPI/face combinations — not
-        // reachable on real hardware). Reuse a font that already exists
-        // rather than deleting one that is in use.
-        return cache.slots[0].font;
-    }
     const int px = -::MulDiv(px96, static_cast<int>(dpi), 96);
     HFONT f = ::CreateFontW(px, 0, 0, 0, weight, FALSE, FALSE, FALSE,
                             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
                             CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                             DEFAULT_PITCH, L"Segoe UI");
     if (f != nullptr) {
-        cache.slots[freeSlot] = FontCache::Entry{dpi, weight, px96, f};
+        // v1.3.0-beta8fix1 (bug BS-22f): a face is cached when there is room for
+        // it and handed back when there is not. The request is NEVER answered
+        // with a different face: layout measures text with the control's live
+        // font, so a wrong face is a wrong row — silently. (A font that does not
+        // get a slot lives as long as the process, like every other font here;
+        // slots are only ever taken by a DISTINCT dpi/weight/px96 face, so the
+        // bound is the number of distinct faces a session asks for.)
+        if (freeSlot != FontCache::kSlots) {
+            cache.slots[freeSlot] = FontCache::Entry{dpi, weight, px96, f};
+        }
         return f;
     }
     // CreateFont failed (out of GDI handles): fall back to any font we
-    // already own, else nullptr (controls then keep the system font).
+    // already own, else nullptr (controls then keep the system font). This is
+    // the ONLY path that may answer with a face that was not asked for.
     for (std::size_t i = 0; i < FontCache::kSlots; ++i) {
         if (cache.slots[i].font != nullptr) { return cache.slots[i].font; }
     }
@@ -3963,11 +4006,36 @@ BOOL CALLBACK rescaleChild(HWND child, LPARAM lp) noexcept {
 // state below; declared here because the DPI path runs before it in the file.
 namespace {
 void dropSettingsLayoutBaseline() noexcept;
+// v1.3.0-beta8fix1 (bug BS-18): the DPI transition needs the solver, and it is
+// defined with the rest of the solve machinery further down the file.
+void solveSettingsLayout(HWND hwnd);
+// v1.3.0-beta8fix1 (bug BS-18, part two): and it needs the page to be sitting
+// on its baseline before it rewrites the live rectangles.
+void settingsScrollToTop() noexcept;
+// v1.3.0-beta8fix1 (bug BS-21): and on its authored top (no tab-strip shift baked
+// into the lives the rescale is about to multiply).
+void settingsUnshiftPageToAuthored() noexcept;
+// v1.3.0-beta8fix1 (bug BS-22c): the ONE writer of the bar latch + WS_VSCROLL
+// pair (defined with the solve machinery; the baseline drop uses it above that).
+bool settingsApplyScrollbarLatch(HWND hwnd, bool wantScroll, const char* who);
+// v1.3.0-beta8fix1 (bug BS-22n): does this child still have the rectangle the
+// solver planned for it? Asked by the combo subclass when the control resizes
+// itself (defined with the solve machinery, which owns the baseline).
+bool settingsWindowFitsPlan(HWND child) noexcept;
+bool settingsSyncScrollbarLatch(HWND hwnd);
+int settingsPageOf(int id);          // defined with the solve machinery below
+void settingsRepaintAll(HWND hwnd);  // ditto
 }  // namespace
 
 void applySettingsDpiScale(UINT newDpi) noexcept {
     if (!g.hSettings) { return; }
     if (newDpi == 0 || newDpi == g_settingsDpi) { return; }
+
+    // v1.3.0-beta8fix1 (bug BS-18, part two): rescaleChild multiplies the LIVE
+    // rectangles, so the page must be sitting on its baseline first — otherwise
+    // the scroll offset is scaled into the geometry, and the baseline drop that
+    // follows makes it permanent (see settingsScrollToTop()).
+    settingsScrollToTop();
 
     // Snapshot the OLD fonts (they are still alive — the cache never
     // deletes an in-use font) so each control can be re-classified.
@@ -3985,9 +4053,38 @@ void applySettingsDpiScale(UINT newDpi) noexcept {
     // v1.3.0-beta8 (bug BS-17): the baseline rectangles are in the OLD scale's
     // pixels, and the solve that follows a DPI change measures at the new one.
     // Dropping them is what makes the solver re-read the (just rescaled) live
-    // rectangles for this one pass; the caller solves immediately after.
+    // rectangles for this one pass.
+    //
+    // v1.3.0-beta8fix1 (bug BS-18): AND THAT SOLVE HAPPENS HERE.
+    //
+    // The re-solve used to be the caller's job, and one caller never did it:
+    // WM_DISPLAYCHANGE (the monitor topology / resolution / scale change — a
+    // hot-plugged screen, an HDMI switch, a session reconnect, a scale change
+    // that arrives before the window's own WM_DPICHANGED) reached
+    // refreshSettingsDpi() -> this function and stopped. The dialog was then
+    // left in the one state nothing can recover from: every child multiplied by
+    // the new scale and the layout baseline DROPPED, with no solver run. From
+    // there
+    //   * applySettingsScrollOffset() starts with `if (solved.empty()) return;`
+    //     — so every scroll step (wheel, arrows, thumb drag) moves the thumb
+    //     and NOT the page;
+    //   * the scrollbar keeps the answer of a geometry that no longer exists
+    //     (its existence is decided inside the solver only), so it is dead when
+    //     the content is unreachable and absent when the page is empty;
+    //   * the next operation that reads the live rectangles — including the
+    //     next solve — takes the rescaled, un-normalized geometry as its input,
+    //     so the page drifts further out of its own viewport instead of back
+    //     into it.
+    // The user sees exactly that: the settings page loses its content and its
+    // scrollbar (BUG_HUNT_REPORT_beta8 §"mất nội dung" reports), and only
+    // closing and reopening the dialog brings it back.
+    //
+    // Rescaling the children and re-solving the layout are ONE operation: the
+    // geometry is only meaningful at the scale it was solved at, so this
+    // function may not return a dialog that is scaled but not solved.
     dropSettingsLayoutBaseline();
     ::InvalidateRect(g.hSettings, nullptr, TRUE);
+    solveSettingsLayout(g.hSettings);
 }
 
 // Re-scale an open settings dialog after its DPI changed (WM_DPICHANGED,
@@ -4017,12 +4114,62 @@ LRESULT CALLBACK comboWheelProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         if (parent != nullptr) { ::SendMessageW(parent, msg, wParam, lParam); }
         return 0;
     }
+    // v1.3.0-beta8fix1 (bug BS-22n): A SIZE THE COMBO DECIDED IS A REFLOW REQUEST.
+    //
+    // A CBS_DROPDOWNLIST sizes its own window — at creation, and again on every
+    // font or theme change — and it does it when it processes the message, which
+    // can be AFTER the solve that sized the row. The plan then describes a window
+    // that does not exist and everything below it is placed against a height the
+    // window does not have. The 35981669220 x64 run measured 306 states of exactly
+    // that, all combos, in both directions:
+    //
+    //   [I6] id 596 lives 420,550 330x36 but the solver's baseline is
+    //        420,550 330x38 (0 px wider, -2 px taller)
+    //
+    // The solve reads the live size back before it returns (see the BS-22l pass in
+    // solveSettingsLayout), which catches a resize that happened during the solve.
+    // This catches the one that happens after it, from the control's own
+    // notification, and asks for the same reflow the runtime text growth does
+    // (BS-12) — POSTED, so it can never re-enter the pass that caused it, and only
+    // when the app is not already solving.
+    if (msg == WM_WINDOWPOSCHANGED && !g_settingsReflowPosted && g_settingsSolveDepth == 0) {
+        const HWND dlg = ::GetParent(hwnd);
+        if (dlg != nullptr && g.hSettings == dlg && !settingsWindowFitsPlan(hwnd)) {
+            g_settingsReflowPosted = true;
+            g_settingsRowGrowthPending = true;   // the timer's own path agrees
+            ::PostMessageW(dlg, WM_APP + 78, 0, 0);
+        }
+    }
     if (msg == WM_NCDESTROY) { ::RemoveWindowSubclass(hwnd, comboWheelProc, 1); }
     return ::DefSubclassProc(hwnd, msg, wParam, lParam);
 }
 
 HWND mkCtl(HWND parent, LPCWSTR cls, LPCWSTR text, DWORD style, int x, int y,
            int w, int h, HMENU id) {
+    // v1.3.0-beta8fix1 (bug BS-22j): A PAGE BUTTON'S LABEL IS ALLOWED TO WRAP.
+    //
+    // Win32 draws a button's text on ONE line unless the style says otherwise
+    // ("BS_MULTILINE: allows multiple lines of text in the button rectangle"),
+    // and this dialog's page rows are authored one line tall at 100 %: the
+    // labels are long enough that the authored width is what makes them fit.
+    // Any scale that makes the text bigger than the box — the probe's text-scale
+    // passes are exactly the "Make text bigger" setting a user can turn on — then
+    // clips the tail of the label with no ellipsis, no tooltip and no way to
+    // scroll to it. The x64 run 35974677491 measured seven of them, every one a
+    // checkbox/radio label: `id 551 (Button) needs 716px ... shows 583px of 583
+    // (box 55,381 583x25, font 32px, text 64 chars)` — and the app's OWN
+    // measurement of that same row said 64 px, i.e. it knew the label needs two
+    // lines where it had planned one (see the solver's `pageButton` growth).
+    //
+    // The bit is set HERE, for every page BUTTON and no chrome one, so the
+    // decision lives in one place and cannot drift from the tabs' id tables:
+    // the always-visible row (ON/OFF, OK/Cancel/Apply) keeps its one-line
+    // labels, which is also what keeps its fixed band height valid.
+    if (::lstrcmpiW(cls, L"BUTTON") == 0 && (style & BS_GROUPBOX) != BS_GROUPBOX &&
+        settingsPageOf(static_cast<int>(reinterpret_cast<INT_PTR>(id))) !=
+            ok::layout::ControlSpec::kAlwaysVisible) {
+        style |= BS_MULTILINE;
+    }
     // v1.3.0-beta8 (bug BS-16b): WS_CLIPSIBLINGS on EVERY child. The tab
     // control is created first and its rectangle is the WHOLE page area, so it
     // sits UNDER ~120 page controls: without this flag its own repaint (a tab
@@ -4488,6 +4635,45 @@ struct SettingsScrollState {
     std::vector<std::pair<HWND, ok::layout::Rect>> solved;
     ok::layout::Rect viewport{};          // tab display rect (client coords)
     int  perTabContentBottom[9] = {};     // deepest solved bottom per tab
+    // v1.3.0-beta8fix1 (bug BS-21): the tab-strip shift currently baked into that
+    // tab's baseline, in 96-dpi px (0 = none). The strip wraps to several rows
+    // when the dialog is narrow, `pageTopShiftPx` moves the page down to clear it,
+    // and this records HOW MUCH of that move the baseline carries — the number
+    // that has to come back to 0 when the strip fits one row again.
+    int  perTabStripShift96[9] = {};
+    // v1.3.0-beta8fix1 (bug BS-22c): the WORST page top a wrapped strip ever
+    // pushed the page down by, in 96-dpi px, for the current tab. It is not a
+    // layout input: it exists because "nothing pulls the page back up" can be a
+    // no-op (the strip is gone and the content sits where the last solve left it),
+    // and a probe that wants to see the pull-back has to know how far the page WENT
+    // down in the first place. Reset where the per-tab layout is reset.
+    int  perTabStripSeen96[9] = {};
+    // v1.3.0-beta8fix1 (bug BS-22d): the tab strip's ROW COUNT as the last solve
+    // planned it (1 = one row). A change in either direction is a layout change:
+    // the tab control has to be made to re-lay out before TCM_ADJUSTRECT is read,
+    // or the display rectangle it answers with describes the strip that was there
+    // before the change (BS-10 for the grow, BS-22d for the shrink).
+    int  stripRows = 1;
+    // v1.3.0-beta8fix1 (bug BS-22u): THE STRIP DECISION'S OWN ARITHMETIC.
+    //
+    // The probe's strip cycle asks the app "is the strip one row?" and the answer
+    // it got back (35991357693) described a state the dialog did not keep: the cycle
+    // read ONE row, stopped looking, and the state it then judged had TWO — with
+    // `rows 2` in the very same note. Two different things can produce that shape
+    // and they need different repairs: the PLAN can be wrong (the labels fit in one
+    // row by the app's own arithmetic, the control wraps them anyway because its
+    // per-item padding is bigger than the plan assumed), or the RECORD can be stale
+    // (the plan re-decided the strip at a width the dialog does not keep — the
+    // scrollbar takes 17 px of the client AFTER the plan was made). These numbers
+    // say which: what the plan decided, the width it was given to decide with, and
+    // how often the control's own answer has been re-read.
+    int  stripPlanRows = 1;               // the plan's row count (1 = one row)
+    int  stripPlanRequired = 0;           // width the chosen labels need, one row
+    int  stripPlanAvailable = 0;          // width the plan had to fit them into
+    int  stripPlanClientW = 0;            // client width the plan was made with
+    int  stripMeasuredRows = 0;           // the CONTROL's answer (item rects)
+    int  stripMeasureCount = 0;           // how many solves re-read it
+    int  stripPlanFontPx = 0;             // height of the face the labels were measured with
     int  viewportBottom = 0;              // viewport.bottom after the refit
     int  offset = 0;                      // current scroll offset (px)
     int  range  = 0;                      // current tab's scroll range (px)
@@ -4495,11 +4681,165 @@ struct SettingsScrollState {
 };
 SettingsScrollState g_settingsScroll;
 
+void applySettingsScrollOffset(HWND hwnd);   // defined below showTab
+
+// v1.3.0-beta8fix1 (bug BS-18, part two): PUT THE PAGE BACK ON ITS BASELINE
+// BEFORE ANYTHING FORGETS WHERE THE BASELINE WAS.
+//
+// A scrolled page lives at `solved - offset` (applySettingsScrollOffset). Every
+// consumer of the geometry that is not the scrollbar itself reads those LIVE
+// rectangles and undoes the offset to recover the baseline: the DPI rescale
+// multiplies them (rescaleChild), and the solver un-scrolls them
+// (solverInputRect(live, offset), BS-17). So the moment the offset is set to 0
+// WITHOUT re-applying it, the live rectangles silently BECOME the baseline: the
+// page ratchets by one scroll offset. Repeat it (scroll, display change,
+// scroll, display change) and the content ends up thousands of pixels above its
+// viewport; the per-tab depth is then reported below the viewport top, the
+// solver correctly concludes there is nothing to scroll, and the user gets an
+// EMPTY page with NO scrollbar until the dialog is closed and reopened — the
+// reported "mất nội dung". The CI harness reached exactly that state: after
+// commit "a rescaled dialog is a solved dialog" the sequence pass still failed
+// with inv_I1=2253 (offset 0, not one visible control) and every tab at 150 %
+// measured 6..20 controls parked at y ≈ -11000 with travel 0.
+void settingsScrollToTop() noexcept {
+    if (g_settingsScroll.solved.empty()) { return; }
+    if (g_settingsScroll.offset == 0) { return; }
+    g_settingsScroll.offset = 0;
+    applySettingsScrollOffset(g.hSettings);
+}
+
+// v1.3.0-beta8fix1 (bug BS-22) — THE SOLVER'S INPUT IS THE AUTHORED GEOMETRY,
+// NOT THE PREVIOUS SOLVE'S OUTPUT.
+//
+// The dialog's page children are authored once (WM_CREATE) and then rewritten by
+// every solve: the tab-strip shift (BS-10/BS-21), the row growth for dynamically
+// measured text, the group-box stretch, the width clamp (BS-20). Each of those is
+// a function of the CURRENT state — the strip's row count, the control's text at
+// its current width, the client width — so the answer must be recomputed from the
+// authored rectangles, exactly as scripts/audit_layout.py and the portable model
+// do. The solver instead took its input from the LIVE rectangles (BS-17 added the
+// scroll offset back; BS-21 subtracted the strip shift), which made every one of
+// those transforms ADDITIVE on its own previous output:
+//
+//   * a row that wrapped at a narrow width grew, pushed everything below it down,
+//     and kept both the height and the push when the dialog widened again — the
+//     probe measured it: `id 555 was at y=114, is at y=158 after the strip fitted
+//     one row again (moved by 44 px)`;
+//   * the tab-strip shift accumulated (BS-21: `stripShift 228` px);
+//   * a shrink could never undo anything, so grow -> shrink -> grow cycles drifted
+//     (`inv_I1`/`inv_I12` at every scale).
+//
+// The authored table is kept in 96-dpi pixels, so a DPI rescale — which
+// multiplies the live rectangles — needs no correction of its own, and the
+// values survive every rescale exactly. It is captured LAZILY, from the first
+// rectangle the solver sees for a control (un-scrolled, i.e. the baseline at that
+// moment, before any shift or growth has been applied), which keeps the capture
+// correct for a control created after the first solve. Nothing in the app resizes
+// a page child for a reason the solver does not already derive from the text and
+// the width (refreshGrowingRow() only sets the text and asks for a reflow — it
+// never resizes), so no information is lost by not remembering the previous
+// output: the next solve recomputes the same answer, and stops recomputing it the
+// moment the cause goes away.
+struct AuthoredPageRect {
+    int id = 0;
+    ok::layout::Rect rect96{};      // authored position + size, 96-dpi px
+};
+std::vector<AuthoredPageRect> g_pageAuthored96;
+
+const ok::layout::Rect* authoredPageRect(int id) noexcept {
+    for (const AuthoredPageRect& e : g_pageAuthored96) {
+        if (e.id == id) { return &e.rect96; }
+    }
+    return nullptr;
+}
+
+// `unscrolledLive` is the rectangle the solver is entitled to call authored: the
+// live window rect with the scroll offset added back (ok::layout::solverInputRect).
+void rememberAuthoredPageRect(int id, const ok::layout::Rect& unscrolledLive,
+                              int dpi) noexcept {
+    if (authoredPageRect(id) != nullptr) { return; }
+    AuthoredPageRect e;
+    e.id = id;
+    e.rect96 = ok::layout::Rect{
+        ok::layout::scaleTo96Px(unscrolledLive.x, dpi),
+        ok::layout::scaleTo96Px(unscrolledLive.y, dpi),
+        ok::layout::scaleTo96Px(unscrolledLive.w, dpi),
+        ok::layout::scaleTo96Px(unscrolledLive.h, dpi)};
+    g_pageAuthored96.push_back(e);
+}
+
+// v1.3.0-beta8fix1 (bug BS-21): PUT THE PAGE BACK ON ITS AUTHORED TOP BEFORE THE
+// STRIP SHIFT BECOMES GEOMETRY.
+//
+// The tab-strip shift is a translation of a whole page down by `stripShiftPx(t,
+// dpi)`. Everything that is not the solver reads the LIVE rectangles (the rescale
+// multiplies them; the solver's baseline input is `solved`), so a shift left in
+// them is indistinguishable from authored geometry — and the only place that can
+// be repaired is here, before the drop discards the record of how much was
+// applied. The children are moved, not resized, exactly like scrolling moves them.
+void settingsUnshiftPageToAuthored() noexcept {
+    if (g.hSettings == nullptr || g_settingsScroll.solved.empty()) { return; }
+    const int dpi = static_cast<int>(g_settingsDpi != 0 ? g_settingsDpi : 96);
+    bool moved = false;
+    for (const auto& entry : g_settingsScroll.solved) {
+        const int tab = settingsPageOf(::GetDlgCtrlID(entry.first));
+        if (tab < 0 || tab > 8) { continue; }
+        const int px = ok::layout::stripShiftPx(
+            g_settingsScroll.perTabStripShift96[tab], dpi);
+        if (px <= 0) { continue; }
+        RECT rc{};
+        ::GetWindowRect(entry.first, &rc);
+        ::MapWindowPoints(nullptr, g.hSettings, reinterpret_cast<POINT*>(&rc), 2);
+        ::SetWindowPos(entry.first, nullptr, rc.left, rc.top - px, 0, 0,
+                       SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS);
+        moved = true;
+    }
+    for (int t = 0; t < 9; ++t) { g_settingsScroll.perTabStripShift96[t] = 0; }
+    if (moved) { settingsRepaintAll(g.hSettings); }
+}
+
 // Defined here (declared above applySettingsDpiScale); see BS-17.
 void dropSettingsLayoutBaseline() noexcept {
+    // The baseline may not be discarded while the page is scrolled away from
+    // it (BS-18, part two): the live rectangles are the only thing a later
+    // solve or rescale can plan from.
+    settingsScrollToTop();
+    // v1.3.0-beta8fix1 (bug BS-21): and it may not be discarded while a tab-strip
+    // shift is baked into the live rectangles either. A rescale multiplies the
+    // lives by the new/old factor — a shift left in them would be multiplied with
+    // it and, once the baseline is gone, would BE the authored layout from then
+    // on: the page would never come back up, at any strip width. The normalisation
+    // runs after the rescale in applySettingsDpiScale(), where the recorded shift
+    // scales by construction (`pxAtDpi(shift96, newDpi)` == the old px x new/old),
+    // so the subtraction removes exactly what the rescale baked in.
+    settingsUnshiftPageToAuthored();
     g_settingsScroll.solved.clear();
     g_settingsScroll.viewport = ok::layout::Rect{};
     g_settingsScroll.viewportBottom = 0;
+    // v1.3.0-beta8fix1 (bug BS-18): THE BASELINE AND THE SCROLL STATE ARE ONE
+    // STATE, so they are dropped together.
+    //
+    // A baseline-less dialog with a live scroll state is unrecoverable state:
+    // the offset and the range describe a page that no longer exists, the
+    // latch/WS_VSCROLL keep a scrollbar whose every message is a no-op
+    // (applySettingsScrollOffset() cannot move a child it has no rectangle
+    // for), and the per-tab depths report content with nothing to back them.
+    // The CI harness drives exactly that state and records it — see the
+    // operation-sequence half of tools/ui_probe and the inv_I4 findings in the
+    // beta8fix1 pull request. What a dialog without a layout may claim is
+    // nothing; the caller re-solves immediately (applySettingsDpiScale is the
+    // only caller, and it now owns the re-solve).
+    for (int t = 0; t < 9; ++t) { g_settingsScroll.perTabContentBottom[t] = 0; }
+    for (int t = 0; t < 9; ++t) { g_settingsScroll.perTabStripSeen96[t] = 0; }
+    g_settingsScroll.stripRows = 1;
+    g_settingsScroll.offset = 0;
+    g_settingsScroll.range = 0;
+    // One owner: the latch and the bit move together, or neither moves.
+    if (settingsApplyScrollbarLatch(g.hSettings, false, "baseline-drop")) {
+        ::SetWindowPos(g.hSettings, nullptr, 0, 0, 0, 0,
+                       SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE |
+                           SWP_FRAMECHANGED);
+    }
 }
 
 // v1.3.0-beta8 (bug BS-14): the solver measures every label at the width the
@@ -4571,6 +4911,12 @@ void showTab(int tab) {
     // the scroll range and jump back to the top (no-op before the first
     // solve, when WM_CREATE's settingsToControls() runs showTab early).
     settingsScrollSetTab(g.hSettings, tab);
+    // v1.3.0-beta8fix1 (bug BS-22c): switching tabs is an operation that changes
+    // WHICH depth the range describes — and the operation the probe caught with the
+    // latch and the style bit disagreeing (`op select_tab`, tab 7, dpi 120). The
+    // decision is re-made here from the geometry the dialog is holding, so a
+    // dialog whose bar disagrees with its content cannot be handed to the user.
+    settingsSyncScrollbarLatch(g.hSettings);
     // BS-16a: the previous tab's controls are hidden, and every pixel they
     // occupied is the dialog's to repaint. Without this the old tab stayed on
     // screen behind the new one -- the "duplicated text/buttons" that looked
@@ -4600,14 +4946,36 @@ void applySettingsScrollOffset(HWND hwnd) {
         // runtime height on the first scroll step.
         ::SetWindowPos(entry.first, nullptr, sc.rect.x, sc.rect.y, 0, 0,
                        SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS);
-        if (!sc.visible) {
+        // v1.3.0-beta8fix1 (bug BS-22c): THE REGION IS COMPUTED FROM THE RECTANGLE
+        // THE WINDOW ACTUALLY HAS.
+        //
+        // The move above uses the baseline (the solver's rectangle) and is exact.
+        // The region, though, must describe the window as it IS: a control can be
+        // a few pixels taller than its baseline — a combo box re-sizes itself to
+        // its font (BS-22c above), and any future Win32-side size change does the
+        // same — and a region computed from the baseline then decides "fully
+        // outside" for a window that is partly inside the viewport. That is the
+        // probe's I6 in one sentence: a window clipped to nothing while 2 px of it
+        // sit inside the page, i.e. content the user cannot see or scroll to.
+        // Computing the clip from the live rectangle makes the invariant true by
+        // construction: the region is a function of what is on screen, not of what
+        // the solver last wrote down.
+        RECT live{};
+        ::GetWindowRect(entry.first, &live);
+        ::MapWindowPoints(nullptr, hwnd, reinterpret_cast<POINT*>(&live), 2);
+        const ok::layout::ScrolledChild shown = ok::layout::scrollChildRect(
+            ok::layout::Rect{live.left, live.top,
+                             static_cast<int>(live.right - live.left),
+                             static_cast<int>(live.bottom - live.top)},
+            0, g_settingsScroll.viewport);
+        if (!shown.visible) {
             if (HRGN rgn = ::CreateRectRgn(0, 0, 0, 0)) {
                 ::SetWindowRgn(entry.first, rgn, TRUE);   // rgn ownership passes
             }
-        } else if (sc.clipped) {
-            if (HRGN rgn = ::CreateRectRgn(sc.clip.x, sc.clip.y,
-                                           sc.clip.x + sc.clip.w,
-                                           sc.clip.y + sc.clip.h)) {
+        } else if (shown.clipped) {
+            if (HRGN rgn = ::CreateRectRgn(shown.clip.x, shown.clip.y,
+                                           shown.clip.x + shown.clip.w,
+                                           shown.clip.y + shown.clip.h)) {
                 ::SetWindowRgn(entry.first, rgn, TRUE);
             }
         } else {
@@ -4625,6 +4993,122 @@ void applySettingsScrollOffset(HWND hwnd) {
     // child that was moved (or region-clipped) from outside it, nor the band the
     // page vacated when the tab strip grew to a second row.
     settingsRepaintAll(hwnd);
+}
+
+//===========================================================================
+// v1.3.0-beta8fix1 (bug BS-22c) — ONE OWNER FOR THE BAR LATCH AND ITS STYLE BIT.
+//
+// The probe's I5 is a single sentence: "the app's bar latch says on but
+// WS_VSCROLL is clear" (58 times in the 77e8fea run, first at `op select_tab`,
+// tab 7, dpi 120 — a state whose own tab fits while a deeper tab lives in the
+// same dialog). The latch (`g_settingsScroll.enabled`) and the bit are two
+// halves of one answer — "this dialog has a scrollbar" — and the user's report
+// ("mất nội dung", the bar gone with the content still overflowing) is exactly
+// what a split pair looks like: no afforance to scroll with, and the page's
+// 17 px of width decided by a bit that disagrees with the layout.
+//
+// They were written together in three places (the planned decision, the
+// clamped-viewport correction, the baseline drop) and by hand in two more
+// (WM_DESTROY). Two writers is one too many: nothing in the code prevented a
+// later operation from moving one without the other, and the pair is read at
+// every probe observation. From here on there is ONE function that may change
+// either of them, and every path that can change the DECISION calls the sync
+// below, which re-decides from the stored depths and re-solves when the answer
+// moved (the bar changes the client width, so patching the bit alone would leave
+// the page 17 px wrong — the same class of defect as BS-18).
+//===========================================================================
+#if defined(KIEEKEY_UI_PROBE)
+// The tripwire: which call last wrote each half, and how often. A divergence
+// that survives this refactor names its writer in the probe's own output instead
+// of costing another CI round of guessing.
+int g_probeLatchWrites = 0;
+int g_probeStyleWrites = 0;
+int g_probeLatchDrifts = 0;
+// How many times the tab strip needed the size-change nudge to re-lay out after it
+// went back to one row (see the strip block in solveSettingsLayout).
+int g_probeStripRelayouts = 0;
+const char* g_probeLatchWriter = "init";
+const char* g_probeStyleWriter = "init";
+#endif
+
+// Returns true when the WINDOW's style bit had to change (the client width does,
+// and the caller is expected to re-read it).
+bool settingsApplyScrollbarLatch(HWND hwnd, bool wantScroll, const char* who) {
+    (void)who;   // probe-only tripwire (see above)
+    g_settingsScroll.enabled = wantScroll;
+#if defined(KIEEKEY_UI_PROBE)
+    g_probeLatchWriter = who;
+    ++g_probeLatchWrites;
+#endif
+    if (hwnd == nullptr) { return false; }
+    const LONG_PTR style = ::GetWindowLongPtrW(hwnd, GWL_STYLE);
+    const bool have = (style & WS_VSCROLL) != 0;
+    if (have == wantScroll) { return false; }
+    ::SetWindowLongPtrW(hwnd, GWL_STYLE,
+                        wantScroll ? (style | WS_VSCROLL)
+                                   : (style & ~static_cast<LONG_PTR>(WS_VSCROLL)));
+#if defined(KIEEKEY_UI_PROBE)
+    g_probeStyleWriter = who;
+    ++g_probeStyleWrites;
+#endif
+    return true;
+}
+
+// v1.3.0-beta8fix1 (bug BS-22c): WINDOWS OWNS THE VISIBILITY OF A STANDARD
+// SCROLLBAR, SO THE LATCH FOLLOWS THE WINDOW.
+//
+// `SetScrollInfo(SB_VERT, ...)` HIDES a standard scroll bar when the range it is
+// given says there is nothing to scroll — and hiding a standard scroll bar clears
+// WS_VSCROLL. The bar's range is per tab (settingsScrollSetTab builds it from the
+// current tab's depth), so on a tab that fits, Windows clears the bit the solver
+// had just set for the whole dialog (its decision is "keep the bar while ANY tab
+// overflows", BS-18). The latch was left saying "on" over a window with no bar —
+// the probe's I5, 12 findings in the 9c6c67c run, with the tripwire naming both
+// halves ("last write solve-planned") because both really were written together:
+// the window changed underneath them.
+//
+// The honest reading is that the latch describes the WINDOW, not the intent: it is
+// re-adopted after every SetScrollInfo, and the intent is re-decided by every solve
+// (and by showTab's sync). Nothing is gated on the stale value: the wheel and
+// scroll handlers also require range > 0, which is 0 exactly when the bar is gone.
+//
+// WHY THE LAYOUT STAYS SOUND WHILE THE BIT FOLLOWS WINDOWS (the direction that
+// matters): the bar can only ever be HIDDEN after the solve, never shown where the
+// solve assumed none. Windows hides it only when the range says the CURRENT tab
+// fits, and "some tab overflows" (the solve's decision, BS-18) is implied by that
+// tab overflowing — so a bar that is visible was planned for. Hiding the bar takes
+// its 17 px out of the non-client area, so the client can only be WIDER than the
+// rectangle the solve laid out for: every solved rect, the tab control included,
+// stays inside it, and nothing the user can see is clipped. The reverse (a solve
+// that assumed no bar, then a bar appearing) is what BS-15 cost the page 17 px
+// over; it cannot happen, because appearing requires an overflowing current tab
+// and such a tab forces the solve to keep the bar.
+void settingsAdoptScrollbarVisibility(HWND hwnd) {
+    if (hwnd == nullptr) { return; }
+    const bool have = (::GetWindowLongPtrW(hwnd, GWL_STYLE) & WS_VSCROLL) != 0;
+    if (have != g_settingsScroll.enabled) {
+        settingsApplyScrollbarLatch(hwnd, have, "win32-visibility");
+    }
+}
+
+// Re-decide the latch from the geometry the app is holding. No-op when the
+// window and the latch already agree. When they do not, the solve owns the fix:
+// the bar's presence decides the client width, the page and every row's width.
+bool settingsSyncScrollbarLatch(HWND hwnd) {
+    // What the sync may NOT do is re-decide the INTENT here: the intent is
+    // "keep the bar while any tab overflows" (BS-18) and it is made inside the
+    // solve; a sync that re-solved would only make Windows hide the bar again for
+    // the tab on screen (see settingsAdoptScrollbarVisibility) and the dialog would
+    // re-solve on every tab switch for nothing. What it must do is make sure the
+    // pair agrees at every observation point: the latch describes the WINDOW.
+    if (hwnd == nullptr || g_settingsScroll.solved.empty()) { return false; }
+    const bool have = (::GetWindowLongPtrW(hwnd, GWL_STYLE) & WS_VSCROLL) != 0;
+    if (have == g_settingsScroll.enabled) { return false; }
+#if defined(KIEEKEY_UI_PROBE)
+    ++g_probeLatchDrifts;
+#endif
+    settingsApplyScrollbarLatch(hwnd, have, "sync");
+    return true;
 }
 
 // Per-tab scroll range from the stored content depths; resets to the top.
@@ -4651,6 +5135,7 @@ void settingsScrollSetTab(HWND hwnd, int tabIndex) {
     si.nPage = static_cast<UINT>(m.pagePx);      // == viewport height
     si.nPos = 0;
     ::SetScrollInfo(hwnd, SB_VERT, &si, TRUE);
+    settingsAdoptScrollbarVisibility(hwnd);   // BS-22c
     applySettingsScrollOffset(hwnd);
 }
 
@@ -4663,6 +5148,28 @@ void settingsScrollSetTab(HWND hwnd, int tabIndex) {
 // at this width": DrawTextW + DT_CALCRECT | DT_WORDBREAK with the CONTROL's own
 // font, so the solve and every other caller (the CA-03 probe included) measure
 // identically. 0 means "not a text control" / "no text" / "no DC".
+// v1.3.0-beta8fix1 (bug BS-23): the width a control's text needs in ONE line, with
+// the room its class puts around that text (a check box and a radio button draw a
+// glyph before the label; a push button pads both sides). The solver fits a row to
+// this number when the page has room — see ok::layout::autoFit's width pass. 0
+// means "not a single-line text control" / "no text".
+int measureSingleLineWidthPx(HWND child, const wchar_t* text, int textLen,
+                             int padPx) noexcept {
+    if (child == nullptr || text == nullptr || textLen <= 0) { return 0; }
+    HWND parent = ::GetParent(child);
+    if (parent == nullptr) { return 0; }
+    HDC dc = ::GetDC(parent);
+    if (dc == nullptr) { return 0; }
+    HGDIOBJ of = ::SelectObject(dc, reinterpret_cast<HGDIOBJ>(
+        ::SendMessageW(child, WM_GETFONT, 0, 0)));
+    SIZE sz{};
+    const BOOL ok = ::GetTextExtentPoint32W(dc, text, textLen, &sz);
+    if (of != nullptr) { ::SelectObject(dc, of); }
+    ::ReleaseDC(parent, dc);
+    if (ok == FALSE) { return 0; }
+    return static_cast<int>(sz.cx) + padPx;
+}
+
 int measureStaticTextHeightPx(HWND child, int widthPx) {
     if (child == nullptr || widthPx <= 0) { return 0; }
     wchar_t text[512];
@@ -4697,10 +5204,42 @@ int settingsPageOf(int id) {
 
 // idempotent (re-solving an already-solved dialog changes nothing).
 void solveSettingsLayout(HWND hwnd);
+// v1.3.0-beta8fix1 (bug BS-22n): the solver's own depth, as a scope guard so every
+// early return (the BS-14 width pass, the BS-22l size read-back) releases it.
+struct SettingsSolveScope {
+    SettingsSolveScope() noexcept { ++g_settingsSolveDepth; }
+    ~SettingsSolveScope() noexcept { --g_settingsSolveDepth; }
+    SettingsSolveScope(const SettingsSolveScope&) = delete;
+    SettingsSolveScope& operator=(const SettingsSolveScope&) = delete;
+};
+
+// v1.3.0-beta8fix1 (bug BS-22n): does this child still have the rectangle the
+// solver planned for it? Only the SIZE is compared: scrolling moves a child
+// (applySettingsScrollOffset) and a move is not a resize. A child the baseline
+// does not know (a chrome control, or a page child before the first solve) is not
+// a mismatch — the question is about the plan the solver wrote, and it has not
+// written one for that child.
+bool settingsWindowFitsPlan(HWND child) noexcept {
+    if (child == nullptr || g_settingsScroll.solved.empty()) { return true; }
+    RECT rc{};
+    if (::GetWindowRect(child, &rc) == FALSE) { return true; }
+    const int w = static_cast<int>(rc.right - rc.left);
+    const int h = static_cast<int>(rc.bottom - rc.top);
+    for (const auto& entry : g_settingsScroll.solved) {
+        if (entry.first != child) { continue; }
+        return std::abs(w - entry.second.w) <= 1 && std::abs(h - entry.second.h) <= 1;
+    }
+    return true;
+}
+
 void solveSettingsLayout(HWND hwnd) {
     if (hwnd == nullptr) { return; }
     HWND tabCtl = ::GetDlgItem(hwnd, IDC_TAB);
     if (tabCtl == nullptr) { return; }
+    // Every WM_WINDOWPOSCHANGED this function causes is its own doing: the
+    // baseline is half-written while it runs, so the subclass' question (BS-22n)
+    // must not be asked about it.
+    const SettingsSolveScope solvingHere;
 
     const int dpi = static_cast<int>(g_settingsDpi != 0 ? g_settingsDpi : 96);
     const auto S = [dpi](int px) { return ::MulDiv(px, dpi, 96); };
@@ -4714,7 +5253,42 @@ void solveSettingsLayout(HWND hwnd) {
     const int tabWidth = rcTab.right - rcTab.left;
     HDC tdc = ::GetDC(tabCtl);
     if (tdc != nullptr) {
-        HGDIOBJ oldFont = ::SelectObject(tdc, uiFont());
+        // v1.3.0-beta8fix1 (bug BS-22v): THE LABELS ARE MEASURED WITH THE FONT THE
+        // CONTROL DRAWS THEM WITH — the same source of truth the page rows already
+        // use (`measureSingleLineWidthPx` / `measureStaticTextHeightPx` select
+        // `WM_GETFONT` of the control).
+        //
+        // This block was the one measurement in the solve that selected `uiFont()`
+        // instead, and the two diverge the moment anything puts a different face on
+        // the tab control — the harness's text-scale path does exactly that, and so
+        // does any real "system text size" state the app's own face has not caught
+        // up with. The plan then measures 100 % labels while the control draws 1.5x
+        // ones: it answers `one row` for a strip the control has already wrapped,
+        // `stripRows` and the style bit describe a strip that is not on the screen,
+        // and the grow/shrink transition cannot be planned at all. The x64 run
+        // 68544ea measured it in the probe's own numbers: at a 150 % text scale the
+        // plan still asked `need 559` — the 100 % width, at every scale — while the
+        // control's item rectangles said two rows, so the strip cycle reported
+        // `not measurable ... a1:700/683 plan1(559/643) ctl1 ml0` and the native
+        // pass could not reach its two-row state.
+        //
+        // In the other direction the same divergence is the user-visible class this
+        // round exists for: a plan that says the labels fit while the control wraps
+        // or clips them hands the solver a strip that is not there.
+        HFONT tabLabelFont =
+            reinterpret_cast<HFONT>(::SendMessageW(tabCtl, WM_GETFONT, 0, 0));
+        if (tabLabelFont == nullptr) { tabLabelFont = uiFont(); }
+        HGDIOBJ oldFont = ::SelectObject(tdc, tabLabelFont);
+        // v1.3.0-beta8fix1 (bug BS-22v): and the height it measures at, so the probe
+        // can hold the two together (I1): the plan's font and the control's font must
+        // be the same face, and a state where they are not is reported with both
+        // numbers instead of being inferred from a row count that came out wrong.
+        {
+            TEXTMETRICW tm{};
+            if (::GetTextMetricsW(tdc, &tm) != FALSE) {
+                g_settingsScroll.stripPlanFontPx = static_cast<int>(tm.tmHeight);
+            }
+        }
         std::vector<int> labelW(9, 0);
         wchar_t buf[64];
         for (int i = 0; i < 9; ++i) {
@@ -4734,20 +5308,152 @@ void solveSettingsLayout(HWND hwnd) {
         ::ReleaseDC(tabCtl, tdc);
         const ok::layout::TabPlan tabPlan = ok::layout::planTabs(
             labelW, labelW, tabWidth - S(16), S(18), S(22), S(6));
+        // v1.3.0-beta8fix1 (bug BS-22u): and the arithmetic it decided on, for the
+        // probe's strip cycle (see SettingsScrollState::stripPlanRows).
+        g_settingsScroll.stripPlanRows = tabPlan.rows;
+        g_settingsScroll.stripPlanRequired = tabPlan.requiredWidth;
+        g_settingsScroll.stripPlanAvailable = tabPlan.availableWidth;
+        {
+            RECT cliPlan{};
+            ::GetClientRect(hwnd, &cliPlan);
+            g_settingsScroll.stripPlanClientW =
+                static_cast<int>(cliPlan.right - cliPlan.left);
+        }
         const LONG_PTR tabStyle = ::GetWindowLongPtrW(tabCtl, GWL_STYLE);
-        if (tabPlan.multiline && (tabStyle & TCS_MULTILINE) == 0) {
-            ::SetWindowLongPtrW(tabCtl, GWL_STYLE, tabStyle | TCS_MULTILINE);
-            // v1.3.0-beta8 (bug BS-10): the style bit alone does NOT re-lay the
-            // control out - TCM_ADJUSTRECT keeps answering with the OLD
-            // single-row display rectangle until the tab control has processed
-            // the change, so the shift below computed 0 and the top of every
-            // page stayed hidden under the second row of tab labels. The CI
-            // probe measured it: page top 114 with controls at 100..110,
-            // 22 x `outside_page`. Force the frame/layout pass, then read.
+        // v1.3.0-beta8 (bug BS-10): the style bit alone does NOT re-lay the control
+        // out - TCM_ADJUSTRECT keeps answering with the OLD display rectangle until
+        // the tab control has processed the change, so the shift below computed 0
+        // and the top of every page stayed hidden under the second row of tab
+        // labels. The CI probe measured it: page top 114 with controls at 100..110,
+        // 22 x `outside_page`. Force the frame/layout pass, then read.
+        //
+        // v1.3.0-beta8fix1 (bug BS-22d): AND THE SAME IS TRUE IN THE OTHER
+        // DIRECTION. This block used to force the re-layout only when the strip
+        // GREW (multiline && !TCS_MULTILINE). When the labels shrink back — the text
+        // scale returns to 100 %, the dialog is widened, the font changes — the tab
+        // control keeps answering TCM_ADJUSTRECT with the TWO-ROW rectangle until
+        // something makes it re-lay out, so `disp.top` stayed one row too low and
+        // the solver pushed the whole page down by that row for a strip that is one
+        // row tall. The 7bbf474 x64 run measured exactly that, 87 times:
+        //   [I1] the page top did not return to its one-row value: 114 -> 130
+        //        (wrapped) -> 130 ... strip 30/30
+        // (and with the page 16 px low, the controls the app believes are visible
+        // sit under the strip's second row: `[I11] the page paints background
+        // only`, plus the `stale_pixels` pair).
+        //
+        // The row COUNT is what matters, in both directions, and `planTabs`
+        // already answers it: force the re-layout whenever the plan's row count
+        // changed, and only then (a re-layout on every solve would be one more
+        // window pass per reflow for nothing).
+        const int stripRows = tabPlan.multiline ? 2 : 1;
+        const bool stripReshaped = (stripRows != g_settingsScroll.stripRows);
+        // v1.3.0-beta8fix1 (bug BS-22d): THE STYLE BIT TRACKS THE PLAN, IN BOTH
+        // DIRECTIONS. Setting TCS_MULTILINE is what makes the control re-lay out
+        // when the labels no longer fit (BS-10); CLEARING it is what makes the
+        // control drop back to one row when they fit again. Leaving the bit set
+        // after the text scale returned to 100 % left the two-row layout in force:
+        // the tab control re-lays out on a style change and on a size change, and
+        // the probe's 100 % pass showed the display rectangle still 16 px low
+        // (`page top 114 -> 130 (wrapped) -> 130`, 87 findings) with the page
+        // pushed down under the strip by its own solver.
+        const bool hasMultiline = (tabStyle & TCS_MULTILINE) != 0;
+        if (tabPlan.multiline != hasMultiline) {
+            ::SetWindowLongPtrW(tabCtl, GWL_STYLE,
+                                tabPlan.multiline
+                                    ? (tabStyle | TCS_MULTILINE)
+                                    : (tabStyle & ~static_cast<LONG_PTR>(TCS_MULTILINE)));
+        }
+        if (stripReshaped || tabPlan.multiline != hasMultiline) {
+            const int rowsBefore = g_settingsScroll.stripRows;
+            g_settingsScroll.stripRows = stripRows;
             ::SetWindowPos(tabCtl, nullptr, 0, 0, 0, 0,
                            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE |
                                SWP_FRAMECHANGED);
             ::UpdateWindow(tabCtl);
+            // And when the strip SHRINKS, make the control recompute its row
+            // layout the way it does for every other layout change: a size change.
+            // The control keeps its size (the second call restores it in the same
+            // message), so nothing moves or flickers; what changes is that the tab
+            // control re-lays its rows out before the display rectangle is read.
+            // Counted, so the report can say how often Windows needed the nudge.
+            if (stripRows < rowsBefore) {
+                RECT tabNow{};
+                ::GetWindowRect(tabCtl, &tabNow);
+                const int tabW = static_cast<int>(tabNow.right - tabNow.left);
+                const int tabH = static_cast<int>(tabNow.bottom - tabNow.top);
+                if (tabW > 0 && tabH > 1) {
+                    ::SetWindowPos(tabCtl, nullptr, 0, 0, tabW, tabH - 1,
+                                   SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+                    ::SetWindowPos(tabCtl, nullptr, 0, 0, tabW, tabH,
+                                   SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+                    ::UpdateWindow(tabCtl);
+#if defined(KIEEKEY_UI_PROBE)
+                    ++g_probeStripRelayouts;
+#endif
+                }
+            }
+        }
+        // v1.3.0-beta8fix1 (bug BS-22o): WHAT THE CONTROL SAYS IS THE TRUTH.
+        // `planTabs` decides whether the labels OUGHT to wrap; only the tab control
+        // knows whether they DID. Win32 can keep nine narrow labels in one row even
+        // with TCS_MULTILINE set (BS-22h measured it: `page top 114 strip 14/14
+        // rows 2`), and the other way round a taller single row moves the display
+        // rectangle with no wrap at all (35982159995: `page top 92 -> 100`,
+        // `rows 1`). Reading TCM_GETROWCOUNT after the re-layout above makes the
+        // reported row count describe the control instead of the plan's intention —
+        // it is what the probe reports as `stripRows` and what the strip cycle's
+        // wrap half is judged by. A control that answers 0 (should not happen)
+        // keeps the plan's number.
+        {
+            // TCM_GETITEMRECT is the layout the control is USING: with more than
+            // one row of tabs, the last item's rectangle starts lower than the
+            // first's. TCM_GETROWCOUNT answers from the control's own idea of how
+            // many rows the item widths need, which can disagree with the layout it
+            // has actually built (35985183906: the display rectangle was the
+            // one-row one, the recorded shift 14 px, and TCM_GETROWCOUNT 2 — three
+            // answers about the same state), so the rectangles are the measurement
+            // and the row count is read from them.
+            RECT first{};
+            RECT last{};
+            int rows = 0;
+            if (::SendMessageW(tabCtl, TCM_GETITEMCOUNT, 0, 0) > 0 &&
+                ::SendMessageW(tabCtl, TCM_GETITEMRECT, 0,
+                               reinterpret_cast<LPARAM>(&first)) != FALSE) {
+                const int count = static_cast<int>(
+                    ::SendMessageW(tabCtl, TCM_GETITEMCOUNT, 0, 0));
+                rows = 1;
+                if (count > 1 &&
+                    ::SendMessageW(tabCtl, TCM_GETITEMRECT,
+                                   static_cast<WPARAM>(count - 1),
+                                   reinterpret_cast<LPARAM>(&last)) != FALSE) {
+                    // v1.3.0-beta8fix1 (bug BS-22t): TWO ITEMS ARE ON ONE ROW IFF
+                    // THEIR RECTANGLES START AT THE SAME y — and the DIRECTION of the
+                    // rows is not this measurement's business.
+                    //
+                    // The previous rule (`last.top > first.top + 2`) assumed a wrap
+                    // always puts the LAST item BELOW the first. The x64 run
+                    // 35989916632 measured `itemTopFirst/Last 24/2`: item 0 twenty-two
+                    // pixels LOWER than item 8, while TCM_GETROWCOUNT answered 2 and
+                    // the strip really was two rows tall (page top 114 = tab top 66 +
+                    // 2 x 24 px). A wrapped control whose rows stack upward therefore
+                    // read as ONE row, and the probe's strip cycle — whose wrap half is
+                    // judged by exactly this number — could never reach its two-row
+                    // state at native scale ("strip-cycle not measurable ... rows 1"),
+                    // one [I1] per native pass for a layout that was there all along.
+                    //
+                    // A wrap moves an item by a whole row; items on one row share
+                    // their top exactly. Half a tab height is the tolerance, so a
+                    // selected tab drawn a pixel or two lower is still one row.
+                    const int rowH = std::max(1, static_cast<int>(first.bottom - first.top));
+                    const int dy = static_cast<int>(last.top) - static_cast<int>(first.top);
+                    if (dy >= rowH / 2 || -dy >= rowH / 2) { rows = 2; }
+                }
+            }
+            if (rows > 0) {
+                g_settingsScroll.stripRows = rows;
+                g_settingsScroll.stripMeasuredRows = rows;
+                ++g_settingsScroll.stripMeasureCount;
+            }
         }
     }
 
@@ -4761,6 +5467,24 @@ void solveSettingsLayout(HWND hwnd) {
     std::vector<HWND> hwnds;
     hwnds.reserve(140);
     wchar_t cls[32];
+    // v1.3.0-beta8fix1 (bug BS-22, part 2) — THE WIDTH IS CLAMPED BEFORE THE
+    // TEXT IS MEASURED. The measurement below answers one question: "how tall
+    // does this label need to be in the box it is about to get". Measuring it at
+    // a width the row will NOT have answers a different one. BS-20 clamps every
+    // page child to the dialog's own right edge, and until now that clamp ran
+    // AFTER `requiredHeight` was measured: a row authored 500 px wide, narrowed
+    // to 460 by the clamp (a narrow client, a wide scrollbar, a smaller page),
+    // was grown for the 3 lines that fit at 500 px and then laid out with the 4
+    // lines that fit at 460 — the fourth line clipped, and the CI probe's I12
+    // says so in exactly those numbers ("id 561 needs 352px but its box is 320px
+    // tall"). Measuring after the clamp makes the grow and the layout agree by
+    // construction. Same bound, same macro as the BS-20 clamp below — one rule,
+    // one place, so a row can never be measured against a width it does not get.
+    const int clampLimitRight = [&] {
+        RECT cli{};
+        ::GetClientRect(hwnd, &cli);
+        return static_cast<int>(cli.right) - S(12);
+    }();
     for (HWND c = ::GetWindow(hwnd, GW_CHILD); c != nullptr;
          c = ::GetWindow(c, GW_HWNDNEXT)) {
         if (c == tabCtl) { continue; }
@@ -4769,6 +5493,10 @@ void solveSettingsLayout(HWND hwnd) {
         RECT rc{};
         ::GetWindowRect(c, &rc);
         ::MapWindowPoints(nullptr, hwnd, reinterpret_cast<POINT*>(&rc), 2);
+        // v1.3.0-beta8fix1 (bug BS-22c): the LIVE height, before any replacement
+        // below touches spec.rect — a combo box is the one control whose height
+        // Win32 decides for itself (see the COMBOBOX branch further down).
+        const int liveH = static_cast<int>(rc.bottom - rc.top);
         ok::layout::ControlSpec spec;
         spec.id = id;
         spec.rect = {rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top};
@@ -4782,17 +5510,38 @@ void solveSettingsLayout(HWND hwnd) {
         // The live rectangle still supplies x/w/h (a DPI rescale changes them,
         // and the baseline is dropped on a DPI change for exactly that reason).
         if (spec.tab != ok::layout::ControlSpec::kAlwaysVisible) {
-            const ok::layout::Rect live = spec.rect;
-            const ok::layout::Rect* base = nullptr;
-            for (const auto& entry : g_settingsScroll.solved) {
-                if (entry.first == c) { base = &entry.second; break; }
+            // BS-22: the input is the AUTHORED rectangle, in all four fields. The
+            // live one supplies nothing but the first capture (un-scrolled), so a
+            // solve is a pure function of the authored layout, the current text
+            // and the current width — never of the previous solve's output.
+            const ok::layout::Rect unscrolled =
+                ok::layout::solverInputRect(spec.rect, g_settingsScroll.offset);
+            rememberAuthoredPageRect(id, unscrolled, dpi);
+            if (const ok::layout::Rect* authored = authoredPageRect(id)) {
+                spec.rect = ok::layout::Rect{S(authored->x), S(authored->y),
+                                             S(authored->w), S(authored->h)};
+            } else {
+                spec.rect = unscrolled;
             }
-            const int y = (base != nullptr)
-                              ? base->y
-                              : ok::layout::solverInputRect(live, g_settingsScroll.offset).y;
-            spec.rect.y = y;
         }
-        const int clsLen = ::GetClassNameW(c, cls, 32);
+        ::GetClassNameW(c, cls, 32);
+        // v1.3.0-beta8fix1 (bug BS-22l): AND A CLASS IS A NAME, NOT A LENGTH.
+        //
+        // The BS-22c combo branch below ("A COMBO BOX'S HEIGHT IS WIN32'S
+        // DECISION") was written as `clsLen == 6 && lstrcmpiW(cls, L"COMBOBOX")`
+        // — and Win32's class name for a combo is "ComboBox": EIGHT characters.
+        // The branch could therefore never run, and the height it was written to
+        // take was never taken. The x64 run 35980164209 measured it as
+        // `id 504 lives 128,297 210x33 but the solver's baseline is 128,297
+        // 210x25` — IDC_COMBO_CODETABLE, whose window Win32 has always sized to
+        // its own closed height (33 px at 96 dpi: item height 25 + two 4 px
+        // borders, which is exactly the `COMBO_CLOSED_H = LINE_HEIGHT_PX + 8`
+        // model scripts/audit_layout.py uses) while the plan kept the authored 25.
+        // Everything below the combo was then placed 8 px too high — the overlap
+        // class this dossier has been chasing since 35965748238 — and the same
+        // guard hid the combo's width requirement (pad S(8), never applied).
+        // The comparison is the one the layout self-check already uses: the name,
+        // case-insensitively, with no length test to get wrong.
         // v1.3.0-beta8 (bug BS-11): the predefined Win32 classes report MIXED
         // case from GetClassNameW ("Static", "Button", ...), so comparing them
         // against uppercase literals with wcscmp() was false for EVERY control:
@@ -4803,17 +5552,105 @@ void solveSettingsLayout(HWND hwnd) {
         // by hand and scripts/audit_layout.py models the authored geometry);
         // the CA-03 probe caught it by printing the app's own measurement (102)
         // next to the rectangle it was applied to (96).
-        const bool isStatic = (clsLen == 6 && ::lstrcmpiW(cls, L"STATIC") == 0);
+        const bool isStatic = ::lstrcmpiW(cls, L"STATIC") == 0;
         const LONG_PTR style = ::GetWindowLongPtrW(c, GWL_STYLE);
         const bool isGroupBox =
-            (clsLen == 6 && ::lstrcmpiW(cls, L"BUTTON") == 0) &&
-            ((style & BS_GROUPBOX) == BS_GROUPBOX);
+            (::lstrcmpiW(cls, L"BUTTON") == 0) && ((style & BS_GROUPBOX) == BS_GROUPBOX);
         spec.groupBox = isGroupBox;
-        spec.growable = isStatic && !isGroupBox &&
-                        ((style & SS_TYPEMASK) != SS_ICON) &&
-                        ((style & SS_TYPEMASK) != SS_OWNERDRAW);
+        // v1.3.0-beta8fix1 (bug BS-22j): A PAGE BUTTON'S LABEL WRAPS, SO ITS
+        // HEIGHT IS MEASURED LIKE A LABEL'S.
+        //
+        // The BS-23 width requirement below tells the row how wide its text
+        // would like to be, but a page can be narrower than that (a small window,
+        // a bigger text scale) and the row is clamped to the page. A button whose
+        // box is one line tall then paints ONE clipped line: the user loses the
+        // tail of a setting's name. Windows wraps it instead — mkCtl gives every
+        // page BUTTON BS_MULTILINE — so the row has to be grown to the height the
+        // wrapped text needs, exactly like a growable STATIC label. The width used
+        // for that measurement is the width the row will really have: the clamp
+        // above has already run (BS-22b), minus the inset Windows keeps for the
+        // button's own glyph (a checkbox/radio label starts after its box, ~24 px
+        // at 96 dpi; a push button's text is centred with a small inset). The
+        // chrome row is excluded: its band is fixed and its labels are authored
+        // to fit one line.
+        const bool isButton = ::lstrcmpiW(cls, L"BUTTON") == 0;
+        const DWORD buttonType = isButton ? (style & BS_TYPEMASK) : 0;
+        const bool checkLike = isButton && (buttonType == BS_AUTOCHECKBOX ||
+                                            buttonType == BS_CHECKBOX ||
+                                            buttonType == BS_AUTORADIOBUTTON ||
+                                            buttonType == BS_RADIOBUTTON ||
+                                            buttonType == BS_3STATE ||
+                                            buttonType == BS_AUTO3STATE);
+        const bool pageButton = isButton && !isGroupBox &&
+                                spec.tab != ok::layout::ControlSpec::kAlwaysVisible;
+        const int buttonTextPad = pageButton ? (checkLike ? S(24) : S(12)) : 0;
+        spec.growable = (isStatic && !isGroupBox &&
+                         ((style & SS_TYPEMASK) != SS_ICON) &&
+                         ((style & SS_TYPEMASK) != SS_OWNERDRAW)) || pageButton;
+        // v1.3.0-beta8fix1 (bug BS-22c): A COMBO BOX'S HEIGHT IS WIN32'S DECISION.
+        //
+        // A CBS_DROPDOWNLIST combo sizes its own closed window to its item height
+        // plus its borders, and it does it again on every font change (WM_SETFONT,
+        // a DPI rescale, the text-scale path). The solver used to impose the
+        // authored height instead, and Win32 re-grew the window afterwards, so the
+        // LIVE rectangle and the solved baseline disagreed by the difference. Two
+        // measured consequences, both from the 77e8fea x64 run:
+        //   * I6 — `id 623 is inside the viewport 22,177 564x442 but its window
+        //     region is EMPTY (rect 264,139 326x40)`: the region is computed from
+        //     the baseline (36 px tall), the window Win32 gave back is 40 px, and
+        //     the 4 px sliver owned by the window was decided "fully outside" and
+        //     clipped to nothing;
+        //   * overlap — `id 625 (ComboBox) ... and id 627 (Static) ... overlap by
+        //     398x6 px`: the row below was placed against the authored 25 px and
+        //     the combo's real 40 px ran into it.
+        // The natural height is a property of the control, its font and the theme
+        // — not of the previous solve — so taking it is not the BS-22 accumulation
+        // defect: every solve asks the window what its height is right now.
+        const bool isCombo = ::lstrcmpiW(cls, L"COMBOBOX") == 0;
+        if (isCombo && liveH > 0) {
+            // The height the WINDOW has, not the authored one — and it goes in
+            // its own field rather than into `spec.rect.h` so that the rectangle
+            // handed to the solver stays the AUTHORED one (BS-22), while the
+            // engine still learns that this control already takes more space and
+            // moves the rows below it (see ControlSpec::liveHeight).
+            spec.liveHeight = liveH;
+        }
+        // The page bound first, the measurement second (see clampLimitRight):
+        // `requiredHeight` must describe the row at the width the row will have.
+        if (spec.tab != ok::layout::ControlSpec::kAlwaysVisible) {
+            spec.rect = ok::layout::clampPageChildWidth(spec.rect, clampLimitRight);
+        }
         if (spec.growable) {
-            spec.requiredHeight = measureStaticTextHeightPx(c, spec.rect.w);
+            const int wrapW = (buttonTextPad > 0)
+                ? std::max(1, static_cast<int>(spec.rect.w) - buttonTextPad)
+                : static_cast<int>(spec.rect.w);
+            spec.requiredHeight = measureStaticTextHeightPx(c, wrapW);
+        }
+        // v1.3.0-beta8fix1 (bug BS-23): and how wide the text wants to be. Only
+        // single-line text (a wrapped label's width is its box, not its longest
+        // line) and only the classes whose text the user reads as one line.
+        if (!isGroupBox) {
+            wchar_t label[512];
+            const int len = ::GetWindowTextW(c, label, 512);
+            bool singleLine = (len > 0);
+            for (int i = 0; i < len && singleLine; ++i) {
+                if (label[i] == L'\n' || label[i] == L'\r') { singleLine = false; }
+            }
+            if (singleLine) {
+                int pad = 0;
+                if (isStatic) {
+                    pad = S(2);
+                } else if (isButton) {
+                    pad = checkLike ? S(24) : S(12);
+                } else if (isCombo) {
+                    pad = S(8);
+                } else {
+                    pad = 0;                       // edits keep their authored width
+                }
+                if (pad > 0) {
+                    spec.requiredWidth = measureSingleLineWidthPx(c, label, len, pad);
+                }
+            }
         }
         specs.push_back(spec);
         hwnds.push_back(c);
@@ -4831,14 +5668,49 @@ void solveSettingsLayout(HWND hwnd) {
             authoredTop = (authoredTop < 0) ? spec.rect.y : std::min(authoredTop, spec.rect.y);
         }
         if (authoredTop < 0) { continue; }
-        const int shift = ok::layout::pageTopShiftPx(authoredTop, static_cast<int>(disp.top));
-        if (shift <= 0) { continue; }
+        // v1.3.0-beta8fix1 (bug BS-21) — THE SHIFT REPLACES, IT DOES NOT ADD.
+        //
+        // `authoredTop` is the BASELINE top, and the baseline already carries the
+        // shift of the previous solve; `pageTopShiftPx` can only ever push DOWN.
+        // Asked the raw baseline it therefore only ever grew: a two-row strip
+        // moved the page down, one row moved it down again, and NOTHING brought it
+        // back — the CI harness measured `stripShift 228` px baked into a 494x497
+        // page, with the tab's controls parked under the page and the solver
+        // reporting a perfectly coherent layout (`[I1] page is EMPTY at offset 0`).
+        // Subtracting the recorded shift first recovers the authored position, so
+        // the answer is absolute and a strip that fits one row again returns the
+        // page to exactly where it was (the model documents this; the unit test
+        // drives three grow/shrink cycles at 100/125/150 %).
+        // The input is the authored top (BS-22), so there is no previous shift in
+        // it and the replacement is exact: `prevShift96 = 0`. The record still
+        // carries the shift applied to the LIVE rectangles, because the DPI path
+        // has to un-shift those before the rescale multiplies them (BS-21).
+        const ok::layout::StripShift shift = ok::layout::stripShiftFor(
+            authoredTop, 0, static_cast<int>(disp.top),
+            static_cast<int>(dpi != 0 ? dpi : 96));
+        g_settingsScroll.perTabStripShift96[t] = shift.shift96;
+        g_settingsScroll.perTabStripSeen96[t] =
+            std::max(g_settingsScroll.perTabStripSeen96[t], shift.shift96);
+        if (shift.shiftPx <= 0) { continue; }
         for (ok::layout::ControlSpec& spec : specs) {
-            if (spec.tab == t) { spec.rect.y += shift; }
+            if (spec.tab == t) { spec.rect.y += shift.shiftPx; }
         }
     }
+    // v1.3.0-beta8fix1 (bug BS-20): and no page child may be wider than the page
+    // that clips it. The ruler is the tab control's right edge — the same bound
+    // the window itself uses (the tab is placed at S(12) with a width of
+    // client - S(24)), so a row can never be laid out into the strip the frame and
+    // the scrollbar own. The 125 % pass of the probe reported 620 px of group box
+    // in a 641 px client (the authored 496 rescaled), which is `outside_page` by
+    // construction; at 100 % the same row happens to fit and the defect was
+    // invisible for four rounds.
+    //
+    // v1.3.0-beta8fix1 (bug BS-22, part 2): the clamp itself lives in the build
+    // loop above, because it has to run BEFORE the text measurement — a row grown
+    // for one width and laid out at another is a clipped row (see clampLimitRight).
+    // One clamp, one order, one bound: it is not applied twice and cannot drift.
     const ok::layout::LayoutPlan plan = ok::layout::autoFit(
-        specs, disp.top, disp.bottom);
+        specs, disp.top, disp.bottom, static_cast<int>(disp.right));
 
     // Per-tab content depths (page controls only — the always-visible button
     // row lives below the viewport by design and must never drive growth).
@@ -4908,21 +5780,18 @@ void solveSettingsLayout(HWND hwnd) {
             anyScroll = true;
         }
     }
-    const LONG_PTR dlgStyle = ::GetWindowLongPtrW(hwnd, GWL_STYLE);
-    const bool haveScroll = (dlgStyle & WS_VSCROLL) != 0;
-    if (anyScroll != haveScroll) {
-        ::SetWindowLongPtrW(hwnd, GWL_STYLE,
-                            anyScroll ? (dlgStyle | WS_VSCROLL)
-                                      : (dlgStyle & ~static_cast<LONG_PTR>(WS_VSCROLL)));
-    }
-    g_settingsScroll.enabled = anyScroll;
+    // One owner (BS-22c): the latch and the WS_VSCROLL bit are written together,
+    // here and nowhere else, and `barChanged` is the single answer to "did the
+    // client width just change underneath this layout".
+    const bool barChanged = settingsApplyScrollbarLatch(hwnd, anyScroll,
+                                                       "solve-planned");
 
     // -- 3. Apply: window rect, then tab + bottom chrome by clientDelta. --
     ::SetWindowPos(hwnd, nullptr, fit.windowRect.x, fit.windowRect.y,
                    fit.windowRect.w, fit.windowRect.h,
                    SWP_NOZORDER | SWP_NOACTIVATE |
-                       (anyScroll != haveScroll ? SWP_FRAMECHANGED : 0));
-    if (anyScroll != haveScroll) {
+                       (barChanged ? SWP_FRAMECHANGED : 0));
+    if (barChanged) {
         // The scrollbar changed the client width — re-read it.
         ::GetClientRect(hwnd, &rcCli);
     }
@@ -4999,36 +5868,41 @@ void solveSettingsLayout(HWND hwnd) {
         std::max(0, static_cast<int>(viewRight - disp2.left)),
         std::max(0, static_cast<int>(viewBottom - disp2.top))};
     g_settingsScroll.viewportBottom = g_settingsScroll.viewport.bottom();
-    // The scrollbar may have to appear because of the clamp above (the first
-    // decision used the intended growth); if so, apply it and re-measure the
-    // client width so the tab does not sit under the scrollbar.
-    if (!g_settingsScroll.enabled) {
-        bool stillOverflow = false;
-        for (int t = 0; t < 9; ++t) {
-            if (g_settingsScroll.perTabContentBottom[t] > g_settingsScroll.viewportBottom) {
-                stillOverflow = true;
-            }
+    // The scrollbar may have to appear — or disappear — because of the clamp
+    // above (the first decision used the intended growth):
+    //
+    // v1.3.0-beta8fix1 (bug BS-18): ONE OWNER, BOTH DIRECTIONS. The planned
+    // decision cannot know the clamped viewport, so the answer is recomputed
+    // here once and applied with the same correction in either direction:
+    //   * missing bar while content overflows -> the page hides text the user
+    //     cannot reach (BS-01);
+    //   * bar kept for a page that fits -> a thumb that cannot move, and the
+    //     page pays 17 px of width for it.
+    // The correction re-reads the client (a scrollbar is non-client) and keeps
+    // the tab control inside it, exactly as the appearing case always did.
+    bool finalOverflow = false;
+    for (int t = 0; t < 9; ++t) {
+        if (g_settingsScroll.perTabContentBottom[t] > g_settingsScroll.viewportBottom) {
+            finalOverflow = true;
         }
-        if (stillOverflow) {
-            g_settingsScroll.enabled = true;
-            const LONG_PTR st = ::GetWindowLongPtrW(hwnd, GWL_STYLE);
-            ::SetWindowLongPtrW(hwnd, GWL_STYLE, st | WS_VSCROLL);
-            ::SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
-                           SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE |
-                               SWP_FRAMECHANGED);
-            RECT cli2{};
-            ::GetClientRect(hwnd, &cli2);
-            RECT tabNow{};
-            ::GetWindowRect(tabCtl, &tabNow);
-            ::MapWindowPoints(nullptr, hwnd, reinterpret_cast<POINT*>(&tabNow), 2);
-            // Same rule as above (bug BS-15): cli2 is the client rect WITH the
-            // scrollbar already excluded.
-            const int w2 = std::max(S(200),
-                                    static_cast<int>(cli2.right - cli2.left) - S(24));
-            ::SetWindowPos(tabCtl, nullptr, S(12), S(66), w2,
-                           std::max(0, static_cast<int>(tabNow.bottom - tabNow.top)),
-                           SWP_NOZORDER | SWP_NOACTIVATE);
-        }
+    }
+    if (finalOverflow != g_settingsScroll.enabled) {
+        settingsApplyScrollbarLatch(hwnd, finalOverflow, "solve-final");
+        ::SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                       SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE |
+                           SWP_FRAMECHANGED);
+        RECT cli2{};
+        ::GetClientRect(hwnd, &cli2);
+        RECT tabNow{};
+        ::GetWindowRect(tabCtl, &tabNow);
+        ::MapWindowPoints(nullptr, hwnd, reinterpret_cast<POINT*>(&tabNow), 2);
+        // Same rule as above (bug BS-15): cli2 is the client rect WITH the
+        // scrollbar already excluded.
+        const int w2 = std::max(S(200),
+                                static_cast<int>(cli2.right - cli2.left) - S(24));
+        ::SetWindowPos(tabCtl, nullptr, S(12), S(66), w2,
+                       std::max(0, static_cast<int>(tabNow.bottom - tabNow.top)),
+                       SWP_NOZORDER | SWP_NOACTIVATE);
     }
     g_settingsScroll.solved.clear();
     for (std::size_t i = 0; i < specs.size(); ++i) {
@@ -5041,6 +5915,52 @@ void solveSettingsLayout(HWND hwnd) {
                        plan.rects[i].w, plan.rects[i].h,
                        SWP_NOZORDER | SWP_NOACTIVATE);
         g_settingsScroll.solved.emplace_back(hwnds[i], plan.rects[i]);
+    }
+    // v1.3.0-beta8fix1 (bug BS-22s): THE TAB CONTROL OWNS THE PAGE'S PIXELS, SO IT
+    // BELONGS UNDER EVERYTHING.
+    //
+    // The tab control is created first and its rectangle is the whole page area; the
+    // ~120 page controls live above it and draw the page. That order is z-order, and
+    // z-order is not permanent: `showTab()` shows the active tab's controls with
+    // SW_SHOW on every tab switch, and ANY window brought to the top of the sibling
+    // order takes its whole rectangle with it — including the tab control, whose
+    // background covers the page area. When the tab control ends up above a page
+    // control, that control is still there (same rectangle, VISIBLE, no region, the
+    // probe reports `live` == `sampled`, `vis y`, `parent dlg`) and is simply not
+    // drawn: the user sees the dialog's background where a row of settings should be
+    // — "mất nội dung", with every window-state check green. The x64 run 35988174121
+    // measured exactly that state: 8 visible controls of tab 3 with `painted 0/3` at
+    // their own live rectangles while the chrome (outside the tab's rectangle)
+    // painted.
+    //
+    // The page children must therefore be ABOVE the tab control, at all times, and
+    // the one place that can guarantee it is here — after the solve applied every
+    // rectangle, before the repaint. It is a z-order change only: no move, no size,
+    // no activation, and the tab's own window rectangle is untouched.
+    ::SetWindowPos(tabCtl, HWND_BOTTOM, 0, 0, 0, 0,
+                   SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    // v1.3.0-beta8fix1 (bug BS-22t): AND THE PIXELS THE TAB CONTROL WAS COVERING
+    // ARE REPAINTED BEFORE ANYTHING CAN LOOK AT THEM.
+    //
+    // A z-order change reveals the page children ASYNCHRONOUSLY: the system
+    // invalidates their newly exposed rectangles and their WM_PAINT runs later,
+    // so a frame captured in between still shows the tab control's background
+    // where the settings are. The x64 run 35989916632 measured it — `[I8] a
+    // forced full repaint changed 3540 client pixels (stale frame)`, the one
+    // invariant this change disturbed, at scenario_forced_repaint dpi 96. The
+    // dialog's own repaint does not cover it either: `settingsRepaintAll()`
+    // invalidates the PARENT, and a parent never paints its children's pixels.
+    //
+    // So the tab control's own rectangle — the page area, which is what the
+    // z-order change exposed — is repainted here, parent background first and
+    // every child inside it (`RDW_ALLCHILDREN`), synchronously. One pass, on the
+    // operation that changed the stacking; no timer, no loop.
+    {
+        RECT pageRc{};
+        ::GetWindowRect(tabCtl, &pageRc);
+        ::MapWindowPoints(nullptr, hwnd, reinterpret_cast<POINT*>(&pageRc), 2);
+        ::RedrawWindow(hwnd, &pageRc, nullptr,
+                       RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW | RDW_ALLCHILDREN);
     }
     int curTab = static_cast<int>(::SendMessageW(tabCtl, TCM_GETCURSEL, 0, 0));
     if (curTab < 0 || curTab > 8) { curTab = 0; }
@@ -5060,6 +5980,35 @@ void solveSettingsLayout(HWND hwnd) {
             solveSettingsLayout(hwnd);
             --g_settingsSolvePass;
             return;
+        }
+        // v1.3.0-beta8fix1 (bug BS-22l): AND THE SIZE A WINDOW DECIDED FOR
+        // ITSELF, AFTER WE SIZED IT.
+        //
+        // `SetWindowPos` above asked for the plan's rectangle and a combo box
+        // answered with its own height (Win32 sizes a CBS_DROPDOWNLIST to its
+        // item height and its borders, and it does it again on every font
+        // change). The plan is then a description of a window that does not
+        // exist: the probe's I6 says so in numbers (`id 504 lives 128,297 210x33
+        // but the solver's baseline is 128,297 210x25`) and the row below it is
+        // placed inside the combo's real box (`[overlap] id 625 (ComboBox) ...
+        // and id 627 (Static) ... overlap by 398x6 px`, run 35980164209).
+        //
+        // One more solve is enough, and the same guard bounds it: the second
+        // pass reads the height the window really has now, so the plan and every
+        // row under it agree — and nothing here needs to know WHICH control it
+        // was or why (a resize the app did not ask for is a reflow request, the
+        // same way a runtime text growth is, BS-12).
+        for (std::size_t i = 0; i < specs.size(); ++i) {
+            if (specs[i].tab == ok::layout::ControlSpec::kAlwaysVisible) { continue; }
+            RECT live{};
+            ::GetWindowRect(hwnds[i], &live);
+            if (static_cast<int>(live.right - live.left) != plan.rects[i].w ||
+                static_cast<int>(live.bottom - live.top) != plan.rects[i].h) {
+                ++g_settingsSolvePass;
+                solveSettingsLayout(hwnd);
+                --g_settingsSolvePass;
+                return;
+            }
         }
     }
 
@@ -5088,6 +6037,7 @@ void reflowSettingsLayoutPreservingScroll(HWND hwnd) {
         si.fMask = SIF_POS;
         si.nPos = clamped;
         ::SetScrollInfo(hwnd, SB_VERT, &si, TRUE);
+        settingsAdoptScrollbarVisibility(hwnd);   // BS-22c
         applySettingsScrollOffset(hwnd);
     }
     // BS-16a: the solve ran either way, so the dialog repaints either way.
@@ -5515,7 +6465,7 @@ std::string buildIdentityUtf8() {
     std::string out = "\n=== Bản dựng (build identity) ===\n";
     out += "Ứng dụng      : KieeKey ";
     out += OPENKEY_KIEEKEY_VERSION_STRING;
-    out += " (PE file version 1.3.0.9)\n";
+    out += " (PE file version 1.3.0.10)\n";
     out += "SHA-256       : ";
     out += hex.empty() ? "không đọc được file đang chạy" : hex;
     out += "\n";
@@ -6027,11 +6977,22 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             // ~165 px at a realistic advance but the slot is 160 px (the BPM
             // edit starts at 444) — the range in parentheses keeps the meaning
             // and the label now fits with room to spare (audit_layout, CA-01d).
+            // v1.3.0-beta8fix1 (bug BS-22c): the BPM row moved 8 px down (368 ->
+            // 376, and the edit 366 -> 374). A combo box sizes its own closed
+            // window to its item height, and at 125 % the selected label "Hardcore
+            // — sai là chết (mặc định)" makes IDC_CMB_FAILMODE 33 px tall — 2 px
+            // more than the 25 px the authored geometry assumed — so the row that
+            // was authored 3 px BELOW the combo's authored bottom ended up 5 px
+            // inside it, and the probe reported it at six scroll positions:
+            //   [overlap] id 596 (ComboBox) 350,487 275x33 and id 597 (Edit)
+            //             555,515 70x28 overlap by 70x5 px
+            // 8 px is the smallest move that clears the real height at every scale
+            // the contract names.
             mkCtl(hwnd, L"STATIC", L"Nhịp Rhythm (60-220):",
-                  WS_CHILD | WS_VISIBLE | SS_LEFT, S(280), S(368), S(160), S(20), reinterpret_cast<HMENU>(IDC_STAT_RHYTHM_BPM));
+                  WS_CHILD | WS_VISIBLE | SS_LEFT, S(280), S(376), S(160), S(20), reinterpret_cast<HMENU>(IDC_STAT_RHYTHM_BPM));
             mkCtl(hwnd, L"EDIT", L"112",
                   WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_NUMBER | WS_BORDER,
-                  S(444), S(366), S(56), S(22), reinterpret_cast<HMENU>(IDC_EDT_RHYTHM_BPM));
+                  S(444), S(374), S(56), S(22), reinterpret_cast<HMENU>(IDC_EDT_RHYTHM_BPM));
             mkCtl(hwnd, L"BUTTON", L"✔ Áp dụng cấu hình game",
                   WS_CHILD | WS_VISIBLE | WS_TABSTOP, S(44), S(362), S(220), S(28),
                   reinterpret_cast<HMENU>(IDC_BTN_APPLY_ARCADE_CFG));
@@ -6284,13 +7245,30 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             }
             refreshSettingsDpi();
             // v1.3.0-beta5 (bug B1): re-measure + re-solve at the new scale
-            // (refreshSettingsDpi only rescales rects/fonts in place; a label
-            // that wraps taller at the new DPI must GROW, and the window must
-            // refit against the new monitor's work area — including the
-            // scroll fallback when the new scale no longer fits).
+            // (a label that wraps taller at the new DPI must GROW, and the
+            // window must refit against the new monitor's work area — including
+            // the scroll fallback when the new scale no longer fits).
+            // v1.3.0-beta8fix1 (bug BS-18): refreshSettingsDpi() now owns that
+            // re-solve (a rescaled dialog that is not solved is unrecoverable),
+            // so this second call is only the belt to that suspenders — the
+            // solve is idempotent and the dialog is already coherent here.
             solveSettingsLayout(hwnd);
             return 0;
         }
+
+        case WM_DISPLAYCHANGE:
+            // v1.3.0-beta8fix1 (bug BS-18): the settings dialog is a TOP-LEVEL
+            // window, so the OS broadcasts a display change (monitor hot-plug,
+            // resolution, scale) straight to it — it must not depend on the
+            // main window's handler for its own layout. Before this, the dialog
+            // ignored the message and the rescale it needed arrived (if at all)
+            // through the main window's broadcast handling, which at
+            // beta8 stopped after resealing the children and dropping the
+            // layout baseline: the page lost its content and its scrollbar
+            // until the dialog was closed and reopened. refreshSettingsDpi()
+            // now rescales AND re-solves in one step.
+            refreshSettingsDpi();
+            return 0;
 
         // v1.3.0-beta8 (bug BS-01 follow-through): the scroll fallback had NO
         // mouse-wheel path at all, so the only way to move the page was the
@@ -6316,6 +7294,7 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 si.fMask = SIF_POS;
                 si.nPos = pos;
                 ::SetScrollInfo(hwnd, SB_VERT, &si, TRUE);
+                settingsAdoptScrollbarVisibility(hwnd);   // BS-22c
                 applySettingsScrollOffset(hwnd);
             }
             return 0;   // never falls through to the dialog default (beep)
@@ -6354,11 +7333,25 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             si.fMask = SIF_POS;
             si.nPos = pos;
             ::SetScrollInfo(hwnd, SB_VERT, &si, TRUE);
+            // SIF_POS alone cannot change the bar's visibility, but the re-adopt
+            // is unconditional so that no future write of the dialog's scroll
+            // state can be added without one (BS-22c).
+            settingsAdoptScrollbarVisibility(hwnd);
             applySettingsScrollOffset(hwnd);
             return 0;
         }
 
 #if defined(KIEEKEY_UI_PROBE)
+        case WM_APP + 78: {   // v1.3.0-beta8fix1 (BS-22n): a child resized itself
+            // Posted by comboWheelProc() when a combo box took a size the plan did
+            // not give it. One reflow, and the flag is cleared first so the reflow's
+            // own SetWindowPos calls cannot queue another.
+            g_settingsReflowPosted = false;
+            g_settingsRowGrowthPending = false;
+            reflowSettingsLayoutPreservingScroll(hwnd);
+            return 0;
+        }
+
         case WM_APP + 77:   // KieeKeyProbeFreezeUi: the probe owns the dialog now
             ::KillTimer(hwnd, 1);
             return 0;
@@ -7511,6 +8504,27 @@ extern "C" HWND KieeKeyProbeOpenSettings(int tab) {
 // width, so the probe can print its measurement next to the solver's instead of
 // assuming they agree (they did not, on the first runs — see the clip findings
 // in BUG_HUNT_REPORT_beta8).
+// v1.3.0-beta8fix1 (bug BS-22g): THE RECTANGLE THE SOLVER APPLIED, not the one
+// Win32 is showing. A finding that says "needs 744px in a 629px box" cannot be
+// acted on without it: the text was either measured by the solver (and the box it
+// produced is the answer) or the box came from somewhere else, and those two
+// cases need opposite fixes. out[0..3] = x, y, w, h of the baseline entry for
+// `id`; returns 1 when the control has one, 0 when it does not.
+extern "C" int KieeKeyProbeSolvedRect(HWND dlg, int id, int* out) {
+    if (dlg == nullptr || out == nullptr) { return 0; }
+    const HWND child = ::GetDlgItem(dlg, id);
+    if (child == nullptr) { return 0; }
+    for (const auto& entry : g_settingsScroll.solved) {
+        if (entry.first != child) { continue; }
+        out[0] = entry.second.x;
+        out[1] = entry.second.y;
+        out[2] = entry.second.w;
+        out[3] = entry.second.h;
+        return 1;
+    }
+    return 0;
+}
+
 extern "C" int KieeKeyProbeMeasureStaticHeight(HWND dlg, int id) {
     HWND child = ::GetDlgItem(dlg, id);
     if (child == nullptr) { return -1; }
@@ -7590,5 +8604,302 @@ extern "C" int KieeKeyProbeSelectTab(HWND dlg, int tab) {
                    reinterpret_cast<LPARAM>(&hdr));
     ::UpdateWindow(dlg);
     return 0;
+}
+
+//===========================================================================
+// v1.3.0-beta8fix1 — STATE-SEQUENCE entry points (the fuzz harness's hands).
+//
+// WHY THIS EXISTS. The CA-03 probe could already select a tab, scroll, force a
+// reflow and simulate a DPI change, and it was GREEN in four consecutive CI
+// rounds while the user's screen showed a settings page that had lost its
+// content and its scrollbar. Every one of those checks measured a SETTLED
+// dialog: solve, then look. The defect lives in the ORDER OF OPERATIONS — an
+// operation that leaves the dialog coherent, followed by another one that
+// leaves it incoherent — so the harness has to drive the app's own operations
+// in a seeded random order and assert an invariant after EVERY one of them.
+//
+// These entry points are what makes that possible without the harness ever
+// re-implementing app logic:
+//
+//   * KieeKeyProbeSetOffset runs the SAME clamp + SetScrollInfo + region apply
+//     the user's thumb drag and wheel end in (WM_VSCROLL / WM_MOUSEWHEEL).
+//   * KieeKeyProbeDisplayChange runs the app's display-change response. That is
+//     the code under test — the harness must not model it.
+//   * KieeKeyProbeScrollState hands the app's OWN numbers back (offset, range,
+//     enabled, the clamped viewport, per-tab solved content depth, the real
+//     SCROLLINFO), so an invariant is asserted on the state the app believes in
+//     and not on a second opinion computed by the probe.
+//   * KieeKeyProbeResize / KieeKeyProbeFontScale drive the two axes the user's
+//     machine varies and the CI runner's desktop cannot.
+//
+// All of them exist only under -DKIEEKEY_UI_PROBE; KieeKeyApp.exe is unchanged.
+//===========================================================================
+struct KieeKeyProbeScrollStateT {
+    int haveBaseline;                 // 0 => the scroll machinery has no layout
+    int solvedCount;                  // baseline entries (page children)
+    int offset;                       // the app's own scroll position
+    int range;                        // current tab's range (px)
+    int enabled;                      // the app's own "bar is on" latch
+    int styleVScroll;                 // WS_VSCROLL on the dialog right now
+    int viewportX, viewportY;         // the page rect the solve CLAMPED to
+    int viewportW, viewportH;
+    int viewportBottom;
+    int contentBottom[9];             // per-tab deepest SOLVED bottom
+    int stripShift[9];                // per-tab tab-strip shift baked into it (96 dpi)
+    int stripSeen[9];                 // the deepest that shift has ever been (96 dpi)
+    int stripRelayouts;               // times the strip needed the nudge to re-lay out
+    int barPos, barPage, barMax;      // Win32's answer (GetScrollInfo)
+    UINT dpi;                         // the scale the solve used
+    // v1.3.0-beta8fix1 (bug BS-22c): WHICH call last wrote each half of the bar
+    // pair (and how often), so a divergence names its writer instead of costing a
+    // CI round of guessing. MUST STAY LAST, in this order: tools/ui_probe carries
+    // a mirror of this struct and the two are compared at probe start-up
+    // (KieeKeyProbeScrollStateSize) — a field inserted in the middle reads as
+    // somebody else's bytes, which is a crash in the probe, not a finding.
+    const char* latchWriter;
+    const char* styleWriter;
+    int latchWrites;
+    int styleWrites;
+    int latchDrifts;                  // times the sync found the two disagreeing
+    // v1.3.0-beta8fix1 (bug BS-22g): the row count the last plan put the tab strip
+    // into (1 = the labels fit one row). The strip-cycle scenario has to START
+    // from a one-row strip to measure the grow/shrink transition, and at 120/144
+    // dpi a client sized for 96 dpi wraps the labels by itself — so the harness
+    // asks the app what the plan did instead of inferring it from the page top
+    // (a wrapped strip and a one-row strip can share a page top when the tab
+    // control is height-clamped, which is exactly the state that made 54 I1
+    // "the labels did not wrap" findings describe a transition that DID happen:
+    // `stripShift seen 29 px`).
+    int stripRows;
+    // v1.3.0-beta8fix1 (bug BS-22u): the strip decision's own arithmetic — the
+    // plan's rows and the width it decided on, plus the tabs control's answer and
+    // how often it has been re-read (see SettingsScrollState in main.cpp).
+    int stripPlanRows;
+    int stripPlanRequired;
+    int stripPlanAvailable;
+    int stripPlanClientW;
+    int stripMeasuredRows;
+    int stripMeasureCount;
+    int stripStyleMultiline;
+    int stripPlanFontPx;
+};
+
+// The probe's mirror of this struct must agree with it byte for byte: a field
+// added on one side only reads as another field's bytes (a `const char*` read out
+// of an `int` is a crash, not a finding). The probe asks for the size at start-up
+// and refuses to run when the two disagree.
+extern "C" unsigned KieeKeyProbeScrollStateSize(void) {
+    return static_cast<unsigned>(sizeof(KieeKeyProbeScrollStateT));
+}
+
+extern "C" void KieeKeyProbeScrollState(HWND dlg, KieeKeyProbeScrollStateT* out) {
+    if (out == nullptr) { return; }
+    *out = KieeKeyProbeScrollStateT{};
+    for (int t = 0; t < 9; ++t) { out->contentBottom[t] = 0; }
+    out->haveBaseline = g_settingsScroll.solved.empty() ? 0 : 1;
+    out->solvedCount  = static_cast<int>(g_settingsScroll.solved.size());
+    out->offset       = g_settingsScroll.offset;
+    out->range        = g_settingsScroll.range;
+    out->enabled      = g_settingsScroll.enabled ? 1 : 0;
+    out->viewportX    = g_settingsScroll.viewport.x;
+    out->viewportY    = g_settingsScroll.viewport.y;
+    out->viewportW    = g_settingsScroll.viewport.w;
+    out->viewportH    = g_settingsScroll.viewport.h;
+    out->viewportBottom = g_settingsScroll.viewportBottom;
+    for (int t = 0; t < 9; ++t) { out->contentBottom[t] = g_settingsScroll.perTabContentBottom[t]; }
+    for (int t = 0; t < 9; ++t) { out->stripShift[t] = g_settingsScroll.perTabStripShift96[t]; }
+    for (int t = 0; t < 9; ++t) { out->stripSeen[t] = g_settingsScroll.perTabStripSeen96[t]; }
+    out->dpi = g_settingsDpi != 0 ? g_settingsDpi : 96;
+#if defined(KIEEKEY_UI_PROBE)
+    out->latchWriter = g_probeLatchWriter;
+    out->styleWriter = g_probeStyleWriter;
+    out->latchWrites = g_probeLatchWrites;
+    out->styleWrites = g_probeStyleWrites;
+    out->latchDrifts = g_probeLatchDrifts;
+    out->stripRelayouts = g_probeStripRelayouts;
+#endif
+    out->stripRows = g_settingsScroll.stripRows;
+    out->stripPlanRows = g_settingsScroll.stripPlanRows;
+    out->stripPlanRequired = g_settingsScroll.stripPlanRequired;
+    out->stripPlanAvailable = g_settingsScroll.stripPlanAvailable;
+    out->stripPlanClientW = g_settingsScroll.stripPlanClientW;
+    out->stripMeasuredRows = g_settingsScroll.stripMeasuredRows;
+    out->stripMeasureCount = g_settingsScroll.stripMeasureCount;
+    out->stripPlanFontPx = g_settingsScroll.stripPlanFontPx;
+    if (dlg != nullptr) {
+        const HWND tabForStyle = ::GetDlgItem(dlg, IDC_TAB);
+        out->stripStyleMultiline =
+            (tabForStyle != nullptr &&
+             (::GetWindowLongPtrW(tabForStyle, GWL_STYLE) & TCS_MULTILINE) != 0)
+                ? 1
+                : 0;
+        out->styleVScroll =
+            (::GetWindowLongPtrW(dlg, GWL_STYLE) & WS_VSCROLL) != 0 ? 1 : 0;
+        SCROLLINFO si{};
+        si.cbSize = sizeof(si);
+        si.fMask = SIF_ALL;
+        if (::GetScrollInfo(dlg, SB_VERT, &si) != FALSE) {
+            out->barPos  = si.nPos;
+            out->barPage = static_cast<int>(si.nPage);
+            out->barMax  = si.nMax;
+        }
+    }
+}
+
+// The tail of the app's own scroll path (WM_VSCROLL SB_THUMBTRACK / the wheel):
+// the APP clamps, updates the scrollbar and re-applies the regions. A harness
+// that wrote the offset itself could reach a state no user drag can produce.
+extern "C" int KieeKeyProbeSetOffset(HWND dlg, int pos) {
+    if (dlg == nullptr) { return -1; }
+    const int clamped = std::clamp(pos, 0, std::max(0, g_settingsScroll.range));
+    if (clamped != g_settingsScroll.offset) {
+        g_settingsScroll.offset = clamped;
+        SCROLLINFO si{};
+        si.cbSize = sizeof(si);
+        si.fMask = SIF_POS;
+        si.nPos = clamped;
+        ::SetScrollInfo(dlg, SB_VERT, &si, TRUE);
+        settingsAdoptScrollbarVisibility(dlg);   // BS-22c
+        applySettingsScrollOffset(dlg);
+    }
+    return g_settingsScroll.offset;
+}
+
+// The app's response to a display change (monitor topology, resolution, scale).
+// The main window's WM_DISPLAYCHANGE handler calls exactly this when the
+// settings dialog is open, and it is the whole of the dialog's own reaction
+// today — so this is the code under test, not a model of it.
+extern "C" int KieeKeyProbeDisplayChange(HWND dlg) {
+    if (dlg == nullptr || g.hSettings == nullptr) { return -1; }
+    refreshSettingsDpi();
+    return 0;
+}
+
+// The harness's ability to say "the monitor now reports this scale" — see the
+// note above windowDpi(). Probe-only, and cleared by the harness after the
+// scenario so no later check runs with a faked scale.
+extern "C" void KieeKeyProbeSetWindowDpiOverride(UINT dpi) {
+    g_probeWindowDpiOverride = dpi;
+}
+
+// Resize the dialog to a target CLIENT size (a work-area / monitor change).
+extern "C" int KieeKeyProbeResize(HWND dlg, int clientW, int clientH) {
+    if (dlg == nullptr || clientW <= 0 || clientH <= 0) { return -1; }
+    RECT rc{0, 0, clientW, clientH};
+    const LONG_PTR style = ::GetWindowLongPtrW(dlg, GWL_STYLE);
+    const LONG_PTR exStyle = ::GetWindowLongPtrW(dlg, GWL_EXSTYLE);
+    ::AdjustWindowRectEx(&rc, static_cast<DWORD>(style), FALSE,
+                         static_cast<DWORD>(exStyle));
+    ::SetWindowPos(dlg, nullptr, 0, 0, rc.right - rc.left, rc.bottom - rc.top,
+                   SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    return 0;
+}
+
+// A larger system text size reaches the controls as larger metrics. The dialog
+// creates its own font, so the harness supplies the scaled faces THROUGH THE
+// APP'S OWN FONT FACTORY and then asks the app to re-solve: the geometry the
+// solver has to cope with is the real one for that text scale.
+// v1.3.0-beta8fix1 (bug BS-22f): THE SCALE KNOWS EVERY FACE THE DIALOG CAN WEAR.
+// The mapping used to be ONE old face per role, and whichever single face that
+// was, it was wrong half the time: a DPI change re-applies the app's own faces
+// (applySettingsDpiScale), while a text-scale cycle leaves the probe's faces on
+// the controls, so the "old" side has to be the UNION of both — the app's faces
+// at the CURRENT dpi and every face this probe has ever applied for that role.
+// With only the app's faces (before 76bef1a) a 100 % call could not undo a 150 %
+// call; with only the probe's last faces (76bef1a) a 150 % call after a DPI
+// change matched nothing and the labels never widened — the first violating state
+// of the 8ba7da0 x64 run, tab 0 cycle 1 at the 120 dpi pass ("the nine tab labels
+// did not wrap at font 150% (page top 109 vs the one-row 109)").
+struct KieeKeyProbeFontPair { HFONT from; HFONT to; };
+struct KieeKeyProbeFontCtx {
+    static constexpr int kMaxPairs = 3 * (1 + 8);   // roles x (app face + history)
+    KieeKeyProbeFontPair pairs[kMaxPairs]{};
+    int count = 0;
+    void add(HFONT from, HFONT to) {
+        if (from == nullptr || to == nullptr || from == to || count >= kMaxPairs) {
+            return;   // already the target (or unclassifiable): leave it alone
+        }
+        for (int i = 0; i < count; ++i) {
+            if (pairs[i].from == from) { return; }
+        }
+        pairs[count++] = KieeKeyProbeFontPair{from, to};
+    }
+};
+static BOOL CALLBACK kieeKeyProbeApplyFont(HWND child, LPARAM lp) {
+    const auto* ctx = reinterpret_cast<const KieeKeyProbeFontCtx*>(lp);
+    if (ctx == nullptr) { return TRUE; }
+    const HFONT cur = reinterpret_cast<HFONT>(
+        ::SendMessageW(child, WM_GETFONT, 0, 0));
+    if (cur == nullptr) { return TRUE; }
+    for (int i = 0; i < ctx->count; ++i) {
+        if (ctx->pairs[i].from == cur) {
+            ::SendMessageW(child, WM_SETFONT,
+                           reinterpret_cast<WPARAM>(ctx->pairs[i].to), TRUE);
+            break;
+        }
+    }
+    return TRUE;
+}
+
+// v1.3.0-beta8fix1 (bug BS-22c): A FONT SCALE THAT CANNOT BE UNDONE IS NOT A FONT
+// SCALE. `kieeKeyProbeApplyFont` maps the APP's fonts onto the probe's by identity,
+// and this entry point used the app's CURRENT fonts as the "old" side — so a call
+// with percent == 100 (the target IS the app's own font size) matched nothing and
+// replaced nothing: every control kept the last scaled font, and the whole pass
+// then measured a dialog whose labels were 1.5x too big. That is why the same
+// label "needed" the same pixels at 125 % and at 150 % in the 77e8fea run, and why
+// the tab strip stayed wrapped after the text scale returned to 100 % (87 x
+// `[I1] the page top did not return to its one-row value: 114 -> 130`).
+// The probe remembers what IT applied, so the next call can undo it.
+static HFONT g_probeFontNormal = nullptr;   // the newest face, for the report
+static HFONT g_probeFontBold = nullptr;
+static HFONT g_probeFontTitle = nullptr;
+// ...and the history of everything it ever applied, so a face left on a control
+// by an earlier pass (or by an earlier dpi) is still recognised.
+static HFONT g_probeFontHistory[3][8]{};
+static int g_probeFontHistoryCount[3] = {0, 0, 0};
+static void kieeKeyProbeRememberFont(int role, HFONT f) {
+    if (f == nullptr || role < 0 || role > 2) { return; }
+    if (role == 0) { g_probeFontNormal = f; }
+    else if (role == 1) { g_probeFontBold = f; }
+    else { g_probeFontTitle = f; }
+    int& n = g_probeFontHistoryCount[role];
+    for (int i = 0; i < n; ++i) {
+        if (g_probeFontHistory[role][i] == f) { return; }
+    }
+    if (n < 8) {   // sizeof(g_probeFontHistory[role]) / sizeof(HFONT)
+        g_probeFontHistory[role][n++] = f;
+    }
+}
+
+extern "C" int KieeKeyProbeFontScale(HWND dlg, int percent) {
+    if (dlg == nullptr || percent < 100 || percent > 400) { return -1; }
+    const int px = percent == 100 ? 13 : std::max(8, 13 * percent / 100);
+    const HFONT next[3] = {
+        cachedFont(px, FW_NORMAL),
+        cachedFont(px, FW_SEMIBOLD),
+        cachedFont(std::max(12, 20 * percent / 100), FW_SEMIBOLD)};
+    const HFONT app[3] = {uiFont(), uiFontBold(), uiFontTitle()};
+    KieeKeyProbeFontCtx ctx;
+    for (int role = 0; role < 3; ++role) {
+        ctx.add(app[role], next[role]);            // what the app itself applies
+        for (int i = 0; i < g_probeFontHistoryCount[role]; ++i) {
+            ctx.add(g_probeFontHistory[role][i], next[role]);   // what we applied
+        }
+    }
+    ::EnumChildWindows(dlg, &kieeKeyProbeApplyFont, reinterpret_cast<LPARAM>(&ctx));
+    for (int role = 0; role < 3; ++role) { kieeKeyProbeRememberFont(role, next[role]); }
+    // The controls changed size underneath the solved layout: everything the
+    // solver measured is stale, which is exactly the condition the layout must
+    // survive.
+    dropSettingsLayoutBaseline();
+    solveSettingsLayout(dlg);
+    return percent;
+}
+
+// The app's own runtime-growth path for a live row (the 500 ms tick's).
+extern "C" void KieeKeyProbeTypeRow(HWND dlg, int id, const wchar_t* text) {
+    if (dlg == nullptr || text == nullptr) { return; }
+    refreshGrowingRow(dlg, id, std::wstring(text));
 }
 #endif // KIEEKEY_UI_PROBE

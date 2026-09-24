@@ -104,6 +104,7 @@ struct ProbeScrollStateT {          // mirrors KieeKeyProbeScrollStateT (main.cp
     int contentBottom[9];
     int stripShift[9];              // tab-strip shift baked into the baseline (96 dpi)
     int stripSeen[9];               // the deepest that shift has ever been (96 dpi)
+    int stripRelayouts;             // times the strip needed the nudge to re-lay out
     int barPos, barPage, barMax;
     UINT dpi;
     // v1.3.0-beta8fix1 (bug BS-22c): who last wrote each half of the
@@ -1343,6 +1344,8 @@ std::string harnessStateStr(const HarnessState& s, const char* op, int step,
            std::to_string(a.contentBottom[s.tab]) +
            " stripShift " + std::to_string(a.stripShift[s.tab]) +
            " stripSeen " + std::to_string(a.stripSeen[s.tab]) +
+           (a.stripRelayouts > 0 ? " stripRelayouts " + std::to_string(a.stripRelayouts)
+                                 : std::string()) +
            " deepestUnscrolled " + std::to_string(s.deepestUnscrolledBottom);
 }
 

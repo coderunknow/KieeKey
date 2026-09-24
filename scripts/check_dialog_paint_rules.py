@@ -555,6 +555,19 @@ def check(repo: Path):
             "rectangle of the strip that was there BEFORE the change, so a strip that "
             "went back to one row still pushes the whole page down by a row and every "
             "control the app believes is visible hides under the tab labels")
+    if '~static_cast<LONG_PTR>(TCS_MULTILINE)' not in solve_body:
+        failures.append(
+            "main.cpp: the tab control's TCS_MULTILINE style is never CLEARED again "
+            "(BS-22d) — the bit tracks the planned row count, and it is what makes "
+            "the control re-lay its rows out; leaving it set after the labels fit one "
+            "row again keeps the two-row display rectangle in force, so the page is "
+            "pushed down under a strip that is one row tall (87 x `[I1] the page top "
+            "did not return to its one-row value`)")
+    if 'tabH - 1' not in solve_body:
+        failures.append(
+            "main.cpp: the size-change nudge that makes the tab control re-lay out "
+            "after it goes back to one row is gone (BS-22d) — a size change is the "
+            "one event the control is guaranteed to re-lay its rows out for")
     if '::UpdateWindow(tabCtl)' not in solve_body:
         failures.append(
             "main.cpp: the forced tab re-layout is gone (BS-10/BS-22d) — the style "

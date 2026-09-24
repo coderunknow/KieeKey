@@ -262,6 +262,19 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "does not mirror the app's",
     ),
     (
+        "BS-22d the strip style stops tracking the plan",
+        "src/app/main.cpp",
+        "        if (tabPlan.multiline != hasMultiline) {\n"
+        "            ::SetWindowLongPtrW(tabCtl, GWL_STYLE,\n"
+        "                                tabPlan.multiline\n"
+        "                                    ? (tabStyle | TCS_MULTILINE)\n"
+        "                                    : (tabStyle & ~static_cast<LONG_PTR>(TCS_MULTILINE)));\n"
+        "        }",
+        "        if (false) {   // seeded: only the grow direction sets the style\n"
+        "        }",
+        "TCS_MULTILINE style is never CLEARED again",
+    ),
+    (
         "BS-22d the strip stops re-laying out when it shrinks",
         "src/app/main.cpp",
         "        const bool stripReshaped = (stripRows != g_settingsScroll.stripRows);",

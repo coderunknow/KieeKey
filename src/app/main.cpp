@@ -4921,6 +4921,9 @@ void applySettingsScrollOffset(HWND hwnd) {
 int g_probeLatchWrites = 0;
 int g_probeStyleWrites = 0;
 int g_probeLatchDrifts = 0;
+// How many times the tab strip needed the size-change nudge to re-lay out after it
+// went back to one row (see the strip block in solveSettingsLayout).
+int g_probeStripRelayouts = 0;
 const char* g_probeLatchWriter = "init";
 const char* g_probeStyleWriter = "init";
 #endif
@@ -5133,15 +5136,51 @@ void solveSettingsLayout(HWND hwnd) {
         // window pass per reflow for nothing).
         const int stripRows = tabPlan.multiline ? 2 : 1;
         const bool stripReshaped = (stripRows != g_settingsScroll.stripRows);
-        if (stripReshaped) {
+        // v1.3.0-beta8fix1 (bug BS-22d): THE STYLE BIT TRACKS THE PLAN, IN BOTH
+        // DIRECTIONS. Setting TCS_MULTILINE is what makes the control re-lay out
+        // when the labels no longer fit (BS-10); CLEARING it is what makes the
+        // control drop back to one row when they fit again. Leaving the bit set
+        // after the text scale returned to 100 % left the two-row layout in force:
+        // the tab control re-lays out on a style change and on a size change, and
+        // the probe's 100 % pass showed the display rectangle still 16 px low
+        // (`page top 114 -> 130 (wrapped) -> 130`, 87 findings) with the page
+        // pushed down under the strip by its own solver.
+        const bool hasMultiline = (tabStyle & TCS_MULTILINE) != 0;
+        if (tabPlan.multiline != hasMultiline) {
+            ::SetWindowLongPtrW(tabCtl, GWL_STYLE,
+                                tabPlan.multiline
+                                    ? (tabStyle | TCS_MULTILINE)
+                                    : (tabStyle & ~static_cast<LONG_PTR>(TCS_MULTILINE)));
+        }
+        if (stripReshaped || tabPlan.multiline != hasMultiline) {
+            const int rowsBefore = g_settingsScroll.stripRows;
             g_settingsScroll.stripRows = stripRows;
-            if (tabPlan.multiline && (tabStyle & TCS_MULTILINE) == 0) {
-                ::SetWindowLongPtrW(tabCtl, GWL_STYLE, tabStyle | TCS_MULTILINE);
-            }
             ::SetWindowPos(tabCtl, nullptr, 0, 0, 0, 0,
                            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE |
                                SWP_FRAMECHANGED);
             ::UpdateWindow(tabCtl);
+            // And when the strip SHRINKS, make the control recompute its row
+            // layout the way it does for every other layout change: a size change.
+            // The control keeps its size (the second call restores it in the same
+            // message), so nothing moves or flickers; what changes is that the tab
+            // control re-lays its rows out before the display rectangle is read.
+            // Counted, so the report can say how often Windows needed the nudge.
+            if (stripRows < rowsBefore) {
+                RECT tabNow{};
+                ::GetWindowRect(tabCtl, &tabNow);
+                const int tabW = static_cast<int>(tabNow.right - tabNow.left);
+                const int tabH = static_cast<int>(tabNow.bottom - tabNow.top);
+                if (tabW > 0 && tabH > 1) {
+                    ::SetWindowPos(tabCtl, nullptr, 0, 0, tabW, tabH - 1,
+                                   SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+                    ::SetWindowPos(tabCtl, nullptr, 0, 0, tabW, tabH,
+                                   SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+                    ::UpdateWindow(tabCtl);
+#if defined(KIEEKEY_UI_PROBE)
+                    ++g_probeStripRelayouts;
+#endif
+                }
+            }
         }
     }
 
@@ -8178,6 +8217,7 @@ struct KieeKeyProbeScrollStateT {
     int contentBottom[9];             // per-tab deepest SOLVED bottom
     int stripShift[9];                // per-tab tab-strip shift baked into it (96 dpi)
     int stripSeen[9];                 // the deepest that shift has ever been (96 dpi)
+    int stripRelayouts;               // times the strip needed the nudge to re-lay out
     int barPos, barPage, barMax;      // Win32's answer (GetScrollInfo)
     UINT dpi;                         // the scale the solve used
     // v1.3.0-beta8fix1 (bug BS-22c): WHICH call last wrote each half of the bar
@@ -8225,6 +8265,7 @@ extern "C" void KieeKeyProbeScrollState(HWND dlg, KieeKeyProbeScrollStateT* out)
     out->latchWrites = g_probeLatchWrites;
     out->styleWrites = g_probeStyleWrites;
     out->latchDrifts = g_probeLatchDrifts;
+    out->stripRelayouts = g_probeStripRelayouts;
 #endif
     if (dlg != nullptr) {
         out->styleVScroll =

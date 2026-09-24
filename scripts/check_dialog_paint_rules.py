@@ -85,6 +85,47 @@ def struct_fields(source: str, name: str) -> list[str]:
     return out
 
 
+def blank_comments(source: str) -> str:
+    """`source` with comment bodies blanked out, line numbers unchanged.
+
+    A line scan has to see what the COMPILER sees: the code explains the pair it
+    protects in prose, and prose that mentions `SetScrollInfo(SB_VERT)` is not a
+    call site (the first version of the every-write-readopts rule matched the
+    explanation and failed its own gate). String and character literals are
+    blanked the same way so a `//` inside one cannot hide real code.
+    """
+    out: list[str] = []
+    i, n = 0, len(source)
+    while i < n:
+        c = source[i]
+        if c == '/' and i + 1 < n and source[i + 1] == '/':
+            j = source.find('\n', i)
+            j = n if j < 0 else j
+            out.append(' ' * (j - i))
+            i = j
+        elif c == '/' and i + 1 < n and source[i + 1] == '*':
+            j = source.find('*/', i + 2)
+            j = n if j < 0 else j + 2
+            out.append(''.join(ch if ch == '\n' else ' ' for ch in source[i:j]))
+            i = j
+        elif c in '"\'':
+            j = i + 1
+            while j < n:
+                if source[j] == '\\':
+                    j += 2
+                    continue
+                if source[j] == c or source[j] == '\n':
+                    j += 1
+                    break
+                j += 1
+            out.append(''.join(ch if ch == '\n' else ' ' for ch in source[i:j]))
+            i = j
+        else:
+            out.append(c)
+            i += 1
+    return ''.join(out)
+
+
 def read_or_empty(repo: Path, rel: str) -> str:
     """Read a file if it exists (a gate must not break when it does not).
 
@@ -682,6 +723,31 @@ def check(repo: Path):
             "main.cpp: dropSettingsLayoutBaseline() no longer drops the bar pair "
             "through its one owner (BS-22c) — a dropped baseline with a live latch "
             "is a scroll state that describes a layout that no longer exists")
+    if 'settingsApplyScrollbarLatch(hwnd, have, "win32-visibility")' not in main:
+        failures.append(
+            "main.cpp: the bar latch is no longer re-adopted from the window after "
+            "SetScrollInfo (BS-22c) — Windows hides a standard scroll bar when the "
+            "range says nothing is left to scroll (per tab!) and hiding one clears "
+            "WS_VSCROLL, so the latch left behind describes a window that no longer "
+            "exists")
+    # The unconditional half of the same rule: the bit belongs to Windows, so
+    # EVERY write of the dialog's scroll state is followed by the re-adopt. A new
+    # SetScrollInfo added without one is how the pair diverges again (I5), and the
+    # divergence is invisible in every rectangle the app holds.
+    main_lines = blank_comments(main).splitlines()
+    for index, line in enumerate(main_lines):
+        if 'SetScrollInfo(' not in line or 'SB_VERT' not in line:
+            continue
+        # Comments are blank by now, so the window may skip over the prose that
+        # explains the call it is looking for.
+        window = [l for l in main_lines[index + 1:index + 6] if l.strip()]
+        if not window or 'settingsAdoptScrollbarVisibility(' not in window[0]:
+            failures.append(
+                f"main.cpp:{index + 1}: SetScrollInfo(SB_VERT) is not followed by "
+                "settingsAdoptScrollbarVisibility() (BS-22c) — SetScrollInfo can "
+                "hide the standard bar and clear WS_VSCROLL behind the app's back "
+                "(the range is per tab), so every write must re-read the bit into "
+                "the latch before the next solve or probe observation")
     if 'settingsSyncScrollbarLatch(' not in show_tab_body:
         failures.append(
             "main.cpp: showTab() no longer re-decides the bar (BS-22c) — switching "

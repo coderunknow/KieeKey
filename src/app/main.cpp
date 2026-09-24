@@ -4951,31 +4951,60 @@ bool settingsApplyScrollbarLatch(HWND hwnd, bool wantScroll, const char* who) {
     return true;
 }
 
+// v1.3.0-beta8fix1 (bug BS-22c): WINDOWS OWNS THE VISIBILITY OF A STANDARD
+// SCROLLBAR, SO THE LATCH FOLLOWS THE WINDOW.
+//
+// `SetScrollInfo(SB_VERT, ...)` HIDES a standard scroll bar when the range it is
+// given says there is nothing to scroll — and hiding a standard scroll bar clears
+// WS_VSCROLL. The bar's range is per tab (settingsScrollSetTab builds it from the
+// current tab's depth), so on a tab that fits, Windows clears the bit the solver
+// had just set for the whole dialog (its decision is "keep the bar while ANY tab
+// overflows", BS-18). The latch was left saying "on" over a window with no bar —
+// the probe's I5, 12 findings in the 9c6c67c run, with the tripwire naming both
+// halves ("last write solve-planned") because both really were written together:
+// the window changed underneath them.
+//
+// The honest reading is that the latch describes the WINDOW, not the intent: it is
+// re-adopted after every SetScrollInfo, and the intent is re-decided by every solve
+// (and by showTab's sync). Nothing is gated on the stale value: the wheel and
+// scroll handlers also require range > 0, which is 0 exactly when the bar is gone.
+//
+// WHY THE LAYOUT STAYS SOUND WHILE THE BIT FOLLOWS WINDOWS (the direction that
+// matters): the bar can only ever be HIDDEN after the solve, never shown where the
+// solve assumed none. Windows hides it only when the range says the CURRENT tab
+// fits, and "some tab overflows" (the solve's decision, BS-18) is implied by that
+// tab overflowing — so a bar that is visible was planned for. Hiding the bar takes
+// its 17 px out of the non-client area, so the client can only be WIDER than the
+// rectangle the solve laid out for: every solved rect, the tab control included,
+// stays inside it, and nothing the user can see is clipped. The reverse (a solve
+// that assumed no bar, then a bar appearing) is what BS-15 cost the page 17 px
+// over; it cannot happen, because appearing requires an overflowing current tab
+// and such a tab forces the solve to keep the bar.
+void settingsAdoptScrollbarVisibility(HWND hwnd) {
+    if (hwnd == nullptr) { return; }
+    const bool have = (::GetWindowLongPtrW(hwnd, GWL_STYLE) & WS_VSCROLL) != 0;
+    if (have != g_settingsScroll.enabled) {
+        settingsApplyScrollbarLatch(hwnd, have, "win32-visibility");
+    }
+}
+
 // Re-decide the latch from the geometry the app is holding. No-op when the
 // window and the latch already agree. When they do not, the solve owns the fix:
 // the bar's presence decides the client width, the page and every row's width.
 bool settingsSyncScrollbarLatch(HWND hwnd) {
-    // The sync re-solves, and a solve must not re-enter it: one extra pass is
-    // enough to re-establish the pair (the solve ends with them written together).
-    static bool inProgress = false;
-    if (inProgress || hwnd == nullptr || g_settingsScroll.solved.empty()) {
-        return false;
-    }
-    bool overflow = false;
-    for (int t = 0; t < 9; ++t) {
-        if (g_settingsScroll.perTabContentBottom[t] > g_settingsScroll.viewportBottom) {
-            overflow = true;
-        }
-    }
-    const bool have =
-        (::GetWindowLongPtrW(hwnd, GWL_STYLE) & WS_VSCROLL) != 0;
-    if (have == overflow && g_settingsScroll.enabled == overflow) { return false; }
+    // What the sync may NOT do is re-decide the INTENT here: the intent is
+    // "keep the bar while any tab overflows" (BS-18) and it is made inside the
+    // solve; a sync that re-solved would only make Windows hide the bar again for
+    // the tab on screen (see settingsAdoptScrollbarVisibility) and the dialog would
+    // re-solve on every tab switch for nothing. What it must do is make sure the
+    // pair agrees at every observation point: the latch describes the WINDOW.
+    if (hwnd == nullptr || g_settingsScroll.solved.empty()) { return false; }
+    const bool have = (::GetWindowLongPtrW(hwnd, GWL_STYLE) & WS_VSCROLL) != 0;
+    if (have == g_settingsScroll.enabled) { return false; }
 #if defined(KIEEKEY_UI_PROBE)
     ++g_probeLatchDrifts;
 #endif
-    inProgress = true;
-    solveSettingsLayout(hwnd);
-    inProgress = false;
+    settingsApplyScrollbarLatch(hwnd, have, "sync");
     return true;
 }
 
@@ -5003,6 +5032,7 @@ void settingsScrollSetTab(HWND hwnd, int tabIndex) {
     si.nPage = static_cast<UINT>(m.pagePx);      // == viewport height
     si.nPos = 0;
     ::SetScrollInfo(hwnd, SB_VERT, &si, TRUE);
+    settingsAdoptScrollbarVisibility(hwnd);   // BS-22c
     applySettingsScrollOffset(hwnd);
 }
 
@@ -5644,6 +5674,7 @@ void reflowSettingsLayoutPreservingScroll(HWND hwnd) {
         si.fMask = SIF_POS;
         si.nPos = clamped;
         ::SetScrollInfo(hwnd, SB_VERT, &si, TRUE);
+        settingsAdoptScrollbarVisibility(hwnd);   // BS-22c
         applySettingsScrollOffset(hwnd);
     }
     // BS-16a: the solve ran either way, so the dialog repaints either way.
@@ -6900,6 +6931,7 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 si.fMask = SIF_POS;
                 si.nPos = pos;
                 ::SetScrollInfo(hwnd, SB_VERT, &si, TRUE);
+                settingsAdoptScrollbarVisibility(hwnd);   // BS-22c
                 applySettingsScrollOffset(hwnd);
             }
             return 0;   // never falls through to the dialog default (beep)
@@ -6938,6 +6970,10 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             si.fMask = SIF_POS;
             si.nPos = pos;
             ::SetScrollInfo(hwnd, SB_VERT, &si, TRUE);
+            // SIF_POS alone cannot change the bar's visibility, but the re-adopt
+            // is unconditional so that no future write of the dialog's scroll
+            // state can be added without one (BS-22c).
+            settingsAdoptScrollbarVisibility(hwnd);
             applySettingsScrollOffset(hwnd);
             return 0;
         }
@@ -8294,6 +8330,7 @@ extern "C" int KieeKeyProbeSetOffset(HWND dlg, int pos) {
         si.fMask = SIF_POS;
         si.nPos = clamped;
         ::SetScrollInfo(dlg, SB_VERT, &si, TRUE);
+        settingsAdoptScrollbarVisibility(dlg);   // BS-22c
         applySettingsScrollOffset(dlg);
     }
     return g_settingsScroll.offset;
@@ -8352,14 +8389,35 @@ static BOOL CALLBACK kieeKeyProbeApplyFont(HWND child, LPARAM lp) {
     return TRUE;
 }
 
+// v1.3.0-beta8fix1 (bug BS-22c): A FONT SCALE THAT CANNOT BE UNDONE IS NOT A FONT
+// SCALE. `kieeKeyProbeApplyFont` maps the APP's fonts onto the probe's by identity,
+// and this entry point used the app's CURRENT fonts as the "old" side — so a call
+// with percent == 100 (the target IS the app's own font size) matched nothing and
+// replaced nothing: every control kept the last scaled font, and the whole pass
+// then measured a dialog whose labels were 1.5x too big. That is why the same
+// label "needed" the same pixels at 125 % and at 150 % in the 77e8fea run, and why
+// the tab strip stayed wrapped after the text scale returned to 100 % (87 x
+// `[I1] the page top did not return to its one-row value: 114 -> 130`).
+// The probe remembers what IT applied, so the next call can undo it.
+static HFONT g_probeFontNormal = nullptr;
+static HFONT g_probeFontBold = nullptr;
+static HFONT g_probeFontTitle = nullptr;
+
 extern "C" int KieeKeyProbeFontScale(HWND dlg, int percent) {
     if (dlg == nullptr || percent < 100 || percent > 400) { return -1; }
     const int px = percent == 100 ? 13 : std::max(8, 13 * percent / 100);
+    HFONT nextNormal = cachedFont(px, FW_NORMAL);
+    HFONT nextBold = cachedFont(px, FW_SEMIBOLD);
+    HFONT nextTitle = cachedFont(std::max(12, 20 * percent / 100), FW_SEMIBOLD);
     const KieeKeyProbeFontCtx ctx{
-        cachedFont(px, FW_NORMAL), cachedFont(px, FW_SEMIBOLD),
-        cachedFont(std::max(12, 20 * percent / 100), FW_SEMIBOLD),
-        uiFont(), uiFontBold(), uiFontTitle()};
+        nextNormal, nextBold, nextTitle,
+        g_probeFontNormal != nullptr ? g_probeFontNormal : uiFont(),
+        g_probeFontBold != nullptr ? g_probeFontBold : uiFontBold(),
+        g_probeFontTitle != nullptr ? g_probeFontTitle : uiFontTitle()};
     ::EnumChildWindows(dlg, &kieeKeyProbeApplyFont, reinterpret_cast<LPARAM>(&ctx));
+    g_probeFontNormal = nextNormal;
+    g_probeFontBold = nextBold;
+    g_probeFontTitle = nextTitle;
     // The controls changed size underneath the solved layout: everything the
     // solver measured is stale, which is exactly the condition the layout must
     // survive.

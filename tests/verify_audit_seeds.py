@@ -303,6 +303,23 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "the proof that the strip really pushed the page down",
     ),
     (
+        "BS-22c the latch stops following the window",
+        "src/app/main.cpp",
+        "        settingsApplyScrollbarLatch(hwnd, have, \"win32-visibility\");",
+        "        /* seeded: the latch is not re-adopted */",
+        "no longer re-adopted from the window",
+    ),
+    (
+        "BS-22c a scroll-state write skips the re-adopt",
+        "src/app/main.cpp",
+        # The prose is part of the anchor: four call sites carry the adopt, and
+        # this is the one whose comment names the unconditional rule.
+        "            // state can be added without one (BS-22c).\n"
+        "            settingsAdoptScrollbarVisibility(hwnd);",
+        "            /* seeded: the write never re-reads the window bit */",
+        "is not followed by settingsAdoptScrollbarVisibility",
+    ),
+    (
         "BS-22c a tab switch stops re-deciding the bar",
         "src/app/main.cpp",
         "    settingsSyncScrollbarLatch(g.hSettings);",

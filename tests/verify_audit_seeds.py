@@ -215,6 +215,43 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "checkEmptyPage",
     ),
     (
+        "BS-22b the row is measured before it is clamped",
+        "src/app/main.cpp",
+        # The two blocks SWAPPED: the measurement runs first, the clamp second —
+        # which is exactly the order the probe's I12 caught (a row grown for the
+        # wide width, laid out at the narrow one, one line clipped).
+        "        if (spec.tab != ok::layout::ControlSpec::kAlwaysVisible) {\n"
+        "            spec.rect = ok::layout::clampPageChildWidth(spec.rect, clampLimitRight,\n"
+        "                                                        S(80));\n"
+        "        }\n"
+        "        if (spec.growable) {\n"
+        "            spec.requiredHeight = measureStaticTextHeightPx(c, spec.rect.w);\n"
+        "        }",
+        "        if (spec.growable) {\n"
+        "            spec.requiredHeight = measureStaticTextHeightPx(c, spec.rect.w);\n"
+        "        }\n"
+        "        if (spec.tab != ok::layout::ControlSpec::kAlwaysVisible) {\n"
+        "            spec.rect = ok::layout::clampPageChildWidth(spec.rect, clampLimitRight,\n"
+        "                                                        S(80));\n"
+        "        }   // seeded: measured first, clamped second",
+        "measures a growable row's required height BEFORE",
+    ),
+    (
+        "BS-22b the strip cycle demands a zero shift again",
+        "tools/ui_probe/ui_probe.cpp",
+        "            if (back.app.stripShift[tab] != base.app.stripShift[tab]) {",
+        "            if (back.app.stripShift[tab] != 0) {",
+        "no longer compares the shift with the value it started from",
+    ),
+    (
+        "BS-22b the bar ruler goes back to all nine tabs",
+        "tools/ui_probe/ui_probe.cpp",
+        "        bool needBar = (a.contentBottom[tab] > s.page.bottom);",
+        "        bool needBar = false;\n"
+        "        for (int t = 0; t < 9; ++t) { if (a.contentBottom[t] > s.page.bottom) { needBar = true; } }",
+        "the bar ruler is no longer the CURRENT",
+    ),
+    (
         "BS-22  the solver reads the live rectangle again",
         "src/app/main.cpp",
         "            if (const ok::layout::Rect* authored = authoredPageRect(id)) {",
@@ -231,8 +268,13 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
     (
         "BS-20  the solver stops clamping rows to the page",
         "src/app/main.cpp",
-        "            spec.rect = ok::layout::clampPageChildWidth(spec.rect, limitRight, S(80));",
-        "            /* seeded: the page's width is not a bound any more */",
+        # BS-22b moved the clamp into the build loop (it must run before the text is
+        # measured), so the seed mutates it where it now lives.
+        "        if (spec.tab != ok::layout::ControlSpec::kAlwaysVisible) {\n"
+        "            spec.rect = ok::layout::clampPageChildWidth(spec.rect, clampLimitRight,\n"
+        "                                                        S(80));\n"
+        "        }",
+        "        /* seeded: the page's width is not a bound any more */",
         "no longer clamps page children",
     ),
     (

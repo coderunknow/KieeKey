@@ -429,6 +429,68 @@ def check(repo: Path):
             repo, 'tests/test_dialog_layout.cpp'):
         failures.append("tests/test_dialog_layout.cpp: the BS-22 recomputed-reflow "
                         "test is gone")
+
+    # 13. v1.3.0-beta8fix1 (bug BS-22, part 2): THE ROW IS MEASURED AT THE WIDTH IT
+    #     GETS. `requiredHeight` answers one question — how tall does this label need
+    #     to be in the box it is about to get — and BS-20 narrows every page child to
+    #     the dialog's own right edge. Measured first, clamped second, a row is grown
+    #     for the lines that fit the wide width and laid out with the lines that fit
+    #     the narrow one: the extra line is clipped. The probe says it in those exact
+    #     numbers — `[I12] id 561 needs 352px but its box is 320px tall` at dpi 144.
+    #     The order is the fix, so the order is what this rule pins.
+    i_clamp = solve_body.find('clampPageChildWidth(')
+    i_measure = solve_body.find('requiredHeight = measureStaticTextHeightPx(')
+    if i_clamp < 0:
+        failures.append("main.cpp: the solver no longer clamps a page child to the "
+                        "page's width (BS-20/BS-22)")
+    elif i_measure < 0:
+        failures.append("main.cpp: the solver no longer measures a growable row's "
+                        "required height (BS-22)")
+    elif i_measure < i_clamp:
+        failures.append(
+            "main.cpp: the solver measures a growable row's required height BEFORE "
+            "clamping its width (BS-22) — the count it grows for belongs to a box the "
+            "row will not get, so at a narrowed page a line of text has no room and "
+            "is clipped (the probe's I12: 'id 561 needs 352px but its box is 320px "
+            "tall'). Clamp first, measure second")
+    if 'testGrowableIsMeasuredAtTheWidthItGets()' not in read_or_empty(
+            repo, 'tests/test_dialog_layout.cpp'):
+        failures.append("tests/test_dialog_layout.cpp: the BS-22 measure-at-the-final-"
+                        "width test is gone")
+
+    # 14. v1.3.0-beta8fix1 (bug BS-22, part 3): THE PROBE'S DERIVED EXPECTATIONS.
+    #     Two of the harness's assertions were calibrated for the OLD inputs and
+    #     became wrong when the solver started from the authored geometry — both
+    #     fired on states the app was right about (309 + 81 of the 76f955a run):
+    #       * the strip-shift record is now the ABSOLUTE distance from the authored
+    #         top to the display rectangle, and the dialog's one-row display top is
+    #         14 px (96 dpi) below the authored first row (group boxes at y=100, the
+    #         display rectangle at 114). "the strip worked, so the shift is 0" called
+    #         that a defect. What must never happen is a value that grows and STAYS
+    #         grown, so the cycle compares the shift with the state it started from —
+    #         and the live geometry (page top, first row, full invariant battery) is
+    #         asserted separately, which is what keeps the comparison strict.
+    #       * the Win32 range is built from ONE tab's depth (settingsScrollSetTab:
+    #         nMax/nPage from perTabContentBottom[tabIndex]), while WS_VSCROLL is the
+    #         all-tabs decision. Asking the usable/dead answer about all nine depths
+    #         made the check contradict itself and I4 (which verifies the range
+    #         against the CURRENT tab). The ruler is the current tab.
+    if 'back.app.stripShift[tab] != base.app.stripShift[tab]' not in probe:
+        failures.append(
+            "tools/ui_probe/ui_probe.cpp: the strip cycle no longer compares the "
+            "shift with the value it started from (BS-22) — with the authored input "
+            "the one-row shift is the display rectangle's inset (14 px at 96 dpi, by "
+            "design: the content starts at the display rect), so a `!= 0` test fails "
+            "on a correct dialog, while the accumulation this contract exists for is "
+            "a value that does not come back")
+    if 'bool needBar = (a.contentBottom[tab] > s.page.bottom);' not in probe:
+        failures.append(
+            "tools/ui_probe/ui_probe.cpp: the bar ruler is no longer the CURRENT "
+            "tab's depth (BS-22) — the scroll range is per tab "
+            "(settingsScrollSetTab sets nMax/nPage from perTabContentBottom[tab]), "
+            "so judging Win32's usable/dead answer over all nine tabs reports a dead "
+            "bar as a defect on every state whose own tab fits while a deeper tab "
+            "lives in the same dialog")
     return failures
 
 
@@ -442,11 +504,12 @@ def main() -> int:
         for f in failures:
             print(f"  - {f}")
         return 1
-    print("PAINT RULES OK — 8 rules: sibling clipping, window styles, "
+    print("PAINT RULES OK — 10 rules: sibling clipping, window styles, "
           "repaint-after-change, need-deduped reflow, unscrolled solver input, "
           "rescale-owns-its-resolve + total baseline drop (BS-18), symmetric "
           "scrollbar correction (+ the probe's blank-page, reflow, pixel and "
-          "operation-sequence checks)")
+          "operation-sequence checks), authored solver input (BS-22), measure-"
+          "after-clamp + the probe's derived expectations (BS-22)")
     return 0
 
 

@@ -4984,6 +4984,24 @@ void solveSettingsLayout(HWND hwnd) {
     std::vector<HWND> hwnds;
     hwnds.reserve(140);
     wchar_t cls[32];
+    // v1.3.0-beta8fix1 (bug BS-22, part 2) — THE WIDTH IS CLAMPED BEFORE THE
+    // TEXT IS MEASURED. The measurement below answers one question: "how tall
+    // does this label need to be in the box it is about to get". Measuring it at
+    // a width the row will NOT have answers a different one. BS-20 clamps every
+    // page child to the dialog's own right edge, and until now that clamp ran
+    // AFTER `requiredHeight` was measured: a row authored 500 px wide, narrowed
+    // to 460 by the clamp (a narrow client, a wide scrollbar, a smaller page),
+    // was grown for the 3 lines that fit at 500 px and then laid out with the 4
+    // lines that fit at 460 — the fourth line clipped, and the CI probe's I12
+    // says so in exactly those numbers ("id 561 needs 352px but its box is 320px
+    // tall"). Measuring after the clamp makes the grow and the layout agree by
+    // construction. Same bound, same macro as the BS-20 clamp below — one rule,
+    // one place, so a row can never be measured against a width it does not get.
+    const int clampLimitRight = [&] {
+        RECT cli{};
+        ::GetClientRect(hwnd, &cli);
+        return static_cast<int>(cli.right) - S(12);
+    }();
     for (HWND c = ::GetWindow(hwnd, GW_CHILD); c != nullptr;
          c = ::GetWindow(c, GW_HWNDNEXT)) {
         if (c == tabCtl) { continue; }
@@ -5039,6 +5057,12 @@ void solveSettingsLayout(HWND hwnd) {
         spec.growable = isStatic && !isGroupBox &&
                         ((style & SS_TYPEMASK) != SS_ICON) &&
                         ((style & SS_TYPEMASK) != SS_OWNERDRAW);
+        // The page bound first, the measurement second (see clampLimitRight):
+        // `requiredHeight` must describe the row at the width the row will have.
+        if (spec.tab != ok::layout::ControlSpec::kAlwaysVisible) {
+            spec.rect = ok::layout::clampPageChildWidth(spec.rect, clampLimitRight,
+                                                        S(80));
+        }
         if (spec.growable) {
             spec.requiredHeight = measureStaticTextHeightPx(c, spec.rect.w);
         }
@@ -5092,15 +5116,11 @@ void solveSettingsLayout(HWND hwnd) {
     // in a 641 px client (the authored 496 rescaled), which is `outside_page` by
     // construction; at 100 % the same row happens to fit and the defect was
     // invisible for four rounds.
-    {
-        RECT cliPage{};
-        ::GetClientRect(hwnd, &cliPage);
-        const int limitRight = static_cast<int>(cliPage.right) - S(12);
-        for (ok::layout::ControlSpec& spec : specs) {
-            if (spec.tab == ok::layout::ControlSpec::kAlwaysVisible) { continue; }
-            spec.rect = ok::layout::clampPageChildWidth(spec.rect, limitRight, S(80));
-        }
-    }
+    //
+    // v1.3.0-beta8fix1 (bug BS-22, part 2): the clamp itself lives in the build
+    // loop above, because it has to run BEFORE the text measurement — a row grown
+    // for one width and laid out at another is a clipped row (see clampLimitRight).
+    // One clamp, one order, one bound: it is not applied twice and cannot drift.
     const ok::layout::LayoutPlan plan = ok::layout::autoFit(
         specs, disp.top, disp.bottom);
 

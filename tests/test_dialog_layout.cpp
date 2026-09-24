@@ -842,6 +842,109 @@ void testReflowIsRecomputedFromAuthored() {
     }
 }
 
+// v1.3.0-beta8fix1 (bug BS-22, part 2) — THE ROW IS MEASURED AT THE WIDTH IT GETS.
+//
+// The 76f955a x64 run's I12, in its own numbers:
+//
+//     [I12] id 561 needs 352px but its box is 320px tall
+//           step 18 seed 1 op tick tab 4 font 125% dpi 144
+//
+// — a growable label grown for the lines that fit a WIDER box than the one it was
+// laid out in. The solver measures the text at `spec.rect.w` and BS-20 then clamps
+// that width to the page's right edge; measured first, clamped second, the extra
+// line has no room and is clipped. The model's half of the fix, at every scale the
+// regression contract names: the same label, one clamp and two measurement orders,
+// and the requirement that the box the solve produces holds what its OWN
+// measurement says at the width the row ends up with.
+void testGrowableIsMeasuredAtTheWidthItGets() {
+    struct Scale { int dpi; } ;
+    const Scale scales[] = {{96}, {120}, {144}};
+
+    // The authored row (id 561's geometry: x=28, 500 wide, a 7-line list at 96 dpi)
+    // and a page narrow enough that the clamp really bites — otherwise the test is
+    // vacuous, which the assertions below check for explicitly.
+    const Rect authored{28, 316, 500, 112};
+    // 4000 px of text at 96 dpi: 8 lines in a 500 px box, 9 in the 462 px box the
+    // clamp leaves — one line more, which is what the probe measured (352 in a box
+    // grown for 320). Bigger than the authored 112 px either way, so the growth
+    // path is exercised and not the authored height.
+    const int kTextPx = 4000;   // the label's text, one-line px at 96 dpi
+    const int kLineH  = 20;     // one wrapped line of that font at 96 dpi
+    const int limitRight = 490; // the page's own right edge at this client width
+
+    for (const Scale& sc : scales) {
+        const auto scaleRect = [&](const Rect& r) {
+            return Rect{dpiScalePx(r.x, sc.dpi), dpiScalePx(r.y, sc.dpi),
+                        dpiScalePx(r.w, sc.dpi), dpiScalePx(r.h, sc.dpi)};
+        };
+        // The app's measurement, modelled: DrawTextW DT_CALCRECT | DT_WORDBREAK at
+        // the given width decides how many lines the text needs.
+        const auto needAt = [&](int widthPx) {
+            const int text = dpiScalePx(kTextPx, sc.dpi);
+            const int line = dpiScalePx(kLineH, sc.dpi);
+            const int lines = (text + widthPx - 1) / widthPx;
+            return lines * line;
+        };
+        const Rect in = scaleRect(authored);
+        const int limit = dpiScalePx(limitRight, sc.dpi);
+        const Rect clamped = clampPageChildWidth(in, limit, dpiScalePx(80, sc.dpi));
+        // Non-vacuity: the clamp narrows this row, and that narrowing costs it a
+        // line. If either were false the two orders would agree and the test would
+        // prove nothing.
+        assert(clamped.w < in.w);
+        assert(needAt(clamped.w) > needAt(in.w));
+
+        // --- measured BEFORE the clamp (what the code did): one line short -----
+        ControlSpec wrong;
+        wrong.id = 561; wrong.tab = 4; wrong.growable = true;
+        wrong.rect = clamped;
+        wrong.requiredHeight = needAt(in.w);           // the WIDE box's answer
+        std::vector<ControlSpec> wv{wrong};
+        const LayoutPlan wrongPlan =
+            autoFit(wv, clamped.y, clamped.bottom() + dpiScalePx(1000, sc.dpi));
+        assert(wrongPlan.rects[0].w == clamped.w);
+        assert(wrongPlan.rects[0].h == needAt(in.w));  // grown for the wide width
+        assert(wrongPlan.rects[0].h < needAt(wrongPlan.rects[0].w));   // ... too short
+        // That is the probe's sentence, in the model's numbers: the app's own
+        // measurement at the box the row GOT does not fit the box.
+
+        // --- measured AFTER the clamp (the fix): the box holds its own text -----
+        ControlSpec right;
+        right.id = 561; right.tab = 4; right.growable = true;
+        right.rect = clamped;
+        right.requiredHeight = needAt(right.rect.w);   // the width the row WILL get
+        std::vector<ControlSpec> rv{right};
+        const LayoutPlan rightPlan =
+            autoFit(rv, clamped.y, clamped.bottom() + dpiScalePx(1000, sc.dpi));
+        assert(rightPlan.rects[0].h >= needAt(rightPlan.rects[0].w));
+
+        // --- and the sibling below follows the extra line down ------------------
+        // The growth is not local: everything under the row moves with it, which is
+        // why measuring at the wrong width pushed the whole page down by the wrong
+        // amount as well (the state the strip-cycle checks read).
+        const int siblingY = dpiScalePx(450, sc.dpi);
+        wrong.rect.y = clamped.y;
+        right.rect.y = clamped.y;
+        ControlSpec wBelow;
+        wBelow.id = 627; wBelow.tab = 4;
+        wBelow.rect = Rect{dpiScalePx(44, sc.dpi), siblingY,
+                           dpiScalePx(450, sc.dpi), dpiScalePx(96, sc.dpi)};
+        ControlSpec rBelow = wBelow;
+        std::vector<ControlSpec> wSiblings{wrong, wBelow};
+        std::vector<ControlSpec> rSiblings{right, rBelow};
+        const LayoutPlan wPlan =
+            autoFit(wSiblings, clamped.y, clamped.bottom() + dpiScalePx(1000, sc.dpi));
+        const LayoutPlan rPlan =
+            autoFit(rSiblings, clamped.y, clamped.bottom() + dpiScalePx(1000, sc.dpi));
+        const int wPush = wPlan.rects[1].y - siblingY;
+        const int rPush = rPlan.rects[1].y - siblingY;
+        assert(wPush == needAt(in.w) - clamped.h);
+        assert(rPush == needAt(clamped.w) - clamped.h);
+        assert(rPush - wPush == needAt(clamped.w) - needAt(in.w));   // exactly the line
+        assert(rPlan.rects[1].y > wPlan.rects[1].y);                 // and it is lower
+    }
+}
+
 void testStripShiftReturnsToAuthoredOnShrink() {
     struct Scale { int dpi; };
     const Scale scales[] = {{96}, {120}, {144}};
@@ -904,6 +1007,42 @@ void testStripShiftReturnsToAuthoredOnShrink() {
         }
         assert(accTop == wrappedTop);          // it never came back ...
         assert(accTop != oneRowTop);           // ... which is exactly the defect
+    }
+
+    // --- the REAL one-row state is NOT zero, and that is by design -------------
+    // v1.3.0-beta8fix1 (bug BS-22, part 3): with the authored input the recorded
+    // shift is the distance between the authored first row and the DISPLAY
+    // rectangle. This dialog's authored rows start at y=100 while the one-row tab
+    // display rectangle starts at 114 (the frame's inset), so 14 px (96 dpi) is the
+    // correct one-row value — the content must start at the display rect, never
+    // above it (BS-10; the probe's I2 asserts the same thing). The 76f955a x64 run
+    // reported it as a defect 81 times because the check demanded 0; what must
+    // never happen is a value that GROWS and stays grown, which is what the cycles
+    // above prove the replacement rule prevents.
+    for (const Scale& sc : scales) {
+        const int displayTop96 = 114;                 // TCM_ADJUSTRECT, one row
+        const int inset = displayTop96 - authoredTop96;
+        assert(inset == 14);
+        const int liveTop = dpiScalePx(authoredTop96 + inset, sc.dpi);   // where rows ARE
+        for (int solveNo = 1; solveNo <= 3; ++solveNo) {
+            // The product's input (BS-22): the AUTHORED top with no previous shift.
+            // Every solve answers the same number — it does not depend on what the
+            // last solve did — and that number is the display rectangle's inset.
+            const StripShift s =
+                stripShiftFor(dpiScalePx(authoredTop96, sc.dpi), 0,
+                              dpiScalePx(displayTop96, sc.dpi), sc.dpi);
+            assert(s.shift96 == inset);               // stable, in 96-dpi px
+            assert(s.shiftPx == dpiScalePx(inset, sc.dpi));
+            // The input the record was read from BEFORE (the live rectangle, which
+            // already carries the inset) answers 0 for this very same geometry.
+            // That is where the probe's `!= 0` expectation came from — and why it
+            // is the wrong ruler for a record that now measures from the authored
+            // layout: it would fail on a correct dialog, while a record that GROWS
+            // and stays grown is caught by comparing with the cycle's own start.
+            const StripShift relative =
+                stripShiftFor(liveTop, 0, dpiScalePx(displayTop96, sc.dpi), sc.dpi);
+            assert(relative.shift96 == 0);
+        }
     }
 
     // The DPI record is in 96-dpi px and survives a rescale by construction: a
@@ -1125,6 +1264,8 @@ int main() {
     testStripShiftReturnsToAuthoredOnShrink();
     // v1.3.0-beta8fix1 (bug BS-22): a solve is recomputed, not accumulated.
     testReflowIsRecomputedFromAuthored();
+    // v1.3.0-beta8fix1 (bug BS-22, part 2): the row is measured at the width it gets.
+    testGrowableIsMeasuredAtTheWidthItGets();
     // v1.3.0-beta8 (bug BS-12): scrolling moves, never resizes; runtime text
     // growth is a reflow request, not a local resize.
     testScrollModelNeverResizesAChild();

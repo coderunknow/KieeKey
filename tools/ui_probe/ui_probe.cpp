@@ -1445,15 +1445,27 @@ void harnessAssert(HWND dlg, const HarnessState& s, const char* op, int step,
     {
         ++g_invChecks[5];
         const bool winUsable = a.barPage < a.barMax + 1;
-        bool needBar = false;
-        for (int t = 0; t < 9; ++t) {
-            if (a.contentBottom[t] > s.page.bottom) { needBar = true; }
-        }
+        // The ruler is the CURRENT TAB's depth, because that is what the range
+        // Win32 is answering about is made of: settingsScrollSetTab() sets
+        // nMax/nPage from perTabContentBottom[tabIndex] — one range, for the tab
+        // on screen. The WS_VSCROLL STYLE bit is the all-tabs decision (a dialog
+        // whose bar appears and disappears as the user walks the tabs would move
+        // every row up and down under them), and the first half of this check
+        // owns that bit. Reading the "usable" answer against all nine depths made
+        // the two halves contradict each other and I4 as well (I4 verifies
+        // `range == contentBottom[tab] - viewportBottom`, i.e. the current tab):
+        // any state with a shallow tab on screen while a deeper tab was in the
+        // dialog was reported as a dead bar that "should" be alive — 309 of the
+        // 55c965c..76f955a run's violations, every one of them a state whose own
+        // range was 0 because its own page fitted.
+        bool needBar = (a.contentBottom[tab] > s.page.bottom);
         if (winUsable != needBar) {
             fail(5, std::string("Win32 says the bar is ") +
                     (winUsable ? "usable" : "dead") + " (page " +
                     std::to_string(a.barPage) + " max " + std::to_string(a.barMax) +
-                    ") but the content overflows the page " +
+                    ") but tab " + std::to_string(tab) + "'s content (depth " +
+                    std::to_string(a.contentBottom[tab]) + ", page bottom " +
+                    std::to_string(s.page.bottom) + ") " +
                     (needBar ? "does need it" : "does not"));
         }
     }
@@ -1938,16 +1950,32 @@ int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCo
                                 "rectangle of the wrapped strip is still in force",
                             where + " " + harnessStateStr(back, "strip_cycle", cycle, 0, 100));
             }
-            // (b) the tab-strip shift comes back to zero
+            // (b) the tab-strip shift comes back to the value it had while the
+            //     strip was one row. NOT "back to zero": since BS-22 the solver's
+            //     input is the AUTHORED geometry, so the shift it records is the
+            //     absolute distance between the authored top and the display
+            //     rectangle — and the design (BS-10) is that the content starts at
+            //     the display rectangle, not above it. For this dialog the tab
+            //     frame's one-row display top is 14 px (96 dpi) BELOW the authored
+            //     first row (group boxes at y=100, display rect top 114), so 14 px
+            //     is the correct one-row state and `!= 0` called it a defect.
+            //     What must never happen is a value that GROWS and stays grown
+            //     (BS-21/BS-22: 14 -> 44 -> 74 ... with the content parked under
+            //     the page). Comparing with the state this cycle started from
+            //     catches exactly that, in both directions, and the live geometry
+            //     is asserted separately by (a) and (c) — which is what makes this
+            //     comparison legitimate rather than a loosened bound.
             ++g_fuzzChecks;
-            if (back.app.stripShift[tab] != 0) {
+            if (back.app.stripShift[tab] != base.app.stripShift[tab]) {
                 harnessFail(1, findings,
-                            "the tab-strip shift is still baked into the layout after "
-                            "the strip fitted one row again: stripShift[" +
+                            "the tab-strip shift did not come back to its one-row "
+                            "value after the strip fitted one row again: stripShift[" +
                                 std::to_string(tab) + "] = " +
+                                std::to_string(base.app.stripShift[tab]) + " -> " +
                                 std::to_string(back.app.stripShift[tab]) +
-                                " px (96 dpi) — the content sits that far below the "
-                                "page it belongs to",
+                                " px (96 dpi) — the wrap is baked into the layout, "
+                                "so the content sits that far below the page it "
+                                "belongs to",
                             where + " " + harnessStateStr(back, "strip_cycle", cycle, 0, 100));
             }
             // (c) the content returns to where it was (no accumulated drift)

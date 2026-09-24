@@ -5324,7 +5324,24 @@ void solveSettingsLayout(HWND hwnd) {
                 spec.rect = unscrolled;
             }
         }
-        const int clsLen = ::GetClassNameW(c, cls, 32);
+        ::GetClassNameW(c, cls, 32);
+        // v1.3.0-beta8fix1 (bug BS-22l): AND A CLASS IS A NAME, NOT A LENGTH.
+        //
+        // The BS-22c combo branch below ("A COMBO BOX'S HEIGHT IS WIN32'S
+        // DECISION") was written as `clsLen == 6 && lstrcmpiW(cls, L"COMBOBOX")`
+        // — and Win32's class name for a combo is "ComboBox": EIGHT characters.
+        // The branch could therefore never run, and the height it was written to
+        // take was never taken. The x64 run 35980164209 measured it as
+        // `id 504 lives 128,297 210x33 but the solver's baseline is 128,297
+        // 210x25` — IDC_COMBO_CODETABLE, whose window Win32 has always sized to
+        // its own closed height (33 px at 96 dpi: item height 25 + two 4 px
+        // borders, which is exactly the `COMBO_CLOSED_H = LINE_HEIGHT_PX + 8`
+        // model scripts/audit_layout.py uses) while the plan kept the authored 25.
+        // Everything below the combo was then placed 8 px too high — the overlap
+        // class this dossier has been chasing since 35965748238 — and the same
+        // guard hid the combo's width requirement (pad S(8), never applied).
+        // The comparison is the one the layout self-check already uses: the name,
+        // case-insensitively, with no length test to get wrong.
         // v1.3.0-beta8 (bug BS-11): the predefined Win32 classes report MIXED
         // case from GetClassNameW ("Static", "Button", ...), so comparing them
         // against uppercase literals with wcscmp() was false for EVERY control:
@@ -5335,11 +5352,10 @@ void solveSettingsLayout(HWND hwnd) {
         // by hand and scripts/audit_layout.py models the authored geometry);
         // the CA-03 probe caught it by printing the app's own measurement (102)
         // next to the rectangle it was applied to (96).
-        const bool isStatic = (clsLen == 6 && ::lstrcmpiW(cls, L"STATIC") == 0);
+        const bool isStatic = ::lstrcmpiW(cls, L"STATIC") == 0;
         const LONG_PTR style = ::GetWindowLongPtrW(c, GWL_STYLE);
         const bool isGroupBox =
-            (clsLen == 6 && ::lstrcmpiW(cls, L"BUTTON") == 0) &&
-            ((style & BS_GROUPBOX) == BS_GROUPBOX);
+            (::lstrcmpiW(cls, L"BUTTON") == 0) && ((style & BS_GROUPBOX) == BS_GROUPBOX);
         spec.groupBox = isGroupBox;
         // v1.3.0-beta8fix1 (bug BS-22j): A PAGE BUTTON'S LABEL WRAPS, SO ITS
         // HEIGHT IS MEASURED LIKE A LABEL'S.
@@ -5357,7 +5373,7 @@ void solveSettingsLayout(HWND hwnd) {
         // at 96 dpi; a push button's text is centred with a small inset). The
         // chrome row is excluded: its band is fixed and its labels are authored
         // to fit one line.
-        const bool isButton = (clsLen == 6 && ::lstrcmpiW(cls, L"BUTTON") == 0);
+        const bool isButton = ::lstrcmpiW(cls, L"BUTTON") == 0;
         const DWORD buttonType = isButton ? (style & BS_TYPEMASK) : 0;
         const bool checkLike = isButton && (buttonType == BS_AUTOCHECKBOX ||
                                             buttonType == BS_CHECKBOX ||
@@ -5390,9 +5406,14 @@ void solveSettingsLayout(HWND hwnd) {
         // The natural height is a property of the control, its font and the theme
         // — not of the previous solve — so taking it is not the BS-22 accumulation
         // defect: every solve asks the window what its height is right now.
-        const bool isCombo = (clsLen == 6 && ::lstrcmpiW(cls, L"COMBOBOX") == 0);
+        const bool isCombo = ::lstrcmpiW(cls, L"COMBOBOX") == 0;
         if (isCombo && liveH > 0) {
-            spec.rect.h = liveH;
+            // The height the WINDOW has, not the authored one — and it goes in
+            // its own field rather than into `spec.rect.h` so that the rectangle
+            // handed to the solver stays the AUTHORED one (BS-22), while the
+            // engine still learns that this control already takes more space and
+            // moves the rows below it (see ControlSpec::liveHeight).
+            spec.liveHeight = liveH;
         }
         // The page bound first, the measurement second (see clampLimitRight):
         // `requiredHeight` must describe the row at the width the row will have.
@@ -5421,7 +5442,7 @@ void solveSettingsLayout(HWND hwnd) {
                     pad = S(2);
                 } else if (isButton) {
                     pad = checkLike ? S(24) : S(12);
-                } else if (clsLen == 6 && ::lstrcmpiW(cls, L"COMBOBOX") == 0) {
+                } else if (isCombo) {
                     pad = S(8);
                 } else {
                     pad = 0;                       // edits keep their authored width
@@ -5713,6 +5734,35 @@ void solveSettingsLayout(HWND hwnd) {
             solveSettingsLayout(hwnd);
             --g_settingsSolvePass;
             return;
+        }
+        // v1.3.0-beta8fix1 (bug BS-22l): AND THE SIZE A WINDOW DECIDED FOR
+        // ITSELF, AFTER WE SIZED IT.
+        //
+        // `SetWindowPos` above asked for the plan's rectangle and a combo box
+        // answered with its own height (Win32 sizes a CBS_DROPDOWNLIST to its
+        // item height and its borders, and it does it again on every font
+        // change). The plan is then a description of a window that does not
+        // exist: the probe's I6 says so in numbers (`id 504 lives 128,297 210x33
+        // but the solver's baseline is 128,297 210x25`) and the row below it is
+        // placed inside the combo's real box (`[overlap] id 625 (ComboBox) ...
+        // and id 627 (Static) ... overlap by 398x6 px`, run 35980164209).
+        //
+        // One more solve is enough, and the same guard bounds it: the second
+        // pass reads the height the window really has now, so the plan and every
+        // row under it agree — and nothing here needs to know WHICH control it
+        // was or why (a resize the app did not ask for is a reflow request, the
+        // same way a runtime text growth is, BS-12).
+        for (std::size_t i = 0; i < specs.size(); ++i) {
+            if (specs[i].tab == ok::layout::ControlSpec::kAlwaysVisible) { continue; }
+            RECT live{};
+            ::GetWindowRect(hwnds[i], &live);
+            if (static_cast<int>(live.right - live.left) != plan.rects[i].w ||
+                static_cast<int>(live.bottom - live.top) != plan.rects[i].h) {
+                ++g_settingsSolvePass;
+                solveSettingsLayout(hwnd);
+                --g_settingsSolvePass;
+                return;
+            }
         }
     }
 

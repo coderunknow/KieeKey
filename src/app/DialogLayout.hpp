@@ -318,6 +318,19 @@ struct ControlSpec {
     // Only label-like controls may grow: a grown button/combobox/edit would
     // change its own semantics (a taller combo box is a taller drop-down).
     bool growable = false;
+    // v1.3.0-beta8fix1 (bug BS-22l): THE HEIGHT WINDOWS GAVE THE CONTROL.
+    //
+    // A CBS_DROPDOWNLIST combo sizes its own window to its item height plus its
+    // borders, and it does it again on every font change — the authored height
+    // is a wish, not the window. This is that measured height (0 = the control
+    // does not size itself). It is NOT `growable`: growth is something the
+    // solver decides for a label, this is something Win32 already did. The plan
+    // has to describe the window (the probe's I6: "the plan and the window
+    // disagree"), and every row below has to clear it — the authored table
+    // spaces its rows around the CLOSED height (scripts/audit_layout.py models
+    // exactly that with `_geometry_rect`), so a row placed against the authored
+    // 25 px lands 8 px inside the combo's real 33 px box.
+    int liveHeight = 0;
     // Group boxes never grow on their own; they are stretched to keep
     // containing their children.
     bool groupBox = false;
@@ -401,15 +414,24 @@ inline constexpr int kRowGapPx = 6;
         parent[child] = best;
     }
 
-    // Growth per control, in authored order.
+    // Growth per control, in authored order: the height the solver decided
+    // (a growable label whose wrapped text needs more room) or the height the
+    // WINDOW already has (a combo that sizes itself). Both are "this control
+    // takes more space than the authored table gave it", and both have to move
+    // the rows below — that is what this pass computes, and the shift pass below
+    // is driven by it. (v1.3.0-beta8fix1, bug BS-22l: the live height used to be
+    // applied to the plan and then dropped here, so the rows below stayed where
+    // the authored table put them and the combo's real box overlapped them.)
     std::vector<int> growth(controls.size(), 0);
     for (std::size_t i = 0; i < controls.size(); ++i) {
         const ControlSpec& c = controls[i];
-        if (!c.growable || c.groupBox) { continue; }
-        const int needed = c.requiredHeight;
-        if (needed > c.rect.h) {
-            growth[i] = needed - c.rect.h;
-            plan.rects[i].h = needed;
+        if (c.groupBox) { continue; }
+        int want = c.rect.h;
+        if (c.growable && c.requiredHeight > want) { want = c.requiredHeight; }
+        if (c.liveHeight > want) { want = c.liveHeight; }
+        if (want > c.rect.h) {
+            growth[i] = want - c.rect.h;
+            plan.rects[i].h = want;
             ++plan.grownControls;
             plan.totalGrowthPx += growth[i];
         }

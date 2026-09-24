@@ -1269,6 +1269,83 @@ void testPageTopShiftKeepsContentBelowTheTabStrip() {
     assert(pageTopShiftPx(200, 114) == 0);
 }
 
+// v1.3.0-beta8fix1 (bug BS-22l) — A COMBO BOX'S REAL HEIGHT IS PART OF THE PLAN,
+// AND THE ROWS BELOW CLEAR IT.
+//
+// The 35980164209 x64 run, twice over, from the same state:
+//
+//   [I6] id 504 lives 128,297 210x33 but the solver's baseline is 128,297 210x25
+//   [overlap] id 625 (ComboBox) 220,467 398x40 and id 627 (Static) 55,501 583x69
+//             overlap by 398x6 px
+//
+// A CBS_DROPDOWNLIST combo sizes its own window to its item height plus its
+// borders, and it does it again on every font change. The app took that height
+// but put it in the authored rectangle, and the plan (and the row below it)
+// stayed on the authored 25 px — so the combo's real box ran into the next row
+// and the plan described a window that does not exist. The rule now: the plan
+// describes the window, and every control below it moves down by the
+// difference. The authored table spaces its rows around the CLOSED height (that
+// is what scripts/audit_layout.py models with `_geometry_rect`), so this is the
+// runtime catching up with the layout the table was authored for.
+void testLiveHeightIsPlannedAndPushesTheRowsBelow() {
+    const auto combo = [](int y, int live) {
+        ControlSpec c;
+        c.id = 504; c.tab = 0;
+        c.rect = Rect{128, y, 210, 25};        // authored: one text line
+        c.liveHeight = live;                   // what Win32 gave the window
+        return c;
+    };
+    const auto label = [](int id, int y, int h) {
+        ControlSpec c;
+        c.id = id; c.tab = 0;
+        c.rect = Rect{128, y, 210, h};
+        return c;
+    };
+
+    // 1. the plan is the window's height, not the authored box.
+    {
+        std::vector<ControlSpec> v{combo(186, 33)};
+        const LayoutPlan plan = autoFit(v, 100, 600, 900);
+        assert(plan.rects[0].h == 33);
+        assert(plan.grownControls == 1);
+        assert(plan.totalGrowthPx == 8);
+    }
+    // 2. the row authored 2 px below the AUTHORED box moves down by the same 8,
+    //    and the non-vacuity is that without the live height they really DID
+    //    overlap: 186 + 33 against a row at 213 is 6 px of the next row's text.
+    {
+        std::vector<ControlSpec> v{combo(186, 33), label(627, 213, 20)};
+        const std::vector<ControlSpec> naive{combo(186, 0), label(627, 213, 20)};
+        const LayoutPlan before = autoFit(naive, 100, 600, 900);
+        assert(before.rects[0].h == 25);
+        assert(before.rects[0].bottom() == 211);
+        assert(before.rects[1].y == 213);                       // 2 px of air
+        assert(33 - (before.rects[1].y - before.rects[0].y) == 6);   // the measured overlap
+
+        const LayoutPlan plan = autoFit(v, 100, 600, 900);
+        assert(plan.rects[0].h == 33);
+        assert(plan.rects[1].y == 213 + 8);                     // moved down by the growth
+        assert(plan.rects[1].y >= plan.rects[0].bottom());
+        assert(plan.rects[1].bottom() == 241);
+    }
+    // 3. a control ABOVE the combo never moves: the shift is downward only.
+    {
+        std::vector<ControlSpec> v{label(600, 100, 20), combo(186, 40), label(627, 213, 20)};
+        const LayoutPlan plan = autoFit(v, 100, 600, 900);
+        assert(plan.rects[0].y == 100);
+        assert(plan.rects[1].h == 40);
+        assert(plan.rects[2].y == 213 + 15);
+    }
+    // 4. the page's depth follows the real bottom, so the scroll range covers it
+    //    (the row is not merely drawn lower — it is reachable).
+    {
+        std::vector<ControlSpec> v{combo(186, 33), label(627, 213, 20)};
+        const LayoutPlan plan = autoFit(v, 100, 220, 900);       // 220 px page
+        assert(plan.contentBottom == 241);
+        assert(plan.extraHeightPx == 21);
+    }
+}
+
 // v1.3.0-beta8 (bug BS-12): the scroll path may MOVE a page child, never
 // RESIZE it. The app re-applied the baseline size on every step, which threw
 // away the height a row had grown at runtime — the CI probe measured a row
@@ -1433,6 +1510,8 @@ int main() {
     testRowWidthFitsItsTextWithinThePage();
     // v1.3.0-beta8 (bug BS-12): scrolling moves, never resizes; runtime text
     // growth is a reflow request, not a local resize.
+    // v1.3.0-beta8fix1 (bug BS-22l): the window's own height moves the rows below.
+    testLiveHeightIsPlannedAndPushesTheRowsBelow();
     testScrollModelNeverResizesAChild();
     testRuntimeGrowthRequestsAReflow();
     // v1.3.0-beta8 (bug BS-17): a reflow while the page is scrolled must not

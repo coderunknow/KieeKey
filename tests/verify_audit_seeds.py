@@ -145,8 +145,8 @@ SEEDS: list[tuple[str, str, str, str, str]] = [
     ),    (
         "CA-01e  GetClassNameW compared against an ALL-CAPS class literal",
         "src/app/main.cpp",
-        'const bool isStatic = (clsLen == 6 && ::lstrcmpiW(cls, L"STATIC") == 0);',
-        'const bool isStatic = (clsLen == 6 && wcscmp(cls, L"STATIC") == 0);',
+        'const bool isStatic = ::lstrcmpiW(cls, L"STATIC") == 0;',
+        'const bool isStatic = ::wcscmp(cls, L"STATIC") == 0;   // seeded',
         "class_case",
     ),
 
@@ -249,7 +249,12 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "BS-22c the solver imposes the authored combo height again",
         "src/app/main.cpp",
         "        if (isCombo && liveH > 0) {\n"
-        "            spec.rect.h = liveH;\n"
+        "            // The height the WINDOW has, not the authored one — and it goes in\n"
+        "            // its own field rather than into `spec.rect.h` so that the rectangle\n"
+        "            // handed to the solver stays the AUTHORED one (BS-22), while the\n"
+        "            // engine still learns that this control already takes more space and\n"
+        "            // moves the rows below it (see ControlSpec::liveHeight).\n"
+        "            spec.liveHeight = liveH;\n"
         "        }",
         "        /* seeded: the authored height wins over Win32's */",
         "imposes its own height on a COMBO BOX again",
@@ -392,6 +397,27 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "                chromeJudged > 0 && chromePainted == 0) {",
         "            if (judged >= 3 && painted == 0) {",
         "renderedPts > 0 is gone",
+    ),
+    (
+        "BS-22l a window that refused the planned size is not re-solved",
+        "src/app/main.cpp",
+        "            if (static_cast<int>(live.right - live.left) != plan.rects[i].w ||",
+        "            if (false) {   // seeded: the window's own size is not read back",
+        "is gone",
+    ),
+    (
+        "BS-22l the live height stops moving the rows below it",
+        "src/app/DialogLayout.hpp",
+        "        if (c.liveHeight > want) { want = c.liveHeight; }",
+        "        // seeded: the rows below stay on the authored box",
+        "the plan no longer takes the height the WINDOW has",
+    ),
+    (
+        "BS-22l the combo class test goes back to a length guard",
+        "src/app/main.cpp",
+        "        const bool isCombo = ::lstrcmpiW(cls, L\"COMBOBOX\") == 0;",
+        "        const bool isCombo = clsLen == 6 && ::lstrcmpiW(cls, L\"COMBOBOX\") == 0;",
+        "is gone",
     ),
     (
         "BS-22k the pass audit stops checking the window against the plan",

@@ -873,8 +873,72 @@ def check(repo: Path):
              'measured height (BS-22j)')):
         if needle not in main:
             failures.append(f"main.cpp: {needle} is gone — {why}")
+    # v1.3.0-beta8fix1 (bug BS-22l): A WINDOW CLASS IS COMPARED AS A NAME.
+    # `clsLen == 6 && lstrcmpiW(cls, L"COMBOBOX")` is the bug that hid the combo
+    # branch for two rounds: Win32's name for a combo is "ComboBox", eight
+    # characters, so the guard was never true. The solver's comparisons are by
+    # name now, and the length test may not come back (comments are blanked here,
+    # so the note above does not count as code).
+    for needle, why in (
+            ('const bool isCombo = ::lstrcmpiW(cls, L"COMBOBOX") == 0;',
+             "the combo branch's own test — Win32's class name for a combo is "
+             '"ComboBox" (8 characters), and the length-guarded version could never '
+             'be true, which left every combo planned at its authored height while '
+             'Win32 gave it its own (id 504: plan 25, window 33)'),
+            ('const bool isButton = ::lstrcmpiW(cls, L"BUTTON") == 0;',
+             'the same comparison for buttons, without a length to get wrong'),
+            ('const bool isStatic = ::lstrcmpiW(cls, L"STATIC") == 0;',
+             'and for statics')):
+        if needle not in main:
+            failures.append(f"main.cpp: {needle} is gone — {why}")
+    if 'clsLen == 6' in blank_comments(main):
+        failures.append(
+            "main.cpp: a window class is compared by its LENGTH again "
+            "(`clsLen == 6 && lstrcmpiW(...)`) (BS-22l) — the predefined classes "
+            'are "Static"/"Button" (6) but "ComboBox" is EIGHT, so the guard is '
+            'false exactly where it matters and the branch it guards is dead code')
+    # v1.3.0-beta8fix1 (bug BS-22l): THE HEIGHT THE WINDOW HAS IS PART OF THE PLAN.
+    # A combo box sizes its own window; taking that height but dropping the rows
+    # below it is what the 35980164209 run measured twice — `[I6] id 504 lives
+    # 128,297 210x33 but the solver's baseline is 128,297 210x25` and `[overlap]
+    # id 625 (ComboBox) ... and id 627 (Static) ... overlap by 398x6 px`.
+    for needle, why in (
+            ('if (static_cast<int>(live.right - live.left) != plan.rects[i].w ||',
+             'the check that a window took the size it was given (BS-22l) — a '
+             'combo box answers SetWindowPos with its own height, and a plan that '
+             'describes a window that does not exist is what put the row below it '
+             'inside the combo (`[overlap] ... overlap by 398x6 px`)'),
+            ('++g_settingsSolvePass;',
+             'the bounded second solve that reads the height the window really has '
+             '(BS-22l) — the same guard the BS-14 width pass uses, so this is one '
+             'extra pass and never a loop')):
+        if needle not in blank_comments(main):
+            failures.append(f"main.cpp: {needle} is gone — {why}")
+    if 'spec.liveHeight = liveH;' not in main:
+        failures.append(
+            "main.cpp: the combo box's real height is no longer handed to the "
+            "solver (BS-22l) — Win32 sizes a CBS_DROPDOWNLIST to its item height "
+            'and its borders, so the authored 25 px is not the window ("the plan '
+            'and the window disagree")')
+    if 'spec.rect.h = liveH;' in blank_comments(main):
+        failures.append(
+            "main.cpp: the live height is written into the AUTHORED rectangle again "
+            "(BS-22l) — the solve must stay a pure function of the authored layout "
+            "(BS-22), and the design wants the authored box plus a measured height: "
+            'ControlSpec::liveHeight exists for exactly that')
+    if 'if (c.liveHeight > want) { want = c.liveHeight; }' not in layout:
+        failures.append(
+            "src/app/DialogLayout.hpp: the plan no longer takes the height the WINDOW "
+            "has (BS-22l) — a combo's real box then describes a window that does not "
+            "exist, and the row below it is placed inside it")
+    if 'std::vector<int> growth(controls.size(), 0);' not in layout:
+        failures.append(
+            "src/app/DialogLayout.hpp: the growth pass (the shift pass's input) is gone "
+            "(BS-22l) — growth is what moves the rows below a control that takes more "
+            "space than the authored table gave it")
     for test in ('testRegionFollowsTheLiveRectangleNotTheBaseline()',
-                 'testPageChildWidthIsClampedToThePage()'):
+                 'testPageChildWidthIsClampedToThePage()',
+                 'testLiveHeightIsPlannedAndPushesTheRowsBelow()'):
         if test not in read_or_empty(repo, 'tests/test_dialog_layout.cpp'):
             failures.append(f"tests/test_dialog_layout.cpp: {test} is gone (BS-22c)")
     # v1.3.0-beta8fix1 (bug BS-22c): the strip cycle must REACH the transition it

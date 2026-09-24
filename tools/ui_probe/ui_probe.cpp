@@ -2259,10 +2259,17 @@ int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCo
     // font 150% (page top 161 vs the one-row 161, stripShift seen 29 px)` at 54
     // states = 9 tabs x 3 cycles x the 2 non-native scales, while all 27 cycles at
     // the native scale measured the transition they were written for. Scaling the
-    // height keeps every cycle running (nothing is skipped, no bound is loosened)
-    // and puts this pass's geometry back at the scale the pass audits.
-    const int clientH = std::max(240, ::MulDiv(static_cast<int>(origClient.bottom),
-                                               static_cast<int>(passDpi), 96));
+    // height keeps every cycle running (nothing is skipped, no bound is loosened).
+    // v1.3.0-beta8fix1 (bug BS-22m, corrected by BS-22o): THE HEIGHT STAYS THE
+    // PASS'S OWN PIXEL HEIGHT. Scaling it to the dpi (the first BS-22m) asked a
+    // 1024x768 runner for a 1.25x/1.5x taller window than the display can hold, and
+    // the run that carried it (35982159995) measured the consequence in one shape:
+    // `[I1] page is EMPTY at offset 0 (page 19,161 645x-11)` with every child
+    // region-clipped to `0x0` — 74 states. The transition does not need a taller
+    // window: it needs a client where the labels fit ONE row at 100 % and wrap at
+    // 150 %, which is a property of the WIDTH, and the calibration below now proves
+    // exactly that instead of inferring it from the height.
+    const int clientH = static_cast<int>(origClient.bottom);
     // v1.3.0-beta8fix1 (bug BS-22c): THE WRAP IS DRIVEN BY THE TEXT SCALE, NOT BY
     // A FIXED WIDTH. The first version of this scenario narrowed the client to 55 %
     // to make the nine tab labels wrap, which is a property of the labels' font: at
@@ -2320,8 +2327,17 @@ int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCo
     //     row without any wrap at all (35982159995 measured exactly that: page top
     //     92 -> 100 with `rows 1` and no shift recorded, because a 1.5x font makes
     //     the single row 8 px taller).
+    // Both halves are read from the app's plan: `stripRows` is the app's own answer
+    // to "do the nine labels fit the tab control at this client", and a scale where
+    // ONE row is unreachable in a window the screen can hold is reported as an
+    // unavailable transition (the pass's `stripCycleUnavailable` note) rather than
+    // skipped tab by tab — a cycle that silently skips every tab would be a green
+    // that never ran.
+    HarnessState baseState;
+    readHarnessState(dlg, all, 0, &baseState);
+    const bool baseOneRow = baseState.app.stripRows <= 1;
     bool measurable = false;
-    for (int attempt = 0; attempt < 6 && !measurable; ++attempt) {
+    for (int attempt = 0; attempt < 6 && baseOneRow && !measurable; ++attempt) {
         KieeKeyProbeResize(dlg, stripW, clientH);
         KieeKeyProbeReflowNow(dlg);
         KieeKeyProbeFontScale(dlg, kWrapFontPct);

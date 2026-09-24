@@ -409,10 +409,10 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
     (
         "BS-22m the strip cycle squeezes the pass into a 96-dpi-tall window",
         "tools/ui_probe/ui_probe.cpp",
-        "    const int clientH = std::max(240, ::MulDiv(static_cast<int>(origClient.bottom),\n"
-        "                                               static_cast<int>(passDpi), 96));",
-        "    const int clientH = static_cast<int>(origClient.bottom);   // seeded",
-        "is gone",
+        "    const int clientH = static_cast<int>(origClient.bottom);",
+        "    const int clientH = ::MulDiv(static_cast<int>(origClient.bottom),\n"
+        "                               static_cast<int>(passDpi), 96);   // seeded",
+        "'s client HEIGHT is the pass's own pixel height",
     ),
     (
         "BS-22l a window that refused the planned size is not re-solved",

@@ -1066,11 +1066,17 @@ def check(repo: Path):
              'grows them, so the app\'s own measurement is a contract for them and '
              'I12 must judge them (a check that skips the rows the clip class was '
              'made of is a check that never fires)'),
-            ('const int clientH = std::max(240, ::MulDiv(static_cast<int>(origClient.bottom),',
-             'the strip cycle\'s client HEIGHT scaled to the pass dpi (BS-22m) — the '
-             'tab control is capped by the client\'s height, so a 96-dpi-tall window '
-             'at 120/144 dpi cannot grow the strip and the grow half of the '
-             'transition becomes unreachable by construction'),
+            ('const int clientH = static_cast<int>(origClient.bottom);',
+             "the strip cycle's client HEIGHT is the pass's own pixel height "
+             '(BS-22m, corrected by BS-22o): scaling it to the dpi asked a 1024x768 '
+             'runner for a window taller than its display, and 35982159995 measured '
+             'the result — `page 19,161 645x-11` with every child region-clipped to '
+             '`0x0`, 74 states'),
+            ('const bool baseOneRow = baseState.app.stripRows <= 1;',
+             'the calibration proving the ONE-ROW half of the transition before the '
+             'wrap half is allowed to count (BS-22o) — a scale where one row is '
+             'unreachable is reported as an unavailable transition instead of being '
+             'skipped tab by tab'),
             ('int chromePainted = 0;',
              'the chrome half of that evidence (BS-22h) — a capture with the chrome '
              'and not the page is a page that was never painted, while one with '

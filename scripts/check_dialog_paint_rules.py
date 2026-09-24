@@ -358,6 +358,34 @@ def check(repo: Path):
             repo, 'tests/test_dialog_layout.cpp'):
         failures.append("tests/test_dialog_layout.cpp: the BS-20 clamp test is gone — "
                         "the decision is portable, so it is asserted without Windows")
+
+    # 11. v1.3.0-beta8fix1 (BS-21): THE TAB-STRIP SHIFT REPLACES, IT DOES NOT ADD.
+    #     BS-10 moves the page down to clear a wrapped tab strip, but it computed
+    #     the move from the BASELINE (which already carries the previous move) and
+    #     `pageTopShiftPx` can only ever push DOWN — so a strip that wrapped once
+    #     kept the page low forever: the probe measured `stripShift 228` px baked
+    #     into a 494x497 page, with 20 controls of one tab parked under a 176 px
+    #     page and none of them visible. These rules pin the replacement decision,
+    #     the un-shift on the DPI path, and the cycle test behind both.
+    if 'stripShiftFor(' not in solve_body:
+        failures.append(
+            "main.cpp: the tab-strip shift no longer goes through "
+            "ok::layout::stripShiftFor() (BS-21) — computing it from the baseline "
+            "with pageTopShiftPx() only ever pushes the page DOWN, so a strip that "
+            "wrapped once leaves the content below the page forever")
+    if 'settingsUnshiftPageToAuthored()' not in drop_body:
+        failures.append(
+            "main.cpp: dropSettingsLayoutBaseline() no longer un-shifts the page "
+            "(BS-21) — a shift left in the live rectangles is multiplied by the DPI "
+            "rescale and, once the baseline is gone, becomes the authored layout")
+    if 'void settingsUnshiftPageToAuthored()' not in main:
+        failures.append("main.cpp: settingsUnshiftPageToAuthored() is gone (BS-21)")
+    if 'StripShift' not in read_or_empty(repo, 'src/app/DialogLayout.hpp'):
+        failures.append("src/app/DialogLayout.hpp: the StripShift model is gone (BS-21)")
+    if 'testStripShiftReturnsToAuthoredOnShrink()' not in read_or_empty(
+            repo, 'tests/test_dialog_layout.cpp'):
+        failures.append("tests/test_dialog_layout.cpp: the BS-21 grow/shrink cycle "
+                        "test is gone")
     return failures
 
 

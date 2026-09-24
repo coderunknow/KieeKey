@@ -112,6 +112,68 @@ struct Rect {
 }
 
 //---------------------------------------------------------------------------
+// v1.3.0-beta8fix1 (bug BS-21) — THE STRIP SHIFT IS A STATE, NOT AN ACCUMULATOR.
+//
+// `pageTopShiftPx` is documented as idempotent, and it is — for the geometry it
+// is designed for, the AUTHORED page top. The runtime handed it the BASELINE of
+// the previous solve, which already carries the previous shift, so the properties
+// it was chosen for did not hold:
+//
+//   * growing the strip (narrowing the dialog, raising the scale, a bigger text
+//     size) moved the page down by `disp.top - shiftedTop` — correct, but written
+//     on top of the old shift;
+//   * SHRINKING it back (widening the dialog, the strip fits one row again) asked
+//     for a shift of 0 and changed nothing: `max(0, ...)` cannot pull a page UP.
+//     The content stayed as far below the page as the widest strip ever pushed it.
+//   * every cycle therefore accumulated: the CI harness measured `stripShift 228`
+//     px in a 494x497 page, and the tab's 20 controls parked 200+ px under a
+//     176 px page with none of them visible and the solver reporting a coherent
+//     layout (`inv_I1` / `[I1] page is EMPTY at offset 0`).
+//
+// The state is a replacement, not an addition: the input is the baseline MINUS the
+// shift already baked into it, and the answer replaces the record. The shift is
+// kept in 96-dpi pixels so a DPI rescale (which multiplies the live rectangles by
+// the same factor) does not have to rescale the record — `MulDiv` at the point of
+// use is the single conversion.
+//---------------------------------------------------------------------------
+// The model is portable (the Linux unit test includes this header, no windows.h),
+// so the DPI conversion is spelled out instead of using MulDiv. Round-half-up on
+// positive values is what Win32's MulDiv does for the values this dialog produces,
+// so the model and the dialog agree to the pixel.
+[[nodiscard]] inline int dpiScalePx(int px96, int dpi) noexcept {
+    const int d = dpi > 0 ? dpi : 96;
+    return (px96 * d + (px96 >= 0 ? 48 : -48)) / 96;
+}
+
+[[nodiscard]] inline int scaleTo96Px(int px, int dpi) noexcept {
+    const int d = dpi > 0 ? dpi : 96;
+    return (px * 96 + (px >= 0 ? d / 2 : -d / 2)) / d;
+}
+
+struct StripShift {
+    int authoredTopPx = 0;   // the baseline top with the previous shift removed
+    int shiftPx      = 0;    // the shift to apply for THIS solve (px at `dpi`)
+    int shift96      = 0;    // the same shift in 96-dpi px (the stored state)
+};
+
+[[nodiscard]] inline StripShift stripShiftFor(int baselineTopPx, int prevShift96,
+                                              int viewportTopPx, int dpi) noexcept {
+    const int denom = dpi > 0 ? dpi : 96;
+    StripShift out;
+    out.authoredTopPx = baselineTopPx - dpiScalePx(prevShift96, denom);
+    out.shiftPx = pageTopShiftPx(out.authoredTopPx, viewportTopPx);
+    out.shift96 = scaleTo96Px(out.shiftPx, denom);
+    return out;
+}
+
+// The inverse, for the DPI path: how far the live rectangles are below the
+// AUTHORED layout right now, at `dpi` (the amount that must be removed before a
+// rescale multiplies them, or the shift becomes part of the authored geometry).
+[[nodiscard]] inline int stripShiftPx(int shift96, int dpi) noexcept {
+    return dpiScalePx(shift96, dpi);
+}
+
+//---------------------------------------------------------------------------
 // v1.3.0-beta8 (bug BS-17) — THE SOLVER MUST START FROM THE UNSCOLLED LAYOUT.
 //
 // "Scrolling" in this dialog is a RENDER operation: it moves the page children

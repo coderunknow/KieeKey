@@ -3983,6 +3983,11 @@ void solveSettingsLayout(HWND hwnd);
 // v1.3.0-beta8fix1 (bug BS-18, part two): and it needs the page to be sitting
 // on its baseline before it rewrites the live rectangles.
 void settingsScrollToTop() noexcept;
+// v1.3.0-beta8fix1 (bug BS-21): and on its authored top (no tab-strip shift baked
+// into the lives the rescale is about to multiply).
+void settingsUnshiftPageToAuthored() noexcept;
+int settingsPageOf(int id);          // defined with the solve machinery below
+void settingsRepaintAll(HWND hwnd);  // ditto
 }  // namespace
 
 void applySettingsDpiScale(UINT newDpi) noexcept {
@@ -4583,12 +4588,51 @@ void settingsScrollToTop() noexcept {
     applySettingsScrollOffset(g.hSettings);
 }
 
+// v1.3.0-beta8fix1 (bug BS-21): PUT THE PAGE BACK ON ITS AUTHORED TOP BEFORE THE
+// STRIP SHIFT BECOMES GEOMETRY.
+//
+// The tab-strip shift is a translation of a whole page down by `stripShiftPx(t,
+// dpi)`. Everything that is not the solver reads the LIVE rectangles (the rescale
+// multiplies them; the solver's baseline input is `solved`), so a shift left in
+// them is indistinguishable from authored geometry — and the only place that can
+// be repaired is here, before the drop discards the record of how much was
+// applied. The children are moved, not resized, exactly like scrolling moves them.
+void settingsUnshiftPageToAuthored() noexcept {
+    if (g.hSettings == nullptr || g_settingsScroll.solved.empty()) { return; }
+    const int dpi = static_cast<int>(g_settingsDpi != 0 ? g_settingsDpi : 96);
+    bool moved = false;
+    for (const auto& entry : g_settingsScroll.solved) {
+        const int tab = settingsPageOf(::GetDlgCtrlID(entry.first));
+        if (tab < 0 || tab > 8) { continue; }
+        const int px = ok::layout::stripShiftPx(
+            g_settingsScroll.perTabStripShift96[tab], dpi);
+        if (px <= 0) { continue; }
+        RECT rc{};
+        ::GetWindowRect(entry.first, &rc);
+        ::MapWindowPoints(nullptr, g.hSettings, reinterpret_cast<POINT*>(&rc), 2);
+        ::SetWindowPos(entry.first, nullptr, rc.left, rc.top - px, 0, 0,
+                       SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS);
+        moved = true;
+    }
+    for (int t = 0; t < 9; ++t) { g_settingsScroll.perTabStripShift96[t] = 0; }
+    if (moved) { settingsRepaintAll(g.hSettings); }
+}
+
 // Defined here (declared above applySettingsDpiScale); see BS-17.
 void dropSettingsLayoutBaseline() noexcept {
     // The baseline may not be discarded while the page is scrolled away from
     // it (BS-18, part two): the live rectangles are the only thing a later
     // solve or rescale can plan from.
     settingsScrollToTop();
+    // v1.3.0-beta8fix1 (bug BS-21): and it may not be discarded while a tab-strip
+    // shift is baked into the live rectangles either. A rescale multiplies the
+    // lives by the new/old factor — a shift left in them would be multiplied with
+    // it and, once the baseline is gone, would BE the authored layout from then
+    // on: the page would never come back up, at any strip width. The normalisation
+    // runs after the rescale in applySettingsDpiScale(), where the recorded shift
+    // scales by construction (`pxAtDpi(shift96, newDpi)` == the old px x new/old),
+    // so the subtraction removes exactly what the rescale baked in.
+    settingsUnshiftPageToAuthored();
     g_settingsScroll.solved.clear();
     g_settingsScroll.viewport = ok::layout::Rect{};
     g_settingsScroll.viewportBottom = 0;
@@ -4950,19 +4994,26 @@ void solveSettingsLayout(HWND hwnd) {
             authoredTop = (authoredTop < 0) ? spec.rect.y : std::min(authoredTop, spec.rect.y);
         }
         if (authoredTop < 0) { continue; }
-        const int shift = ok::layout::pageTopShiftPx(authoredTop, static_cast<int>(disp.top));
-        // v1.3.0-beta8fix1 (bug BS-21) — INSTRUMENTATION ONLY (no rectangle below
-        // this line changes): `authoredTop` is read from the BASELINE, which
-        // already carries the shift of the previous solve, so the applied shift is
-        // CUMULATIVE. Recording the total makes the defect measurable instead of
-        // inferred: a page that was shifted for a two-row strip keeps the shift
-        // when the strip fits one row again, and the content sits that far below
-        // the page it belongs to.
-        g_settingsScroll.perTabStripShift96[t] +=
-            ::MulDiv(shift, 96, static_cast<int>(dpi != 0 ? dpi : 96));
-        if (shift <= 0) { continue; }
+        // v1.3.0-beta8fix1 (bug BS-21) — THE SHIFT REPLACES, IT DOES NOT ADD.
+        //
+        // `authoredTop` is the BASELINE top, and the baseline already carries the
+        // shift of the previous solve; `pageTopShiftPx` can only ever push DOWN.
+        // Asked the raw baseline it therefore only ever grew: a two-row strip
+        // moved the page down, one row moved it down again, and NOTHING brought it
+        // back — the CI harness measured `stripShift 228` px baked into a 494x497
+        // page, with the tab's controls parked under the page and the solver
+        // reporting a perfectly coherent layout (`[I1] page is EMPTY at offset 0`).
+        // Subtracting the recorded shift first recovers the authored position, so
+        // the answer is absolute and a strip that fits one row again returns the
+        // page to exactly where it was (the model documents this; the unit test
+        // drives three grow/shrink cycles at 100/125/150 %).
+        const ok::layout::StripShift shift = ok::layout::stripShiftFor(
+            authoredTop, g_settingsScroll.perTabStripShift96[t],
+            static_cast<int>(disp.top), static_cast<int>(dpi != 0 ? dpi : 96));
+        g_settingsScroll.perTabStripShift96[t] = shift.shift96;
+        if (shift.shiftPx <= 0) { continue; }
         for (ok::layout::ControlSpec& spec : specs) {
-            if (spec.tab == t) { spec.rect.y += shift; }
+            if (spec.tab == t) { spec.rect.y += shift.shiftPx; }
         }
     }
     // v1.3.0-beta8fix1 (bug BS-20): and no page child may be wider than the page

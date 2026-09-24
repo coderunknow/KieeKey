@@ -212,6 +212,13 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "checkEmptyPage",
     ),
     (
+        "BS-21  the tab-strip shift accumulates again",
+        "src/app/main.cpp",
+        "        const ok::layout::StripShift shift = ok::layout::stripShiftFor(",
+        "        const ok::layout::StripShift shift = ok::layout::pageTopShiftPx(",
+        "no longer goes through",
+    ),
+    (
         "BS-20  the solver stops clamping rows to the page",
         "src/app/main.cpp",
         "            spec.rect = ok::layout::clampPageChildWidth(spec.rect, limitRight, S(80));",
@@ -237,8 +244,11 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
     (
         "BS-18  the baseline drop forgets the scroll position",
         "src/app/main.cpp",
-        "    settingsScrollToTop();\n    g_settingsScroll.solved.clear();",
-        "    g_settingsScroll.solved.clear();",
+        # anchored on the call plus the BS-21 normalisation that now follows it
+        # (the bare call line is not adjacent to solved.clear() any more)
+        "    settingsScrollToTop();\n"
+        "    // v1.3.0-beta8fix1 (bug BS-21): and it may not be discarded",
+        "    // v1.3.0-beta8fix1 (bug BS-21): and it may not be discarded",
         "may not discard the baseline while the page is scrolled",
     ),
     (

@@ -2076,8 +2076,16 @@ int runSequenceHarness(HWND dlg, int tabCount, unsigned nativeDpi, unsigned pass
                         harnessStateStr(handed, "restore", stepsPerTab, 0, 100));
         }
         ++g_invChecks[13];
-        if (std::abs(handed.client.right - origClient.right) > 2 ||
-            std::abs(handed.client.bottom - origClient.bottom) > 2) {
+        // The client WIDTH is a function of WS_VSCROLL (a scrollbar is non-client):
+        // a handover whose width differs from the pass's own by exactly one
+        // scrollbar is the same window with the bar on the other side of its
+        // decision, not a leftover size. The HEIGHT stays exact — the bar cannot
+        // change it, so a height difference is a resize that was not undone.
+        const int barW = ::GetSystemMetrics(SM_CXVSCROLL);
+        const int widthDelta = static_cast<int>(handed.client.right - origClient.right);
+        const bool widthOk = std::abs(widthDelta) <= 2 ||
+                             (barW > 0 && std::abs(std::abs(widthDelta) - barW) <= 1);
+        if (!widthOk || std::abs(handed.client.bottom - origClient.bottom) > 2) {
             harnessFail(13, &findings,
                         "the harness handed the next step a dialog of " +
                             std::to_string(handed.client.right) + "x" +
@@ -2085,8 +2093,10 @@ int runSequenceHarness(HWND dlg, int tabCount, unsigned nativeDpi, unsigned pass
                             " but this pass started at " +
                             std::to_string(origClient.right) + "x" +
                             std::to_string(origClient.bottom) +
-                            " — the pass would audit a window size no operation of this "
-                            "pass ever set",
+                            " (a difference of one scrollbar width, " +
+                            std::to_string(barW) + " px, is accepted: the client width "
+                            "is a function of WS_VSCROLL) — the pass would audit a "
+                            "window size no operation of this pass ever set",
                         harnessStateStr(handed, "restore", stepsPerTab, 0, 100));
         }
         // The restored state is judged by the same I1..I12 battery every

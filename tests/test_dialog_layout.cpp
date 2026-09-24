@@ -729,6 +729,95 @@ void testBottomRowMovesDownOnly() {
 // 100 %, where the same row happens to fit, which is why four green CI rounds and
 // a green local suite never saw it. The clamp is the model's answer; this asserts
 // its three properties at all three contract scales.
+// v1.3.0-beta8fix1 (bug BS-21) — THE TAB STRIP RESHAPES, THE PAGE COMES BACK.
+//
+// The failing state the x64 probe recorded:
+//
+//   [I1] page is EMPTY at offset 0 (page 22,177 639x176): 580 36,383 259x1210 ...
+//        tab 5 dpi 144 offset 0/1048 contentBottom[5] 1401
+//
+// — a tab whose controls sit 200+ px BELOW a 176 px page, none of them visible,
+// while the app reports a coherent layout. The mechanism is the shift BS-10 added
+// to keep the page clear of a multi-row strip: it is computed from the previous
+// solve's baseline, and `pageTopShiftPx` can only push DOWN, so a strip that
+// wrapped once kept the page low forever (`stripShift 228` px in a 494x497 page by
+// the end of a fuzz walk). These assertions are the model's half of the fix:
+// grow -> shrink -> grow three times, at every scale the contract names, must
+// return the page to exactly its one-row position — and the accumulating rule the
+// code used must be shown to fail them (non-vacuity).
+void testStripShiftReturnsToAuthoredOnShrink() {
+    struct Scale { int dpi; };
+    const Scale scales[] = {{96}, {120}, {144}};
+    // A constrained page at 150 %: the probe measured 22,177 639x176 — a short
+    // client whose strip has wrapped. The authored page top is what it is at one
+    // row; the wrapped strip pushes the viewport top DOWN.
+    const int authoredTop96 = 100;          // first page control, one-row strip
+    const int wrappedTop96  = 122;          // two rows of labels (+2 x 11 px)
+
+    for (const Scale& sc : scales) {
+        const int authoredTop = dpiScalePx(authoredTop96, sc.dpi);
+        const int wrappedTop  = dpiScalePx(wrappedTop96, sc.dpi);
+
+        int prevShift96 = 0;                 // the app's per-tab record
+        int top = authoredTop;               // the page top as laid out
+
+        // --- 1. one row: the shift is 0 and the page is at its authored top ---
+        {
+            StripShift s0 = stripShiftFor(top, prevShift96, authoredTop, sc.dpi);
+            assert(s0.authoredTopPx == authoredTop);
+            assert(s0.shiftPx == 0 && s0.shift96 == 0);
+            top = s0.authoredTopPx + s0.shiftPx;
+            prevShift96 = s0.shift96;
+        }
+        const int oneRowTop = top;
+        assert(oneRowTop == authoredTop);
+
+        for (int cycle = 1; cycle <= 3; ++cycle) {
+            // --- 2. the strip wraps: the page moves down to clear it ----------
+            {
+                StripShift sw = stripShiftFor(top, prevShift96, wrappedTop, sc.dpi);
+                assert(sw.authoredTopPx == authoredTop);       // recovered, not raw
+                assert(sw.shiftPx == wrappedTop - authoredTop);
+                top = sw.authoredTopPx + sw.shiftPx;
+                prevShift96 = sw.shift96;
+                assert(top == wrappedTop);
+            }
+            // --- 3. the strip fits one row again: the page comes BACK ---------
+            {
+                StripShift sb = stripShiftFor(top, prevShift96, authoredTop, sc.dpi);
+                assert(sb.shiftPx == 0);
+                assert(sb.shift96 == 0);
+                top = sb.authoredTopPx + sb.shiftPx;
+                prevShift96 = sb.shift96;
+                assert(top == oneRowTop);                      // cycle N == cycle 1
+            }
+        }
+
+        // --- the accumulating rule the code used must FAIL this -------------
+        // (what `g_settingsScroll.perTabStripShift96[t] += shift` did: the input
+        // was the already-shifted baseline, so the shrink-back asked for 0 and
+        // changed nothing).
+        int accTop = authoredTop;
+        int accShift = 0;
+        for (int cycle = 1; cycle <= 3; ++cycle) {
+            accShift += pageTopShiftPx(accTop, wrappedTop);     // +=, on the shifted top
+            accTop += pageTopShiftPx(accTop, wrappedTop);
+            accShift += pageTopShiftPx(accTop, authoredTop);    // the shrink: 0
+            accTop += pageTopShiftPx(accTop, authoredTop);
+        }
+        assert(accTop == wrappedTop);          // it never came back ...
+        assert(accTop != oneRowTop);           // ... which is exactly the defect
+    }
+
+    // The DPI record is in 96-dpi px and survives a rescale by construction: a
+    // shift applied at 96 dpi must come out as the same physical distance at 150 %.
+    const StripShift at96 = stripShiftFor(dpiScalePx(authoredTop96, 96), 0,
+                                          dpiScalePx(wrappedTop96, 96), 96);
+    assert(at96.shift96 == wrappedTop96 - authoredTop96);
+    assert(stripShiftPx(at96.shift96, 144) == dpiScalePx(wrappedTop96 - authoredTop96, 144));
+    assert(stripShiftPx(at96.shift96, 96) == at96.shiftPx);
+}
+
 void testPageChildWidthIsClampedToThePage() {
     struct Case { int scale; int clientW; int x; int authoredW; };
     // The authored geometry of the rows the audit flagged, plus the widest label
@@ -935,6 +1024,8 @@ int main() {
     testPageTopShiftKeepsContentBelowTheTabStrip();
     // v1.3.0-beta8fix1 (bug BS-20): the page's own width is a hard bound.
     testPageChildWidthIsClampedToThePage();
+    // v1.3.0-beta8fix1 (bug BS-21): the strip shift is replaced, never accumulated.
+    testStripShiftReturnsToAuthoredOnShrink();
     // v1.3.0-beta8 (bug BS-12): scrolling moves, never resizes; runtime text
     // growth is a reflow request, not a local resize.
     testScrollModelNeverResizesAChild();

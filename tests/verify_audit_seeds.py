@@ -409,6 +409,14 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "the rule that both halves of the transition have to hold on that state",
     ),
     (
+        "BS-22t the revealed page is left unrepainted after the z-order change",
+        "src/app/main.cpp",
+        "        ::RedrawWindow(hwnd, &pageRc, nullptr,\n"
+        "                       RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW | RDW_ALLCHILDREN);",
+        "        /* seeded: the revealed page waits for the next WM_PAINT */",
+        "the synchronous page repaint after the tab control is put at the bottom",
+    ),
+    (
         "BS-22s the page children stop being kept above the tab control",
         "src/app/main.cpp",
         "    ::SetWindowPos(tabCtl, HWND_BOTTOM, 0, 0, 0, 0,\n"
@@ -433,7 +441,7 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
     (
         "BS-22o the app stops measuring the tab control's own layout",
         "src/app/main.cpp",
-        "                    if (last.top > first.top + 2) { rows = 2; }",
+        "                    if (dy >= rowH / 2 || -dy >= rowH / 2) { rows = 2; }",
         "                    rows = 1;   /* seeded: one row, whatever the layout says */",
         "the rule that reads the row count from those rectangles",
     ),

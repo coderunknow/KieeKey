@@ -947,8 +947,22 @@ def check(repo: Path):
              'a TCM_GETROWCOUNT of 2), and a taller single row moves the display '
              'rectangle with no wrap at all. Two items in different rows are the layout '
              'itself'),
-            ('if (last.top > first.top + 2) { rows = 2; }',
-             'the rule that reads the row count from those rectangles (BS-22o)'),
+            ('if (dy >= rowH / 2 || -dy >= rowH / 2) { rows = 2; }',
+             "the rule that reads the row count from those rectangles (BS-22o/BS-22t) "
+             '— TWO ITEMS ARE ON ONE ROW IFF THEIR TOPS MATCH, in either direction: '
+             '35989916632 measured `itemTopFirst/Last 24/2` (item 0 lower than item 8) '
+             'with TCM_GETROWCOUNT 2 and a two-row strip, so a rule that insists the '
+             'last item is the lower one reads a wrapped control as one row and the '
+             'probe\'s strip cycle can never reach its two-row state at native scale'),
+            ('::RedrawWindow(hwnd, &pageRc, nullptr,',
+             'the synchronous page repaint after the tab control is put at the bottom '
+             'of the sibling order (BS-22t) — a z-order change reveals the page '
+             'children asynchronously, so a frame captured in between shows the tab '
+             'control\'s background where the settings are: `[I8] a forced full repaint '
+             'changed 3540 client pixels (stale frame)`, the one invariant the z-order '
+             'fix disturbed. The parent\'s own invalidate cannot cover it (a parent '
+             'does not paint its children\'s pixels), hence RDW_ALLCHILDREN over the '
+             'tab control\'s rectangle, once, on the operation that changed it'),
             ('++g_settingsSolvePass;',
              'the bounded second solve that reads the height the window really has '
              '(BS-22l) — the same guard the BS-14 width pass uses, so this is one '

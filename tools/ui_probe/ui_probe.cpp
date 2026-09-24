@@ -2338,23 +2338,42 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
                                 : "set") +
                            " rows " +
                            std::to_string(::SendMessageW(tabCtl, TCM_GETROWCOUNT, 0, 0)) +
-                           " itemTopFirst/Last " +
+                           " itemTops " +
                            ([&] {
-                               RECT f{}, l{};
+                               // v1.3.0-beta8fix1 (bug BS-22t): EVERY ITEM'S TOP, not
+                               // just the two ends. 35989916632's `itemTopFirst/Last
+                               // 24/2` said the strip had more than one row (the app
+                               // read it as one, BS-22t) but not WHICH item sits where,
+                               // and that is the question the next state has to answer:
+                               // the list either shows a contiguous split (row 0 = the
+                               // first k items, row 1 = the rest, in one direction or
+                               // the other) or it shows something no layout produces,
+                               // and either way the fixed rule is judged by it.
                                const int n = static_cast<int>(
                                    ::SendMessageW(tabCtl, TCM_GETITEMCOUNT, 0, 0));
-                               if (n <= 0 ||
-                                   ::SendMessageW(tabCtl, TCM_GETITEMRECT, 0,
-                                                  reinterpret_cast<LPARAM>(&f)) == FALSE) {
-                                   return std::string("n/a");
+                               if (n <= 0) { return std::string("n/a"); }
+                               std::string tops;
+                               RECT f{};
+                               int rowH = 0;
+                               int lastTop = 0;
+                               for (int i = 0; i < n; ++i) {
+                                   RECT r{};
+                                   if (::SendMessageW(tabCtl, TCM_GETITEMRECT,
+                                                      static_cast<WPARAM>(i),
+                                                      reinterpret_cast<LPARAM>(&r)) == FALSE) {
+                                       return std::string("n/a");
+                                   }
+                                   if (i == 0) {
+                                       f = r;
+                                       rowH = static_cast<int>(r.bottom - r.top);
+                                   }
+                                   lastTop = static_cast<int>(r.top);
+                                   if (i != 0) { tops += ","; }
+                                   tops += std::to_string(r.top);
                                }
-                               if (n > 1 &&
-                                   ::SendMessageW(tabCtl, TCM_GETITEMRECT,
-                                                  static_cast<WPARAM>(n - 1),
-                                                  reinterpret_cast<LPARAM>(&l)) != FALSE) {
-                                   return std::to_string(f.top) + "/" + std::to_string(l.top);
-                               }
-                               return std::to_string(f.top) + "/" + std::to_string(f.top);
+                               return tops + " rowH " + std::to_string(rowH) +
+                                      " itemTopFirst/Last " + std::to_string(f.top) + "/" +
+                                      std::to_string(lastTop);
                            }());
             }
             const int renderedPts = renderPaintCountAt(

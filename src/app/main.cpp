@@ -5360,7 +5360,27 @@ void solveSettingsLayout(HWND hwnd) {
                     ::SendMessageW(tabCtl, TCM_GETITEMRECT,
                                    static_cast<WPARAM>(count - 1),
                                    reinterpret_cast<LPARAM>(&last)) != FALSE) {
-                    if (last.top > first.top + 2) { rows = 2; }
+                    // v1.3.0-beta8fix1 (bug BS-22t): TWO ITEMS ARE ON ONE ROW IFF
+                    // THEIR RECTANGLES START AT THE SAME y — and the DIRECTION of the
+                    // rows is not this measurement's business.
+                    //
+                    // The previous rule (`last.top > first.top + 2`) assumed a wrap
+                    // always puts the LAST item BELOW the first. The x64 run
+                    // 35989916632 measured `itemTopFirst/Last 24/2`: item 0 twenty-two
+                    // pixels LOWER than item 8, while TCM_GETROWCOUNT answered 2 and
+                    // the strip really was two rows tall (page top 114 = tab top 66 +
+                    // 2 x 24 px). A wrapped control whose rows stack upward therefore
+                    // read as ONE row, and the probe's strip cycle — whose wrap half is
+                    // judged by exactly this number — could never reach its two-row
+                    // state at native scale ("strip-cycle not measurable ... rows 1"),
+                    // one [I1] per native pass for a layout that was there all along.
+                    //
+                    // A wrap moves an item by a whole row; items on one row share
+                    // their top exactly. Half a tab height is the tolerance, so a
+                    // selected tab drawn a pixel or two lower is still one row.
+                    const int rowH = std::max(1, static_cast<int>(first.bottom - first.top));
+                    const int dy = static_cast<int>(last.top) - static_cast<int>(first.top);
+                    if (dy >= rowH / 2 || -dy >= rowH / 2) { rows = 2; }
                 }
             }
             if (rows > 0) { g_settingsScroll.stripRows = rows; }
@@ -5849,6 +5869,29 @@ void solveSettingsLayout(HWND hwnd) {
     // no activation, and the tab's own window rectangle is untouched.
     ::SetWindowPos(tabCtl, HWND_BOTTOM, 0, 0, 0, 0,
                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    // v1.3.0-beta8fix1 (bug BS-22t): AND THE PIXELS THE TAB CONTROL WAS COVERING
+    // ARE REPAINTED BEFORE ANYTHING CAN LOOK AT THEM.
+    //
+    // A z-order change reveals the page children ASYNCHRONOUSLY: the system
+    // invalidates their newly exposed rectangles and their WM_PAINT runs later,
+    // so a frame captured in between still shows the tab control's background
+    // where the settings are. The x64 run 35989916632 measured it — `[I8] a
+    // forced full repaint changed 3540 client pixels (stale frame)`, the one
+    // invariant this change disturbed, at scenario_forced_repaint dpi 96. The
+    // dialog's own repaint does not cover it either: `settingsRepaintAll()`
+    // invalidates the PARENT, and a parent never paints its children's pixels.
+    //
+    // So the tab control's own rectangle — the page area, which is what the
+    // z-order change exposed — is repainted here, parent background first and
+    // every child inside it (`RDW_ALLCHILDREN`), synchronously. One pass, on the
+    // operation that changed the stacking; no timer, no loop.
+    {
+        RECT pageRc{};
+        ::GetWindowRect(tabCtl, &pageRc);
+        ::MapWindowPoints(nullptr, hwnd, reinterpret_cast<POINT*>(&pageRc), 2);
+        ::RedrawWindow(hwnd, &pageRc, nullptr,
+                       RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW | RDW_ALLCHILDREN);
+    }
     int curTab = static_cast<int>(::SendMessageW(tabCtl, TCM_GETCURSEL, 0, 0));
     if (curTab < 0 || curTab > 8) { curTab = 0; }
     settingsScrollSetTab(hwnd, curTab);   // applies solved rects at offset 0

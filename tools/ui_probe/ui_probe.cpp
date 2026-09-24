@@ -114,6 +114,7 @@ struct ProbeScrollStateT {          // mirrors KieeKeyProbeScrollStateT (main.cp
     int latchWrites;
     int styleWrites;
     int latchDrifts;
+    int stripRows;                  // the last plan's row count (1 = one row)
 };
 extern "C" void KieeKeyProbeScrollState(HWND dlg, ProbeScrollStateT* out);
 // v1.3.0-beta8fix1 (bug BS-22c): the app answers with the size of ITS struct, and
@@ -128,6 +129,8 @@ extern "C" int  KieeKeyProbeDisplayChange(HWND dlg);
 extern "C" void KieeKeyProbeSetWindowDpiOverride(UINT dpi);
 extern "C" int  KieeKeyProbeResize(HWND dlg, int clientW, int clientH);
 extern "C" int  KieeKeyProbeFontScale(HWND dlg, int percent);
+// v1.3.0-beta8fix1 (bug BS-22g): the solver's own rectangle for a control.
+extern "C" int  KieeKeyProbeSolvedRect(HWND dlg, int id, int* out);
 extern "C" void KieeKeyProbeTypeRow(HWND dlg, int id, const wchar_t* text);
 
 namespace {
@@ -227,6 +230,19 @@ std::string className(HWND h) {
     wchar_t buf[128]{};
     ::GetClassNameW(h, buf, static_cast<int>(sizeof(buf) / sizeof(buf[0])));
     return toUtf8(buf);
+}
+
+// v1.3.0-beta8fix1 (bug BS-22g): "solved XxY" — what the app's own solver put in
+// the baseline for this control, empty when it has no baseline entry. Every
+// rectangle finding carries it so the next reader does not have to guess whether
+// the box came from the solver or from an older layout.
+std::string solvedOf(HWND dlg, int id) {
+    int r[4] = {0, 0, 0, 0};
+    if (KieeKeyProbeSolvedRect(dlg, id, r) == 0) { return " solved -"; }
+    // rectStr() is defined further down; same "x,y wxh" shape, spelled here so
+    // this helper can sit next to the other id/geometry helpers.
+    return " solved " + std::to_string(r[0]) + "," + std::to_string(r[1]) + " " +
+           std::to_string(r[2]) + "x" + std::to_string(r[3]);
 }
 
 // The real measured width of `text` in `h`'s own font.
@@ -661,7 +677,9 @@ void checkOverlaps(const Audit& a, const std::vector<Ctl>& ctls) {
                     rectStr(ci.ex, ci.ey, ci.ew, ci.eh) + " and id " +
                     std::to_string(cj.id) + " (" + cj.klass + ") " +
                     rectStr(cj.ex, cj.ey, cj.ew, cj.eh) + " overlap by " +
-                    std::to_string(ix) + "x" + std::to_string(iy) + " px"});
+                    std::to_string(ix) + "x" + std::to_string(iy) + " px" +
+                    solvedOf(a.dlg, ci.id) + solvedOf(a.dlg, cj.id) + " live " +
+                    std::to_string(ci.h) + "/" + std::to_string(cj.h) + "px"});
             }
         }
         // A group box may contain its children, but it must never cover a
@@ -757,12 +775,21 @@ void checkTextFit(const Audit& a, const std::vector<Ctl>& ctls) {
         if (c.eh <= c.fontHeight + 4) {
             need = textWidth(c.hwnd, wtext);
             if (need > c.ew + 2) {
+                // v1.3.0-beta8fix1 (bug BS-22g): the finding names the font the
+                // text was measured in and how long the text is, because "needs
+                // 744px in a 629px box" is only actionable with them: the row was
+                // sized from the AUTHORED label while the control carries the
+                // live text, and which of the two the app measured decides
+                // whether this is a layout defect or a live-row contract.
                 a.findings->push_back({"clip",
                     a.prefix + "id " + std::to_string(c.id) + " (" + c.klass + ") needs " +
                     std::to_string(need) + "px (app solver says " +
                     std::to_string(KieeKeyProbeMeasureStaticHeight(a.dlg, c.id)) +
                     "), shows " + std::to_string(c.ew) + "px of " + std::to_string(c.w) +
-                    " (box " + rectStr(c.x, c.y, c.w, c.h) + "): " + c.text.substr(0, 60)});
+                    " (box " + rectStr(c.x, c.y, c.w, c.h) + ", font " +
+                    std::to_string(c.fontHeight) + "px, text " +
+                    std::to_string(wtext.size()) + " chars" +
+                    solvedOf(a.dlg, c.id) + "): " + c.text.substr(0, 60)});
             }
         } else {
             need = wrappedTextHeight(c.hwnd, wtext, c.ew);
@@ -1857,32 +1884,69 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
         if (s.havePage && w > 0 && h > 0) {
             const std::uint32_t bg =
                 beforePx[static_cast<std::size_t>(2) * static_cast<std::size_t>(w) + 2];
+            // v1.3.0-beta8fix1 (bug BS-22g): A CONTROL THE CAPTURE DOES NOT COVER
+            // IS NOT EVIDENCE OF A BLANK PAGE. The sample points are skipped when
+            // they fall outside the captured client, and the old counter judged
+            // such a control anyway — three visible-but-largely-off-screen controls
+            // were enough to report `the page paints background only` about a page
+            // the capture had never looked at. A control counts as judged only when
+            // at least one of its three middle-row samples is inside the capture,
+            // and a page with fewer than three of those is reported as its own
+            // finding (with the numbers) instead of passing as "nothing to see":
+            // an empty page is the user's report, so a green here may not be a
+            // measurement that never ran.
             int judged = 0;
             int painted = 0;
+            int uncovered = 0;
+            std::string evidence;
             for (const HarnessCtl& c : s.ctls) {
                 if (judged >= 8) { break; }
                 if (!c.shown || c.regionEmpty || c.ew < 24 || c.eh < 8) { continue; }
-                ++judged;
                 const int y = c.ey + c.eh / 2;
-                bool differs = false;
+                int sampled = 0;
+                int differs = 0;
                 for (int k = 1; k <= 3; ++k) {
                     const int x = c.ex + c.ew * k / 4;
                     if (x < 0 || y < 0 || x >= w || y >= h) { continue; }
+                    ++sampled;
                     const std::uint32_t px =
                         beforePx[static_cast<std::size_t>(y) * static_cast<std::size_t>(w) +
                                  static_cast<std::size_t>(x)];
-                    if (px != bg) { differs = true; }
+                    if (px != bg) { ++differs; }
                 }
-                if (differs) { ++painted; }
+                if (sampled == 0) { ++uncovered; continue; }
+                ++judged;
+                if (differs > 0) { ++painted; }
+                if (evidence.size() < 220) {
+                    evidence += " " + std::to_string(c.id) + " " +
+                                rectStr(c.ex, c.ey, c.ew, c.eh) + " painted " +
+                                std::to_string(differs) + "/" + std::to_string(sampled);
+                }
             }
+            const std::string ground =
+                "scenario_screen_paint tab " + std::to_string(deepestTab) + " client " +
+                std::to_string(w) + "x" + std::to_string(h) + " app dpi " +
+                std::to_string(s.app.dpi) + " page " + rectStr(s.page) + " offset " +
+                std::to_string(s.app.offset) + " strip " +
+                std::to_string(s.app.stripShift[deepestTab]) + "/" +
+                std::to_string(s.app.stripSeen[deepestTab]) + " rows " +
+                std::to_string(s.app.stripRows) + " judged " + std::to_string(judged) +
+                " uncovered " + std::to_string(uncovered) + evidence;
             ++g_invChecks[11];
             if (judged >= 3 && painted == 0) {
                 harnessFail(11, findings,
                             "the page paints background only: " + std::to_string(judged) +
                                 " visible controls, none of their middle rows differs "
                                 "from the page background",
-                            "scenario_screen_paint tab " + std::to_string(deepestTab) +
-                                " client " + std::to_string(w) + "x" + std::to_string(h));
+                            ground);
+            } else if (judged < 3) {
+                harnessFail(11, findings,
+                            "the screen capture covers fewer than three whole page "
+                            "controls (" + std::to_string(judged) + " covered, " +
+                                std::to_string(uncovered) + " not covered by the "
+                                "capture) — the page's content cannot be judged from "
+                                "this frame",
+                            ground);
             }
         }
     } else {
@@ -1948,7 +2012,8 @@ std::string whereOf(const HarnessState& s, int tab, unsigned passDpi, int cycle,
            " font " + std::to_string(fontPct) + "% page top " +
            std::to_string(s.page.top) + " strip " +
            std::to_string(s.app.stripShift[tab]) + "/" +
-           std::to_string(s.app.stripSeen[tab]) + " step " + std::to_string(step);
+           std::to_string(s.app.stripSeen[tab]) + " rows " +
+           std::to_string(s.app.stripRows) + " step " + std::to_string(step);
 }
 
 int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCount,
@@ -1970,9 +2035,23 @@ int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCo
     const int kWrapFontPct = 150;
 
     // Start from the pass's own state: its scale, one-row strip, top of the page.
+    //
+    // v1.3.0-beta8fix1 (bug BS-22g): AND THE CLIENT HAS TO BE BIG ENOUGH TO HOLD
+    // ONE ROW AT THIS SCALE, or the scenario starts from a strip that is already
+    // wrapped and its "the labels grew and the strip wrapped" measurement is
+    // really "the labels were already too wide". At the 120 dpi pass of the
+    // 904334c x64 run the client was the pass's scaled 683 px, the labels needed
+    // more than the 645 px tab that leaves, and every cycle reported
+    // `[I1] the nine tab labels did not wrap at font 150% (page top 161 vs the
+    // one-row 161, stripShift seen 29 px)` — 54 findings for a transition that HAD
+    // happened (the shift is the app's own record of the strip pushing the page).
+    // The width is the pass client scaled to this dpi plus 15 % of slack, and the
+    // cycle then PROVES its precondition (stripRows == 1) instead of assuming it.
+    const int stripW = std::max(
+        wideW, ::MulDiv(wideW, static_cast<int>(passDpi), 96) + ::MulDiv(wideW, 15, 100));
     KieeKeyProbeSimulateDpi(dlg, passDpi);
     KieeKeyProbeFontScale(dlg, 100);
-    KieeKeyProbeResize(dlg, wideW, clientH);
+    KieeKeyProbeResize(dlg, stripW, clientH);
     KieeKeyProbeReflowNow(dlg);
     KieeKeyProbeSetOffset(dlg, 0);
 
@@ -1996,6 +2075,26 @@ int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCo
 
         if (!multiRowPossible || baseFirstY < 0) { continue; }
 
+        // v1.3.0-beta8fix1 (bug BS-22g): the transition needs a one-row start, and
+        // the app's own plan says whether it has one. Reporting the missing
+        // precondition (instead of running three cycles that cannot measure
+        // anything) is what keeps this scenario from being vacuously green in a
+        // client too small to ever show the strip as one row.
+        ++g_fuzzChecks;
+        if (base.app.stripRows > 1) {
+            harnessFail(1, findings,
+                        "the strip-cycle scenario could not establish a one-row "
+                        "tab strip at this pass: the app's plan put the labels in " +
+                            std::to_string(base.app.stripRows) + " rows in a " +
+                            std::to_string(stripW) + " px client (page " +
+                            rectStr(base.page) + ", strip shift " +
+                            std::to_string(base.app.stripShift[tab]) +
+                            " px) — a cycle from here measures a strip that was "
+                            "already wrapped, not the grow/shrink transition",
+                        whereOf(base, tab, passDpi, 0, 0, stripW, clientH, 100));
+            continue;
+        }
+
         for (int cycle = 1; cycle <= 3; ++cycle) {
             // --- the labels grow: the strip wraps, the page top moves DOWN ----
             KieeKeyProbeFontScale(dlg, kWrapFontPct);
@@ -2017,7 +2116,7 @@ int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCo
                                 " px) — the grow/shrink transition cannot be measured "
                                 "in this state, so a green here would be a green that "
                                 "never ran",
-                            whereOf(wrapped, tab, passDpi, cycle, 0, wideW, clientH,
+                            whereOf(wrapped, tab, passDpi, cycle, 0, stripW, clientH,
                                     kWrapFontPct));
             }
 
@@ -2034,7 +2133,7 @@ int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCo
                 if (backFirstY < 0 || c.y < backFirstY) { backFirstY = c.y; backFirstId = c.id; }
             }
             const std::string where =
-                whereOf(back, tab, passDpi, cycle, 0, wideW, clientH, 100);
+                whereOf(back, tab, passDpi, cycle, 0, stripW, clientH, 100);
 
             // (a) the page top comes back
             ++g_fuzzChecks;

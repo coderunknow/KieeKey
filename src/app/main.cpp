@@ -8150,6 +8150,27 @@ extern "C" HWND KieeKeyProbeOpenSettings(int tab) {
 // width, so the probe can print its measurement next to the solver's instead of
 // assuming they agree (they did not, on the first runs — see the clip findings
 // in BUG_HUNT_REPORT_beta8).
+// v1.3.0-beta8fix1 (bug BS-22g): THE RECTANGLE THE SOLVER APPLIED, not the one
+// Win32 is showing. A finding that says "needs 744px in a 629px box" cannot be
+// acted on without it: the text was either measured by the solver (and the box it
+// produced is the answer) or the box came from somewhere else, and those two
+// cases need opposite fixes. out[0..3] = x, y, w, h of the baseline entry for
+// `id`; returns 1 when the control has one, 0 when it does not.
+extern "C" int KieeKeyProbeSolvedRect(HWND dlg, int id, int* out) {
+    if (dlg == nullptr || out == nullptr) { return 0; }
+    const HWND child = ::GetDlgItem(dlg, id);
+    if (child == nullptr) { return 0; }
+    for (const auto& entry : g_settingsScroll.solved) {
+        if (entry.first != child) { continue; }
+        out[0] = entry.second.x;
+        out[1] = entry.second.y;
+        out[2] = entry.second.w;
+        out[3] = entry.second.h;
+        return 1;
+    }
+    return 0;
+}
+
 extern "C" int KieeKeyProbeMeasureStaticHeight(HWND dlg, int id) {
     HWND child = ::GetDlgItem(dlg, id);
     if (child == nullptr) { return -1; }
@@ -8286,6 +8307,16 @@ struct KieeKeyProbeScrollStateT {
     int latchWrites;
     int styleWrites;
     int latchDrifts;                  // times the sync found the two disagreeing
+    // v1.3.0-beta8fix1 (bug BS-22g): the row count the last plan put the tab strip
+    // into (1 = the labels fit one row). The strip-cycle scenario has to START
+    // from a one-row strip to measure the grow/shrink transition, and at 120/144
+    // dpi a client sized for 96 dpi wraps the labels by itself — so the harness
+    // asks the app what the plan did instead of inferring it from the page top
+    // (a wrapped strip and a one-row strip can share a page top when the tab
+    // control is height-clamped, which is exactly the state that made 54 I1
+    // "the labels did not wrap" findings describe a transition that DID happen:
+    // `stripShift seen 29 px`).
+    int stripRows;
 };
 
 // The probe's mirror of this struct must agree with it byte for byte: a field
@@ -8322,6 +8353,7 @@ extern "C" void KieeKeyProbeScrollState(HWND dlg, KieeKeyProbeScrollStateT* out)
     out->latchDrifts = g_probeLatchDrifts;
     out->stripRelayouts = g_probeStripRelayouts;
 #endif
+    out->stripRows = g_settingsScroll.stripRows;
     if (dlg != nullptr) {
         out->styleVScroll =
             (::GetWindowLongPtrW(dlg, GWL_STYLE) & WS_VSCROLL) != 0 ? 1 : 0;

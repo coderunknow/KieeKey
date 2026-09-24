@@ -857,6 +857,39 @@ def check(repo: Path):
              'the proof that the strip really pushed the page down (BS-22c)')):
         if needle not in probe:
             failures.append(f"tools/ui_probe/ui_probe.cpp: {needle} is gone — {why}")
+    # v1.3.0-beta8fix1 (bug BS-22g): A MEASUREMENT MUST PROVE ITS PRECONDITION.
+    # Three checks were green-able in states where they measured nothing: the
+    # strip cycle ran from a strip that was already wrapped (54 I1 findings about a
+    # transition that had happened), the screen-paint check counted controls its
+    # capture did not cover as "painted nothing" (2 I11), and neither finding named
+    # the rectangle the app's own solver had applied.
+    for needle, why in (
+            ('base.app.stripRows > 1',
+             'the proof that the strip cycle really starts from ONE row — a cycle in '
+             'a client too small to show one row measures a wrapped strip, not the '
+             'grow/shrink transition (BS-22g)'),
+            ('::MulDiv(wideW, static_cast<int>(passDpi), 96)',
+             'the dpi-scaled client that lets a one-row strip exist at this pass '
+             '(BS-22g)'),
+            ('if (sampled == 0) { ++uncovered; continue; }',
+             'the screen-paint check skipping a control its capture does not cover '
+             '(a control off the captured frame is not evidence of a blank page) '
+             '(BS-22g)'),
+            ('if (judged < 3) {',
+             'the screen-paint check refusing to report green when it could not '
+             'judge three whole controls (BS-22g)')):
+        if needle not in probe:
+            failures.append(f"tools/ui_probe/ui_probe.cpp: {needle} is gone — {why}")
+    if 'KieeKeyProbeSolvedRect' not in main or 'KieeKeyProbeSolvedRect' not in probe:
+        failures.append(
+            "main.cpp / tools/ui_probe/ui_probe.cpp: KieeKeyProbeSolvedRect() is gone "
+            "(BS-22g) — every rectangle finding has to name the rectangle the app's "
+            "own solver applied: \"needs 744px in a 629px box\" is only actionable "
+            "when it says whether that box came from the solver or from an older "
+            "layout")
+    if 'g_settingsScroll.solved' not in main:
+        failures.append("main.cpp: the solved baseline is gone (BS-22g) — the scroll "
+                        "machinery repositions page children from it")
     if 'bool needBar = (a.contentBottom[tab] > s.page.bottom);' not in probe:
         failures.append(
             "tools/ui_probe/ui_probe.cpp: the bar ruler is no longer the CURRENT "

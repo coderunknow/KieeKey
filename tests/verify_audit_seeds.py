@@ -350,6 +350,27 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "no longer maps the app's own faces at the CURRENT dpi",
     ),
     (
+        "BS-22g the strip cycle stops proving its one-row start",
+        "tools/ui_probe/ui_probe.cpp",
+        "        if (base.app.stripRows > 1) {",
+        "        if (false) {   // seeded: a cycle from an already wrapped strip",
+        "base.app.stripRows > 1 is gone",
+    ),
+    (
+        "BS-22g the screen check counts controls its capture does not cover",
+        "tools/ui_probe/ui_probe.cpp",
+        "                if (sampled == 0) { ++uncovered; continue; }",
+        "                /* seeded: an uncovered control counts as painted nothing */",
+        "skipping a control its capture does not cover",
+    ),
+    (
+        "BS-22g the rectangle findings forget the solver's own rect",
+        "src/app/main.cpp",
+        "extern \"C\" int KieeKeyProbeSolvedRect(HWND dlg, int id, int* out) {",
+        "/* seeded: the solver's own rectangle is not answered */",
+        "KieeKeyProbeSolvedRect() is gone",
+    ),
+    (
         "BS-22c a tab switch stops re-deciding the bar",
         "src/app/main.cpp",
         "    settingsSyncScrollbarLatch(g.hSettings);",

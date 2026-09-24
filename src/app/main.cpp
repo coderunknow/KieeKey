@@ -5339,8 +5339,31 @@ void solveSettingsLayout(HWND hwnd) {
         // wrap half is judged by. A control that answers 0 (should not happen)
         // keeps the plan's number.
         {
-            const LRESULT rows = ::SendMessageW(tabCtl, TCM_GETROWCOUNT, 0, 0);
-            if (rows > 0) { g_settingsScroll.stripRows = static_cast<int>(rows); }
+            // TCM_GETITEMRECT is the layout the control is USING: with more than
+            // one row of tabs, the last item's rectangle starts lower than the
+            // first's. TCM_GETROWCOUNT answers from the control's own idea of how
+            // many rows the item widths need, which can disagree with the layout it
+            // has actually built (35985183906: the display rectangle was the
+            // one-row one, the recorded shift 14 px, and TCM_GETROWCOUNT 2 — three
+            // answers about the same state), so the rectangles are the measurement
+            // and the row count is read from them.
+            RECT first{};
+            RECT last{};
+            int rows = 0;
+            if (::SendMessageW(tabCtl, TCM_GETITEMCOUNT, 0, 0) > 0 &&
+                ::SendMessageW(tabCtl, TCM_GETITEMRECT, 0,
+                               reinterpret_cast<LPARAM>(&first)) != FALSE) {
+                const int count = static_cast<int>(
+                    ::SendMessageW(tabCtl, TCM_GETITEMCOUNT, 0, 0));
+                rows = 1;
+                if (count > 1 &&
+                    ::SendMessageW(tabCtl, TCM_GETITEMRECT,
+                                   static_cast<WPARAM>(count - 1),
+                                   reinterpret_cast<LPARAM>(&last)) != FALSE) {
+                    if (last.top > first.top + 2) { rows = 2; }
+                }
+            }
+            if (rows > 0) { g_settingsScroll.stripRows = rows; }
         }
     }
 

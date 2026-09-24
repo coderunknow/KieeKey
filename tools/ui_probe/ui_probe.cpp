@@ -2108,10 +2108,38 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
                 samples.insert(samples.end(), mine.begin(), mine.end());
                 perCtl.push_back(mine);
                 if (differs > 0) { ++painted; }
-                if (evidence.size() < 220) {
-                    evidence += " " + std::to_string(c.id) + " " +
-                                rectStr(c.ex, c.ey, c.ew, c.eh) + " painted " +
-                                std::to_string(differs) + "/" +
+                if (evidence.size() < 700) {
+                    // v1.3.0-beta8fix1 (bug BS-22q, part three): WHAT THE WINDOW IS,
+                    // not only where it was sampled. `painted 0/3` on a control that
+                    // is shown, inside the page and has a region is a statement about
+                    // the SCREEN; whether the window is there at all (its live
+                    // rectangle, its region, its parent) is what tells "not painted"
+                    // from "not this window any more".
+                    RECT live{};
+                    ::GetWindowRect(c.hwnd, &live);
+                    ::MapWindowPoints(nullptr, dlg, reinterpret_cast<POINT*>(&live), 2);
+                    RECT rgn{};
+                    const HRGN probeRgn = ::CreateRectRgn(0, 0, 0, 0);
+                    const int rgnType = (probeRgn != nullptr)
+                                            ? ::GetWindowRgn(c.hwnd, probeRgn)
+                                            : ERROR;
+                    if (probeRgn != nullptr && rgnType != ERROR) { ::GetRgnBox(probeRgn, &rgn); }
+                    if (probeRgn != nullptr) { ::DeleteObject(probeRgn); }
+                    evidence += " " + std::to_string(c.id) + " sampled " +
+                                rectStr(c.ex, c.ey, c.ew, c.eh) + " live " +
+                                rectStr(live.left, live.top, live.right - live.left,
+                                        live.bottom - live.top) +
+                                " rgn " +
+                                (rgnType == ERROR ? std::string("none")
+                                                  : (rgnType == NULLREGION
+                                                         ? std::string("EMPTY")
+                                                         : rectStr(rgn.left, rgn.top,
+                                                                   rgn.right - rgn.left,
+                                                                   rgn.bottom - rgn.top))) +
+                                " vis " + (::IsWindowVisible(c.hwnd) != FALSE ? "y" : "N") +
+                                " parent " +
+                                (::GetParent(c.hwnd) == dlg ? "dlg" : "OTHER") +
+                                " painted " + std::to_string(differs) + "/" +
                                 std::to_string(mine.size());
                 }
             }
@@ -2189,6 +2217,13 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
                 }
             }
             const bool pagePaintedOnScreen = bareInCapture && (bareScreen != bg);
+            // v1.3.0-beta8fix1 (bug BS-22q, part three): these stay EVIDENCE, not a
+            // branch. A tab control does not paint its page area — the parent dialog
+            // does — so `screen == bg` at a bare point inside the page is the normal
+            // state and cannot become a finding about the page not being painted. The
+            // numbers ride along in the state string so the next run can tell "the
+            // page area is the window's background" (normal) from "the app's render
+            // fills the page where the screen does not" (something painted over it).
             const bool pagePaintedInRender = (bareRender != bg);
             // v1.3.0-beta8fix1 (bug BS-22m): AND THE SAME POINTS ON THE OTHER
             // FRAME. `afterPx` is the capture taken AFTER the forced full repaint
@@ -2233,7 +2268,25 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
                                 ? "EMPTY"
                                 : "set") +
                            " rows " +
-                           std::to_string(::SendMessageW(tabCtl, TCM_GETROWCOUNT, 0, 0));
+                           std::to_string(::SendMessageW(tabCtl, TCM_GETROWCOUNT, 0, 0)) +
+                           " itemTopFirst/Last " +
+                           ([&] {
+                               RECT f{}, l{};
+                               const int n = static_cast<int>(
+                                   ::SendMessageW(tabCtl, TCM_GETITEMCOUNT, 0, 0));
+                               if (n <= 0 ||
+                                   ::SendMessageW(tabCtl, TCM_GETITEMRECT, 0,
+                                                  reinterpret_cast<LPARAM>(&f)) == FALSE) {
+                                   return std::string("n/a");
+                               }
+                               if (n > 1 &&
+                                   ::SendMessageW(tabCtl, TCM_GETITEMRECT,
+                                                  static_cast<WPARAM>(n - 1),
+                                                  reinterpret_cast<LPARAM>(&l)) != FALSE) {
+                                   return std::to_string(f.top) + "/" + std::to_string(l.top);
+                               }
+                               return std::to_string(f.top) + "/" + std::to_string(f.top);
+                           }());
             }
             const std::string ground =
                 "scenario_screen_paint tab " + std::to_string(deepestTab) + " client " +
@@ -2291,15 +2344,6 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
                                 "frame taken after RedrawWindow() and none of them does "
                                 "in the frame before it — the content exists, and the "
                                 "app\'s own repaint path did not put it on the screen",
-                            ground);
-            } else if (judged >= 3 && painted == 0 && !pagePaintedOnScreen) {
-                harnessFail(11, findings,
-                            "the page area is the WINDOW's background: the capture shows "
-                            "the window's own background inside the page and at all " +
-                                std::to_string(judged) + " visible controls' rows, while the "
-                                "app's own render paints the page there — the page (and "
-                                "everything in it) was never put on the screen in this "
-                                "state",
                             ground);
             } else if (judged >= 3 && painted == 0) {
                 harnessFail(11, findings,

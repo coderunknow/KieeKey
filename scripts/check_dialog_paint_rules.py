@@ -930,12 +930,16 @@ def check(repo: Path):
              'combo box answers SetWindowPos with its own height, and a plan that '
              'describes a window that does not exist is what put the row below it '
              'inside the combo (`[overlap] ... overlap by 398x6 px`)'),
-            ('const LRESULT rows = ::SendMessageW(tabCtl, TCM_GETROWCOUNT, 0, 0);',
-             "the app reading the tab control's OWN row count (BS-22o) — the plan's "
-             '`multiline` flag is an intention (Win32 can keep nine narrow labels in '
-             'one row even with TCS_MULTILINE set) and the display rectangle moves for '
-             'a taller single row too, so neither may stand in for "the labels '
-             'wrapped"'),
+            ('::SendMessageW(tabCtl, TCM_GETITEMRECT, 0,',
+             "the app measuring the tab control's ACTUAL layout (BS-22o) — the plan's "
+             '`multiline` flag is an intention, TCM_GETROWCOUNT answers from the item '
+             'widths (which can disagree with the layout the control has built: '
+             '35985183906 had the one-row display rectangle, a 14 px recorded shift and '
+             'a TCM_GETROWCOUNT of 2), and a taller single row moves the display '
+             'rectangle with no wrap at all. Two items in different rows are the layout '
+             'itself'),
+            ('if (last.top > first.top + 2) { rows = 2; }',
+             'the rule that reads the row count from those rectangles (BS-22o)'),
             ('++g_settingsSolvePass;',
              'the bounded second solve that reads the height the window really has '
              '(BS-22l) — the same guard the BS-14 width pass uses, so this is one '
@@ -1035,8 +1039,11 @@ def check(repo: Path):
              'the measurement that tells "the page painted and its content is missing" '
              'from "the page area is the window\'s background" (BS-22q) — a point '
              'inside the page but outside every control, read on both frames'),
-            ("the page area is the WINDOW's background",
-             'the finding that names the second state (BS-22q)'),
+            ('const bool pagePaintedOnScreen = bareInCapture && (bareScreen != bg);',
+             'the bare-page sample kept as EVIDENCE (BS-22q) — a tab control does not '
+             'paint its page area (the parent does), so this may not become a finding '
+             'of its own; the numbers are what lets the next run tell a page area that '
+             'is simply the window background from one something painted over'),
             ('KieeKeyProbeSimulateDpi(dlg, nativeDpi);\n    KieeKeyProbeFontScale(dlg, 100);\n'
              '    KieeKeyProbeResize(dlg, static_cast<int>(origClient.right),\n'
              '                       static_cast<int>(origClient.bottom));\n'
@@ -1117,6 +1124,13 @@ def check(repo: Path):
              'the rule that both halves of the transition have to hold on that state '
              '(BS-22o, part two)'),
 
+            ('live " +',
+             'the live rectangle of each judged control in the screen-paint evidence '
+             '(BS-22q) — `painted 0/3` is a statement about the SCREEN, and whether the '
+             'window is still where it was sampled is what separates "not painted" from '
+             '"not this window any more"'),
+            ('" parent " +',
+             'the same evidence naming the control\'s parent (BS-22q)'),
             ('std::string tabState = "tab n/a";',
              'the tab control\'s own state (rectangle, visibility, region, row count) '
              'recorded next to the screen-paint finding (BS-22q) — "the tab control did '

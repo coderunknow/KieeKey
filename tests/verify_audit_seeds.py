@@ -414,11 +414,11 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "the measurement that tells",
     ),
     (
-        "BS-22o the app stops reading the control's own row count",
+        "BS-22o the app stops measuring the tab control's own layout",
         "src/app/main.cpp",
-        "            const LRESULT rows = ::SendMessageW(tabCtl, TCM_GETROWCOUNT, 0, 0);",
-        "            const LRESULT rows = 0;   // seeded: the plan decides alone",
-        "the app reading the tab control's OWN row count",
+        "                    if (last.top > first.top + 2) { rows = 2; }",
+        "                    rows = 1;   /* seeded: one row, whatever the layout says */",
+        "the rule that reads the row count from those rectangles",
     ),
     (
         "BS-22n a combo that resizes itself asks for no reflow",

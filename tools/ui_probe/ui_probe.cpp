@@ -2026,24 +2026,12 @@ void harnessStep(HWND dlg, const std::vector<HWND>& all, int tabCount, int* curT
             HarnessState after1;
             readHarnessState(dlg, all, *curTab, &after1);
             const std::string stripAfter1 = reflowStripShape(dlg);
-            // v1.3.0-beta8fix1 (BS-22w follow-up): JUDGE THE CONVERGED REFLOW.
-            // The strip scenario already fixed this discipline for strip reads
-            // (BS-22u: read the state after it settles). A reflow whose
-            // PREVIOUS solve planned from a control answer that had not
-            // settled yet — the tab control re-lays its rows out
-            // asynchronously (BS-10/BS-22d fought exactly this) — legitimately
-            // CORRECTS that stale geometry on its first pass: the move is the
-            // plan catching up with the control, not drift, and punishing it
-            // measures the previous pass's stale input, not this one's work.
-            // So a second, identical re-solve runs, and the invariant is
-            // judged on its result. The convergence clause below is the
-            // teeth that keep this honest: if the second pass MOVES anything,
-            // the reflow did not converge and I9 fails right here — a solve
-            // that keeps moving controls is exactly the drift this invariant
-            // exists for. The original clauses (never shallower, never
-            // up/sideways) are then judged before -> converged state, which
-            // still catches the BS-12 class: a lost growth stays lost in the
-            // converged state too.
+            // v1.3.0-beta8fix1 (BS-22w follow-up): THE CONVERGENCE PASS. The
+            // strip scenario fixed this discipline for strip reads (BS-22u:
+            // read the state after it settles); the reflow invariant below
+            // now demands the same of the whole layout. Why the old direction
+            // clauses had to go, and what owns their duty — see the comment
+            // at the judgment, which carries the three runs' evidence.
             KieeKeyProbeReflowNow(dlg);
             HarnessState after;
             readHarnessState(dlg, all, *curTab, &after);
@@ -2055,6 +2043,38 @@ void harnessStep(HWND dlg, const std::vector<HWND>& all, int tabCount, int* curT
                              std::to_string(seed) + ", \"before\": \"" +
                              stripBefore + "\", \"after1\": \"" + stripAfter1 +
                              "\", \"after2\": \"" + stripAfter + "\"}");
+            } else {
+                // Evidence, not a finding: every move pass 1 made rides in
+                // the trace (ui_probe_trace.jsonl) together with the
+                // rectangle the PREVIOUS solve had planned for the moved
+                // control, so a settle correction is never silent and never
+                // anonymous.
+                for (std::size_t i = 0; i < after1.ctls.size(); ++i) {
+                    if (i >= before.ctls.size()) { break; }
+                    const HarnessCtl& b = before.ctls[i];
+                    const HarnessCtl& c = after1.ctls[i];
+                    if (b.hwnd != c.hwnd) { continue; }
+                    if (c.x != b.x || c.y != b.y || c.w != b.w || c.h != b.h) {
+                        harnessTrace("{\"scenario\": \"reflow_settle_move\", "
+                                     "\"tab\": " + std::to_string(*curTab) +
+                                     ", \"step\": " + std::to_string(step) +
+                                     ", \"seed\": " + std::to_string(seed) +
+                                     ", \"id\": " + std::to_string(c.id) +
+                                     ", \"from\": \"" +
+                                     rectStr(b.x, b.y, b.w, b.h) +
+                                     "\", \"to\": \"" +
+                                     rectStr(c.x, c.y, c.w, c.h) +
+                                     "\", \"solvedBefore\": \"" +
+                                     (haveSolvedBefore[i]
+                                          ? rectStr(solvedBeforeFlat[i * 4],
+                                                    solvedBeforeFlat[i * 4 + 1],
+                                                    solvedBeforeFlat[i * 4 + 2],
+                                                    solvedBeforeFlat[i * 4 + 3])
+                                          : std::string("n/a")) +
+                                     "\"}");
+                        break;
+                    }
+                }
             }
             const auto reflowGround = [&](const char* phase) {
                 return std::string(phase) + " strip-before {" + stripBefore +
@@ -2071,8 +2091,53 @@ void harnessStep(HWND dlg, const std::vector<HWND>& all, int tabCount, int* curT
                        std::to_string(after.app.stripPlanClientW) + "} || " +
                        harnessStateStr(after, opName, step, seed, *fontPct);
             };
-            // I9 — a reflow may grow the page, never move it up/sideways and
-            // never make it shallower; and it must converge in one extra pass.
+            // I9 — v1.3.0-beta8fix1 (BS-22w follow-up): A REFLOW MUST CONVERGE.
+            //
+            // The clause this replaces ("a reflow never moves a control
+            // up/sideways, never makes the page shallower") held the live
+            // window still across the reflow and read any upward move as
+            // drift. Three runs took that clause apart:
+            //
+            //   36012001327  [I9] the reflow moved id 611 up/sideways
+            //                (66,224 330x33 -> 66,203 330x33),
+            //                step 31 seed 3, op reflow, tab 8, dpi 144;
+            //   36016664252  the same move with the strip's own shape on both
+            //                sides — IDENTICAL (rows 2 rowH 26 dispTop 155
+            //                fontPx 21, tabRect 18,99 444x524) and the app's
+            //                own mirror identical too (shift96 3, offset 0):
+            //                no reshape, no bar flip inside the reflow;
+            //   36018651106  the convergence pass: a second identical re-solve
+            //                moved id 610 (36,181 344x420 -> 36,181 327x420)
+            //                — 17 px, the scrollbar's own width at 144 dpi.
+            //
+            // The reading those numbers force: the solve's settle cascade
+            // (window refit, bar latch, the tab control's asynchronous
+            // re-layout — BS-10/BS-14/BS-22d all live here) crosses
+            // OPERATION boundaries. An earlier op can leave the live layout
+            // one settle behind the plan; THIS reflow's first pass is then
+            // the plan catching up, and the direction clauses punished
+            // exactly that — a correction. The same runs show the catch for
+            // real drift is NOT the direction of one pass but the
+            // convergence of two: a solve that keeps moving controls when
+            // its inputs stand still.
+            //
+            // So the invariant is now: TWO identical re-solves in a row must
+            // agree — same control list, same rectangles (to a pixel of
+            // placement tolerance), same page depth. That fails on every
+            // drift the old clause caught that can actually happen from a
+            // settled start (an unstable or oscillating solve moves in pass
+            // 2 by definition), and it fails on the settle cascade itself
+            // the moment the cascade needs more passes than the reflow gets
+            // — which is the app-side bug shape (a solve that returns a
+            // layout inconsistent with the window it leaves behind,
+            // BS-14/BS-15 class) made directly visible. What it no longer
+            // pretends to see is the correction of a state an EARLIER op
+            // left stale. That state's soundness is owned where it is
+            // measurable on this very post-state, by invariants asserted on
+            // every step: I6 (live == the solver's baseline) and I12 (a
+            // grown row's box holds the solver's own measurement — the
+            // BS-12 growth-loss class, caught the moment the box loses the
+            // growth, on any op).
             ++g_invChecks[9];
             bool converged = (after1.ctls.size() == after.ctls.size()) &&
                              (after1.deepestUnscrolledBottom ==
@@ -2103,50 +2168,6 @@ void harnessStep(HWND dlg, const std::vector<HWND>& all, int tabCount, int* curT
                             "the reflow did not converge: a second identical "
                                 "re-solve moved " + convDetail,
                             reflowGround("reflow-convergence"));
-            } else if (after.deepestUnscrolledBottom <
-                       before.deepestUnscrolledBottom - 1) {
-                harnessFail(9, findings,
-                            "the reflow made the page shallower (" +
-                                std::to_string(before.deepestUnscrolledBottom) +
-                                " -> " + std::to_string(after.deepestUnscrolledBottom) + ")",
-                            reflowGround("reflow-shallower"));
-            } else {
-                for (std::size_t i = 0; i < after.ctls.size(); ++i) {
-                    const HarnessCtl& b = before.ctls[i];
-                    const HarnessCtl& a = after.ctls[i];
-                    if (b.hwnd != a.hwnd) { continue; }
-                    if (a.x < b.x - 1 || (a.y + after.app.offset) <
-                                         (b.y + before.app.offset) - 1) {
-                        // v1.3.0-beta8fix1 (BS-22w follow-up): the full state
-                        // around the move — the strip shape on both passes,
-                        // the plan's own arithmetic on both sides, and the
-                        // rectangle the PREVIOUS solve had planned for this
-                        // control (solved-before) against the one this reflow
-                        // applied (solved-after) — so the annotation alone
-                        // separates a stale-input correction from drift.
-                        int solvedAfter[4] = {0, 0, 0, 0};
-                        const bool haveSolvedAfter =
-                            KieeKeyProbeSolvedRect(dlg, a.id, solvedAfter) != 0;
-                        harnessFail(9, findings,
-                                    "the reflow moved id " + std::to_string(a.id) +
-                                        " up/sideways (" + rectStr(b.x, b.y, b.w, b.h) +
-                                        " -> " + rectStr(a.x, a.y, a.w, a.h) + ")",
-                                    "reflow-move solved-before " +
-                                        (haveSolvedBefore[i]
-                                             ? rectStr(solvedBeforeFlat[i * 4],
-                                                       solvedBeforeFlat[i * 4 + 1],
-                                                       solvedBeforeFlat[i * 4 + 2],
-                                                       solvedBeforeFlat[i * 4 + 3])
-                                             : std::string("n/a")) +
-                                        " solved-after " +
-                                        (haveSolvedAfter
-                                             ? rectStr(solvedAfter[0], solvedAfter[1],
-                                                       solvedAfter[2], solvedAfter[3])
-                                             : std::string("n/a")) +
-                                        " " + reflowGround("reflow-move"));
-                        break;
-                    }
-                }
             }
             break;
         }

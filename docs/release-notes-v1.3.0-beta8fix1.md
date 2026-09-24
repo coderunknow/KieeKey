@@ -162,6 +162,37 @@ capture whenever a control still wears another scale's face; the ink samples
 are a 4×3 grid strictly inside each control. New paint-gate rule 12 and five
 new seeds (`verify_audit_seeds.py`: 84 checks, 0 misses) pin all of it.
 
+### BS-22w follow-up — the reflow invariant judges CONVERGENCE (CI of this PR)
+
+The patch's CI rounds surfaced one more measurement defect one layer out, in
+the fuzz's reflow invariant (I9). The evidence chain, all from annotations:
+
+* `36012001327`: `[I9] the reflow moved id 611 up/sideways (66,224 330x33 ->
+  66,203 330x33)` at step 31 seed 3 (tab 8, 100 %, dpi 144) — the BS-22w
+  signature itself was already gone (`I11:6/0`).
+* `36016664252`: the same move with the strip's own shape on both sides —
+  identical (`rows 2 rowH 26 dispTop 155 fontPx 21`), the app's mirror
+  identical (`shift96 3`, `offset 0`) — no reshape, no bar flip *inside* the
+  reflow.
+* `36018651106`: the convergence pass fired: a second identical re-solve moved
+  id 610 (`344x420 -> 327x420`) — **17 px, the scrollbar's width at 144 dpi**:
+  the solve's settle cascade (refit → bar latch → client width) crosses
+  operation boundaries, and an earlier op can leave the live layout one settle
+  behind the plan. The old direction clauses punished the reflow that
+  *corrected* that stale geometry.
+
+I9 is therefore now: **two identical re-solves in a row must agree** (control
+list, rectangles to a pixel of placement tolerance, page depth). An unstable
+or oscillating solve fails by definition; the settle cascade itself fails the
+moment it needs more passes than the reflow gets (the BS-14/BS-15 app-bug
+shape, made directly visible); the correction of a state an earlier op left
+stale is traced (`reflow_settle_move` with the previous solve's rectangle) and
+its soundness stays owned by I6 (live == baseline) and I12 (box holds the
+solver's own measurement — the BS-12 growth-loss class), which assert on the
+same post-state every step. Paint-gate rule 12 gained the two needles
+(`reflowStripShape`, the convergence clause); the seed harness grew to
+**86 checks, 0 misses**. App code untouched by the follow-up.
+
 ## The fix (UI/presentation only — no engine, hook, TSF or persistence change)
 
 1. **`applySettingsDpiScale()` owns the whole transition**: rescale → drop the

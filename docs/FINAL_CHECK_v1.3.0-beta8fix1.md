@@ -140,7 +140,7 @@ control.
 | Bộ kiểm native | `tests/run_all_tests.sh` | **ALL NATIVE TESTS PASSED** |
 | Audit bố cục | `python3 scripts/audit_layout.py --strict` | **AUDIT OK** (0 finding) |
 | Luật vẽ | `python3 scripts/check_dialog_paint_rules.py` | **OK** — 12 luật (mới: BS-22w) |
-| Seed kiểm toán | `python3 tests/verify_audit_seeds.py` | **84 [ok], 0 MISS** — ALL SEEDED VIOLATIONS CAUGHT |
+| Seed kiểm toán | `python3 tests/verify_audit_seeds.py` | **86 [ok], 0 MISS** — ALL SEEDED VIOLATIONS CAUGHT |
 | Hình dạng báo cáo probe | `python3 tests/check_probe_json_shape.py` | **OK** (+ self-test) |
 | Phiên bản | `python3 scripts/check_version.py` | **OK** — `1.3.0-beta8fix1` (PE `1.3.0.10`) |
 | Cách ly input | `python3 scripts/check_input_isolation.py` | **OK** |

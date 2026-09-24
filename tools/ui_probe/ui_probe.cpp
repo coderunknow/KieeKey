@@ -102,6 +102,7 @@ struct ProbeScrollStateT {          // mirrors KieeKeyProbeScrollStateT (main.cp
     int styleVScroll;
     int viewportX, viewportY, viewportW, viewportH, viewportBottom;
     int contentBottom[9];
+    int stripShift[9];              // tab-strip shift baked into the baseline (96 dpi)
     int barPos, barPage, barMax;
     UINT dpi;
 };
@@ -1307,6 +1308,7 @@ std::string harnessStateStr(const HarnessState& s, const char* op, int step,
            " visible " + std::to_string(s.visibleCount) +
            " contentBottom[" + std::to_string(s.tab) + "] " +
            std::to_string(a.contentBottom[s.tab]) +
+           " stripShift " + std::to_string(a.stripShift[s.tab]) +
            " deepestUnscrolled " + std::to_string(s.deepestUnscrolledBottom);
 }
 
@@ -1823,6 +1825,158 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
 // The seeded fuzz pass: fixed seeds, a fixed number of steps per tab and scale,
 // every step asserting the invariants. The step budget is in the JSON counters,
 // so "0 findings" can never mean "it never ran".
+//===========================================================================
+// v1.3.0-beta8fix1 (bug BS-21) — THE TAB STRIP CHANGES SHAPE, THE PAGE COMES
+// BACK.
+//
+// The display rectangle the page lives in starts where the tab strip ends, and
+// the strip is planned from the label widths: a narrow dialog (or a bigger font,
+// or a higher scale) wraps the nine labels onto two or three rows and the page
+// top moves DOWN. BS-10 taught the solver to move the page content down with it
+// so nothing hides under the labels — but the move is computed from the
+// BASELINE, which already carries the previous move, so it only ever grows. When
+// the strip fits one row again nothing pulls the page back up: the content stays
+// as far below the page as the widest strip ever pushed it.
+//
+// This scenario drives exactly that transition, on the app's own paths, and
+// measures the drift instead of asserting the symptom: for every tab, one row ->
+// multi-row -> one row, three times, at the pass's own scale. The invariants
+// (harnessAssert) cover the ordinary "is the page coherent" question; the checks
+// below cover the transition:
+//
+//   * the page top returns to its one-row value when the strip does;
+//   * the tab's first control returns to its one-row y (the content is not left
+//     below the page: `stripShift` must come back to 0);
+//   * repeating the cycle does not accumulate (cycle 3 == cycle 1).
+//
+// 639x176-style constrained pages are the point: a short client whose strip has
+// wrapped has almost no room, so a stale downward shift is not a cosmetic offset,
+// it is an empty page — the state the fuzz reached with 20 controls parked at
+// y=383..1593 under a 176 px viewport.
+//===========================================================================
+int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCount,
+                               unsigned passDpi, const RECT& origClient,
+                               std::vector<Finding>* findings) {
+    ++g_scenarioRuns;
+    const int before = g_fuzzFailures;
+    const int wideW = static_cast<int>(origClient.right);
+    const int narrowW = std::max(320, ::MulDiv(wideW, 55, 100));
+    const int clientH = static_cast<int>(origClient.bottom);
+
+    // Start from the pass's own state: its scale, one-row strip, top of the page.
+    KieeKeyProbeSimulateDpi(dlg, passDpi);
+    KieeKeyProbeFontScale(dlg, 100);
+    KieeKeyProbeResize(dlg, wideW, clientH);
+    KieeKeyProbeReflowNow(dlg);
+    KieeKeyProbeSetOffset(dlg, 0);
+
+    for (int tab = 0; tab < tabCount; ++tab) {
+        if (KieeKeyProbeSelectTab(dlg, tab) != 0) { break; }
+        ::Sleep(15);
+
+        // --- the one-row reference -------------------------------------------
+        KieeKeyProbeSetOffset(dlg, 0);
+        KieeKeyProbeReflowNow(dlg);
+        HarnessState base;
+        readHarnessState(dlg, all, tab, &base);
+        int baseFirstY = -1;
+        int baseFirstId = 0;
+        for (const HarnessCtl& c : base.ctls) {
+            if (!c.shown || c.regionEmpty) { continue; }
+            if (baseFirstY < 0 || c.y < baseFirstY) { baseFirstY = c.y; baseFirstId = c.id; }
+        }
+        const int basePageTop = base.page.top;
+        const bool multiRowPossible = base.havePage && basePageTop > 0;
+
+        if (!multiRowPossible || baseFirstY < 0) { continue; }
+
+        for (int cycle = 1; cycle <= 3; ++cycle) {
+            // --- narrow: the labels wrap, the page top moves down -------------
+            KieeKeyProbeResize(dlg, narrowW, clientH);
+            KieeKeyProbeReflowNow(dlg);
+            KieeKeyProbeSetOffset(dlg, 0);
+            HarnessState narrow;
+            readHarnessState(dlg, all, tab, &narrow);
+            ++g_fuzzChecks;
+            if (narrow.page.top <= basePageTop) {
+                // Not a failure of the app: the labels did not wrap at 55 %, so
+                // this pass cannot measure the transition. Say so instead of
+                // reporting a green that was never exercised.
+                harnessTrace("{\"harness\": \"strip_cycles\", \"tab\": " +
+                             std::to_string(tab) + ", \"cycle\": " + std::to_string(cycle) +
+                             ", \"note\": \"the strip did not wrap at " +
+                             std::to_string(narrowW) + " px (page top " +
+                             std::to_string(narrow.page.top) + ")\"}");
+            }
+
+            // --- widen back: the strip fits one row again --------------------
+            KieeKeyProbeResize(dlg, wideW, clientH);
+            KieeKeyProbeReflowNow(dlg);
+            KieeKeyProbeSetOffset(dlg, 0);
+            HarnessState back;
+            readHarnessState(dlg, all, tab, &back);
+            int backFirstY = -1;
+            int backFirstId = 0;
+            for (const HarnessCtl& c : back.ctls) {
+                if (!c.shown || c.regionEmpty) { continue; }
+                if (backFirstY < 0 || c.y < backFirstY) { backFirstY = c.y; backFirstId = c.id; }
+            }
+            const std::string where =
+                "tab " + std::to_string(tab) + " cycle " + std::to_string(cycle) +
+                " pass dpi " + std::to_string(passDpi) + " client " +
+                std::to_string(wideW) + "x" + std::to_string(clientH) +
+                " (narrowed to " + std::to_string(narrowW) + ")";
+
+            // (a) the page top comes back
+            ++g_fuzzChecks;
+            if (back.page.top != basePageTop) {
+                harnessFail(1, findings,
+                            "the page top did not return to its one-row value: " +
+                                std::to_string(basePageTop) + " -> " +
+                                std::to_string(narrow.page.top) + " (wrapped) -> " +
+                                std::to_string(back.page.top) + " — the display "
+                                "rectangle of the wrapped strip is still in force",
+                            where + " " + harnessStateStr(back, "strip_cycle", cycle, 0, 100));
+            }
+            // (b) the tab-strip shift comes back to zero
+            ++g_fuzzChecks;
+            if (back.app.stripShift[tab] != 0) {
+                harnessFail(1, findings,
+                            "the tab-strip shift is still baked into the layout after "
+                            "the strip fitted one row again: stripShift[" +
+                                std::to_string(tab) + "] = " +
+                                std::to_string(back.app.stripShift[tab]) +
+                                " px (96 dpi) — the content sits that far below the "
+                                "page it belongs to",
+                            where + " " + harnessStateStr(back, "strip_cycle", cycle, 0, 100));
+            }
+            // (c) the content returns to where it was (no accumulated drift)
+            ++g_fuzzChecks;
+            if (backFirstY < 0 || std::abs(backFirstY - baseFirstY) > 1) {
+                harnessFail(1, findings,
+                            "the page content did not return to its one-row position: "
+                            "id " + std::to_string(backFirstId > 0 ? baseFirstId : 0) +
+                            " was at y=" +
+                                std::to_string(baseFirstY) + ", is at y=" +
+                                std::to_string(backFirstY) + " after the strip fitted one "
+                                "row again (moved by " +
+                                std::to_string(backFirstY - baseFirstY) + " px)",
+                            where + " " + harnessStateStr(back, "strip_cycle", cycle, 0, 100));
+            }
+            // (d) the ordinary invariants hold in the restored state too
+            ++g_fuzzChecks;
+            harnessAssert(dlg, back, "strip_cycle", cycle, 0, 100, findings);
+        }
+    }
+
+    // Leave the dialog as this scenario found it.
+    KieeKeyProbeResize(dlg, wideW, clientH);
+    KieeKeyProbeReflowNow(dlg);
+    KieeKeyProbeSetOffset(dlg, 0);
+    KieeKeyProbeSelectTab(dlg, 0);
+    return g_fuzzFailures - before;
+}
+
 int runSequenceHarness(HWND dlg, int tabCount, unsigned nativeDpi, unsigned passDpi,
                        int stepsPerTab,
                        std::vector<std::pair<std::string, int>>* byKind) {
@@ -1836,6 +1990,10 @@ int runSequenceHarness(HWND dlg, int tabCount, unsigned nativeDpi, unsigned pass
 
     const int scenarioFailures =
         harnessScenario(dlg, all, tabCount, nativeDpi, origClient, &findings);
+    // v1.3.0-beta8fix1 (bug BS-21): the tab-strip reshape transition, driven
+    // deterministically (one row -> multi-row -> one row, three cycles, every
+    // tab) instead of waiting for the seeded walk to stumble into it.
+    harnessScenarioStripCycles(dlg, all, tabCount, passDpi, origClient, &findings);
 
     static const int kFontScales[] = {100, 125, 150};
     for (int fontPct : kFontScales) {

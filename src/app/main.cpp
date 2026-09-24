@@ -4543,6 +4543,12 @@ struct SettingsScrollState {
     std::vector<std::pair<HWND, ok::layout::Rect>> solved;
     ok::layout::Rect viewport{};          // tab display rect (client coords)
     int  perTabContentBottom[9] = {};     // deepest solved bottom per tab
+    // v1.3.0-beta8fix1 (bug BS-21): the tab-strip shift currently baked into that
+    // tab's baseline, in 96-dpi px (0 = none). The strip wraps to several rows
+    // when the dialog is narrow, `pageTopShiftPx` moves the page down to clear it,
+    // and this records HOW MUCH of that move the baseline carries — the number
+    // that has to come back to 0 when the strip fits one row again.
+    int  perTabStripShift96[9] = {};
     int  viewportBottom = 0;              // viewport.bottom after the refit
     int  offset = 0;                      // current scroll offset (px)
     int  range  = 0;                      // current tab's scroll range (px)
@@ -4945,6 +4951,15 @@ void solveSettingsLayout(HWND hwnd) {
         }
         if (authoredTop < 0) { continue; }
         const int shift = ok::layout::pageTopShiftPx(authoredTop, static_cast<int>(disp.top));
+        // v1.3.0-beta8fix1 (bug BS-21) — INSTRUMENTATION ONLY (no rectangle below
+        // this line changes): `authoredTop` is read from the BASELINE, which
+        // already carries the shift of the previous solve, so the applied shift is
+        // CUMULATIVE. Recording the total makes the defect measurable instead of
+        // inferred: a page that was shifted for a two-row strip keeps the shift
+        // when the strip fits one row again, and the content sits that far below
+        // the page it belongs to.
+        g_settingsScroll.perTabStripShift96[t] +=
+            ::MulDiv(shift, 96, static_cast<int>(dpi != 0 ? dpi : 96));
         if (shift <= 0) { continue; }
         for (ok::layout::ControlSpec& spec : specs) {
             if (spec.tab == t) { spec.rect.y += shift; }
@@ -7787,6 +7802,7 @@ struct KieeKeyProbeScrollStateT {
     int viewportW, viewportH;
     int viewportBottom;
     int contentBottom[9];             // per-tab deepest SOLVED bottom
+    int stripShift[9];                // per-tab tab-strip shift baked into it (96 dpi)
     int barPos, barPage, barMax;      // Win32's answer (GetScrollInfo)
     UINT dpi;                         // the scale the solve used
 };
@@ -7806,6 +7822,7 @@ extern "C" void KieeKeyProbeScrollState(HWND dlg, KieeKeyProbeScrollStateT* out)
     out->viewportH    = g_settingsScroll.viewport.h;
     out->viewportBottom = g_settingsScroll.viewportBottom;
     for (int t = 0; t < 9; ++t) { out->contentBottom[t] = g_settingsScroll.perTabContentBottom[t]; }
+    for (int t = 0; t < 9; ++t) { out->stripShift[t] = g_settingsScroll.perTabStripShift96[t]; }
     out->dpi = g_settingsDpi != 0 ? g_settingsDpi : 96;
     if (dlg != nullptr) {
         out->styleVScroll =

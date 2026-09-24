@@ -1263,7 +1263,17 @@ def check(repo: Path):
              'the ink measurement samples a 4x3 grid strictly inside the '
              'control (BS-22w) — three quarter-points on the middle row all '
              'land in the space after a left-aligned label on a wide control '
-             'and read `painted 0/3` about a painted control')):
+             'and read `painted 0/3` about a painted control'),
+            ('std::string reflowStripShape(HWND dlg) {',
+             'the I9 reflow finding carries the tab control\'s own shape on '
+             'both sides (rows, row height, display top, label font) — without '
+             'it a stale-input correction cannot be told from a drift '
+             '(BS-22w follow-up)'),
+            ('the reflow did not converge: a second identical ',
+             'the reflow invariant is judged on the CONVERGED reflow and the '
+             'convergence clause is the teeth (BS-22w follow-up) — a second '
+             'identical re-solve that still moves controls is the drift, and '
+             'it fails right here')):
         if needle not in probe:
             failures.append(f"tools/ui_probe/ui_probe.cpp: {needle} is gone — {why}")
     return failures

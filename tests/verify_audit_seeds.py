@@ -755,6 +755,23 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "                            const int x = ex + ew;   /* seeded: off the control */",
         "BS-22w",
     ),
+    # v1.3.0-beta8fix1 (BS-22w follow-up): the reflow invariant is judged on
+    # the CONVERGED reflow, and the evidence that separates a stale-input
+    # correction from drift is mandatory. Same discipline, two seeds.
+    (
+        "BS-22w  the reflow finding loses the strip's own shape",
+        "tools/ui_probe/ui_probe.cpp",
+        "std::string reflowStripShape(HWND dlg) {",
+        "std::string reflowStripShapeRemoved(HWND dlg) {   /* seeded: helper gone */",
+        "cannot be told from a drift",
+    ),
+    (
+        "BS-22w  the reflow convergence clause deleted",
+        "tools/ui_probe/ui_probe.cpp",
+        "                            \"the reflow did not converge: a second identical \"",
+        "                            \"/* seeded: convergence never judged */ \"",
+        "the reflow did not converge",
+    ),
 ]
 
 # Files scripts/check_dialog_paint_rules.py reads, relative to the repo root.

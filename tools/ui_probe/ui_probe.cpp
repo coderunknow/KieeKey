@@ -2005,34 +2005,111 @@ void harnessStep(HWND dlg, const std::vector<HWND>& all, int tabCount, int* curT
         case kOpReflow: {
             HarnessState before;
             readHarnessState(dlg, all, *curTab, &before);
-            // v1.3.0-beta8fix1 (BS-22w follow-up, instrumentation only): the
-            // strip's own shape on both sides of the reflow. A reshape during
-            // the reflow moves the page BY DESIGN (BS-22d: the page comes back
-            // when the strip does), so the finding below has to be able to
-            // tell a reshape from a drift — both snapshots ride in the ground,
-            // and a reshape alone is traced even when nothing fails.
+            // v1.3.0-beta8fix1 (BS-22w follow-up): THE BASELINE AS THE PREVIOUS
+            // SOLVE LEFT IT, per control, BEFORE this reflow touches anything —
+            // the only way to tell "the previous plan already said this" from
+            // "the live window drifted off the plan".
+            std::vector<int> solvedBeforeFlat(before.ctls.size() * 4, 0);
+            std::vector<char> haveSolvedBefore(before.ctls.size(), 0);
+            for (std::size_t i = 0; i < before.ctls.size(); ++i) {
+                haveSolvedBefore[i] = static_cast<char>(
+                    KieeKeyProbeSolvedRect(dlg, before.ctls[i].id,
+                                           &solvedBeforeFlat[i * 4]) != 0);
+            }
+            // v1.3.0-beta8fix1 (BS-22w follow-up, instrumentation): the strip's
+            // own shape on both sides of the reflow (rows from the item
+            // rectangles, row height, display top, label font px, tab rect) —
+            // a reshape riding the reflow moves the page BY DESIGN (BS-22d),
+            // and the numbers say which case a move is.
             const std::string stripBefore = reflowStripShape(dlg);
+            KieeKeyProbeReflowNow(dlg);
+            HarnessState after1;
+            readHarnessState(dlg, all, *curTab, &after1);
+            const std::string stripAfter1 = reflowStripShape(dlg);
+            // v1.3.0-beta8fix1 (BS-22w follow-up): JUDGE THE CONVERGED REFLOW.
+            // The strip scenario already fixed this discipline for strip reads
+            // (BS-22u: read the state after it settles). A reflow whose
+            // PREVIOUS solve planned from a control answer that had not
+            // settled yet — the tab control re-lays its rows out
+            // asynchronously (BS-10/BS-22d fought exactly this) — legitimately
+            // CORRECTS that stale geometry on its first pass: the move is the
+            // plan catching up with the control, not drift, and punishing it
+            // measures the previous pass's stale input, not this one's work.
+            // So a second, identical re-solve runs, and the invariant is
+            // judged on its result. The convergence clause below is the
+            // teeth that keep this honest: if the second pass MOVES anything,
+            // the reflow did not converge and I9 fails right here — a solve
+            // that keeps moving controls is exactly the drift this invariant
+            // exists for. The original clauses (never shallower, never
+            // up/sideways) are then judged before -> converged state, which
+            // still catches the BS-12 class: a lost growth stays lost in the
+            // converged state too.
             KieeKeyProbeReflowNow(dlg);
             HarnessState after;
             readHarnessState(dlg, all, *curTab, &after);
             const std::string stripAfter = reflowStripShape(dlg);
-            if (stripBefore != stripAfter) {
+            if (stripBefore != stripAfter1 || stripAfter1 != stripAfter) {
                 harnessTrace("{\"scenario\": \"reflow_strip_shape\", \"tab\": " +
                              std::to_string(*curTab) + ", \"step\": " +
                              std::to_string(step) + ", \"seed\": " +
                              std::to_string(seed) + ", \"before\": \"" +
-                             stripBefore + "\", \"after\": \"" + stripAfter +
-                             "\"}");
+                             stripBefore + "\", \"after1\": \"" + stripAfter1 +
+                             "\", \"after2\": \"" + stripAfter + "\"}");
             }
+            const auto reflowGround = [&](const char* phase) {
+                return std::string(phase) + " strip-before {" + stripBefore +
+                       "} strip-after1 {" + stripAfter1 + "} strip-after2 {" +
+                       stripAfter + "} plan-before {rows " +
+                       std::to_string(before.app.stripPlanRows) + " req " +
+                       std::to_string(before.app.stripPlanRequired) + " avail " +
+                       std::to_string(before.app.stripPlanAvailable) + " clientW " +
+                       std::to_string(before.app.stripPlanClientW) +
+                       "} plan-after {rows " +
+                       std::to_string(after.app.stripPlanRows) + " req " +
+                       std::to_string(after.app.stripPlanRequired) + " avail " +
+                       std::to_string(after.app.stripPlanAvailable) + " clientW " +
+                       std::to_string(after.app.stripPlanClientW) + "} || " +
+                       harnessStateStr(after, opName, step, seed, *fontPct);
+            };
             // I9 — a reflow may grow the page, never move it up/sideways and
-            // never make it shallower.
+            // never make it shallower; and it must converge in one extra pass.
             ++g_invChecks[9];
-            if (after.deepestUnscrolledBottom < before.deepestUnscrolledBottom - 1) {
+            bool converged = (after1.ctls.size() == after.ctls.size()) &&
+                             (after1.deepestUnscrolledBottom ==
+                              after.deepestUnscrolledBottom);
+            std::string convDetail;
+            if (converged) {
+                for (std::size_t i = 0; i < after.ctls.size(); ++i) {
+                    const HarnessCtl& c1 = after1.ctls[i];
+                    const HarnessCtl& c2 = after.ctls[i];
+                    if (c1.hwnd != c2.hwnd) { continue; }
+                    const int dx = c2.x - c1.x;
+                    const int dy = c2.y - c1.y;
+                    if (dx < -1 || dx > 1 || dy < -1 || dy > 1 ||
+                        c2.w != c1.w || c2.h != c1.h) {
+                        converged = false;
+                        convDetail = "id " + std::to_string(c2.id) + " (" +
+                                     rectStr(c1.x, c1.y, c1.w, c1.h) + " -> " +
+                                     rectStr(c2.x, c2.y, c2.w, c2.h) + ")";
+                        break;
+                    }
+                }
+            } else {
+                convDetail = "the control list or the page depth changed "
+                             "between the two passes";
+            }
+            if (!converged) {
+                harnessFail(9, findings,
+                            "the reflow did not converge: a second identical "
+                                "re-solve moved " + convDetail,
+                            reflowGround("reflow-convergence"));
+            } else if (after.deepestUnscrolledBottom <
+                       before.deepestUnscrolledBottom - 1) {
                 harnessFail(9, findings,
                             "the reflow made the page shallower (" +
                                 std::to_string(before.deepestUnscrolledBottom) +
                                 " -> " + std::to_string(after.deepestUnscrolledBottom) + ")",
-                            harnessStateStr(after, opName, step, seed, *fontPct));
+                            reflowGround("reflow-shallower"));
             } else {
                 for (std::size_t i = 0; i < after.ctls.size(); ++i) {
                     const HarnessCtl& b = before.ctls[i];
@@ -2041,44 +2118,32 @@ void harnessStep(HWND dlg, const std::vector<HWND>& all, int tabCount, int* curT
                     if (a.x < b.x - 1 || (a.y + after.app.offset) <
                                          (b.y + before.app.offset) - 1) {
                         // v1.3.0-beta8fix1 (BS-22w follow-up): the full state
-                        // around the move — the strip shape on both sides, the
-                        // app's recorded shift/rows/offset on both sides, and
-                        // the rectangle the solver applied afterwards — so the
-                        // annotation alone decides "the strip reshaped and the
-                        // page came back (the BS-22d contract)" vs "a drift".
-                        int solved[4] = {0, 0, 0, 0};
-                        const bool haveSolved =
-                            KieeKeyProbeSolvedRect(dlg, a.id, solved) == 0;
+                        // around the move — the strip shape on both passes,
+                        // the plan's own arithmetic on both sides, and the
+                        // rectangle the PREVIOUS solve had planned for this
+                        // control (solved-before) against the one this reflow
+                        // applied (solved-after) — so the annotation alone
+                        // separates a stale-input correction from drift.
+                        int solvedAfter[4] = {0, 0, 0, 0};
+                        const bool haveSolvedAfter =
+                            KieeKeyProbeSolvedRect(dlg, a.id, solvedAfter) != 0;
                         harnessFail(9, findings,
                                     "the reflow moved id " + std::to_string(a.id) +
                                         " up/sideways (" + rectStr(b.x, b.y, b.w, b.h) +
                                         " -> " + rectStr(a.x, a.y, a.w, a.h) + ")",
-                                    "reflow-strip before {" + stripBefore +
-                                        "} after {" + stripAfter +
-                                        "} app-before {shift96 " +
-                                        std::to_string(before.app.stripShift[*curTab]) +
-                                        " seen96 " +
-                                        std::to_string(before.app.stripSeen[*curTab]) +
-                                        " stripRows " +
-                                        std::to_string(before.app.stripRows) +
-                                        " offset " +
-                                        std::to_string(before.app.offset) +
-                                        "} app-after {shift96 " +
-                                        std::to_string(after.app.stripShift[*curTab]) +
-                                        " seen96 " +
-                                        std::to_string(after.app.stripSeen[*curTab]) +
-                                        " stripRows " +
-                                        std::to_string(after.app.stripRows) +
-                                        " offset " +
-                                        std::to_string(after.app.offset) +
-                                        "} solved-after " +
-                                        (haveSolved
-                                             ? rectStr(solved[0], solved[1],
-                                                       solved[2], solved[3])
+                                    "reflow-move solved-before " +
+                                        (haveSolvedBefore[i]
+                                             ? rectStr(solvedBeforeFlat[i * 4],
+                                                       solvedBeforeFlat[i * 4 + 1],
+                                                       solvedBeforeFlat[i * 4 + 2],
+                                                       solvedBeforeFlat[i * 4 + 3])
                                              : std::string("n/a")) +
-                                        " || " +
-                                        harnessStateStr(after, opName, step, seed,
-                                                        *fontPct));
+                                        " solved-after " +
+                                        (haveSolvedAfter
+                                             ? rectStr(solvedAfter[0], solvedAfter[1],
+                                                       solvedAfter[2], solvedAfter[3])
+                                             : std::string("n/a")) +
+                                        " " + reflowGround("reflow-move"));
                         break;
                     }
                 }

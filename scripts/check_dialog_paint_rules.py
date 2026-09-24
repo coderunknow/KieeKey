@@ -1063,11 +1063,20 @@ def check(repo: Path):
             ('if (judged < 3) {',
              'the screen-paint check refusing to report green when it could not '
              'judge three whole controls (BS-22g)'),
-            ('const int renderedPts = renderPaintCountAt(dlg, samples, bg);',
+            ('const int renderedPts = renderPaintCountAt(',
              "the screen-paint finding's cross-check against the frame the app would "
              'draw (WM_PRINTCLIENT): a capture that reads as background everywhere is '
              'either a blank page or somebody else\'s pixels, and only the render '
              'tells the two apart (BS-22g)'),
+            ('constexpr std::uint32_t kRenderSentinel = 0x00FF00FFU;',
+             'the sentinel the render buffer is pre-filled with (BS-22r) — a DIB '
+             'section starts undefined and a window that does not answer '
+             'WM_PRINTCLIENT leaves it that way, which counted as "the app painted '
+             'here" for every sample point (35987071106: `rendered 24/24` with the '
+             'bare point reading `render=0`)'),
+            ('if (!haveBg) { painted = -1; }',
+             'the rule that a render which never painted its own background is '
+             'reported as unusable rather than counted as ink (BS-22r)'),
             ('if (passDpi == nativeDpi) {',
              'the rule that the strip transition MUST be measurable at the '
              "runner's own scale (BS-22i) — the other passes may only report "

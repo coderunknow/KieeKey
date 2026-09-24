@@ -372,9 +372,11 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
     (
         "BS-22g the blank-page finding stops cross-checking the render",
         "tools/ui_probe/ui_probe.cpp",
-        "            const int renderedPts = renderPaintCountAt(dlg, samples, bg);",
+        "            const int renderedPts = renderPaintCountAt(\n"
+        "                dlg, samples,\n"
+        "                POINT{static_cast<int>(s.page.left) + 2, static_cast<int>(s.page.top) + 2});",
         "            const int renderedPts = 0;   // seeded: no cross-check",
-        "const int renderedPts = renderPaintCountAt(dlg, samples, bg); is gone",
+        "const int renderedPts = renderPaintCountAt( is gone",
     ),
     (
         "BS-22i the native pass stops requiring a measurable transition",
@@ -405,6 +407,13 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "    if (!baseOneRowFinal) { measurable = false; }",
         "    /* seeded: the widened client counts as the cycle's own state */",
         "the rule that both halves of the transition have to hold on that state",
+    ),
+    (
+        "BS-22r the render cross-check counts an unpainted frame as ink",
+        "tools/ui_probe/ui_probe.cpp",
+        "        if (!haveBg) { painted = -1; }",
+        "        /* seeded: an undrawn buffer counts as the app's own render */",
+        "the rule that a render which never painted its own background",
     ),
     (
         "BS-22q the screen-paint check stops naming the page area",

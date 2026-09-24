@@ -995,6 +995,10 @@ bool readScreenClient(HWND hwnd, std::vector<std::uint32_t>* px, int* w, int* h)
 // page but outside every control (is the page painted at all?) as well as at the
 // controls' own rows. Both answers come from the same WM_PRINTCLIENT frame, so this
 // returns the pixels themselves; the helpers below read them.
+// The colour the render buffer is pre-filled with: any pixel still holding it
+// after WM_PRINTCLIENT was never painted (see renderPaintCountAt).
+constexpr std::uint32_t kRenderSentinel = 0x00FF00FFU;
+
 bool renderCapture(HWND hwnd, std::vector<std::uint32_t>* px, int* w, int* h) {
     if (hwnd == nullptr || px == nullptr || w == nullptr || h == nullptr) { return false; }
     RECT client{};
@@ -1017,6 +1021,24 @@ bool renderCapture(HWND hwnd, std::vector<std::uint32_t>* px, int* w, int* h) {
     bool ok = false;
     if (bmp != nullptr && bits != nullptr && mem != nullptr) {
         HGDIOBJ old = ::SelectObject(mem, bmp);
+        // v1.3.0-beta8fix1 (bug BS-22r): THE RENDER IS PRE-FILLED WITH A SENTINEL.
+        //
+        // A DIB section starts out undefined, and a window that does not answer
+        // WM_PRINTCLIENT leaves it untouched — which the last run exposed in one
+        // number: the bare point inside the page read `render=0` (never written)
+        // while the same helper reported `rendered 24/24`, because the sample points
+        // were being compared with the SCREEN's background and a black, undrawn DIB
+        // differs from it everywhere. "The app's own render paints text here" is the
+        // evidence the whole cross-check rests on, so it has to mean ink: the buffer
+        // is filled with a colour the app never paints before the message is sent,
+        // and the helpers below count a point as painted only when it is neither the
+        // sentinel nor the render's own background.
+        {
+            auto* pre = static_cast<std::uint32_t*>(bits);
+            for (std::size_t i = 0; i < static_cast<std::size_t>(cw) * ch; ++i) {
+                pre[i] = kRenderSentinel;
+            }
+        }
         ::SendMessageW(hwnd, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(mem),
                        static_cast<LPARAM>(PRF_CLIENT | PRF_CHILDREN | PRF_ERASEBKGND));
         ::GdiFlush();
@@ -1034,7 +1056,11 @@ bool renderCapture(HWND hwnd, std::vector<std::uint32_t>* px, int* w, int* h) {
     return ok;
 }
 
-int renderPaintCountAt(HWND hwnd, const std::vector<POINT>& pts, std::uint32_t bg) {
+// Painted = the render wrote something here that is neither the sentinel nor the
+// render's own background. `bgSentinel` is the sentinel value the buffer is
+// pre-filled with (see renderCapture); the render's background is sampled from the
+// same frame at `probe` (a point that is background on the screen).
+int renderPaintCountAt(HWND hwnd, const std::vector<POINT>& pts, POINT probe) {
     if (hwnd == nullptr || pts.empty()) { return 0; }
     RECT client{};
     if (::GetClientRect(hwnd, &client) == FALSE) { return 0; }
@@ -1060,12 +1086,30 @@ int renderPaintCountAt(HWND hwnd, const std::vector<POINT>& pts, std::uint32_t b
                        static_cast<LPARAM>(PRF_CLIENT | PRF_CHILDREN | PRF_ERASEBKGND));
         ::GdiFlush();
         const auto* px = static_cast<const std::uint32_t*>(bits);
+        // The render's own background: the DIB was pre-filled with the sentinel, so
+        // if the point the screen shows as background is still the sentinel, the
+        // window did not paint its background either and this frame cannot be used
+        // as evidence — the count comes back as -1.
+        std::uint32_t renderBg = 0;
+        bool haveBg = false;
+        if (probe.x >= 0 && probe.y >= 0 && probe.x < cw && probe.y < ch) {
+            const std::uint32_t p =
+                px[static_cast<std::size_t>(probe.y) * cw + probe.x] & 0x00FFFFFFU;
+            if (p != (kRenderSentinel & 0x00FFFFFFU)) { renderBg = p; haveBg = true; }
+        }
+        if (!haveBg && cw > 4 && ch > 4) {
+            // fall back to the frame's own corner (the dialog paints its background
+            // there with the same brush as everywhere else)
+            const std::uint32_t p = px[2] & 0x00FFFFFFU;
+            if (p != (kRenderSentinel & 0x00FFFFFFU)) { renderBg = p; haveBg = true; }
+        }
+        if (!haveBg) { painted = -1; }
         for (const POINT& pt : pts) {
+            if (painted < 0) { break; }
             if (pt.x < 0 || pt.y < 0 || pt.x >= cw || pt.y >= ch) { continue; }
-            if ((px[static_cast<std::size_t>(pt.y) * cw + pt.x] & 0x00FFFFFFU) !=
-                (bg & 0x00FFFFFFU)) {
-                ++painted;
-            }
+            const std::uint32_t v = px[static_cast<std::size_t>(pt.y) * cw + pt.x] &
+                                    0x00FFFFFFU;
+            if (v != (kRenderSentinel & 0x00FFFFFFU) && v != renderBg) { ++painted; }
         }
         if (old != nullptr) { ::SelectObject(mem, old); }
     }
@@ -2255,6 +2299,12 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
             // did not paint" and "the tab control is not there" are different
             // repairs and the numbers have to say which one it is.
             std::string tabState = "tab n/a";
+            // v1.3.0-beta8fix1 (bug BS-22r): AND WHICH ROW EACH TAB LANDED IN. The
+            // last run's `itemTopFirst/Last 24/2` is the whole question about the
+            // strip (the first item LOWER than the last is not a layout this control
+            // is documented to produce), and the numbers are what make it decidable:
+            // every item's top, the control's client width and its row count from
+            // both of the APIs that claim to answer it.
             if (const HWND tabCtl = ::GetDlgItem(dlg, IDC_TAB)) {
                 RECT tr{};
                 ::GetWindowRect(tabCtl, &tr);
@@ -2288,6 +2338,9 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
                                return std::to_string(f.top) + "/" + std::to_string(f.top);
                            }());
             }
+            const int renderedPts = renderPaintCountAt(
+                dlg, samples,
+                POINT{static_cast<int>(s.page.left) + 2, static_cast<int>(s.page.top) + 2});
             const std::string ground =
                 "scenario_screen_paint tab " + std::to_string(deepestTab) + " client " +
                 std::to_string(w) + "x" + std::to_string(h) + " app dpi " +
@@ -2295,12 +2348,14 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
                 std::to_string(s.app.offset) + " strip " +
                 std::to_string(s.app.stripShift[deepestTab]) + "/" +
                 std::to_string(s.app.stripSeen[deepestTab]) + " rows " +
-                std::to_string(s.app.stripRows) + " judged " + std::to_string(judged) +
+                std::to_string(s.app.stripRows) + " " + tabState + " ctl:" + evidence +
+                " judged " + std::to_string(judged) +
                 " uncovered " + std::to_string(uncovered) + " rendered " +
-                std::to_string(renderPaintCountAt(dlg, samples, bg)) + "/" +
+                (renderedPts < 0 ? std::string("NONE")
+                                 : std::to_string(renderedPts)) + "/" +
                 std::to_string(samples.size()) + " chrome " +
                 std::to_string(chromePainted) + "/" + std::to_string(chromeJudged) +
-                " " + tabState + " pageBare screen=" +
+                " pageBare screen=" +
                 (bareInCapture ? std::to_string(bareScreen) : std::string("n/a")) +
                 " bg=" + std::to_string(bg) +
                 " render=" + std::to_string(bareRender) +
@@ -2314,7 +2369,9 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
                                         std::to_string(judged)) +
                 evidence;
             ++g_invChecks[11];
-            const int renderedPts = renderPaintCountAt(dlg, samples, bg);
+            // v1.3.0-beta8fix1 (bug BS-22r): and the render is read at the point the
+            // screen shows as page background, so its own background is measured in
+            // the same frame instead of assumed to be the screen's colour.
             if (judged >= 3 && painted == 0 && renderedPts > 0 &&
                 chromeJudged > 0 && chromePainted == 0) {
                 // v1.3.0-beta8fix1 (bug BS-22k): WHOSE FRAME IS THIS?

@@ -59,6 +59,72 @@ arrives before the window's own `WM_DPICHANGED`. The dialog was then left with:
 The user sees exactly the report: a page with no content and a scrollbar that is
 either dead or gone. Only closing and reopening the dialog recovers.
 
+## The second root cause: the tab control sat ABOVE the page (z-order)
+
+The reported screen — a settings page showing background where its rows should be —
+had a second, independent cause, and the harness had to be taught to look at the
+**z-order** to see it. The tab control is created first and owns the whole page
+rectangle; the ~120 page controls are created after it, so they live *above* it.
+That order is not permanent: `showTab()` shows the active tab's controls with
+`SW_SHOW` on every tab switch, and a window brought to the top of the sibling order
+takes its whole rectangle with it. When the tab control ends up **above** a page
+control, that control is still there — same rectangle, `WS_VISIBLE`, no region,
+parented to the dialog — and is simply **not drawn**. Every window-state check the
+project had was green while the user's screen showed an empty row.
+
+The x64 probe run `35988174121` measured exactly that state:
+
+```
+scenario_screen_paint tab 3 client 543x689 app dpi 96 page 16,114 511x529
+  strip 4/4 rows 1 tab 12,66 519x581 visible yes region set rows 2
+  ctl: 522 sampled 28,114 250x18 live 28,114 250x18 rgn none vis y parent dlg painted 0/3
+       514 sampled 290,114 210x18 live 290,114 210x18 rgn none vis y parent dlg painted 0/3
+       ...
+[I11] the page paints background only: 8 visible controls, none of their middle
+      rows differs from the page background
+```
+
+Eight controls of the shown tab, at their own live rectangles, visible, unregioned —
+and not one pixel of them on the screen, while the chrome (outside the tab's
+rectangle) painted. The fix keeps the page children above the tab control by
+construction: after the solve has applied every rectangle, the tab control is put at
+the **bottom** of the dialog's children (`SetWindowPos(…, HWND_BOTTOM, …,
+SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)` — a z-order change only), and the pixels
+the change reveals are repainted synchronously (the parent's own invalidate cannot
+cover them: a parent never paints its children's pixels — the probe's I8 measured
+the stale frame at `3540 client pixels` before that repaint existed). The probe now
+records each judged control's position in that order (`z N tabAbove|tabBelow`), so a
+regression names its side of the stack instead of costing a run of guessing.
+
+## The rest of the round (same symptom, other paths — and the measurements that hid them)
+
+| code | root cause | invariant |
+|---|---|---|
+| BS-22 | the solver read the **live** (scrolled/rescaled) rectangles instead of the authored geometry | I5, I12 |
+| BS-22c | the clamp may only narrow; the region follows the window; one owner for the latch/`WS_VSCROLL` pair | I5 |
+| BS-22d/23 | the strip re-lays out in **both** directions; a row fits its own text in width | I1, I12 |
+| BS-22e | the bar belongs to the window it serves; a text scale must be undoable | I5 |
+| BS-22f | the font factory mints the face it was asked for; the scale knows every face | I1 |
+| BS-22g/h/i | a measurement must prove its **precondition** (client calibration for the strip cycle; screen-capture provenance; unavailable passes report themselves) | I1, I11 |
+| BS-22j/k | a label that does not fit **wraps** instead of being clipped; the capture proves whose frame it is | I6, I12 |
+| BS-22l/o/p/q | the plan describes the **window that exists** in both directions (a combo's real height; the row count the control built) | I6, I1 |
+| BS-22r | the render cross-check counted an unpainted DIB as "ink" | I11 (measurement) |
+| BS-22t | the row count is read in **either** direction; the revealed page is repainted synchronously | I1, I8 |
+| BS-22u | the strip cycle reads the state after it settles and reports the plan's own arithmetic | I1 (measurement) |
+| BS-22v | the nine tab labels are measured with the font the **control** draws them with (`WM_GETFONT`), not `uiFont()` | **I1 (last)** |
+
+BS-22v is the link that closed the last red state. `solveSettingsLayout()` was the one
+measurement in the solve that selected `uiFont()` instead of the control's own font
+(the other two helpers, `measureSingleLineWidthPx()` and `measureStaticTextHeightPx()`,
+already select `WM_GETFONT`). When anything puts a different face on the tab control
+— the harness's text-scale path does, through the app's own font factory — the plan
+measures 100 % labels while the control draws 1.5x ones: it answers `one row` for a
+strip the control has already wrapped, `stripRows` and the style bit describe a strip
+that is not on the screen, and the grow/shrink transition cannot be planned at all.
+The probe's note from run `68544ea` carries the numbers that named it:
+`a1:700/683 plan1(559/643) ctl1 ml0` — the plan and the control agree at a wide
+client, and only the *font* was wrong.
+
 ## The fix (UI/presentation only — no engine, hook, TSF or persistence change)
 
 1. **`applySettingsDpiScale()` owns the whole transition**: rescale → drop the
@@ -135,10 +201,27 @@ next to the probe's own findings on the same run:
 and `t0..t8 @100%` all clean while every tab at **150 %** is red — the feature is
 scale-dependent, which is why a 100 % desktop can run it for months.
 
-**GREEN after the fix**: the same harness on the fixed tree (this release's CI run)
-reports `0` findings, `0` harness violations, with the step/assertion counts still
-in `ui_probe.json` and in the CI digest line — a green run cannot mean "the
-sequence checks never ran".
+**GREEN after the fix**: the same harness on the final tree (CI run `35993697384`,
+commit `e036e85`, all four jobs green — `Native regression (Linux)`, `x64`, `ARM64`,
+`ARM64EC`) reports `0` findings and `0` harness violations, with the step/assertion
+counts still in `ui_probe.json` and in the CI digest line — a green run cannot mean
+"the sequence checks never ran":
+
+```
+harness 4320 steps / 4734 assertions / 0 violations []
+scenarios 6 run, 0 with violations
+invariants (checks/violations) I1:3086/0 I2:33415/0 I3:9042/0 I4:4521/0
+          I5:9042/0 I6:108473/0 I8:3/0 I9:342/0 I11:3/0 I12:27590/0 R1:6/0
+UI probe: 3456 controls, 14550 checks, 0 findings []
+          (native DPI 96, scales 100/125/150, screen checks 27 run / 0 unavailable)
+x64 CTest: tests=8; failures=0; disabled=0; skipped=0
+```
+
+The loop that got there, kept in `docs/FINAL_CHECK_v1.3.0-beta8fix1.md`:
+
+```
+1379 (77e8fea) → 56 → 84 → 309 → 383 → 335 → 30 → 4 → 4 → 2 → 1 → 0 (e036e85)
+```
 
 ## What is still UNVERIFIED (Windows)
 

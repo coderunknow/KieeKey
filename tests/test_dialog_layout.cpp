@@ -745,6 +745,103 @@ void testBottomRowMovesDownOnly() {
 // grow -> shrink -> grow three times, at every scale the contract names, must
 // return the page to exactly its one-row position — and the accumulating rule the
 // code used must be shown to fail them (non-vacuity).
+// v1.3.0-beta8fix1 (bug BS-22) — THE SOLVE IS RECOMPUTED, NOT ACCUMULATED.
+//
+// The CI probe caught the additive behaviour with a plain sentence:
+//
+//     [I1] the page content did not return to its one-row position: id 555 was at
+//          y=114, is at y=158 after the strip fitted one row again (moved by 44 px)
+//
+// The row that wrapped at the narrow width had grown, pushed everything below it
+// down, and kept BOTH the height and the push when the dialog widened again —
+// because the solver's input was the previous solve's output (the live/baseline
+// rectangle), and `autoFit` only knows how to add growth. This test drives the
+// exact cycle on the portable model: a growable label with a width-dependent
+// required height, a sibling under it, a constrained page (the probe's 639x176
+// shape, scaled), and the requirement that a re-solve from the AUTHORED layout
+// returns the authored plan exactly — at every scale the contract names.
+void testReflowIsRecomputedFromAuthored() {
+    struct Scale { int dpi; };
+    const Scale scales[] = {{96}, {120}, {144}};
+
+    for (const Scale& sc : scales) {
+        const int narrowW = dpiScalePx(320, sc.dpi);
+        const int wideW   = dpiScalePx(640, sc.dpi);
+        // The page the probe measured at 150 %: 22,177 639x176 — 176 px tall.
+        const int pageTop = dpiScalePx(100, sc.dpi);
+        const int pageBottom = pageTop + dpiScalePx(176, sc.dpi);
+
+        const Rect authoredLabel{dpiScalePx(10, sc.dpi), pageTop,
+                                 dpiScalePx(300, sc.dpi), dpiScalePx(20, sc.dpi)};
+        const Rect authoredButton{dpiScalePx(10, sc.dpi), dpiScalePx(130, sc.dpi),
+                                  dpiScalePx(300, sc.dpi), dpiScalePx(20, sc.dpi)};
+
+        // The label's text: two lines at the narrow width, one at the wide one —
+        // i.e. exactly what the app's own measurement reports, and the only input
+        // the solver is entitled to use.
+        const auto specsAt = [&](int width, bool authoredInput, const LayoutPlan* prev) {
+            ControlSpec label;
+            label.id = 1;
+            label.tab = 0;
+            label.growable = true;
+            label.rect = authoredInput ? authoredLabel : prev->rects[0];
+            label.requiredHeight = (width < dpiScalePx(400, sc.dpi))
+                                       ? dpiScalePx(40, sc.dpi)   // two lines
+                                       : dpiScalePx(20, sc.dpi);  // one line
+            ControlSpec button;
+            button.id = 2;
+            button.tab = 0;
+            button.rect = authoredInput ? authoredButton : prev->rects[1];
+            button.requiredHeight = 0;
+            std::vector<ControlSpec> v{label, button};
+            return v;
+        };
+
+        // --- the narrow solve: the label grows, the button moves down ---------
+        std::vector<ControlSpec> narrow = specsAt(narrowW, true, nullptr);
+        const LayoutPlan narrowPlan = autoFit(narrow, pageTop, pageBottom);
+        assert(narrowPlan.rects[0].h == dpiScalePx(40, sc.dpi));
+        assert(narrowPlan.rects[1].y == dpiScalePx(150, sc.dpi));   // pushed down
+
+        // --- the wide solve, from the AUTHORED layout: back to the authored plan -
+        std::vector<ControlSpec> wide = specsAt(wideW, true, nullptr);
+        const LayoutPlan widePlan = autoFit(wide, pageTop, pageBottom);
+        assert(widePlan.rects[0].h == authoredLabel.h);              // shrank back
+        assert(widePlan.rects[0].y == authoredLabel.y);
+        assert(widePlan.rects[1].y == authoredButton.y);             // no push left
+        assert(widePlan.rects[1].h == authoredButton.h);
+
+        // --- and the accumulating rule must FAIL the same assertions ----------
+        // (what the solver did when its input was the previous plan: `autoFit`
+        // adds growth and cannot take it back, so both the height and the push
+        // stay for the rest of the session).
+        std::vector<ControlSpec> acc = specsAt(wideW, false, &narrowPlan);
+        const LayoutPlan accPlan = autoFit(acc, pageTop, pageBottom);
+        assert(accPlan.rects[0].h == dpiScalePx(40, sc.dpi));        // grew ... stayed
+        assert(accPlan.rects[1].y == dpiScalePx(150, sc.dpi));       // push ... stayed
+        assert(accPlan.rects[1].y != authoredButton.y);              // the defect
+
+        // --- three full cycles, authored-in: no drift at all -------------------
+        for (int cycle = 1; cycle <= 3; ++cycle) {
+            std::vector<ControlSpec> n = specsAt(narrowW, true, nullptr);
+            const LayoutPlan np = autoFit(n, pageTop, pageBottom);
+            assert(np.rects[1].y == dpiScalePx(150, sc.dpi));
+            std::vector<ControlSpec> w = specsAt(wideW, true, nullptr);
+            const LayoutPlan wp = autoFit(w, pageTop, pageBottom);
+            assert(wp.rects[0].h == authoredLabel.h);
+            assert(wp.rects[1].y == authoredButton.y);
+        }
+
+        // --- the constrained page (639x176-style) keeps the content reachable ---
+        // A page shorter than the content is a SCROLL situation, not a layout one:
+        // the authored positions are the truth and the rest is travel.
+        std::vector<ControlSpec> tall = specsAt(wideW, true, nullptr);
+        const LayoutPlan tallPlan = autoFit(tall, pageTop, pageTop + dpiScalePx(40, sc.dpi));
+        assert(tallPlan.rects[0].y == authoredLabel.y);              // not pushed up
+        assert(tallPlan.rects[1].y == authoredButton.y);             // nor down
+    }
+}
+
 void testStripShiftReturnsToAuthoredOnShrink() {
     struct Scale { int dpi; };
     const Scale scales[] = {{96}, {120}, {144}};
@@ -1026,6 +1123,8 @@ int main() {
     testPageChildWidthIsClampedToThePage();
     // v1.3.0-beta8fix1 (bug BS-21): the strip shift is replaced, never accumulated.
     testStripShiftReturnsToAuthoredOnShrink();
+    // v1.3.0-beta8fix1 (bug BS-22): a solve is recomputed, not accumulated.
+    testReflowIsRecomputedFromAuthored();
     // v1.3.0-beta8 (bug BS-12): scrolling moves, never resizes; runtime text
     // growth is a reflow request, not a local resize.
     testScrollModelNeverResizesAChild();

@@ -4588,6 +4588,66 @@ void settingsScrollToTop() noexcept {
     applySettingsScrollOffset(g.hSettings);
 }
 
+// v1.3.0-beta8fix1 (bug BS-22) — THE SOLVER'S INPUT IS THE AUTHORED GEOMETRY,
+// NOT THE PREVIOUS SOLVE'S OUTPUT.
+//
+// The dialog's page children are authored once (WM_CREATE) and then rewritten by
+// every solve: the tab-strip shift (BS-10/BS-21), the row growth for dynamically
+// measured text, the group-box stretch, the width clamp (BS-20). Each of those is
+// a function of the CURRENT state — the strip's row count, the control's text at
+// its current width, the client width — so the answer must be recomputed from the
+// authored rectangles, exactly as scripts/audit_layout.py and the portable model
+// do. The solver instead took its input from the LIVE rectangles (BS-17 added the
+// scroll offset back; BS-21 subtracted the strip shift), which made every one of
+// those transforms ADDITIVE on its own previous output:
+//
+//   * a row that wrapped at a narrow width grew, pushed everything below it down,
+//     and kept both the height and the push when the dialog widened again — the
+//     probe measured it: `id 555 was at y=114, is at y=158 after the strip fitted
+//     one row again (moved by 44 px)`;
+//   * the tab-strip shift accumulated (BS-21: `stripShift 228` px);
+//   * a shrink could never undo anything, so grow -> shrink -> grow cycles drifted
+//     (`inv_I1`/`inv_I12` at every scale).
+//
+// The authored table is kept in 96-dpi pixels, so a DPI rescale — which
+// multiplies the live rectangles — needs no correction of its own, and the
+// values survive every rescale exactly. It is captured LAZILY, from the first
+// rectangle the solver sees for a control (un-scrolled, i.e. the baseline at that
+// moment, before any shift or growth has been applied), which keeps the capture
+// correct for a control created after the first solve. Nothing in the app resizes
+// a page child for a reason the solver does not already derive from the text and
+// the width (refreshGrowingRow() only sets the text and asks for a reflow — it
+// never resizes), so no information is lost by not remembering the previous
+// output: the next solve recomputes the same answer, and stops recomputing it the
+// moment the cause goes away.
+struct AuthoredPageRect {
+    int id = 0;
+    ok::layout::Rect rect96{};      // authored position + size, 96-dpi px
+};
+std::vector<AuthoredPageRect> g_pageAuthored96;
+
+const ok::layout::Rect* authoredPageRect(int id) noexcept {
+    for (const AuthoredPageRect& e : g_pageAuthored96) {
+        if (e.id == id) { return &e.rect96; }
+    }
+    return nullptr;
+}
+
+// `unscrolledLive` is the rectangle the solver is entitled to call authored: the
+// live window rect with the scroll offset added back (ok::layout::solverInputRect).
+void rememberAuthoredPageRect(int id, const ok::layout::Rect& unscrolledLive,
+                              int dpi) noexcept {
+    if (authoredPageRect(id) != nullptr) { return; }
+    AuthoredPageRect e;
+    e.id = id;
+    e.rect96 = ok::layout::Rect{
+        ok::layout::scaleTo96Px(unscrolledLive.x, dpi),
+        ok::layout::scaleTo96Px(unscrolledLive.y, dpi),
+        ok::layout::scaleTo96Px(unscrolledLive.w, dpi),
+        ok::layout::scaleTo96Px(unscrolledLive.h, dpi)};
+    g_pageAuthored96.push_back(e);
+}
+
 // v1.3.0-beta8fix1 (bug BS-21): PUT THE PAGE BACK ON ITS AUTHORED TOP BEFORE THE
 // STRIP SHIFT BECOMES GEOMETRY.
 //
@@ -4945,15 +5005,19 @@ void solveSettingsLayout(HWND hwnd) {
         // The live rectangle still supplies x/w/h (a DPI rescale changes them,
         // and the baseline is dropped on a DPI change for exactly that reason).
         if (spec.tab != ok::layout::ControlSpec::kAlwaysVisible) {
-            const ok::layout::Rect live = spec.rect;
-            const ok::layout::Rect* base = nullptr;
-            for (const auto& entry : g_settingsScroll.solved) {
-                if (entry.first == c) { base = &entry.second; break; }
+            // BS-22: the input is the AUTHORED rectangle, in all four fields. The
+            // live one supplies nothing but the first capture (un-scrolled), so a
+            // solve is a pure function of the authored layout, the current text
+            // and the current width — never of the previous solve's output.
+            const ok::layout::Rect unscrolled =
+                ok::layout::solverInputRect(spec.rect, g_settingsScroll.offset);
+            rememberAuthoredPageRect(id, unscrolled, dpi);
+            if (const ok::layout::Rect* authored = authoredPageRect(id)) {
+                spec.rect = ok::layout::Rect{S(authored->x), S(authored->y),
+                                             S(authored->w), S(authored->h)};
+            } else {
+                spec.rect = unscrolled;
             }
-            const int y = (base != nullptr)
-                              ? base->y
-                              : ok::layout::solverInputRect(live, g_settingsScroll.offset).y;
-            spec.rect.y = y;
         }
         const int clsLen = ::GetClassNameW(c, cls, 32);
         // v1.3.0-beta8 (bug BS-11): the predefined Win32 classes report MIXED
@@ -5007,9 +5071,13 @@ void solveSettingsLayout(HWND hwnd) {
         // the answer is absolute and a strip that fits one row again returns the
         // page to exactly where it was (the model documents this; the unit test
         // drives three grow/shrink cycles at 100/125/150 %).
+        // The input is the authored top (BS-22), so there is no previous shift in
+        // it and the replacement is exact: `prevShift96 = 0`. The record still
+        // carries the shift applied to the LIVE rectangles, because the DPI path
+        // has to un-shift those before the rescale multiplies them (BS-21).
         const ok::layout::StripShift shift = ok::layout::stripShiftFor(
-            authoredTop, g_settingsScroll.perTabStripShift96[t],
-            static_cast<int>(disp.top), static_cast<int>(dpi != 0 ? dpi : 96));
+            authoredTop, 0, static_cast<int>(disp.top),
+            static_cast<int>(dpi != 0 ? dpi : 96));
         g_settingsScroll.perTabStripShift96[t] = shift.shift96;
         if (shift.shiftPx <= 0) { continue; }
         for (ok::layout::ControlSpec& spec : specs) {

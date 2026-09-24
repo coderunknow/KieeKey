@@ -141,14 +141,30 @@ def check(repo: Path):
     except ValueError:
         failures.append("main.cpp: solveSettingsLayout() not found")
     else:
-        if ('solverInputRect' not in solve or
-                'g_settingsScroll.solved' not in solve or
-                'spec.rect.y = y;' not in solve):
+        # v1.3.0-beta8fix1 (bug BS-22): the requirement is that the solver's input is
+        # UN-SCROLLED. BS-17 met it by adding the offset back to the live rectangle
+        # (solverInputRect) and preferring the saved baseline; BS-22 supersedes both
+        # with the authored rectangle, which is un-scrolled by construction and also
+        # un-shifted and un-grown (the additive-output defects of BS-21/BS-22). The
+        # rule therefore accepts either mechanism and still fails on the bug it was
+        # written for: taking the y straight from the scrolled live rectangle.
+        uses_authored = 'authoredPageRect(' in solve
+        uses_baseline = ('solverInputRect' in solve and
+                         'g_settingsScroll.solved' in solve)
+        if not (uses_authored or uses_baseline):
             failures.append(
                 "main.cpp: solveSettingsLayout() no longer derives the page children's "
-                "input from the saved baseline / solverInputRect (the y it applies to "
-                "the spec) — a reflow while the user is scrolled then folds the scroll "
-                "offset into the layout and the page drifts away (BS-17)")
+                "input from an un-scrolled source (the authored table, BS-22, or the "
+                "saved baseline + solverInputRect, BS-17) — a reflow while the user is "
+                "scrolled then folds the scroll offset into the layout and the page "
+                "drifts away")
+        if 'solverInputRect(spec.rect, g_settingsScroll.offset)' not in solve and \
+                'solverInputRect(live, g_settingsScroll.offset)' not in solve:
+            failures.append(
+                "main.cpp: the solver no longer adds the scroll offset back to the "
+                "live rectangle it captures the authored geometry from (BS-17/BS-22) "
+                "— a control first seen while the page is scrolled would have the "
+                "rendered position baked in as its authored one")
     if 'void dropSettingsLayoutBaseline() noexcept' not in main:
         failures.append("main.cpp: dropSettingsLayoutBaseline() is gone — a DPI "
                         "rescale would feed the old scale's baselines back in (BS-17)")
@@ -385,6 +401,33 @@ def check(repo: Path):
     if 'testStripShiftReturnsToAuthoredOnShrink()' not in read_or_empty(
             repo, 'tests/test_dialog_layout.cpp'):
         failures.append("tests/test_dialog_layout.cpp: the BS-21 grow/shrink cycle "
+                        "test is gone")
+
+    # 12. v1.3.0-beta8fix1 (BS-22): THE SOLVER'S INPUT IS THE AUTHORED GEOMETRY.
+    #     Taking it from the live/baseline rectangles made every transform additive
+    #     on its own previous output — the strip shift accumulated (BS-21), a row
+    #     that wrapped at a narrow width kept its height AND the push it caused when
+    #     the dialog widened again (the probe's "id 555 was at y=114, is at y=158
+    #     after the strip fitted one row again"). The authored table (96-dpi px, so
+    #     a rescale cannot skew it) makes a solve a pure function of the authored
+    #     layout, the current text and the current width. These rules pin the table,
+    #     its capture, the solver's use of it, and the cycle test behind them.
+    for needle, why in (
+            ('struct AuthoredPageRect', 'the authored-geometry table (BS-22)'),
+            ('rememberAuthoredPageRect(', "the table's capture (BS-22)"),
+            ('authoredPageRect(', "the table's lookup (BS-22)")):
+        if needle not in main:
+            failures.append(f"main.cpp: {needle} is gone — {why}")
+    if 'authoredPageRect(id)' not in solve_body:
+        failures.append(
+            "main.cpp: the solver no longer reads the AUTHORED rectangle for page "
+            "children (BS-22) — with the live/baseline rectangle as its input every "
+            "transform is additive on its own previous output: the strip shift "
+            "accumulates, and a row that wrapped at a narrow width keeps its height "
+            "and its push when the dialog widens again")
+    if 'testReflowIsRecomputedFromAuthored()' not in read_or_empty(
+            repo, 'tests/test_dialog_layout.cpp'):
+        failures.append("tests/test_dialog_layout.cpp: the BS-22 recomputed-reflow "
                         "test is gone")
     return failures
 

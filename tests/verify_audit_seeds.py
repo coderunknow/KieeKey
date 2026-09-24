@@ -193,9 +193,12 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
     (
         "BS-17  the solver reading the live (scrolled) rectangle again",
         "src/app/main.cpp",
-        "            spec.rect.y = y;",
-        "            spec.rect.y = live.y;",
-        "solverInputRect",
+        # BS-22 moved the un-scrolling to the capture point, so the seed now removes
+        # the offset add-back itself (the scrolled live rectangle becomes the input)
+        "            const ok::layout::Rect unscrolled =\n"
+        "                ok::layout::solverInputRect(spec.rect, g_settingsScroll.offset);",
+        "            const ok::layout::Rect unscrolled = spec.rect;   // seeded: the render, not the layout",
+        "no longer adds the scroll offset back",
     ),
     (
         "RS-06  a report without the build identity",
@@ -210,6 +213,13 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "void checkEmptyPage(const Audit& a, const std::vector<Ctl>& ctls, int travelPx) {",
         "void checkEmptyPageRemoved(const Audit& a, const std::vector<Ctl>& ctls, int travelPx) {",
         "checkEmptyPage",
+    ),
+    (
+        "BS-22  the solver reads the live rectangle again",
+        "src/app/main.cpp",
+        "            if (const ok::layout::Rect* authored = authoredPageRect(id)) {",
+        "            if (const ok::layout::Rect* authored = (const ok::layout::Rect*)nullptr) {",
+        "no longer reads the AUTHORED rectangle",
     ),
     (
         "BS-21  the tab-strip shift accumulates again",

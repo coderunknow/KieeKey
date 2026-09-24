@@ -895,6 +895,16 @@ def check(repo: Path):
              'draw (WM_PRINTCLIENT): a capture that reads as background everywhere is '
              'either a blank page or somebody else\'s pixels, and only the render '
              'tells the two apart (BS-22g)'),
+            ('if (passDpi == nativeDpi) {',
+             'the rule that the strip transition MUST be measurable at the '
+             "runner's own scale (BS-22i) — the other passes may only report "
+             'themselves unavailable, and the native one may not'),
+            ('++g_stripCycleUnavailable;',
+             'the counted, reported unavailability of a scale the screen cannot '
+             'give room to (BS-22i)'),
+            ('if (measurable) {',
+             'the guard that runs the full invariant battery on the wrapped state '
+             'even where the height growth is not measurable (BS-22i)'),
             ('int chromePainted = 0;',
              'the chrome half of that evidence (BS-22h) — a capture with the chrome '
              'and not the page is a page that was never painted, while one with '

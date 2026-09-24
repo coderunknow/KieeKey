@@ -298,7 +298,7 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
     (
         "BS-22c the strip cycle stops proving it wrapped",
         "tools/ui_probe/ui_probe.cpp",
-        "            if (wrapGrow <= 0 || wrapped.page.top < basePageTop) {",
+        "            if (measurable && (wrapGrow <= 0 || wrapped.page.top < basePageTop)) {",
         "            if (false) {   // seeded: no proof the labels wrapped",
         "the proof that the strip really grew with the labels",
     ),
@@ -369,6 +369,20 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "                std::to_string(renderPaintCountAt(dlg, samples, bg)) + \"/\" +",
         "                std::to_string(0) + \"/\" +   // seeded: no cross-check",
         "cross-check against the frame the app would draw",
+    ),
+    (
+        "BS-22i the native pass stops requiring a measurable transition",
+        "tools/ui_probe/ui_probe.cpp",
+        "        if (passDpi == nativeDpi) {",
+        "        if (false) {   // seeded: nothing requires the native scale to measure",
+        "MUST be measurable at the",
+    ),
+    (
+        "BS-22i the strip-cycle note stops being counted",
+        "tools/ui_probe/ui_probe.cpp",
+        "        ++g_stripCycleUnavailable;",
+        "        /* seeded: an unmeasurable pass is not recorded */",
+        "++g_stripCycleUnavailable; is gone",
     ),
     (
         "BS-22g the screen check counts controls its capture does not cover",

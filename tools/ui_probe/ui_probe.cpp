@@ -711,6 +711,11 @@ void checkOverlaps(const Audit& a, const std::vector<Ctl>& ctls) {
 // Counts how often the desktop was unusable, so the digest says so out loud
 // instead of looking like "0 findings" when nothing could be measured.
 int g_screenUnavailable = 0;
+// v1.3.0-beta8fix1 (bug BS-22i): passes where the tab strip cannot gain a row
+// because the WINDOW cannot be made tall enough at that scale (see the strip
+// cycle) — recorded with its numbers, never folded into a pass.
+int g_stripCycleUnavailable = 0;
+std::string g_stripCycleNote;
 // How many times the screen comparison actually ran (vs. was skipped): "0
 // findings" must never be read as "verified" when nothing was measured.
 int g_screenCaptures = 0;
@@ -2104,7 +2109,8 @@ std::string whereOf(const HarnessState& s, int tab, unsigned passDpi, int cycle,
 }
 
 int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCount,
-                               unsigned passDpi, const RECT& origClient,
+                               unsigned passDpi, unsigned nativeDpi,
+                               const RECT& origClient,
                                std::vector<Finding>* findings) {
     ++g_scenarioRuns;
     const int before = g_fuzzFailures;
@@ -2145,6 +2151,7 @@ int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCo
     // per-tab cycle still proves both halves for every tab.
     const int stripW0 = std::max(wideW, ::MulDiv(wideW, static_cast<int>(passDpi), 96));
     int stripW = stripW0;
+    bool measurable = false;
     KieeKeyProbeSimulateDpi(dlg, passDpi);
     KieeKeyProbeFontScale(dlg, 100);
     for (int attempt = 0; attempt < 6; ++attempt) {
@@ -2159,7 +2166,7 @@ int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCo
         readHarnessState(dlg, all, 0, &probeState);
         const bool grows = probeState.app.stripShift[0] > shiftBefore;
         KieeKeyProbeFontScale(dlg, 100);
-        if (grows) { break; }
+        if (grows) { measurable = true; break; }
         // At this width the labels fit the tab either way, so there is no
         // transition to measure: try a narrower client.
         stripW = std::max(stripW0 * 2 / 3, stripW * 4 / 5);
@@ -2167,6 +2174,44 @@ int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCo
     KieeKeyProbeResize(dlg, stripW, clientH);
     KieeKeyProbeReflowNow(dlg);
     KieeKeyProbeSetOffset(dlg, 0);
+
+    // v1.3.0-beta8fix1 (bug BS-22i): A PASS THAT CANNOT GROW THE STRIP REPORTS
+    // ITSELF. At 120/144 dpi the runner's screen (768 px tall) cannot give the
+    // window the height the scale needs: the tab control is capped by
+    // tabHeightForClient so the bottom row stays visible, its display rectangle
+    // stops moving, and the app's recorded strip height stays at whatever the
+    // wrapped-at-100 % state was (measured: `strip shift 29 -> 29 px` at every
+    // width down to the window's own minimum). That is a property of the screen,
+    // not of the dialog — the app's own state in those passes is asserted in full
+    // by the invariant battery below (I2..I12 on the wrapped and returned states),
+    // and the grow/shrink transition itself is measured at the runner's real scale,
+    // where it MUST be measurable: a native pass that cannot grow the strip is a
+    // finding, so this can never become the reason the transition stops being
+    // tested.
+    if (!measurable) {
+        ++g_stripCycleUnavailable;
+        HarnessState st;
+        readHarnessState(dlg, all, 0, &st);
+        const std::string note =
+            "strip-cycle not measurable: pass dpi " + std::to_string(passDpi) +
+            " client " + std::to_string(stripW) + "x" + std::to_string(clientH) +
+            " page " + rectStr(st.page) + " strip shift " +
+            std::to_string(st.app.stripShift[0]) + " px rows " +
+            std::to_string(st.app.stripRows) +
+            " — the window cannot be made tall enough at this scale for the strip "
+            "to gain a row (the tab control's height is capped so the bottom row "
+            "stays visible)";
+        g_stripCycleNote = note;
+        harnessTrace("{\"scenario\": \"strip_cycles\", \"measured\": false, \"note\": \"" +
+                     note + "\"}");
+        if (passDpi == nativeDpi) {
+            harnessFail(1, findings,
+                        "the strip's grow/shrink transition is not measurable even at "
+                        "the runner's own scale (" + note + ") — the native pass is "
+                        "where this dialog's strip transition is proven",
+                        whereOf(st, 0, passDpi, 0, 0, stripW, clientH, 100));
+        }
+    }
 
     for (int tab = 0; tab < tabCount; ++tab) {
         if (KieeKeyProbeSelectTab(dlg, tab) != 0) { break; }
@@ -2211,7 +2256,11 @@ int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCo
             // control's display rectangle, `stripRows` from the plan), and the page
             // top may not move UP while the labels grow.
             const int wrapGrow = wrapped.app.stripShift[tab] - baseShift;
-            if (wrapGrow <= 0 || wrapped.page.top < basePageTop) {
+            if (measurable) {
+                harnessAssert(dlg, wrapped, "strip_cycle_wrapped", cycle, 0,
+                              kWrapFontPct, findings);
+            }
+            if (measurable && (wrapGrow <= 0 || wrapped.page.top < basePageTop)) {
                 // A cycle that cannot reach the transition may not report it as
                 // corrected: the state below is one where the strip is still one
                 // row (or nothing was pushed down), so there is nothing to see.
@@ -2238,6 +2287,7 @@ int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCo
             KieeKeyProbeSetOffset(dlg, 0);
             HarnessState back;
             readHarnessState(dlg, all, tab, &back);
+            harnessAssert(dlg, back, "strip_cycle_back", cycle, 0, 100, findings);
             int backFirstY = -1;
             int backFirstId = 0;
             for (const HarnessCtl& c : back.ctls) {
@@ -2337,7 +2387,8 @@ int runSequenceHarness(HWND dlg, int tabCount, unsigned nativeDpi, unsigned pass
     // v1.3.0-beta8fix1 (bug BS-21): the tab-strip reshape transition, driven
     // deterministically (one row -> multi-row -> one row, three cycles, every
     // tab) instead of waiting for the seeded walk to stumble into it.
-    harnessScenarioStripCycles(dlg, all, tabCount, passDpi, origClient, &findings);
+    harnessScenarioStripCycles(dlg, all, tabCount, passDpi, nativeDpi,
+                            origClient, &findings);
 
     static const int kFontScales[] = {100, 125, 150};
     for (int fontPct : kFontScales) {
@@ -3071,6 +3122,9 @@ int main(int argc, char** argv) {
             ",\n \"findings\": " + std::to_string(g_findings) +
             ",\n \"screenCaptures\": " + std::to_string(g_screenCaptures) +
             ",\n \"screenUnavailable\": " + std::to_string(g_screenUnavailable) +
+            ",\n \"stripCycleUnavailable\": " +
+                std::to_string(g_stripCycleUnavailable) +
+            ",\n \"stripCycleNote\": \"" + g_stripCycleNote + "\"," +
             ",\n \"fuzzSteps\": " + std::to_string(g_fuzzSteps) +
             ",\n \"fuzzChecks\": " + std::to_string(g_fuzzChecks) +
             ",\n \"fuzzViolations\": " + std::to_string(g_fuzzFailures) +

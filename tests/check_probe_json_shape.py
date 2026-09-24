@@ -48,7 +48,8 @@ PROBE = REPO_ROOT / "tools" / "ui_probe" / "ui_probe.cpp"
 # "the harness never ran".
 REQUIRED_TOP = (
     "tool", "nativeDpi", "tabs", "controls", "checks", "findings",
-    "screenCaptures", "screenUnavailable", "fuzzSteps", "fuzzChecks",
+    "screenCaptures", "screenUnavailable", "stripCycleUnavailable", "fuzzSteps",
+    "fuzzChecks",
     "fuzzViolations", "scenarios", "scenarioViolations", "invariants",
     "traceLines", "passEntries", "handover", "firstViolations", "findingsByKind",
 )

@@ -61,10 +61,12 @@ SEEDS: list[tuple[str, str, str, str, str]] = [
     (
         "CA-01a  one-line static too narrow at every scale",
         "src/app/main.cpp",
+        # BS-22c moved the BPM row 8 px down (the combo's real closed height is
+        # taller than the authored 25 px), so the anchor follows it.
         'mkCtl(hwnd, L"STATIC", L"Nhịp Rhythm (60-220):",\n'
-        '                  WS_CHILD | WS_VISIBLE | SS_LEFT, S(280), S(368), S(160), S(20)',
+        '                  WS_CHILD | WS_VISIBLE | SS_LEFT, S(280), S(376), S(160), S(20)',
         'mkCtl(hwnd, L"STATIC", L"Nhịp Rhythm (60-220):",\n'
-        '                  WS_CHILD | WS_VISIBLE | SS_LEFT, S(280), S(368), S(100), S(20)',
+        '                  WS_CHILD | WS_VISIBLE | SS_LEFT, S(280), S(376), S(100), S(20)',
         "clip",
     ),
     (
@@ -258,6 +260,27 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "    int barPos, barPage, barMax;\n    UINT dpi;",
         "    UINT dpi;\n    int barPos, barPage, barMax;",
         "does not mirror the app's",
+    ),
+    (
+        "BS-22d the strip stops re-laying out when it shrinks",
+        "src/app/main.cpp",
+        "        const bool stripReshaped = (stripRows != g_settingsScroll.stripRows);",
+        "        const bool stripReshaped = false;   // seeded: only the grow direction",
+        "stops re-laying the tab strip out",
+    ),
+    (
+        "BS-23 the row stops being measured in width",
+        "src/app/main.cpp",
+        "                    spec.requiredWidth = measureSingleLineWidthPx(c, label, len, pad);",
+        "                    spec.requiredWidth = 0;   // seeded: height only",
+        "no longer measures a single-line row's width",
+    ),
+    (
+        "BS-23 the width fit forgets its sibling bound",
+        "src/app/DialogLayout.hpp",
+        "            limit = std::min(limit, orc.x - kRowGapPx);",
+        "            limit = std::min(limit, 1000000);   // seeded: no sibling bound",
+        "the sibling bound of the width fit",
     ),
     (
         "BS-22c the strip cycle stops proving it wrapped",

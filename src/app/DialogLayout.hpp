@@ -308,6 +308,13 @@ struct ControlSpec {
     // Measured text height in pixels (DrawTextW DT_CALCRECT). 0 means "not a
     // text control" or "measured smaller than the authored box".
     int requiredHeight = 0;
+    // v1.3.0-beta8fix1 (bug BS-23): the width this control's own text needs in
+    // ONE line (GetTextExtentPoint32W with the control's font, plus the room its
+    // class needs — a check box draws its glyph before the text). 0 means "not a
+    // single-line text control" / "already fits". Measured by the Win32 layer; the
+    // solver only enforces the bounds (the page's right edge, the nearest sibling,
+    // the enclosing group box), so a row can never grow into its neighbour.
+    int requiredWidth = 0;
     // Only label-like controls may grow: a grown button/combobox/edit would
     // change its own semantics (a taller combo box is a taller drop-down).
     bool growable = false;
@@ -337,6 +344,11 @@ struct LayoutPlan {
 inline constexpr int kGroupBoxBottomPadPx = 10;
 
 //---------------------------------------------------------------------------
+// The gap a fitted row keeps to the sibling it grows towards (v1.3.0-beta8fix1,
+// bug BS-23). The audit treats an overlap of up to 4 px as touching, so 6 keeps a
+// fitted row clear of its neighbour by the same margin the rest of the dialog uses.
+inline constexpr int kRowGapPx = 6;
+
 // autoFit — grow labels to their measured height and reflow the page below
 // them.
 //
@@ -353,10 +365,20 @@ inline constexpr int kGroupBoxBottomPadPx = 10;
 //     row is therefore anchored by the caller via `pageBottom` growth, i.e.
 //     the caller moves the row by LayoutPlan::extraHeightPx.
 //   * Nothing is ever shrunk below its authored size.
+//   * v1.3.0-beta8fix1 (bug BS-23): a row WIDER-THAN-ITS-TEXT is grown to the
+//     width that text needs, bounded by the page's right edge, by the nearest
+//     sibling on the same row and by the enclosing group box. The dialog's
+//     labels are authored at 96 dpi and the fonts are not: at 125 % "Cho phép AI
+//     học nhịp gõ cá nhân (Opt-in an toàn, hoàn toàn cục bộ)" measures 579 px in a
+//     box the authored 450 px scales to 563 — 16 px of Vietnamese text that simply
+//     disappear (`[clip] id 601 (Button) needs 579px ... shows 563px of 563`).
+//     Width is the one direction a text control may grow in that does not move
+//     anything below it, so the bound is what keeps it safe.
 //---------------------------------------------------------------------------
 [[nodiscard]] inline LayoutPlan autoFit(const std::vector<ControlSpec>& controls,
                                         int pageTop,
-                                        int pageBottom) {
+                                        int pageBottom,
+                                        int pageRightPx = 0) {
     LayoutPlan plan;
     plan.rects.reserve(controls.size());
     for (const ControlSpec& c : controls) { plan.rects.push_back(c.rect); }
@@ -428,6 +450,36 @@ inline constexpr int kGroupBoxBottomPadPx = 10;
             bottom = std::max(bottom, plan.rects[i].bottom() + kGroupBoxBottomPadPx);
         }
         plan.rects[g].h = bottom - plan.rects[g].y;
+    }
+
+    // Width fit (v1.3.0-beta8fix1, bug BS-23): see the note above the function.
+    // Runs after the vertical pass so the "same row" test uses final positions,
+    // and never moves anything: only `.w` changes.
+    for (std::size_t i = 0; i < controls.size(); ++i) {
+        const ControlSpec& c = controls[i];
+        if (c.requiredWidth <= 0 || c.groupBox) { continue; }
+        if (c.requiredWidth <= plan.rects[i].w) { continue; }
+        int limit = (pageRightPx > 0) ? pageRightPx : (plan.rects[i].x + c.requiredWidth);
+        for (std::size_t j = 0; j < controls.size(); ++j) {
+            if (j == i) { continue; }
+            const ControlSpec& o = controls[j];
+            if (o.tab != c.tab) { continue; }
+            const Rect& orc = plan.rects[j];
+            // Only a control that starts to the RIGHT of this one and shares its
+            // row (vertically overlapping) can be in the way.
+            if (orc.x < plan.rects[i].right()) { continue; }
+            const bool sameRow = orc.y < plan.rects[i].bottom() &&
+                                 plan.rects[i].y < orc.bottom();
+            if (!sameRow) { continue; }
+            limit = std::min(limit, orc.x - kRowGapPx);
+        }
+        if (parent[i] >= 0) {
+            limit = std::min(limit, plan.rects[static_cast<std::size_t>(parent[i])].right() -
+                                       kGroupBoxBottomPadPx);
+        }
+        const int room = limit - plan.rects[i].x;
+        if (room <= plan.rects[i].w) { continue; }
+        plan.rects[i].w = std::min(c.requiredWidth, room);
     }
 
     // Content bounds + the clip verdict.

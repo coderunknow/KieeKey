@@ -1182,6 +1182,80 @@ void testRegionFollowsTheLiveRectangleNotTheBaseline() {
     assert(inter.w > 0 && inter.h > 0);                // 2 px tall: content, not nothing
 }
 
+// v1.3.0-beta8fix1 (bug BS-23) — A ROW GROWS IN WIDTH TO FIT ITS OWN TEXT, WITHIN
+// BOUNDS IT CANNOT CROSS.
+//
+// The 7bbf474 x64 run, the last `clip` finding of the settled audit:
+//
+//   [clip] id 601 (Button) needs 579px (app solver says 50), shows 563px of 563
+//          (box 55,180 563x28): Cho phép AI học nhịp gõ cá nhân (Opt-in an toàn, ho
+//
+// A check box whose label is 16 px wider than the box the authored 450 px scales
+// to at 125 %. The page has room (the row starts at 55 in a page that reaches 648),
+// so the box grows — but never into the sibling to its right, never past the page,
+// never outside its group box, and never wider than the text needs. Height is
+// untouched: a width fit cannot move anything below it, which is what makes it safe
+// to apply after the vertical pass.
+void testRowWidthFitsItsTextWithinThePage() {
+    const auto checkbox = [](int x, int w, int y, int needW) {
+        ControlSpec c;
+        c.id = 601; c.tab = 7; c.growable = false; c.rect = Rect{x, y, w, 28};
+        c.requiredWidth = needW;
+        return c;
+    };
+    const auto sibling = [](int id, int x, int w, int y) {
+        ControlSpec c;
+        c.id = id; c.tab = 7; c.rect = Rect{x, y, w, 28};
+        return c;
+    };
+
+    // 1. nothing in the way: the box grows to exactly the measured width.
+    {
+        std::vector<ControlSpec> v{checkbox(55, 563, 180, 579)};
+        const LayoutPlan plan = autoFit(v, 100, 600, 648);
+        assert(plan.rects[0].w == 579);
+        assert(plan.rects[0].h == 28);            // height untouched
+        assert(plan.rects[0].y == 180);           // and no movement
+    }
+    // 2. a sibling on the same row: the fit stops kRowGapPx short of it.
+    {
+        std::vector<ControlSpec> v{checkbox(55, 400, 180, 700), sibling(602, 560, 200, 180)};
+        const LayoutPlan plan = autoFit(v, 100, 600, 900);
+        assert(plan.rects[0].w == 560 - 55 - kRowGapPx);
+        assert(plan.rects[1].x == 560);           // the neighbour never moves
+        // The non-vacuity: without the bound the row would have reached 700.
+        assert(plan.rects[0].w < 700);
+    }
+    // 3. the page's right edge: even with nothing else on the row.
+    {
+        std::vector<ControlSpec> v{checkbox(55, 400, 180, 900)};
+        const LayoutPlan plan = autoFit(v, 100, 600, 648);
+        assert(plan.rects[0].w == 648 - 55);
+    }
+    // 4. an enclosing group box is a bound too (a child may not grow out of it).
+    {
+        ControlSpec box;
+        box.id = 600; box.tab = 7; box.groupBox = true; box.rect = Rect{30, 147, 500, 350};
+        std::vector<ControlSpec> v{box, checkbox(55, 400, 180, 900)};
+        const LayoutPlan plan = autoFit(v, 100, 600, 2000);
+        assert(plan.rects[1].w == 500 + 30 - 55 - kGroupBoxBottomPadPx);
+    }
+    // 5. a row that already fits is left alone (idempotent, no ratchet).
+    {
+        std::vector<ControlSpec> v{checkbox(55, 300, 180, 250)};
+        const LayoutPlan plan = autoFit(v, 100, 600, 648);
+        assert(plan.rects[0].w == 300);
+    }
+    // 6. a row with NO room (the page is narrower than its text) keeps what it has:
+    //    the fit may not make it smaller, and the audit's `clip` is the honest
+    //    owner of that state (the label really does not fit).
+    {
+        std::vector<ControlSpec> v{checkbox(55, 300, 180, 900)};
+        const LayoutPlan plan = autoFit(v, 100, 600, 300);
+        assert(plan.rects[0].w == 300);
+    }
+}
+
 void testPageTopShiftKeepsContentBelowTheTabStrip() {
     // The CI probe measured the display rectangle at y=114 (two rows of tabs)
     // while the authored page starts at y=100 (group boxes) / 110 (labels).
@@ -1355,6 +1429,8 @@ int main() {
     testGrowableIsMeasuredAtTheWidthItGets();
     // v1.3.0-beta8fix1 (bug BS-22c): the region follows the live rectangle.
     testRegionFollowsTheLiveRectangleNotTheBaseline();
+    // v1.3.0-beta8fix1 (bug BS-23): a row grows in width to fit its text.
+    testRowWidthFitsItsTextWithinThePage();
     // v1.3.0-beta8 (bug BS-12): scrolling moves, never resizes; runtime text
     // growth is a reflow request, not a local resize.
     testScrollModelNeverResizesAChild();

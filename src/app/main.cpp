@@ -4565,6 +4565,12 @@ struct SettingsScrollState {
     // and a probe that wants to see the pull-back has to know how far the page WENT
     // down in the first place. Reset where the per-tab layout is reset.
     int  perTabStripSeen96[9] = {};
+    // v1.3.0-beta8fix1 (bug BS-22d): the tab strip's ROW COUNT as the last solve
+    // planned it (1 = one row). A change in either direction is a layout change:
+    // the tab control has to be made to re-lay out before TCM_ADJUSTRECT is read,
+    // or the display rectangle it answers with describes the strip that was there
+    // before the change (BS-10 for the grow, BS-22d for the shrink).
+    int  stripRows = 1;
     int  viewportBottom = 0;              // viewport.bottom after the refit
     int  offset = 0;                      // current scroll offset (px)
     int  range  = 0;                      // current tab's scroll range (px)
@@ -4722,6 +4728,7 @@ void dropSettingsLayoutBaseline() noexcept {
     // only caller, and it now owns the re-solve).
     for (int t = 0; t < 9; ++t) { g_settingsScroll.perTabContentBottom[t] = 0; }
     for (int t = 0; t < 9; ++t) { g_settingsScroll.perTabStripSeen96[t] = 0; }
+    g_settingsScroll.stripRows = 1;
     g_settingsScroll.offset = 0;
     g_settingsScroll.range = 0;
     // One owner: the latch and the bit move together, or neither moves.
@@ -5005,6 +5012,28 @@ void settingsScrollSetTab(HWND hwnd, int tabIndex) {
 // at this width": DrawTextW + DT_CALCRECT | DT_WORDBREAK with the CONTROL's own
 // font, so the solve and every other caller (the CA-03 probe included) measure
 // identically. 0 means "not a text control" / "no text" / "no DC".
+// v1.3.0-beta8fix1 (bug BS-23): the width a control's text needs in ONE line, with
+// the room its class puts around that text (a check box and a radio button draw a
+// glyph before the label; a push button pads both sides). The solver fits a row to
+// this number when the page has room — see ok::layout::autoFit's width pass. 0
+// means "not a single-line text control" / "no text".
+int measureSingleLineWidthPx(HWND child, const wchar_t* text, int textLen,
+                             int padPx) noexcept {
+    if (child == nullptr || text == nullptr || textLen <= 0) { return 0; }
+    HWND parent = ::GetParent(child);
+    if (parent == nullptr) { return 0; }
+    HDC dc = ::GetDC(parent);
+    if (dc == nullptr) { return 0; }
+    HGDIOBJ of = ::SelectObject(dc, reinterpret_cast<HGDIOBJ>(
+        ::SendMessageW(child, WM_GETFONT, 0, 0)));
+    SIZE sz{};
+    const BOOL ok = ::GetTextExtentPoint32W(dc, text, textLen, &sz);
+    if (of != nullptr) { ::SelectObject(dc, of); }
+    ::ReleaseDC(parent, dc);
+    if (ok == FALSE) { return 0; }
+    return static_cast<int>(sz.cx) + padPx;
+}
+
 int measureStaticTextHeightPx(HWND child, int widthPx) {
     if (child == nullptr || widthPx <= 0) { return 0; }
     wchar_t text[512];
@@ -5077,15 +5106,38 @@ void solveSettingsLayout(HWND hwnd) {
         const ok::layout::TabPlan tabPlan = ok::layout::planTabs(
             labelW, labelW, tabWidth - S(16), S(18), S(22), S(6));
         const LONG_PTR tabStyle = ::GetWindowLongPtrW(tabCtl, GWL_STYLE);
-        if (tabPlan.multiline && (tabStyle & TCS_MULTILINE) == 0) {
-            ::SetWindowLongPtrW(tabCtl, GWL_STYLE, tabStyle | TCS_MULTILINE);
-            // v1.3.0-beta8 (bug BS-10): the style bit alone does NOT re-lay the
-            // control out - TCM_ADJUSTRECT keeps answering with the OLD
-            // single-row display rectangle until the tab control has processed
-            // the change, so the shift below computed 0 and the top of every
-            // page stayed hidden under the second row of tab labels. The CI
-            // probe measured it: page top 114 with controls at 100..110,
-            // 22 x `outside_page`. Force the frame/layout pass, then read.
+        // v1.3.0-beta8 (bug BS-10): the style bit alone does NOT re-lay the control
+        // out - TCM_ADJUSTRECT keeps answering with the OLD display rectangle until
+        // the tab control has processed the change, so the shift below computed 0
+        // and the top of every page stayed hidden under the second row of tab
+        // labels. The CI probe measured it: page top 114 with controls at 100..110,
+        // 22 x `outside_page`. Force the frame/layout pass, then read.
+        //
+        // v1.3.0-beta8fix1 (bug BS-22d): AND THE SAME IS TRUE IN THE OTHER
+        // DIRECTION. This block used to force the re-layout only when the strip
+        // GREW (multiline && !TCS_MULTILINE). When the labels shrink back — the text
+        // scale returns to 100 %, the dialog is widened, the font changes — the tab
+        // control keeps answering TCM_ADJUSTRECT with the TWO-ROW rectangle until
+        // something makes it re-lay out, so `disp.top` stayed one row too low and
+        // the solver pushed the whole page down by that row for a strip that is one
+        // row tall. The 7bbf474 x64 run measured exactly that, 87 times:
+        //   [I1] the page top did not return to its one-row value: 114 -> 130
+        //        (wrapped) -> 130 ... strip 30/30
+        // (and with the page 16 px low, the controls the app believes are visible
+        // sit under the strip's second row: `[I11] the page paints background
+        // only`, plus the `stale_pixels` pair).
+        //
+        // The row COUNT is what matters, in both directions, and `planTabs`
+        // already answers it: force the re-layout whenever the plan's row count
+        // changed, and only then (a re-layout on every solve would be one more
+        // window pass per reflow for nothing).
+        const int stripRows = tabPlan.multiline ? 2 : 1;
+        const bool stripReshaped = (stripRows != g_settingsScroll.stripRows);
+        if (stripReshaped) {
+            g_settingsScroll.stripRows = stripRows;
+            if (tabPlan.multiline && (tabStyle & TCS_MULTILINE) == 0) {
+                ::SetWindowLongPtrW(tabCtl, GWL_STYLE, tabStyle | TCS_MULTILINE);
+            }
             ::SetWindowPos(tabCtl, nullptr, 0, 0, 0, 0,
                            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE |
                                SWP_FRAMECHANGED);
@@ -5211,6 +5263,38 @@ void solveSettingsLayout(HWND hwnd) {
         if (spec.growable) {
             spec.requiredHeight = measureStaticTextHeightPx(c, spec.rect.w);
         }
+        // v1.3.0-beta8fix1 (bug BS-23): and how wide the text wants to be. Only
+        // single-line text (a wrapped label's width is its box, not its longest
+        // line) and only the classes whose text the user reads as one line.
+        if (!isGroupBox) {
+            wchar_t label[512];
+            const int len = ::GetWindowTextW(c, label, 512);
+            bool singleLine = (len > 0);
+            for (int i = 0; i < len && singleLine; ++i) {
+                if (label[i] == L'\n' || label[i] == L'\r') { singleLine = false; }
+            }
+            if (singleLine) {
+                int pad = 0;
+                if (isStatic) {
+                    pad = S(2);
+                } else if (clsLen == 6 && ::lstrcmpiW(cls, L"BUTTON") == 0) {
+                    const bool gnarly = (style & BS_TYPEMASK) == BS_AUTOCHECKBOX ||
+                                        (style & BS_TYPEMASK) == BS_CHECKBOX ||
+                                        (style & BS_TYPEMASK) == BS_AUTORADIOBUTTON ||
+                                        (style & BS_TYPEMASK) == BS_RADIOBUTTON ||
+                                        (style & BS_TYPEMASK) == BS_3STATE ||
+                                        (style & BS_TYPEMASK) == BS_AUTO3STATE;
+                    pad = gnarly ? S(24) : S(12);
+                } else if (clsLen == 6 && ::lstrcmpiW(cls, L"COMBOBOX") == 0) {
+                    pad = S(8);
+                } else {
+                    pad = 0;                       // edits keep their authored width
+                }
+                if (pad > 0) {
+                    spec.requiredWidth = measureSingleLineWidthPx(c, label, len, pad);
+                }
+            }
+        }
         specs.push_back(spec);
         hwnds.push_back(c);
     }
@@ -5269,7 +5353,7 @@ void solveSettingsLayout(HWND hwnd) {
     // for one width and laid out at another is a clipped row (see clampLimitRight).
     // One clamp, one order, one bound: it is not applied twice and cannot drift.
     const ok::layout::LayoutPlan plan = ok::layout::autoFit(
-        specs, disp.top, disp.bottom);
+        specs, disp.top, disp.bottom, static_cast<int>(disp.right));
 
     // Per-tab content depths (page controls only — the always-visible button
     // row lives below the viewport by design and must never drive growth).
@@ -6460,11 +6544,22 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             // ~165 px at a realistic advance but the slot is 160 px (the BPM
             // edit starts at 444) — the range in parentheses keeps the meaning
             // and the label now fits with room to spare (audit_layout, CA-01d).
+            // v1.3.0-beta8fix1 (bug BS-22c): the BPM row moved 8 px down (368 ->
+            // 376, and the edit 366 -> 374). A combo box sizes its own closed
+            // window to its item height, and at 125 % the selected label "Hardcore
+            // — sai là chết (mặc định)" makes IDC_CMB_FAILMODE 33 px tall — 2 px
+            // more than the 25 px the authored geometry assumed — so the row that
+            // was authored 3 px BELOW the combo's authored bottom ended up 5 px
+            // inside it, and the probe reported it at six scroll positions:
+            //   [overlap] id 596 (ComboBox) 350,487 275x33 and id 597 (Edit)
+            //             555,515 70x28 overlap by 70x5 px
+            // 8 px is the smallest move that clears the real height at every scale
+            // the contract names.
             mkCtl(hwnd, L"STATIC", L"Nhịp Rhythm (60-220):",
-                  WS_CHILD | WS_VISIBLE | SS_LEFT, S(280), S(368), S(160), S(20), reinterpret_cast<HMENU>(IDC_STAT_RHYTHM_BPM));
+                  WS_CHILD | WS_VISIBLE | SS_LEFT, S(280), S(376), S(160), S(20), reinterpret_cast<HMENU>(IDC_STAT_RHYTHM_BPM));
             mkCtl(hwnd, L"EDIT", L"112",
                   WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_NUMBER | WS_BORDER,
-                  S(444), S(366), S(56), S(22), reinterpret_cast<HMENU>(IDC_EDT_RHYTHM_BPM));
+                  S(444), S(374), S(56), S(22), reinterpret_cast<HMENU>(IDC_EDT_RHYTHM_BPM));
             mkCtl(hwnd, L"BUTTON", L"✔ Áp dụng cấu hình game",
                   WS_CHILD | WS_VISIBLE | WS_TABSTOP, S(44), S(362), S(220), S(28),
                   reinterpret_cast<HMENU>(IDC_BTN_APPLY_ARCADE_CFG));

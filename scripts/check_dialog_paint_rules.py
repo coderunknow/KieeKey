@@ -535,6 +535,57 @@ def check(repo: Path):
             "design: the content starts at the display rect), so a `!= 0` test fails "
             "on a correct dialog, while the accumulation this contract exists for is "
             "a value that does not come back")
+    # 17. v1.3.0-beta8fix1 (bugs BS-22d / BS-23): TWO MORE MEASURED STATES.
+    #     * BS-22d — the tab strip's row count is a layout change in BOTH
+    #       directions. The grow direction forced a re-layout since BS-10; the
+    #       shrink direction did not, so TCM_ADJUSTRECT kept answering with the
+    #       two-row display rectangle and the solver pushed the page down by a row
+    #       for a strip that was one row tall (87 x `[I1] the page top did not
+    #       return to its one-row value: 114 -> 130 (wrapped) -> 130`, with the
+    #       page 16 px low the controls the app believes are visible sit under the
+    #       strip's second row: `[I11] the page paints background only`).
+    #     * BS-23 — a row may GROW IN WIDTH to fit its own text, bounded by the
+    #       page, the nearest sibling and the enclosing group box. The last `clip`
+    #       finding of the settled audit is that bound missing: 16 px of Vietnamese
+    #       label in a box the authored width scales 16 px too small for.
+    if 'stripRows != g_settingsScroll.stripRows' not in solve_body:
+        failures.append(
+            "main.cpp: the solver stops re-laying the tab strip out when its row "
+            "count changes (BS-22d) — TCM_ADJUSTRECT keeps answering with the display "
+            "rectangle of the strip that was there BEFORE the change, so a strip that "
+            "went back to one row still pushes the whole page down by a row and every "
+            "control the app believes is visible hides under the tab labels")
+    if '::UpdateWindow(tabCtl)' not in solve_body:
+        failures.append(
+            "main.cpp: the forced tab re-layout is gone (BS-10/BS-22d) — the style "
+            "bit and TCM_ADJUSTRECT disagree until the control processes the change")
+    if 'measureSingleLineWidthPx(' not in main:
+        failures.append("main.cpp: the single-line width measurement is gone (BS-23) — "
+                        "the solver cannot fit a row to its text without it")
+    if 'spec.requiredWidth = measureSingleLineWidthPx(' not in solve_body:
+        failures.append(
+            "main.cpp: the solver no longer measures a single-line row's width "
+            "(BS-23) — the dialog's labels are authored at 96 dpi and the fonts are "
+            "not, so at 125 % a check box label 16 px wider than its box loses the "
+            "end of the sentence (the audit's last `clip` finding)")
+    if 'disp.bottom, static_cast<int>(disp.right))' not in solve_body:
+        failures.append(
+            "main.cpp: autoFit() is no longer given the page's right edge (BS-23) — "
+            "without it the width fit has no page bound and a row could grow past "
+            "the clip rectangle it is drawn in")
+    header = read_or_empty(repo, 'src/app/DialogLayout.hpp')
+    for needle, why in (
+            ('int requiredWidth = 0;', "the measured single-line width (BS-23)"),
+            ('int pageRightPx = 0', "the page bound of the width fit (BS-23)"),
+            ('kRowGapPx', "the gap the width fit keeps to the next row (BS-23)"),
+            ('limit = std::min(limit, orc.x - kRowGapPx);',
+             "the sibling bound of the width fit (BS-23)")):
+        if needle not in header:
+            failures.append(f"src/app/DialogLayout.hpp: {needle} is gone — {why}")
+    if 'testRowWidthFitsItsTextWithinThePage()' not in read_or_empty(
+            repo, 'tests/test_dialog_layout.cpp'):
+        failures.append("tests/test_dialog_layout.cpp: the BS-23 width-fit test is gone")
+
     # 16. v1.3.0-beta8fix1 (bug BS-22c): THE PROBE'S STATE MIRROR MATCHES THE APP'S.
     #     Two TUs on opposite sides of an extern "C" pointer, one struct: the two
     #     declarations have to agree field for field, in order. A mismatch is not a

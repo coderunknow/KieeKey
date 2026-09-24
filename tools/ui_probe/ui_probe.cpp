@@ -2178,10 +2178,10 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
                     bool found = false;
                     bool tabAbove = false;
                     const HWND tabHere = ::GetDlgItem(dlg, IDC_TAB);
-                    for (HWND w = ::GetWindow(dlg, GW_CHILD); w != nullptr;
-                         w = ::GetWindow(w, GW_HWNDNEXT)) {
-                        if (w == c.hwnd) { found = true; break; }
-                        if (w != tabHere) { ++above; }
+                    for (HWND sib = ::GetWindow(dlg, GW_CHILD); sib != nullptr;
+                         sib = ::GetWindow(sib, GW_HWNDNEXT)) {
+                        if (sib == c.hwnd) { found = true; break; }
+                        if (sib != tabHere) { ++above; }
                         else { tabAbove = true; }
                     }
                     evidence += " " + std::to_string(c.id) + " z " +

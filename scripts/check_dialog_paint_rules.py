@@ -272,10 +272,16 @@ def check(repo: Path):
             failures.append(
                 "main.cpp: applySettingsDpiScale() un-scrolls AFTER it has already "
                 "rescaled the children (BS-18, part two) — the order is the fix")
+        # v1.3.0-beta8fix1 (bug BS-22c): the latch and the WS_VSCROLL bit are no
+        # longer written here by hand — they have ONE owner
+        # (settingsApplyScrollbarLatch), which the drop calls with `false`. The
+        # requirement is unchanged: a dropped baseline may not keep a live scroll
+        # state. Rule 15 pins the owner itself.
         for needle, what in (('g_settingsScroll.offset = 0;', 'the scroll position'),
                              ('g_settingsScroll.range = 0;', 'the scroll range'),
-                             ('g_settingsScroll.enabled = false;', "the bar's latch"),
-                             ('WS_VSCROLL', 'the WS_VSCROLL style bit'),
+                             ('settingsApplyScrollbarLatch(g.hSettings, false,',
+                              "the bar's latch and its WS_VSCROLL bit (through their "
+                              "one owner)"),
                              ('perTabContentBottom', 'the per-tab solved depths')):
             if needle not in drop_body:
                 failures.append(
@@ -361,6 +367,14 @@ def check(repo: Path):
         solve_body = function_body(main, r'void solveSettingsLayout\s*\(HWND hwnd\)')
     except ValueError:
         solve_body = ''
+    try:
+        show_tab_body = function_body(main, r'void showTab\s*\(int tab\)')
+    except ValueError:
+        show_tab_body = ''
+    try:
+        scroll_body = function_body(main, r'void applySettingsScrollOffset\s*\(HWND hwnd\)')
+    except ValueError:
+        scroll_body = ''
     if 'clampPageChildWidth(' not in solve_body:
         failures.append(
             "main.cpp: the solver no longer clamps page children to the page's "
@@ -483,6 +497,104 @@ def check(repo: Path):
             "design: the content starts at the display rect), so a `!= 0` test fails "
             "on a correct dialog, while the accumulation this contract exists for is "
             "a value that does not come back")
+    # 15. v1.3.0-beta8fix1 (bug BS-22c): FOUR MECHANISMS FROM THE 77e8fea RUN.
+    #     Each one is a state the probe measured, and each one has one owner:
+    #       * the page clamp may NARROW a row, never widen it. Its first version
+    #         raised every row thinner than S(80) to that minimum, so "VNI" (58 px)
+    #         became 100 px at 125 % and ran into "Simple Telex" (`overlap by
+    #         15x25 px`), and "Từ điển" (68 px) stuck 34 px out of the page
+    #         (`outside_page`). A width is authored geometry.
+    #       * a combo box's height is WIN32's: it sizes its closed window to its
+    #         item height, and re-sizes it on every font change. Imposing the
+    #         authored height left the live window a few px taller than the solved
+    #         baseline — the probe's I6 (a 2 px sliver inside the viewport, region
+    #         EMPTY) and the combo/static overlaps of the row below it.
+    #       * a control's REGION is computed from the rectangle the window actually
+    #         has, not from the baseline: a region derived from a rectangle that is
+    #         2 px shorter clips a visible control to nothing. Same I6, structurally
+    #         impossible after this.
+    #       * the bar latch and WS_VSCROLL are ONE answer with ONE writer
+    #         (settingsApplyScrollbarLatch), re-decided by settingsSyncScrollbarLatch
+    #         whenever an operation changes which depth the range describes — the
+    #         probe's I5, 58 x "the app's bar latch says on but WS_VSCROLL is clear".
+    if 'clampPageChildWidth(spec.rect, clampLimitRight)' not in solve_body:
+        failures.append(
+            "main.cpp: the page clamp call changed shape (BS-22c) — the solver "
+            "clamps a page child to the page's right edge with no minimum width: a "
+            "minimum WIDENS rows the author meant to be narrow, which is how "
+            "\"VNI\" (58 px) reached 100 px at 125 % and ran into its neighbour")
+    clamp_body = ''
+    try:
+        clamp_body = function_body(read_or_empty(repo, 'src/app/DialogLayout.hpp'),
+                                   r'Rect clampPageChildWidth\s*\([^)]*\)\s*noexcept')
+    except ValueError:
+        failures.append("src/app/DialogLayout.hpp: clampPageChildWidth() not found "
+                        "(BS-20/BS-22c)")
+    if clamp_body and 'minWidthPx' in clamp_body:
+        failures.append(
+            "src/app/DialogLayout.hpp: clampPageChildWidth() carries a minimum "
+            "width again (BS-22c) — a floor that runs on every row WIDENS the "
+            "deliberately narrow ones (radio buttons, small check boxes) into their "
+            "neighbours, which the probe reports as `overlap`, and pushes the ones "
+            "at the right edge out of the page (`outside_page`)")
+    if 'if (isCombo && liveH > 0)' not in solve_body:
+        failures.append(
+            "main.cpp: the solver imposes its own height on a COMBO BOX again "
+            "(BS-22c) — Win32 sizes a closed combo to its item height and re-sizes "
+            "it on every font change, so the live window ends up taller than the "
+            "solved baseline: the region drawn from the baseline clips a visible "
+            "control to nothing (I6) and the row below is placed under the window "
+            "the combo really has (overlap)")
+    if ('settingsApplyScrollbarLatch(' not in solve_body or
+            'SetWindowLongPtrW(hwnd, GWL_STYLE' in solve_body):
+        failures.append(
+            "main.cpp: the solver writes the bar latch / WS_VSCROLL pair by hand "
+            "again (BS-22c) — the two are ONE answer and only "
+            "settingsApplyScrollbarLatch() may write them; written apart they "
+            "diverge, and the user is left with a scrollbar the app believes in or "
+            "a page with no way to reach its content (I5)")
+    if 'settingsApplyScrollbarLatch(' not in drop_body:
+        failures.append(
+            "main.cpp: dropSettingsLayoutBaseline() no longer drops the bar pair "
+            "through its one owner (BS-22c) — a dropped baseline with a live latch "
+            "is a scroll state that describes a layout that no longer exists")
+    if 'settingsSyncScrollbarLatch(' not in show_tab_body:
+        failures.append(
+            "main.cpp: showTab() no longer re-decides the bar (BS-22c) — switching "
+            "tabs changes which depth the range describes, and the probe caught "
+            "exactly that operation with the latch and the style bit disagreeing "
+            "(`op select_tab`, 58 findings in the 77e8fea run)")
+    if ('GetWindowRect(entry.first, &live)' not in scroll_body or
+            'shown = ok::layout::scrollChildRect(' not in scroll_body):
+        failures.append(
+            "main.cpp: applySettingsScrollOffset() computes a control's region from "
+            "the solved baseline again (BS-22c) — the baseline can be a few pixels "
+            "shorter than the window Win32 actually gave back (a combo box sizes "
+            "itself), and the region of a partly visible control then says \"fully "
+            "outside\" and paints nothing where the user should see a sliver (I6)")
+    for needle, why in (
+            ('settingsApplyScrollbarLatch(', 'the ONE writer of the bar pair (BS-22c)'),
+            ('settingsSyncScrollbarLatch(', 'the re-decision of the bar pair (BS-22c)')):
+        if needle not in main:
+            failures.append(f"main.cpp: {needle} is gone — {why}")
+    for test in ('testRegionFollowsTheLiveRectangleNotTheBaseline()',
+                 'testPageChildWidthIsClampedToThePage()'):
+        if test not in read_or_empty(repo, 'tests/test_dialog_layout.cpp'):
+            failures.append(f"tests/test_dialog_layout.cpp: {test} is gone (BS-22c)")
+    # v1.3.0-beta8fix1 (bug BS-22c): the strip cycle must REACH the transition it
+    # judges. The first version narrowed the client to 55 % to make the tab labels
+    # wrap — a property of the label font, which did not wrap at 125 %/150 % — so
+    # the cycle could "pass" without ever growing the strip. The wrap is now driven
+    # by the harness's text-scale path (1.5x at every scale) and the app's own
+    # record of how deep the shift went (`stripSeen`) is what proves it.
+    for needle, why in (
+            ('kWrapFontPct', 'the text-scale driver of the strip cycle (BS-22c)'),
+            ('KieeKeyProbeFontScale(dlg, kWrapFontPct)',
+             'the wrap that makes the cycle measurable (BS-22c)'),
+            ('stripSeen[tab] <= 0',
+             'the proof that the strip really pushed the page down (BS-22c)')):
+        if needle not in probe:
+            failures.append(f"tools/ui_probe/ui_probe.cpp: {needle} is gone — {why}")
     if 'bool needBar = (a.contentBottom[tab] > s.page.bottom);' not in probe:
         failures.append(
             "tools/ui_probe/ui_probe.cpp: the bar ruler is no longer the CURRENT "
@@ -504,12 +616,12 @@ def main() -> int:
         for f in failures:
             print(f"  - {f}")
         return 1
-    print("PAINT RULES OK — 10 rules: sibling clipping, window styles, "
+    print("PAINT RULES OK — 11 rules: sibling clipping, window styles, "
           "repaint-after-change, need-deduped reflow, unscrolled solver input, "
           "rescale-owns-its-resolve + total baseline drop (BS-18), symmetric "
           "scrollbar correction (+ the probe's blank-page, reflow, pixel and "
           "operation-sequence checks), authored solver input (BS-22), measure-"
-          "after-clamp + the probe's derived expectations (BS-22)")
+          "after-clamp + the probe's derived expectations (BS-22), one owner for the bar pair + narrow-only clamp + live-rectangle regions (BS-22c)")
     return 0
 
 

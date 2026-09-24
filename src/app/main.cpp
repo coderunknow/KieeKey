@@ -3986,6 +3986,10 @@ void settingsScrollToTop() noexcept;
 // v1.3.0-beta8fix1 (bug BS-21): and on its authored top (no tab-strip shift baked
 // into the lives the rescale is about to multiply).
 void settingsUnshiftPageToAuthored() noexcept;
+// v1.3.0-beta8fix1 (bug BS-22c): the ONE writer of the bar latch + WS_VSCROLL
+// pair (defined with the solve machinery; the baseline drop uses it above that).
+bool settingsApplyScrollbarLatch(HWND hwnd, bool wantScroll, const char* who);
+bool settingsSyncScrollbarLatch(HWND hwnd);
 int settingsPageOf(int id);          // defined with the solve machinery below
 void settingsRepaintAll(HWND hwnd);  // ditto
 }  // namespace
@@ -4554,6 +4558,13 @@ struct SettingsScrollState {
     // and this records HOW MUCH of that move the baseline carries — the number
     // that has to come back to 0 when the strip fits one row again.
     int  perTabStripShift96[9] = {};
+    // v1.3.0-beta8fix1 (bug BS-22c): the WORST page top a wrapped strip ever
+    // pushed the page down by, in 96-dpi px, for the current tab. It is not a
+    // layout input: it exists because "nothing pulls the page back up" can be a
+    // no-op (the strip is gone and the content sits where the last solve left it),
+    // and a probe that wants to see the pull-back has to know how far the page WENT
+    // down in the first place. Reset where the per-tab layout is reset.
+    int  perTabStripSeen96[9] = {};
     int  viewportBottom = 0;              // viewport.bottom after the refit
     int  offset = 0;                      // current scroll offset (px)
     int  range  = 0;                      // current tab's scroll range (px)
@@ -4710,18 +4721,14 @@ void dropSettingsLayoutBaseline() noexcept {
     // nothing; the caller re-solves immediately (applySettingsDpiScale is the
     // only caller, and it now owns the re-solve).
     for (int t = 0; t < 9; ++t) { g_settingsScroll.perTabContentBottom[t] = 0; }
+    for (int t = 0; t < 9; ++t) { g_settingsScroll.perTabStripSeen96[t] = 0; }
     g_settingsScroll.offset = 0;
     g_settingsScroll.range = 0;
-    g_settingsScroll.enabled = false;
-    if (g.hSettings != nullptr) {
-        const LONG_PTR style = ::GetWindowLongPtrW(g.hSettings, GWL_STYLE);
-        if ((style & WS_VSCROLL) != 0) {
-            ::SetWindowLongPtrW(g.hSettings, GWL_STYLE,
-                                style & ~static_cast<LONG_PTR>(WS_VSCROLL));
-            ::SetWindowPos(g.hSettings, nullptr, 0, 0, 0, 0,
-                           SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE |
-                               SWP_FRAMECHANGED);
-        }
+    // One owner: the latch and the bit move together, or neither moves.
+    if (settingsApplyScrollbarLatch(g.hSettings, false, "baseline-drop")) {
+        ::SetWindowPos(g.hSettings, nullptr, 0, 0, 0, 0,
+                       SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE |
+                           SWP_FRAMECHANGED);
     }
 }
 
@@ -4794,6 +4801,12 @@ void showTab(int tab) {
     // the scroll range and jump back to the top (no-op before the first
     // solve, when WM_CREATE's settingsToControls() runs showTab early).
     settingsScrollSetTab(g.hSettings, tab);
+    // v1.3.0-beta8fix1 (bug BS-22c): switching tabs is an operation that changes
+    // WHICH depth the range describes — and the operation the probe caught with the
+    // latch and the style bit disagreeing (`op select_tab`, tab 7, dpi 120). The
+    // decision is re-made here from the geometry the dialog is holding, so a
+    // dialog whose bar disagrees with its content cannot be handed to the user.
+    settingsSyncScrollbarLatch(g.hSettings);
     // BS-16a: the previous tab's controls are hidden, and every pixel they
     // occupied is the dialog's to repaint. Without this the old tab stayed on
     // screen behind the new one -- the "duplicated text/buttons" that looked
@@ -4823,14 +4836,36 @@ void applySettingsScrollOffset(HWND hwnd) {
         // runtime height on the first scroll step.
         ::SetWindowPos(entry.first, nullptr, sc.rect.x, sc.rect.y, 0, 0,
                        SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS);
-        if (!sc.visible) {
+        // v1.3.0-beta8fix1 (bug BS-22c): THE REGION IS COMPUTED FROM THE RECTANGLE
+        // THE WINDOW ACTUALLY HAS.
+        //
+        // The move above uses the baseline (the solver's rectangle) and is exact.
+        // The region, though, must describe the window as it IS: a control can be
+        // a few pixels taller than its baseline — a combo box re-sizes itself to
+        // its font (BS-22c above), and any future Win32-side size change does the
+        // same — and a region computed from the baseline then decides "fully
+        // outside" for a window that is partly inside the viewport. That is the
+        // probe's I6 in one sentence: a window clipped to nothing while 2 px of it
+        // sit inside the page, i.e. content the user cannot see or scroll to.
+        // Computing the clip from the live rectangle makes the invariant true by
+        // construction: the region is a function of what is on screen, not of what
+        // the solver last wrote down.
+        RECT live{};
+        ::GetWindowRect(entry.first, &live);
+        ::MapWindowPoints(nullptr, hwnd, reinterpret_cast<POINT*>(&live), 2);
+        const ok::layout::ScrolledChild shown = ok::layout::scrollChildRect(
+            ok::layout::Rect{live.left, live.top,
+                             static_cast<int>(live.right - live.left),
+                             static_cast<int>(live.bottom - live.top)},
+            0, g_settingsScroll.viewport);
+        if (!shown.visible) {
             if (HRGN rgn = ::CreateRectRgn(0, 0, 0, 0)) {
                 ::SetWindowRgn(entry.first, rgn, TRUE);   // rgn ownership passes
             }
-        } else if (sc.clipped) {
-            if (HRGN rgn = ::CreateRectRgn(sc.clip.x, sc.clip.y,
-                                           sc.clip.x + sc.clip.w,
-                                           sc.clip.y + sc.clip.h)) {
+        } else if (shown.clipped) {
+            if (HRGN rgn = ::CreateRectRgn(shown.clip.x, shown.clip.y,
+                                           shown.clip.x + shown.clip.w,
+                                           shown.clip.y + shown.clip.h)) {
                 ::SetWindowRgn(entry.first, rgn, TRUE);
             }
         } else {
@@ -4848,6 +4883,90 @@ void applySettingsScrollOffset(HWND hwnd) {
     // child that was moved (or region-clipped) from outside it, nor the band the
     // page vacated when the tab strip grew to a second row.
     settingsRepaintAll(hwnd);
+}
+
+//===========================================================================
+// v1.3.0-beta8fix1 (bug BS-22c) — ONE OWNER FOR THE BAR LATCH AND ITS STYLE BIT.
+//
+// The probe's I5 is a single sentence: "the app's bar latch says on but
+// WS_VSCROLL is clear" (58 times in the 77e8fea run, first at `op select_tab`,
+// tab 7, dpi 120 — a state whose own tab fits while a deeper tab lives in the
+// same dialog). The latch (`g_settingsScroll.enabled`) and the bit are two
+// halves of one answer — "this dialog has a scrollbar" — and the user's report
+// ("mất nội dung", the bar gone with the content still overflowing) is exactly
+// what a split pair looks like: no afforance to scroll with, and the page's
+// 17 px of width decided by a bit that disagrees with the layout.
+//
+// They were written together in three places (the planned decision, the
+// clamped-viewport correction, the baseline drop) and by hand in two more
+// (WM_DESTROY). Two writers is one too many: nothing in the code prevented a
+// later operation from moving one without the other, and the pair is read at
+// every probe observation. From here on there is ONE function that may change
+// either of them, and every path that can change the DECISION calls the sync
+// below, which re-decides from the stored depths and re-solves when the answer
+// moved (the bar changes the client width, so patching the bit alone would leave
+// the page 17 px wrong — the same class of defect as BS-18).
+//===========================================================================
+#if defined(KIEEKEY_UI_PROBE)
+// The tripwire: which call last wrote each half, and how often. A divergence
+// that survives this refactor names its writer in the probe's own output instead
+// of costing another CI round of guessing.
+int g_probeLatchWrites = 0;
+int g_probeStyleWrites = 0;
+int g_probeLatchDrifts = 0;
+const char* g_probeLatchWriter = "init";
+const char* g_probeStyleWriter = "init";
+#endif
+
+// Returns true when the WINDOW's style bit had to change (the client width does,
+// and the caller is expected to re-read it).
+bool settingsApplyScrollbarLatch(HWND hwnd, bool wantScroll, const char* who) {
+    (void)who;   // probe-only tripwire (see above)
+    g_settingsScroll.enabled = wantScroll;
+#if defined(KIEEKEY_UI_PROBE)
+    g_probeLatchWriter = who;
+    ++g_probeLatchWrites;
+#endif
+    if (hwnd == nullptr) { return false; }
+    const LONG_PTR style = ::GetWindowLongPtrW(hwnd, GWL_STYLE);
+    const bool have = (style & WS_VSCROLL) != 0;
+    if (have == wantScroll) { return false; }
+    ::SetWindowLongPtrW(hwnd, GWL_STYLE,
+                        wantScroll ? (style | WS_VSCROLL)
+                                   : (style & ~static_cast<LONG_PTR>(WS_VSCROLL)));
+#if defined(KIEEKEY_UI_PROBE)
+    g_probeStyleWriter = who;
+    ++g_probeStyleWrites;
+#endif
+    return true;
+}
+
+// Re-decide the latch from the geometry the app is holding. No-op when the
+// window and the latch already agree. When they do not, the solve owns the fix:
+// the bar's presence decides the client width, the page and every row's width.
+bool settingsSyncScrollbarLatch(HWND hwnd) {
+    // The sync re-solves, and a solve must not re-enter it: one extra pass is
+    // enough to re-establish the pair (the solve ends with them written together).
+    static bool inProgress = false;
+    if (inProgress || hwnd == nullptr || g_settingsScroll.solved.empty()) {
+        return false;
+    }
+    bool overflow = false;
+    for (int t = 0; t < 9; ++t) {
+        if (g_settingsScroll.perTabContentBottom[t] > g_settingsScroll.viewportBottom) {
+            overflow = true;
+        }
+    }
+    const bool have =
+        (::GetWindowLongPtrW(hwnd, GWL_STYLE) & WS_VSCROLL) != 0;
+    if (have == overflow && g_settingsScroll.enabled == overflow) { return false; }
+#if defined(KIEEKEY_UI_PROBE)
+    ++g_probeLatchDrifts;
+#endif
+    inProgress = true;
+    solveSettingsLayout(hwnd);
+    inProgress = false;
+    return true;
 }
 
 // Per-tab scroll range from the stored content depths; resets to the top.
@@ -5010,6 +5129,10 @@ void solveSettingsLayout(HWND hwnd) {
         RECT rc{};
         ::GetWindowRect(c, &rc);
         ::MapWindowPoints(nullptr, hwnd, reinterpret_cast<POINT*>(&rc), 2);
+        // v1.3.0-beta8fix1 (bug BS-22c): the LIVE height, before any replacement
+        // below touches spec.rect — a combo box is the one control whose height
+        // Win32 decides for itself (see the COMBOBOX branch further down).
+        const int liveH = static_cast<int>(rc.bottom - rc.top);
         ok::layout::ControlSpec spec;
         spec.id = id;
         spec.rect = {rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top};
@@ -5057,11 +5180,33 @@ void solveSettingsLayout(HWND hwnd) {
         spec.growable = isStatic && !isGroupBox &&
                         ((style & SS_TYPEMASK) != SS_ICON) &&
                         ((style & SS_TYPEMASK) != SS_OWNERDRAW);
+        // v1.3.0-beta8fix1 (bug BS-22c): A COMBO BOX'S HEIGHT IS WIN32'S DECISION.
+        //
+        // A CBS_DROPDOWNLIST combo sizes its own closed window to its item height
+        // plus its borders, and it does it again on every font change (WM_SETFONT,
+        // a DPI rescale, the text-scale path). The solver used to impose the
+        // authored height instead, and Win32 re-grew the window afterwards, so the
+        // LIVE rectangle and the solved baseline disagreed by the difference. Two
+        // measured consequences, both from the 77e8fea x64 run:
+        //   * I6 — `id 623 is inside the viewport 22,177 564x442 but its window
+        //     region is EMPTY (rect 264,139 326x40)`: the region is computed from
+        //     the baseline (36 px tall), the window Win32 gave back is 40 px, and
+        //     the 4 px sliver owned by the window was decided "fully outside" and
+        //     clipped to nothing;
+        //   * overlap — `id 625 (ComboBox) ... and id 627 (Static) ... overlap by
+        //     398x6 px`: the row below was placed against the authored 25 px and
+        //     the combo's real 40 px ran into it.
+        // The natural height is a property of the control, its font and the theme
+        // — not of the previous solve — so taking it is not the BS-22 accumulation
+        // defect: every solve asks the window what its height is right now.
+        const bool isCombo = (clsLen == 6 && ::lstrcmpiW(cls, L"COMBOBOX") == 0);
+        if (isCombo && liveH > 0) {
+            spec.rect.h = liveH;
+        }
         // The page bound first, the measurement second (see clampLimitRight):
         // `requiredHeight` must describe the row at the width the row will have.
         if (spec.tab != ok::layout::ControlSpec::kAlwaysVisible) {
-            spec.rect = ok::layout::clampPageChildWidth(spec.rect, clampLimitRight,
-                                                        S(80));
+            spec.rect = ok::layout::clampPageChildWidth(spec.rect, clampLimitRight);
         }
         if (spec.growable) {
             spec.requiredHeight = measureStaticTextHeightPx(c, spec.rect.w);
@@ -5103,6 +5248,8 @@ void solveSettingsLayout(HWND hwnd) {
             authoredTop, 0, static_cast<int>(disp.top),
             static_cast<int>(dpi != 0 ? dpi : 96));
         g_settingsScroll.perTabStripShift96[t] = shift.shift96;
+        g_settingsScroll.perTabStripSeen96[t] =
+            std::max(g_settingsScroll.perTabStripSeen96[t], shift.shift96);
         if (shift.shiftPx <= 0) { continue; }
         for (ok::layout::ControlSpec& spec : specs) {
             if (spec.tab == t) { spec.rect.y += shift.shiftPx; }
@@ -5192,21 +5339,18 @@ void solveSettingsLayout(HWND hwnd) {
             anyScroll = true;
         }
     }
-    const LONG_PTR dlgStyle = ::GetWindowLongPtrW(hwnd, GWL_STYLE);
-    const bool haveScroll = (dlgStyle & WS_VSCROLL) != 0;
-    if (anyScroll != haveScroll) {
-        ::SetWindowLongPtrW(hwnd, GWL_STYLE,
-                            anyScroll ? (dlgStyle | WS_VSCROLL)
-                                      : (dlgStyle & ~static_cast<LONG_PTR>(WS_VSCROLL)));
-    }
-    g_settingsScroll.enabled = anyScroll;
+    // One owner (BS-22c): the latch and the WS_VSCROLL bit are written together,
+    // here and nowhere else, and `barChanged` is the single answer to "did the
+    // client width just change underneath this layout".
+    const bool barChanged = settingsApplyScrollbarLatch(hwnd, anyScroll,
+                                                       "solve-planned");
 
     // -- 3. Apply: window rect, then tab + bottom chrome by clientDelta. --
     ::SetWindowPos(hwnd, nullptr, fit.windowRect.x, fit.windowRect.y,
                    fit.windowRect.w, fit.windowRect.h,
                    SWP_NOZORDER | SWP_NOACTIVATE |
-                       (anyScroll != haveScroll ? SWP_FRAMECHANGED : 0));
-    if (anyScroll != haveScroll) {
+                       (barChanged ? SWP_FRAMECHANGED : 0));
+    if (barChanged) {
         // The scrollbar changed the client width — re-read it.
         ::GetClientRect(hwnd, &rcCli);
     }
@@ -5302,11 +5446,7 @@ void solveSettingsLayout(HWND hwnd) {
         }
     }
     if (finalOverflow != g_settingsScroll.enabled) {
-        g_settingsScroll.enabled = finalOverflow;
-        const LONG_PTR st = ::GetWindowLongPtrW(hwnd, GWL_STYLE);
-        ::SetWindowLongPtrW(hwnd, GWL_STYLE,
-                            finalOverflow ? (st | WS_VSCROLL)
-                                          : (st & ~static_cast<LONG_PTR>(WS_VSCROLL)));
+        settingsApplyScrollbarLatch(hwnd, finalOverflow, "solve-final");
         ::SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
                        SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE |
                            SWP_FRAMECHANGED);
@@ -7937,11 +8077,20 @@ struct KieeKeyProbeScrollStateT {
     int range;                        // current tab's range (px)
     int enabled;                      // the app's own "bar is on" latch
     int styleVScroll;                 // WS_VSCROLL on the dialog right now
+    // v1.3.0-beta8fix1 (bug BS-22c): WHICH call last wrote each half of the pair
+    // (and how often), so a divergence names its writer instead of costing a CI
+    // round of guessing. Probe-only state; empty strings outside the probe build.
+    const char* latchWriter;
+    const char* styleWriter;
+    int latchWrites;
+    int styleWrites;
+    int latchDrifts;                  // times the sync found the two disagreeing
     int viewportX, viewportY;         // the page rect the solve CLAMPED to
     int viewportW, viewportH;
     int viewportBottom;
     int contentBottom[9];             // per-tab deepest SOLVED bottom
     int stripShift[9];                // per-tab tab-strip shift baked into it (96 dpi)
+    int stripSeen[9];                 // the deepest that shift has ever been (96 dpi)
     int barPos, barPage, barMax;      // Win32's answer (GetScrollInfo)
     UINT dpi;                         // the scale the solve used
 };
@@ -7962,7 +8111,15 @@ extern "C" void KieeKeyProbeScrollState(HWND dlg, KieeKeyProbeScrollStateT* out)
     out->viewportBottom = g_settingsScroll.viewportBottom;
     for (int t = 0; t < 9; ++t) { out->contentBottom[t] = g_settingsScroll.perTabContentBottom[t]; }
     for (int t = 0; t < 9; ++t) { out->stripShift[t] = g_settingsScroll.perTabStripShift96[t]; }
+    for (int t = 0; t < 9; ++t) { out->stripSeen[t] = g_settingsScroll.perTabStripSeen96[t]; }
     out->dpi = g_settingsDpi != 0 ? g_settingsDpi : 96;
+#if defined(KIEEKEY_UI_PROBE)
+    out->latchWriter = g_probeLatchWriter;
+    out->styleWriter = g_probeStyleWriter;
+    out->latchWrites = g_probeLatchWrites;
+    out->styleWrites = g_probeStyleWrites;
+    out->latchDrifts = g_probeLatchDrifts;
+#endif
     if (dlg != nullptr) {
         out->styleVScroll =
             (::GetWindowLongPtrW(dlg, GWL_STYLE) & WS_VSCROLL) != 0 ? 1 : 0;

@@ -215,14 +215,65 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "checkEmptyPage",
     ),
     (
+        "BS-22c the clamp widens a narrow row again",
+        "src/app/DialogLayout.hpp",
+        "    if (out.w > room) { out.w = room; }              // narrow, never widen",
+        "    if (out.w < minWidthPx) { out.w = minWidthPx; }\n"
+        "    if (out.w > room) { out.w = room; }",
+        "carries a minimum width again",
+    ),
+    (
+        "BS-22c the region comes from the baseline again",
+        "src/app/main.cpp",
+        "        const ok::layout::ScrolledChild shown = ok::layout::scrollChildRect(",
+        "        const ok::layout::ScrolledChild shown = sc;   // seeded: from the baseline",
+        "computes a control's region from the solved baseline again",
+    ),
+    (
+        "BS-22c the solve writes the bar pair by hand again",
+        "src/app/main.cpp",
+        "    const bool barChanged = settingsApplyScrollbarLatch(hwnd, anyScroll,\n"
+        "                                                       \"solve-planned\");",
+        "    const bool barChanged = anyScroll !=\n"
+        "        ((::GetWindowLongPtrW(hwnd, GWL_STYLE) & WS_VSCROLL) != 0);\n"
+        "    ::SetWindowLongPtrW(hwnd, GWL_STYLE,\n"
+        "                        anyScroll ? (::GetWindowLongPtrW(hwnd, GWL_STYLE) | WS_VSCROLL)\n"
+        "                                  : (::GetWindowLongPtrW(hwnd, GWL_STYLE) &\n"
+        "                                     ~static_cast<LONG_PTR>(WS_VSCROLL)));\n"
+        "    g_settingsScroll.enabled = anyScroll;",
+        "writes the bar latch / WS_VSCROLL pair by hand",
+    ),
+    (
+        "BS-22c the solver imposes the authored combo height again",
+        "src/app/main.cpp",
+        "        if (isCombo && liveH > 0) {\n"
+        "            spec.rect.h = liveH;\n"
+        "        }",
+        "        /* seeded: the authored height wins over Win32's */",
+        "imposes its own height on a COMBO BOX again",
+    ),
+    (
+        "BS-22c the strip cycle stops proving it wrapped",
+        "tools/ui_probe/ui_probe.cpp",
+        "            if (wrapped.page.top <= basePageTop || wrapped.app.stripSeen[tab] <= 0) {",
+        "            if (false) {",
+        "the proof that the strip really pushed the page down",
+    ),
+    (
+        "BS-22c a tab switch stops re-deciding the bar",
+        "src/app/main.cpp",
+        "    settingsSyncScrollbarLatch(g.hSettings);",
+        "    /* seeded: the bar is never re-decided on a tab switch */",
+        "no longer re-decides the bar",
+    ),
+    (
         "BS-22b the row is measured before it is clamped",
         "src/app/main.cpp",
         # The two blocks SWAPPED: the measurement runs first, the clamp second —
         # which is exactly the order the probe's I12 caught (a row grown for the
         # wide width, laid out at the narrow one, one line clipped).
         "        if (spec.tab != ok::layout::ControlSpec::kAlwaysVisible) {\n"
-        "            spec.rect = ok::layout::clampPageChildWidth(spec.rect, clampLimitRight,\n"
-        "                                                        S(80));\n"
+        "            spec.rect = ok::layout::clampPageChildWidth(spec.rect, clampLimitRight);\n"
         "        }\n"
         "        if (spec.growable) {\n"
         "            spec.requiredHeight = measureStaticTextHeightPx(c, spec.rect.w);\n"
@@ -231,8 +282,7 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "            spec.requiredHeight = measureStaticTextHeightPx(c, spec.rect.w);\n"
         "        }\n"
         "        if (spec.tab != ok::layout::ControlSpec::kAlwaysVisible) {\n"
-        "            spec.rect = ok::layout::clampPageChildWidth(spec.rect, clampLimitRight,\n"
-        "                                                        S(80));\n"
+        "            spec.rect = ok::layout::clampPageChildWidth(spec.rect, clampLimitRight);\n"
         "        }   // seeded: measured first, clamped second",
         "measures a growable row's required height BEFORE",
     ),
@@ -271,8 +321,7 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         # BS-22b moved the clamp into the build loop (it must run before the text is
         # measured), so the seed mutates it where it now lives.
         "        if (spec.tab != ok::layout::ControlSpec::kAlwaysVisible) {\n"
-        "            spec.rect = ok::layout::clampPageChildWidth(spec.rect, clampLimitRight,\n"
-        "                                                        S(80));\n"
+        "            spec.rect = ok::layout::clampPageChildWidth(spec.rect, clampLimitRight);\n"
         "        }",
         "        /* seeded: the page's width is not a bound any more */",
         "no longer clamps page children",
@@ -322,8 +371,11 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
     (
         "BS-18  the baseline drop keeps the scroll range",
         "src/app/main.cpp",
-        "    g_settingsScroll.range = 0;\n    g_settingsScroll.enabled = false;",
-        "    g_settingsScroll.enabled = false;",
+        # BS-22c routed the bar pair through its one owner, so the anchor is the
+        # range/depths pair the drop still has to zero.
+        "    g_settingsScroll.range = 0;\n"
+        "    // One owner: the latch and the bit move together, or neither moves.",
+        "    // One owner: the latch and the bit move together, or neither moves.",
         "no longer clears the scroll range",
     ),
     (

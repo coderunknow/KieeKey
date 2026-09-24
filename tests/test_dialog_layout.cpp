@@ -887,7 +887,7 @@ void testGrowableIsMeasuredAtTheWidthItGets() {
         };
         const Rect in = scaleRect(authored);
         const int limit = dpiScalePx(limitRight, sc.dpi);
-        const Rect clamped = clampPageChildWidth(in, limit, dpiScalePx(80, sc.dpi));
+        const Rect clamped = clampPageChildWidth(in, limit);
         // Non-vacuity: the clamp narrows this row, and that narrowing costs it a
         // line. If either were false the two orders would agree and the test would
         // prove nothing.
@@ -1066,12 +1066,11 @@ void testPageChildWidthIsClampedToThePage() {
     };
     for (const Case& c : cases) {
         const int limit = c.clientW - 12 * c.scale / 100;      // the tab's right edge
-        const int minW = 80 * c.scale / 100;
         const Rect in{c.x * c.scale / 100, 0, c.authoredW * c.scale / 100, 40};
-        const Rect out = clampPageChildWidth(in, limit, minW);
-        assert(out.w >= minW);                                  // never degenerate
+        const Rect out = clampPageChildWidth(in, limit);
         assert(out.x == in.x);                                  // the left edge is kept
-        assert(out.right() <= limit);                           // inside the page
+        assert(out.w > 0);                                      // never degenerate
+        assert(out.w <= in.w);                                  // v1.3.0-beta8fix1: NEVER wider
         if (in.right() <= limit) {
             assert(out.w == in.w);                              // idempotent when it fits
         } else {
@@ -1079,20 +1078,108 @@ void testPageChildWidthIsClampedToThePage() {
             // at 125 % (620 px of group box starting at x=30 in a 641 px client),
             // so the bound really is violated before the clamp runs.
             assert(out.w < in.w);
+            assert(out.right() == limit);                       // and it ends AT the bound
         }
         // Re-clamping an already-clamped row changes nothing: the solver may run
         // many times per session and a ratchet would eat every row pixel by pixel.
-        const Rect again = clampPageChildWidth(out, limit, minW);
+        const Rect again = clampPageChildWidth(out, limit);
         assert(again.w == out.w && again.x == out.x);
     }
-    // A child whose left edge is already past the limit keeps its minimum width
-    // instead of collapsing to a negative one (a control of width <= 0 disappears
-    // from the layout entirely — worse than the overshoot it was clamped for).
-    const Rect past = clampPageChildWidth(Rect{700, 0, 200, 30}, 640, 80);
-    assert(past.w == 80);
+
+    // v1.3.0-beta8fix1 (bug BS-22c) — A MINIMUM WIDTH MAY NOT WIDEN A ROW.
+    //
+    // The first version of this rule raised every row narrower than 80 px (S(80))
+    // to that minimum, and this dialog is full of deliberately narrow rows: the
+    // radio buttons "Telex" (74 px), "VNI" (58 px), "Tắt" (54 px), the check box
+    // "Từ điển" (68 px). Widened to the minimum they ran into the neighbour — the
+    // audit's `overlap` class, measured at 125 % as `id 502 (Button) 160,189
+    // 100x25 and id 503 (Button) 245,189 140x25 overlap by 15x25 px`, where the
+    // authored 58 px became 100 px (= S(80) at that scale) — and, for the row at
+    // the right edge, out of the page: `id 569 ... at 560,772 100x25 is outside
+    // the reachable page`.
+    {
+        const int limit = 626;               // the 125 % pass's tab right edge
+        const Rect telex{55, 189, 93, 25};   // authored 74 px @96, x=44
+        const Rect vni{160, 189, 73, 25};    // authored 58 px @96, x=128
+        const Rect simple{245, 189, 140, 25};
+        const Rect outTelex = clampPageChildWidth(telex, limit);
+        const Rect outVni = clampPageChildWidth(vni, limit);
+        const Rect outSimple = clampPageChildWidth(simple, limit);
+        assert(outTelex.w == telex.w);       // unchanged: it fits and it is narrow
+        assert(outVni.w == vni.w);
+        assert(outSimple.w == simple.w);
+        // The pair no longer overlaps — the assertion the widening failed.
+        assert(outTelex.right() <= outVni.x);
+        assert(outVni.right() <= outSimple.x);
+        // Non-vacuity: the old rule really did create the overlap. S(80) at 125 %
+        // is 100 px, so "Telex" (93), "VNI" (73) and "Từ điển" (85) were all
+        // widened; VNI then reached x=260 while "Simple Telex" starts at 245.
+        const int oldVniW = std::max(vni.w, 100);
+        assert(vni.x + oldVniW > simple.x);                    // 260 > 245: the defect
+        assert(vni.right() <= simple.x);                       // and the rule's result: no
+
+        // And the row at the right edge: 68 px authored became 100 px and stuck
+        // 34 px out of the page; kept at its authored width it ends at the bound.
+        const Rect dict{560, 772, 85, 25};   // authored 68 px @96, x=448
+        const Rect outDict = clampPageChildWidth(dict, limit);
+        assert(outDict.w == 66);             // narrowed to end at the bound
+        assert(outDict.right() == limit);
+        assert(dict.x + 100 > limit);        // the widening really did stick out
+    }
+
+    // A child whose own left edge is at or past the limit is returned unchanged:
+    // its position is authored, and widening it could only push it further out.
+    const Rect past = clampPageChildWidth(Rect{700, 0, 200, 30}, 640);
+    assert(past.w == 200 && past.x == 700);
     // No limit (0) is "no information": the row is returned untouched.
-    const Rect untouched = clampPageChildWidth(Rect{10, 0, 500, 30}, 0, 80);
+    const Rect untouched = clampPageChildWidth(Rect{10, 0, 500, 30}, 0);
     assert(untouched.w == 500);
+}
+
+// v1.3.0-beta8fix1 (bug BS-22c) — A CONTROL'S REGION IS COMPUTED FROM THE RECT
+// THE WINDOW ACTUALLY HAS.
+//
+// The probe's I6 in the 77e8fea run, twice on combo boxes and six times overall:
+//
+//   [I6] id 623 is inside the viewport 22,177 564x442 but its window region is
+//        EMPTY (rect 264,139 326x40)
+//
+// A CBS_DROPDOWNLIST combo sizes its own closed window to its item height, so it
+// can be a few pixels TALLER than the rectangle the solver recorded. The region
+// was computed from the recorded rectangle, and the sliver between the two
+// rectangles was decided "fully outside the viewport" and clipped to nothing:
+// 2 px of a live control inside the page, painted as background. The model's half:
+// the same baseline, two live heights, and the requirement that the region
+// describes what is on screen.
+void testRegionFollowsTheLiveRectangleNotTheBaseline() {
+    const Rect viewport{16, 177, 564, 442};            // the probe's failing state
+    const Rect baseline{264, 696, 326, 36};            // the solver's rectangle
+    const int  offset = 557;                           // the bottom of the travel
+    const Rect liveTall{264, 696, 326, 40};            // Win32 gave it 4 more px
+
+    const ScrolledChild fromBaseline = scrollChildRect(baseline, offset, viewport);
+    const ScrolledChild fromLive = scrollChildRect(liveTall, offset, viewport);
+    // Both rectangles are the SOLVER's (scrollChildRect applies the offset):
+    // baseline 696..732 -> 139..175, i.e. 2 px ABOVE the viewport, which the old
+    // code called "fully outside" and clipped to nothing — while the window Win32
+    // gave back (40 px tall) reaches 179 and is 2 px inside the page.
+    assert(baseline.y - offset + baseline.h == 175);
+    assert(!fromBaseline.visible);
+    assert(fromLive.visible);                          // the truth: it is on screen
+    assert(fromLive.clipped);
+    assert(fromLive.clip.h > 0);                       // 179 - 177 = 2 px of it
+
+    // The invariant the probe asserts, at the model level: a control whose live
+    // rectangle intersects the viewport is never clipped to nothing.
+    const Rect truth{viewport.x, viewport.y,
+                     viewport.right() - viewport.x, viewport.bottom() - viewport.y};
+    const Rect live{liveTall.x, liveTall.y - offset, liveTall.w, liveTall.h};
+    const Rect inter = Rect{std::max(live.x, truth.x), std::max(live.y, truth.y),
+                            std::min(live.right(), truth.right()) -
+                                std::max(live.x, truth.x),
+                            std::min(live.bottom(), truth.bottom()) -
+                                std::max(live.y, truth.y)};
+    assert(inter.w > 0 && inter.h > 0);                // 2 px tall: content, not nothing
 }
 
 void testPageTopShiftKeepsContentBelowTheTabStrip() {
@@ -1266,6 +1353,8 @@ int main() {
     testReflowIsRecomputedFromAuthored();
     // v1.3.0-beta8fix1 (bug BS-22, part 2): the row is measured at the width it gets.
     testGrowableIsMeasuredAtTheWidthItGets();
+    // v1.3.0-beta8fix1 (bug BS-22c): the region follows the live rectangle.
+    testRegionFollowsTheLiveRectangleNotTheBaseline();
     // v1.3.0-beta8 (bug BS-12): scrolling moves, never resizes; runtime text
     // growth is a reflow request, not a local resize.
     testScrollModelNeverResizesAChild();

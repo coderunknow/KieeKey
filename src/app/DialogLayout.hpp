@@ -207,7 +207,8 @@ struct StripShift {
 }
 
 //---------------------------------------------------------------------------
-// v1.3.0-beta8fix1 (bug BS-20) — A PAGE CHILD MAY NOT BE WIDER THAN THE PAGE.
+// v1.3.0-beta8fix1 (bug BS-20/BS-22c) — A PAGE CHILD MAY NOT BE WIDER THAN THE
+// PAGE, AND THE CLAMP ONLY EVER NARROWS.
 //
 // The audit's 125 % pass (the scale the beta8fix1 probe added, because the
 // regression contract names 100/125/150 %) reported what a wider page never
@@ -221,23 +222,38 @@ struct StripShift {
 // construction — the ruler the probe uses (client right) is a property of the
 // mechanism, not of the probe.
 //
+// v1.3.0-beta8fix1 (bug BS-22c) — AND A MINIMUM WIDTH MAY NOT WIDEN A ROW.
+//
+// The first version of this rule also raised every row narrower than a minimum
+// (80 px @96) up to that minimum. Written to keep a degenerate row from
+// collapsing to nothing, it ran on EVERY row, and this dialog is full of rows
+// that are narrower than 80 px on purpose: the radio buttons "Telex" (74), "VNI"
+// (58), "Tắt" (54), "Tiêu điểm" (66), the checkbox "Từ điển" (68). Widened to the
+// minimum they ran into the neighbour, which is exactly the class the probe
+// reports as `overlap` — measured, not inferred: `id 502 (Button) 160,189 100x25
+// and id 503 (Button) 245,189 140x25 overlap by 15x25 px` at 125 %, where the
+// authored 58 px became 100 px (S(80) at that scale), and `id 569 ... at 560,772
+// 100x25 is outside the reachable page` for a 68 px checkbox the same rule pushed
+// past the client. A row's width is AUTHORED geometry: the solver may narrow one
+// to the page that clips it, and may grow one for the text it has to show, but it
+// may never invent width the author did not write.
+//
 // The clamp is a pure decision so it can be asserted without Windows:
 //   * a child that fits is returned unchanged (idempotent, so re-solving cannot
 //     ratchet a row narrower every pass);
 //   * a child sticking out to the right is narrowed to end AT the limit, keeping
 //     its left edge — the row's text then wraps inside the page, which autoFit
 //     turns into height (never into clipping, which is the defect);
-//   * a child whose left edge is already past the limit keeps a sane minimum
-//     width instead of a negative one.
+//   * a child whose own left edge is at or past the limit is returned unchanged:
+//     its position is authored, widening it could only push it further out.
 //---------------------------------------------------------------------------
-[[nodiscard]] inline Rect clampPageChildWidth(const Rect& r, int limitRightPx,
-                                              int minWidthPx) noexcept {
-    if (limitRightPx <= 0) { return r; }
+[[nodiscard]] inline Rect clampPageChildWidth(const Rect& r,
+                                              int limitRightPx) noexcept {
+    if (limitRightPx <= 0) { return r; }             // no information: leave it
     Rect out = r;
-    if (out.w < minWidthPx) { out.w = minWidthPx; }
     const int room = limitRightPx - out.x;
-    if (room <= minWidthPx) { out.w = minWidthPx; return out; }
-    if (out.w > room) { out.w = room; }
+    if (room <= 0) { return out; }                   // starts past the bound
+    if (out.w > room) { out.w = room; }              // narrow, never widen
     return out;
 }
 

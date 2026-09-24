@@ -103,8 +103,16 @@ struct ProbeScrollStateT {          // mirrors KieeKeyProbeScrollStateT (main.cp
     int viewportX, viewportY, viewportW, viewportH, viewportBottom;
     int contentBottom[9];
     int stripShift[9];              // tab-strip shift baked into the baseline (96 dpi)
+    int stripSeen[9];               // the deepest that shift has ever been (96 dpi)
     int barPos, barPage, barMax;
     UINT dpi;
+    // v1.3.0-beta8fix1 (bug BS-22c): who last wrote each half of the
+    // latch/WS_VSCROLL pair (see settingsApplyScrollbarLatch in main.cpp).
+    const char* latchWriter;
+    const char* styleWriter;
+    int latchWrites;
+    int styleWrites;
+    int latchDrifts;
 };
 extern "C" void KieeKeyProbeScrollState(HWND dlg, ProbeScrollStateT* out);
 extern "C" int  KieeKeyProbeSetOffset(HWND dlg, int pos);
@@ -1210,6 +1218,9 @@ struct HarnessCtl {
     int  x = 0, y = 0, w = 0, h = 0;       // window rect, dialog client coords
     int  rl = 0, rt = 0, rr = 0, rb = 0;   // region box (child-local)
     int  ex = 0, ey = 0, ew = 0, eh = 0;   // region box ∩ page
+    // v1.3.0-beta8fix1 (bug BS-22c): the class the SOLVER measures and grows
+    // (a STATIC that is not a group box / icon / owner-draw) — see I12.
+    bool growable = false;
 };
 
 struct HarnessState {
@@ -1259,6 +1270,16 @@ void readHarnessState(HWND dlg, const std::vector<HWND>& all, int tab,
         c.w = static_cast<int>(r.right - r.left);
         c.h = static_cast<int>(r.bottom - r.top);
         c.shown = ::IsWindowVisible(child) != FALSE;
+        {
+            wchar_t cls[32];
+            const int clsLen = ::GetClassNameW(child, cls, 32);
+            const LONG_PTR style = ::GetWindowLongPtrW(child, GWL_STYLE);
+            const bool isStatic = (clsLen == 6 && ::lstrcmpiW(cls, L"STATIC") == 0);
+            const bool isGroupBox = (style & BS_GROUPBOX) == BS_GROUPBOX;
+            c.growable = isStatic && !isGroupBox &&
+                         ((style & SS_TYPEMASK) != SS_ICON) &&
+                         ((style & SS_TYPEMASK) != SS_OWNERDRAW);
+        }
         HRGN rgn = ::CreateRectRgn(0, 0, 0, 0);
         if (rgn != nullptr) {
             const int type = ::GetWindowRgn(child, rgn);
@@ -1297,8 +1318,13 @@ std::string harnessStateStr(const HarnessState& s, const char* op, int step,
            " offset " + std::to_string(a.offset) + "/" + std::to_string(a.range) +
            " baseline " + (a.haveBaseline != 0 ? "yes(" + std::to_string(a.solvedCount) + ")"
                                                : std::string("NO")) +
-           " latch " + (a.enabled != 0 ? "on" : "off") +
-           " style " + (a.styleVScroll != 0 ? "VSCROLL" : "-") +
+           " latch " + (a.enabled != 0 ? "on" : "off") + "[" +
+               (a.latchWriter != nullptr ? a.latchWriter : "?") + "#" +
+               std::to_string(a.latchWrites) + "]" +
+           " style " + (a.styleVScroll != 0 ? "VSCROLL" : "-") + "[" +
+               (a.styleWriter != nullptr ? a.styleWriter : "?") + "#" +
+               std::to_string(a.styleWrites) + "]" +
+           (a.latchDrifts > 0 ? " latchDrifts " + std::to_string(a.latchDrifts) : "") +
            " info " + std::to_string(a.barPos) + "/" + std::to_string(a.barPage) +
            "/" + std::to_string(a.barMax) +
            " viewport " + rectStr(a.viewportX, a.viewportY, a.viewportW, a.viewportH) +
@@ -1309,6 +1335,7 @@ std::string harnessStateStr(const HarnessState& s, const char* op, int step,
            " contentBottom[" + std::to_string(s.tab) + "] " +
            std::to_string(a.contentBottom[s.tab]) +
            " stripShift " + std::to_string(a.stripShift[s.tab]) +
+           " stripSeen " + std::to_string(a.stripSeen[s.tab]) +
            " deepestUnscrolled " + std::to_string(s.deepestUnscrolledBottom);
 }
 
@@ -1438,9 +1465,20 @@ void harnessAssert(HWND dlg, const HarnessState& s, const char* op, int step,
     // I5 — the latch, the style bit and Win32's own enable rule agree.
     ++g_invChecks[5];
     if ((a.enabled != 0) != (a.styleVScroll != 0)) {
+        // v1.3.0-beta8fix1 (bug BS-22c): name the writer of each half. The pair is
+        // written by ONE function (settingsApplyScrollbarLatch) and re-decided by
+        // settingsSyncScrollbarLatch; the tags say which call wrote each side last
+        // and how many times, so a divergence that survives the ownership fix
+        // points at the operation that broke it instead of costing a CI round.
         fail(5, std::string("the app's bar latch says ") +
-                (a.enabled != 0 ? "on" : "off") + " but WS_VSCROLL is " +
-                (a.styleVScroll != 0 ? "set" : "clear"));
+                (a.enabled != 0 ? "on" : "off") + " (last write " +
+                (a.latchWriter != nullptr ? a.latchWriter : "?") + " #" +
+                std::to_string(a.latchWrites) + ") but WS_VSCROLL is " +
+                (a.styleVScroll != 0 ? "set" : "clear") + " (last write " +
+                (a.styleWriter != nullptr ? a.styleWriter : "?") + " #" +
+                std::to_string(a.styleWrites) + ") — the two halves of one answer " +
+                "were written apart; the sync found this " +
+                std::to_string(a.latchDrifts) + " time(s)");
     }
     {
         ++g_invChecks[5];
@@ -1507,20 +1545,44 @@ void harnessAssert(HWND dlg, const HarnessState& s, const char* op, int step,
         }
     }
     // I12 — the app's own measurement must fit the box it was applied to.
+    //
+    // v1.3.0-beta8fix1 (bug BS-22c): AND ONLY THE CONTROLS THE APP MEASURES.
+    //
+    // `KieeKeyProbeMeasureStaticHeight` is the app's solver measurement
+    // (`measureStaticTextHeightPx`: DrawTextW + DT_CALCRECT | DT_WORDBREAK), and
+    // the solver applies it to ONE class of control — `spec.growable`:
+    // a STATIC that is not a group box, not SS_ICON and not SS_OWNERDRAW
+    // (src/app/main.cpp, the build loop; `requiredHeight` is set there and nowhere
+    // else, and `autoFit` grows exactly those boxes). Asking any other control the
+    // same question measures a rendering it never performs: a Button, check box or
+    // edit is SINGLE-LINE (BS_MULTILINE is not set anywhere in this dialog), so a
+    // wrapped height of 64 px for a 33 px box describes two lines Win32 never
+    // draws — and the check fired 1313 times in the 77e8fea run on exactly that
+    // arithmetic (`id 591 needs 64px but its box is 33px tall`, id 591 being
+    // IDC_CHK_CHAOS_MASTER, a check box whose label is simply wider than its box).
+    // The defect behind it is real and has its own owner: `checkTextFit` reports it
+    // as `clip` (and the solver now fits such a row's width where the page has
+    // room). What this invariant owns is the solver's own contract: a box grown to
+    // `requiredHeight` must hold that measurement. Controls outside the contract
+    // are still EXAMINED (the check counter below counts every one of them, so the
+    // coverage stays visible) — they are just not judged by a rendering rule that
+    // does not apply to them.
     if (s.havePage) {
         int judged = 0;
         for (const HarnessCtl& c : s.ctls) {
             if (judged >= 8) { break; }
             if (!c.shown || c.regionEmpty || c.ew <= 0 || c.eh <= 0) { continue; }
             if (c.h <= 0) { continue; }
+            ++g_invChecks[12];          // every control examined, contract or not
+            if (!c.growable) { continue; }
             const int need = KieeKeyProbeMeasureStaticHeight(dlg, c.id);
             if (need <= 0) { continue; }
             ++judged;
-            ++g_invChecks[12];
             if (need > c.h + 2) {
                 fail(12, "id " + std::to_string(c.id) + " needs " +
                         std::to_string(need) + "px but its box is " +
-                        std::to_string(c.h) + "px tall");
+                        std::to_string(c.h) + "px tall — the solver's own "
+                        "measurement does not fit the box it grew");
                 break;
             }
         }
@@ -1866,14 +1928,36 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
 // it is an empty page — the state the fuzz reached with 20 controls parked at
 // y=383..1593 under a 176 px viewport.
 //===========================================================================
+// The state description every strip-cycle finding quotes: tab, cycle, the pass's
+// scale, the client the cycle runs at and the font scale the labels are read at.
+std::string whereOf(const HarnessState& s, int tab, unsigned passDpi, int cycle,
+                    int step, int wideW, int clientH, int fontPct) {
+    return "tab " + std::to_string(tab) + " cycle " + std::to_string(cycle) +
+           " pass dpi " + std::to_string(passDpi) + " client " +
+           std::to_string(wideW) + "x" + std::to_string(clientH) +
+           " font " + std::to_string(fontPct) + "% page top " +
+           std::to_string(s.page.top) + " strip " +
+           std::to_string(s.app.stripShift[tab]) + "/" +
+           std::to_string(s.app.stripSeen[tab]) + " step " + std::to_string(step);
+}
+
 int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCount,
                                unsigned passDpi, const RECT& origClient,
                                std::vector<Finding>* findings) {
     ++g_scenarioRuns;
     const int before = g_fuzzFailures;
     const int wideW = static_cast<int>(origClient.right);
-    const int narrowW = std::max(320, ::MulDiv(wideW, 55, 100));
     const int clientH = static_cast<int>(origClient.bottom);
+    // v1.3.0-beta8fix1 (bug BS-22c): THE WRAP IS DRIVEN BY THE TEXT SCALE, NOT BY
+    // A FIXED WIDTH. The first version of this scenario narrowed the client to 55 %
+    // to make the nine tab labels wrap, which is a property of the labels' font: at
+    // 96 dpi they wrapped, at 125 %/150 % (labels 1.25x/1.5x wider, and a smaller
+    // client to wrap into) they did not always — and a cycle that never reaches the
+    // transition proves nothing about the transition. The harness's own text-scale
+    // path (KieeKeyProbeFontScale, the app's real font factory + re-solve) makes the
+    // labels 1.5x wider at EVERY scale, so the strip wraps and then fits one row
+    // again by construction; the check below still proves the wrap happened.
+    const int kWrapFontPct = 150;
 
     // Start from the pass's own state: its scale, one-row strip, top of the page.
     KieeKeyProbeSimulateDpi(dlg, passDpi);
@@ -1903,26 +1987,32 @@ int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCo
         if (!multiRowPossible || baseFirstY < 0) { continue; }
 
         for (int cycle = 1; cycle <= 3; ++cycle) {
-            // --- narrow: the labels wrap, the page top moves down -------------
-            KieeKeyProbeResize(dlg, narrowW, clientH);
+            // --- the labels grow: the strip wraps, the page top moves DOWN ----
+            KieeKeyProbeFontScale(dlg, kWrapFontPct);
             KieeKeyProbeReflowNow(dlg);
             KieeKeyProbeSetOffset(dlg, 0);
-            HarnessState narrow;
-            readHarnessState(dlg, all, tab, &narrow);
+            HarnessState wrapped;
+            readHarnessState(dlg, all, tab, &wrapped);
             ++g_fuzzChecks;
-            if (narrow.page.top <= basePageTop) {
-                // Not a failure of the app: the labels did not wrap at 55 %, so
-                // this pass cannot measure the transition. Say so instead of
-                // reporting a green that was never exercised.
-                harnessTrace("{\"harness\": \"strip_cycles\", \"tab\": " +
-                             std::to_string(tab) + ", \"cycle\": " + std::to_string(cycle) +
-                             ", \"note\": \"the strip did not wrap at " +
-                             std::to_string(narrowW) + " px (page top " +
-                             std::to_string(narrow.page.top) + ")\"}");
+            if (wrapped.page.top <= basePageTop || wrapped.app.stripSeen[tab] <= 0) {
+                // A cycle that cannot reach the transition may not report it as
+                // corrected: the state below is one where the strip is still one
+                // row (or nothing was pushed down), so there is nothing to see.
+                harnessFail(1, findings,
+                            "the nine tab labels did not wrap at font " +
+                                std::to_string(kWrapFontPct) + "% (page top " +
+                                std::to_string(wrapped.page.top) + " vs the one-row " +
+                                std::to_string(basePageTop) + ", stripShift seen " +
+                                std::to_string(wrapped.app.stripSeen[tab]) +
+                                " px) — the grow/shrink transition cannot be measured "
+                                "in this state, so a green here would be a green that "
+                                "never ran",
+                            whereOf(wrapped, tab, passDpi, cycle, 0, wideW, clientH,
+                                    kWrapFontPct));
             }
 
-            // --- widen back: the strip fits one row again --------------------
-            KieeKeyProbeResize(dlg, wideW, clientH);
+            // --- the labels shrink back: the strip fits one row again ---------
+            KieeKeyProbeFontScale(dlg, 100);
             KieeKeyProbeReflowNow(dlg);
             KieeKeyProbeSetOffset(dlg, 0);
             HarnessState back;
@@ -1934,10 +2024,7 @@ int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCo
                 if (backFirstY < 0 || c.y < backFirstY) { backFirstY = c.y; backFirstId = c.id; }
             }
             const std::string where =
-                "tab " + std::to_string(tab) + " cycle " + std::to_string(cycle) +
-                " pass dpi " + std::to_string(passDpi) + " client " +
-                std::to_string(wideW) + "x" + std::to_string(clientH) +
-                " (narrowed to " + std::to_string(narrowW) + ")";
+                whereOf(back, tab, passDpi, cycle, 0, wideW, clientH, 100);
 
             // (a) the page top comes back
             ++g_fuzzChecks;
@@ -1945,7 +2032,7 @@ int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCo
                 harnessFail(1, findings,
                             "the page top did not return to its one-row value: " +
                                 std::to_string(basePageTop) + " -> " +
-                                std::to_string(narrow.page.top) + " (wrapped) -> " +
+                                std::to_string(wrapped.page.top) + " (wrapped) -> " +
                                 std::to_string(back.page.top) + " — the display "
                                 "rectangle of the wrapped strip is still in force",
                             where + " " + harnessStateStr(back, "strip_cycle", cycle, 0, 100));
@@ -2224,6 +2311,21 @@ int main(int argc, char** argv) {
         // changes the scale, so a pass is reproducible on its own.
         RECT passClient{};
         ::GetClientRect(dlg, &passClient);
+        // v1.3.0-beta8fix1 (bug BS-22c): A PASS DOES NOT INHERIT THE SCROLLBAR'S
+        // WIDTH. The bar is the APP's decision, re-made for every geometry; a
+        // client already deflated by it and then scaled hands the pass a window
+        // one bar (plus one frame) narrower than the app's own S(560) client at
+        // that DPI — a size no real session produces, and the source of the 125 %
+        // pass's `clip`/`outside_page` findings. Measured arithmetic for the
+        // 125 % pass of the 76f955a run: 96-dpi client 526 (the bar had taken 17
+        // off the authored 543) × 1.25 = 658, minus the 120-dpi bar 21 = 637,
+        // while the authored content needs 528 + S(12) = 540 @96 = 675 @125 and
+        // the app's own client at 125 % is 700 (S(560)) - 21 = 679. The bar was
+        // charged twice; the 42 px it cost are the whole finding class.
+        if ((::GetWindowLongPtrW(dlg, GWL_STYLE) & WS_VSCROLL) != 0) {
+            const int barW = ::GetSystemMetrics(SM_CXVSCROLL);
+            passClient.right += (barW > 0 ? barW : 0);
+        }
         if (pass.dpi != nativeDpi) {
             passClient.right = static_cast<LONG>(
                 ::MulDiv(passClient.right, static_cast<int>(pass.dpi),

@@ -400,6 +400,13 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "renderedPts > 0 is gone",
     ),
     (
+        "BS-22o the strip cycle accepts a widened client the app will shrink",
+        "tools/ui_probe/ui_probe.cpp",
+        "    if (!baseOneRowFinal) { measurable = false; }",
+        "    /* seeded: the widened client counts as the cycle's own state */",
+        "the rule that both halves of the transition have to hold on that state",
+    ),
+    (
         "BS-22q the screen-paint check stops naming the page area",
         "tools/ui_probe/ui_probe.cpp",
         "            const bool pagePaintedOnScreen = bareInCapture && (bareScreen != bg);",

@@ -1107,6 +1107,21 @@ def check(repo: Path):
              'wrap half is allowed to count (BS-22o) — a scale where one row is '
              'unreachable is reported as an unavailable transition instead of being '
              'skipped tab by tab'),
+            ('const bool baseOneRowFinal = baseFinal.app.stripRows <= 1;',
+             'the SAME precondition judged on the state the cycles really run in, '
+             'after the app\'s own refit decided the width it keeps (BS-22o, part two): '
+             'a widened client the app shrinks back proves a precondition the cycle '
+             'never gets, which is how 35985183906 reported `strip shift 29 -> 29 px` '
+             'at 27 states'),
+            ('if (!baseOneRowFinal) { measurable = false; }',
+             'the rule that both halves of the transition have to hold on that state '
+             '(BS-22o, part two)'),
+
+            ('std::string tabState = "tab n/a";',
+             'the tab control\'s own state (rectangle, visibility, region, row count) '
+             'recorded next to the screen-paint finding (BS-22q) — "the tab control did '
+             'not paint" and "the tab control is not there" are different repairs, and '
+             'the numbers have to say which one it is'),
             ('int chromePainted = 0;',
              'the chrome half of that evidence (BS-22h) — a capture with the chrome '
              'and not the page is a page that was never painted, while one with '

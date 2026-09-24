@@ -2213,6 +2213,28 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
                     if (ink) { ++paintedAfter; }
                 }
             }
+            // v1.3.0-beta8fix1 (bug BS-22q, part two): WHICH WINDOW OWES THE PAGE
+            // ITS PIXELS. The finding below says the page area shows the window's
+            // background; this records the tab control's own state (visibility,
+            // rectangle, row count) in the same breath, because "the tab control
+            // did not paint" and "the tab control is not there" are different
+            // repairs and the numbers have to say which one it is.
+            std::string tabState = "tab n/a";
+            if (const HWND tabCtl = ::GetDlgItem(dlg, IDC_TAB)) {
+                RECT tr{};
+                ::GetWindowRect(tabCtl, &tr);
+                ::MapWindowPoints(nullptr, dlg, reinterpret_cast<POINT*>(&tr), 2);
+                tabState = "tab " + rectStr(tr.left, tr.top, tr.right - tr.left,
+                                            tr.bottom - tr.top) +
+                           " visible " +
+                           (::IsWindowVisible(tabCtl) != FALSE ? "yes" : "NO") +
+                           " region " +
+                           (::GetWindowRgn(tabCtl, ::CreateRectRgn(0, 0, 0, 0)) == NULLREGION
+                                ? "EMPTY"
+                                : "set") +
+                           " rows " +
+                           std::to_string(::SendMessageW(tabCtl, TCM_GETROWCOUNT, 0, 0));
+            }
             const std::string ground =
                 "scenario_screen_paint tab " + std::to_string(deepestTab) + " client " +
                 std::to_string(w) + "x" + std::to_string(h) + " app dpi " +
@@ -2225,7 +2247,7 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
                 std::to_string(renderPaintCountAt(dlg, samples, bg)) + "/" +
                 std::to_string(samples.size()) + " chrome " +
                 std::to_string(chromePainted) + "/" + std::to_string(chromeJudged) +
-                " pageBare screen=" +
+                " " + tabState + " pageBare screen=" +
                 (bareInCapture ? std::to_string(bareScreen) : std::string("n/a")) +
                 " bg=" + std::to_string(bg) +
                 " render=" + std::to_string(bareRender) +
@@ -2474,6 +2496,23 @@ int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCo
     KieeKeyProbeReflowNow(dlg);
     KieeKeyProbeFontScale(dlg, 100);
     KieeKeyProbeSetOffset(dlg, 0);
+    // v1.3.0-beta8fix1 (bug BS-22o, part two): AND THE PRECONDITION IS JUDGED ON
+    // THE STATE THE CYCLES WILL REALLY RUN IN. `KieeKeyProbeResize` asks for a
+    // width; the app's own refit decides which width it KEEPS (a window that is
+    // larger than its content needs is shrunk back), so a calibration that
+    // measured a widened client proved a precondition the cycle never gets to
+    // use. The 35985183906 run is exactly that shape: at 120 dpi the app refits
+    // to its own S(560) → labels at 1.25x do not fit → the strip is TWO rows even
+    // at font 100 %, so the cycle started inside a wrap it did not cause and
+    // reported `strip shift 29 -> 29 px, page top 161 vs the one-row 161` at 27
+    // states — a transition that cannot be measured in that state, which is what
+    // the check itself says. This reads the base state once more, AFTER the refit,
+    // from the control's own row count (TCM_GETROWCOUNT, BS-22o) — the same value
+    // the cycles are judged by — and lets the unavailability path report a scale
+    // whose own window has no one-row strip to return to.
+    HarnessState baseFinal;
+    readHarnessState(dlg, all, 0, &baseFinal);
+    const bool baseOneRowFinal = baseFinal.app.stripRows <= 1;
 
     // v1.3.0-beta8fix1 (bug BS-22i): A PASS THAT CANNOT GROW THE STRIP REPORTS
     // ITSELF. At 120/144 dpi the runner's screen (768 px tall) cannot give the
@@ -2488,6 +2527,7 @@ int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCo
     // where it MUST be measurable: a native pass that cannot grow the strip is a
     // finding, so this can never become the reason the transition stops being
     // tested.
+    if (!baseOneRowFinal) { measurable = false; }
     if (!measurable) {
         ++g_stripCycleUnavailable;
         HarnessState st;
@@ -2498,9 +2538,16 @@ int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCo
             " page " + rectStr(st.page) + " strip shift " +
             std::to_string(st.app.stripShift[0]) + " px rows " +
             std::to_string(st.app.stripRows) +
-            " — the window cannot be made tall enough at this scale for the strip "
-            "to gain a row (the tab control's height is capped so the bottom row "
-            "stays visible)";
+            " rows, client " + std::to_string(st.client.right) + "x" +
+            std::to_string(st.client.bottom) +
+            " — at this scale the app's own window leaves the nine labels " +
+            (baseOneRowFinal ? "one row at 100 % but cannot gain a row (the tab "
+                               "control's height is capped so the bottom row stays "
+                               "visible)"
+                             : "wrapped at every width it keeps (the labels are 1.25x "
+                               "wide in a window the app refits to its authored size), "
+                               "so there is no one-row state for the cycle to return "
+                               "to");
         g_stripCycleNote = note;
         harnessTrace("{\"scenario\": \"strip_cycles\", \"measured\": false, \"note\": \"" +
                      note + "\"}");

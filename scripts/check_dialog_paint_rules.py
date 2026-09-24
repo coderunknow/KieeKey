@@ -919,6 +919,15 @@ def check(repo: Path):
             ('bool settingsWindowFitsPlan(HWND child) noexcept {',
              'the question the subclass asks — the live SIZE against the planned '
              'rectangle (BS-22n); a move is not a resize and is ignored'),
+            ('::SetWindowPos(tabCtl, HWND_BOTTOM, 0, 0, 0, 0,',
+             'the z-order rule that keeps the page children ABOVE the tab control '
+             '(BS-22s): the tab owns the page\'s pixels, and any window brought to the '
+             'top of the sibling order — showTab() shows the active tab\'s controls '
+             'with SW_SHOW on every switch — takes its whole rectangle with it. The '
+             '35988174121 run measured 8 page controls of one tab with the right '
+             'rectangle, WS_VISIBLE, no region and `painted 0/3`: present in every '
+             'window-state check, absent from the screen, which is the user\'s "mất '
+             'nội dung" with the harness green'),
             ('const SettingsSolveScope solvingHere;',
              'the scope guard that keeps the solver\'s own SetWindowPos calls from '
              'looking like a control resizing itself (BS-22n)')):

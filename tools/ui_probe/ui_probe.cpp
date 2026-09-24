@@ -2169,7 +2169,26 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
                                             : ERROR;
                     if (probeRgn != nullptr && rgnType != ERROR) { ::GetRgnBox(probeRgn, &rgn); }
                     if (probeRgn != nullptr) { ::DeleteObject(probeRgn); }
-                    evidence += " " + std::to_string(c.id) + " sampled " +
+                    // v1.3.0-beta8fix1 (bug BS-22s): AND WHERE IT SITS IN THE Z-ORDER,
+                    // because that is what decides whether it is drawn at all. A
+                    // control with the right rectangle, no region and WS_VISIBLE that
+                    // shows no ink is a control something is painting over — the tab
+                    // control owns the same pixels and must be under it.
+                    int above = 0;
+                    bool found = false;
+                    bool tabAbove = false;
+                    const HWND tabHere = ::GetDlgItem(dlg, IDC_TAB);
+                    for (HWND w = ::GetWindow(dlg, GW_CHILD); w != nullptr;
+                         w = ::GetWindow(w, GW_HWNDNEXT)) {
+                        if (w == c.hwnd) { found = true; break; }
+                        if (w != tabHere) { ++above; }
+                        else { tabAbove = true; }
+                    }
+                    evidence += " " + std::to_string(c.id) + " z " +
+                                (found ? std::to_string(above) +
+                                             (tabAbove ? " tabAbove" : " tabBelow")
+                                       : std::string("?")) +
+                                " sampled " +
                                 rectStr(c.ex, c.ey, c.ew, c.eh) + " live " +
                                 rectStr(live.left, live.top, live.right - live.left,
                                         live.bottom - live.top) +

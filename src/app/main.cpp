@@ -5826,6 +5826,29 @@ void solveSettingsLayout(HWND hwnd) {
                        SWP_NOZORDER | SWP_NOACTIVATE);
         g_settingsScroll.solved.emplace_back(hwnds[i], plan.rects[i]);
     }
+    // v1.3.0-beta8fix1 (bug BS-22s): THE TAB CONTROL OWNS THE PAGE'S PIXELS, SO IT
+    // BELONGS UNDER EVERYTHING.
+    //
+    // The tab control is created first and its rectangle is the whole page area; the
+    // ~120 page controls live above it and draw the page. That order is z-order, and
+    // z-order is not permanent: `showTab()` shows the active tab's controls with
+    // SW_SHOW on every tab switch, and ANY window brought to the top of the sibling
+    // order takes its whole rectangle with it — including the tab control, whose
+    // background covers the page area. When the tab control ends up above a page
+    // control, that control is still there (same rectangle, VISIBLE, no region, the
+    // probe reports `live` == `sampled`, `vis y`, `parent dlg`) and is simply not
+    // drawn: the user sees the dialog's background where a row of settings should be
+    // — "mất nội dung", with every window-state check green. The x64 run 35988174121
+    // measured exactly that state: 8 visible controls of tab 3 with `painted 0/3` at
+    // their own live rectangles while the chrome (outside the tab's rectangle)
+    // painted.
+    //
+    // The page children must therefore be ABOVE the tab control, at all times, and
+    // the one place that can guarantee it is here — after the solve applied every
+    // rectangle, before the repaint. It is a z-order change only: no move, no size,
+    // no activation, and the tab's own window rectangle is untouched.
+    ::SetWindowPos(tabCtl, HWND_BOTTOM, 0, 0, 0, 0,
+                   SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     int curTab = static_cast<int>(::SendMessageW(tabCtl, TCM_GETCURSEL, 0, 0));
     if (curTab < 0 || curTab > 8) { curTab = 0; }
     settingsScrollSetTab(hwnd, curTab);   // applies solved rects at offset 0

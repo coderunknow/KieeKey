@@ -409,6 +409,14 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "the rule that both halves of the transition have to hold on that state",
     ),
     (
+        "BS-22s the page children stop being kept above the tab control",
+        "src/app/main.cpp",
+        "    ::SetWindowPos(tabCtl, HWND_BOTTOM, 0, 0, 0, 0,\n"
+        "                   SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);",
+        "    /* seeded: the z-order is left to chance */",
+        "the z-order rule that keeps the page children ABOVE the tab control",
+    ),
+    (
         "BS-22r the render cross-check counts an unpainted frame as ink",
         "tools/ui_probe/ui_probe.cpp",
         "        if (!haveBg) { painted = -1; }",

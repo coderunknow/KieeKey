@@ -351,7 +351,9 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
     (
         "BS-22f the text scale forgets the app's own faces",
         "src/app/main.cpp",
-        "        ctx.add(app[role], next[role]);            // what the app itself applies",
+        # BS-22w added the recorded role to every mapping pair; the anchor
+        # follows the call's signature.
+        "        ctx.add(app[role], next[role], role);          // what the app itself applies",
         "        /* seeded: only the faces this probe applied are mapped */",
         "no longer maps the app's own faces at the CURRENT dpi",
     ),
@@ -714,6 +716,44 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "void checkSiblingClobber(const Audit& a, const std::vector<Ctl>& ctls) {",
         "void checkSiblingClobberRemoved(const Audit& a, const std::vector<Ctl>& ctls) {",
         "checkSiblingClobber",
+    ),
+    # v1.3.0-beta8fix1 (BS-22w): the scale must know every face the app minted,
+    # the restore must be audited before the capture runs, and the ink samples
+    # must land strictly inside each control. Same discipline, five seeds.
+    (
+        "BS-22w  the rescale keeps its faces unreported",
+        "src/app/main.cpp",
+        "        kieeKeyProbeRememberAppFont(replacement, replacementRole);",
+        "        /* seeded: the rescale's faces go unreported */",
+        "BS-22w",
+    ),
+    (
+        "BS-22w  the scale guesses an app-minted face's role",
+        "src/app/main.cpp",
+        "        const int role = g_probeAppFontRoles[i];",
+        "        const int role = 0;   /* seeded: role guessed, not recorded */",
+        "BS-22w",
+    ),
+    (
+        "BS-22w  the restore audit stops counting",
+        "src/app/main.cpp",
+        "            ++g_probeUnmappedFonts;",
+        "            /* seeded: the audit never counts */",
+        "BS-22w",
+    ),
+    (
+        "BS-22w  the capture runs without reading the audit",
+        "tools/ui_probe/ui_probe.cpp",
+        "            const int unmapped = KieeKeyProbeUnmappedFontCount();",
+        "            const int unmapped = 0;   /* seeded: the audit is never read */",
+        "BS-22w",
+    ),
+    (
+        "BS-22w  the ink samples leave the control's interior",
+        "tools/ui_probe/ui_probe.cpp",
+        "                            const int x = ex + ew * col / 5;",
+        "                            const int x = ex + ew;   /* seeded: off the control */",
+        "BS-22w",
     ),
 ]
 

@@ -112,6 +112,7 @@ regression names its side of the stack instead of costing a run of guessing.
 | BS-22t | the row count is read in **either** direction; the revealed page is repainted synchronously | I1, I8 |
 | BS-22u | the strip cycle reads the state after it settles and reports the plan's own arithmetic | I1 (measurement) |
 | BS-22v | the nine tab labels are measured with the font the **control** draws them with (`WM_GETFONT`), not `uiFont()` | **I1 (last)** |
+| BS-22w | the text scale maps every face the **app minted, at any dpi**, by its **recorded** role; the restore is audited before the capture runs; the ink samples sit strictly inside each control | I11 (measurement) |
 
 BS-22v is the link that closed the last red state. `solveSettingsLayout()` was the one
 measurement in the solve that selected `uiFont()` instead of the control's own font
@@ -124,6 +125,42 @@ that is not on the screen, and the grow/shrink transition cannot be planned at a
 The probe's note from run `68544ea` carries the numbers that named it:
 `a1:700/683 plan1(559/643) ctl1 ml0` — the plan and the control agree at a wide
 client, and only the *font* was wrong.
+
+### BS-22w — the flake the tag run exposed (after the merge)
+
+The merge commit `55414e9` produced **two CI runs on the very same tree with
+different verdicts**: run `35995109042` (push of `main`) passed all four jobs,
+and run `35995128589` (push of the tag `v1.3.0-beta8fix1`) failed only `x64`,
+with one violation — `[I11] the page paints background only`, `client 974x689
+app dpi 96`, `rowH 37`, `itemTops 2,2,…` (the 150 % strip's metrics) on a pass
+that believed it was at 96 dpi. Same tree, different verdict ⇒ the defect was
+in a **measurement**, and it followed the timing, not the tree. Two defects:
+
+1. **The text-scale mapping table did not know the app's own faces minted at
+   another dpi.** `KieeKeyProbeFontScale()` mapped the app's faces at the
+   *current* dpi plus every face the probe itself had applied. A face the app's
+   rescale path (`rescaleChild`, through `applySettingsDpiScale`) minted at
+   144 dpi is in neither set — so when the harness's scale returned to 100 %,
+   controls wearing that face kept it. The plan measured labels with the bigger
+   face, asked for a wider window, the solver widened the window to 974 px, and
+   the capture judged a hybrid dialog **no pass ever built**. Which pass leaves
+   which face behind depends on how the previous pass's rescale interleaved
+   with the scale cycle — hence green on one run of the tree, red on another.
+2. **The "has ink" measurement sampled three x-points on one row.** On a wide
+   control whose label sits at the left edge, all three quarter-points land in
+   the empty space after the text, so a *painted* control read `painted 0/3` —
+   a false alarm that turned (1) into a blank-page finding.
+
+The fix (measurement only — the product was never wrong): every font writer
+reports its face into a registry **with the role it just classified**
+(`kieeKeyProbeRememberAppFont`; the scale maps an app-minted face by its
+recorded role, never by a height guess — at 150 % the body face is 19 px and
+the title 30 px, at 144 dpi the body face is 20 px); `KieeKeyProbeFontScale()`
+audits its own restore (`KieeKeyProbeUnmappedFontCount()`), and the harness
+fails the I11 **pre-condition** (`scenario_screen_paint_fonts`) *before* the
+capture whenever a control still wears another scale's face; the ink samples
+are a 4×3 grid strictly inside each control. New paint-gate rule 12 and five
+new seeds (`verify_audit_seeds.py`: 84 checks, 0 misses) pin all of it.
 
 ## The fix (UI/presentation only — no engine, hook, TSF or persistence change)
 
@@ -222,6 +259,19 @@ The loop that got there, kept in `docs/FINAL_CHECK_v1.3.0-beta8fix1.md`:
 ```
 1379 (77e8fea) → 56 → 84 → 309 → 383 → 335 → 30 → 4 → 4 → 2 → 1 → 0 (e036e85)
 ```
+
+## Sau khi tag: lượt CI của chính tag (BS-22w)
+
+The tag `v1.3.0-beta8fix1` first pointed at the merge commit `55414e9`. Its CI
+run (`35995128589`) hit the BS-22w measurement flake above: job `x64` failed on
+the one `[I11]` violation, and `Publish release` — the only job that creates the
+GitHub Release — was `skipped`. **That run never released anything**, so the tag
+was moved (deleted on the remote, re-created as an annotated tag) to the first
+commit that carries BS-22w and whose tag CI run is green in all four jobs,
+including `Publish release`. Nothing was withdrawn or rewritten: a release that
+was never created cannot be retracted. The release notes, the final check and
+`TESTING_v1.3.0-beta8fix1.txt` that ship with the release describe the BS-22w
+tree, not the `55414e9` one.
 
 ## What is still UNVERIFIED (Windows)
 

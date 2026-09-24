@@ -102,6 +102,7 @@ làm CI không nhìn thấy triệu chứng):
 | BS-22t | số hàng phải đọc **theo cả hai chiều** (hàng có thể xếp lên trên); và vùng pixel lộ ra sau khi đổi z-order phải được **vẽ lại đồng bộ** | I1, I8 |
 | BS-22u | chu trình tab phải đọc trạng thái **sau khi app đã lắng** và báo ra **số học của plan** (need/available/client) | I1 (đo) |
 | BS-22v | nhãn tab phải được đo bằng **font mà control thật sự vẽ** (`WM_GETFONT`), không phải `uiFont()` | **I1 (chốt)** |
+| BS-22w | đường đổi cỡ chữ phải biết **mọi mặt chữ app tự tạo, ở mọi dpi**, ánh xạ theo **vai trò đã ghi**; phép khôi phục phải được **kiểm tra trước khi chụp**; điểm lấy mực phải nằm **hẳn bên trong control** | I11 (đo) |
 
 BS-22v là mắt xích cuối: `solveSettingsLayout()` là phép đo **duy nhất** trong solver
 chọn `uiFont()` thay vì font của control (hai helper đo còn lại —
@@ -113,43 +114,90 @@ thể được hoạch định** — nên lượt native không đo được chu
 Bằng chứng số nằm trong ghi chú của lượt `68544ea`:
 `a1:700/683 plan1(559/643) ctl1 ml0` cùng `font` hai bên.
 
+BS-22w là mắt xích sau merge. Cùng một cây `55414e9`, hai lượt CI hai verdict:
+run `35995109042` (push `main`) xanh cả 4 job, run `35995128589` (push tag)
+đỏ đúng một job `x64` với một vi phạm `[I11] the page paints background only`
+(`client 974x689 app dpi 96`, `rowH 37`, `itemTops 2,2,…` — chỉ số của thanh tab
+150 % trên một lượt tự nhận 96 dpi). Cùng cây, khác verdict ⇒ lỗi nằm ở **phép
+đo** và **theo thời điểm, không theo cây**. Hai lỗi đo: (1) bảng ánh xạ mặt chữ
+của `KieeKeyProbeFontScale()` không chứa mặt chữ **app tự tạo ở dpi khác**
+(`rescaleChild` đổi cho control khi rescale 150 %) ⇒ lượt về 100 % để sót mặt
+chữ lớn ⇒ plan đòi cửa sổ rộng hơn ⇒ solver giãn cửa sổ ⇒ phép chụp phán một
+trạng thái không lượt nào dựng nên; (2) phép đo "có mực" lấy 3 điểm x trên một
+hàng — với control rộng, nhãn canh trái, cả 3 điểm rơi vào khoảng trống sau
+chữ ⇒ control **được vẽ** vẫn đọc `painted 0/3`. Bản vá: mọi nơi app đặt font
+đều báo vào registry kèm **vai trò đã ghi** (không đoán theo chiều cao), số
+control còn sót mặt chữ của thang khác được **xuất ra và biến thành thất bại
+tiền đề I11 trước khi chụp**, và điểm lấy mực thành lưới 4×3 hẳn bên trong
+control.
+
 ---
 
-## 3. Cổng kiểm (cây `e036e85`)
+## 3. Cổng kiểm (cây đã vá BS-22w, trên `main`)
 
 | Cổng | Lệnh | Kết quả |
 |---|---|---|
 | Bộ kiểm native | `tests/run_all_tests.sh` | **ALL NATIVE TESTS PASSED** |
 | Audit bố cục | `python3 scripts/audit_layout.py --strict` | **AUDIT OK** (0 finding) |
-| Luật vẽ | `python3 scripts/check_dialog_paint_rules.py` | **OK** — 11 luật |
-| Seed kiểm toán | `python3 tests/verify_audit_seeds.py` | **ALL SEEDED VIOLATIONS CAUGHT** (mọi seed BS-22x) |
+| Luật vẽ | `python3 scripts/check_dialog_paint_rules.py` | **OK** — 12 luật (mới: BS-22w) |
+| Seed kiểm toán | `python3 tests/verify_audit_seeds.py` | **84 [ok], 0 MISS** — ALL SEEDED VIOLATIONS CAUGHT |
 | Hình dạng báo cáo probe | `python3 tests/check_probe_json_shape.py` | **OK** (+ self-test) |
 | Phiên bản | `python3 scripts/check_version.py` | **OK** — `1.3.0-beta8fix1` (PE `1.3.0.10`) |
+| Cách ly input | `python3 scripts/check_input_isolation.py` | **OK** |
 | SHA256SUMS | `bash scripts/gen_sha256sums.sh --check` | **in sync** |
-| Cảnh báo biên dịch | `zig c++ -Wall -Wextra -Wshadow` | **0 cảnh báo** (main + probe) |
-| CI x64 (MSVC `/W4 /WX`) | job `x64`, run `35993697384` | **success** — build, unit tests, UI probe, SHA manifest |
-| CI ARM64 / ARM64EC | cùng run | **success** (build) |
-| CI Native (Linux) | cùng run | **success** — bộ regression đầy đủ |
+| Cảnh báo biên dịch | `zig c++ -Wall -Wextra -Wshadow` (mọi TU, probe + thường) | **0 cảnh báo, 0 lỗi** |
+| Bản dựng thử | `build_windows_exe.sh --arch=x86_64` ×2 | **cùng SHA-256** `676d21d6…ad52` (1.914.880 byte) — tái lập |
 
 ---
 
-## 4. UNVERIFIED (Windows) — những gì CI **không** chứng minh được
+## 4. Bảng run CI (cùng cây `55414e9`, trước bản vá)
+
+| run | sự kiện | kết quả |
+|---|---|---|
+| `35995109042` | push `main` | **success** — 4/4 job |
+| `35995128589` | push tag `v1.3.0-beta8fix1` | **failure** — chỉ `x64` (1 vi phạm `inv_I11=1`); `Publish release` = **skipped** ⇒ **chưa phát hành gì** |
+| `35994523368` | cây PR (`c72abe2`) | **success** — 4/4 job |
+| `35993697384` | cây PR (`e036e85`) | **success** — 4/4 job |
+
+Chữ ký của lượt đỏ (nguyên văn từ annotation của job `x64`, job
+`107618125297`):
+
+```
+harness 4320 steps / 4734 assertions / 1 violations [inv_I11=1] | scenarios 6 run, 1 with violations
+invariants (checks/violations) I1:3086/0 I2:33415/0 I3:9042/0 I4:4521/0 I5:9042/0 I6:108473/0
+                               I8:3/0 I9:342/0 I11:3/1 I12:27590/0 R1:6/0
+first: [I11] the page paints background only: 8 visible controls, none of their middle rows
+       differs from the page background
+scenario_screen_paint tab 3 client 974x689 app dpi 96 page 16,107 942x534 offset 0 strip 0/71
+  rows 1 tab 12,66 950x579 visible yes region set rows 1 itemTops 2,2,2,2,2,2,2,2,2 rowH 37
+  itemTopFirst/Last 2/2 ctl: 522 z 36 tabBelow sampled 28,124 256x64 live 28,124 256x64
+  rgn none vis y parent dlg painted ...
+```
+
+CTest vẫn `tests=8; failures=0` ⇒ build và unit test khoẻ; lỗi chỉ nằm ở bất
+biến I11 của UI probe. Kết luận: hiện tượng **theo thời điểm/trạng thái** của
+phép đo, không phải hồi quy sản phẩm — đã bịt bằng BS-22w (mục 2).
+
+---
+
+## 5. UNVERIFIED (Windows) — những gì CI **không** chứng minh được
 
 * **Triệu chứng của bạn đã hết hay chưa.** CI chứng minh trạng thái gây ra nó (control
-  bị che bởi z-order, và đường đổi tỉ lệ không solve) **tái hiện được và đã bị sửa**;
-  nhưng chỉ máy Windows của bạn mới xác nhận được là nó không còn xảy ra. Đây là lý do
-  bản này **chưa merge, chưa tag**.
+  bị che bởi z-order, đường đổi tỉ lệ không solve, và hai lỗi đo BS-22w) **tái hiện
+  được và đã bị sửa**; nhưng chỉ máy Windows của bạn mới xác nhận được là nó không còn
+  xảy ra.
 * Nhánh nào trên máy bạn đưa tới lỗi (đổi tỉ lệ màn hình, mở lại hộp thoại, nhiều màn
   hình, text size 125/150 %) là **UNVERIFIED** — bản sửa loại bỏ cả **lớp** (không còn
-  đường nào để tab control ở trên nội dung; không còn đường nào rescale mà không solve).
+  đường nào để tab control ở trên nội dung; không còn đường nào rescale mà không solve;
+  không còn mặt chữ nào của app nằm ngoài bảng ánh xạ của đường đổi cỡ chữ).
 * Cỡ chữ 125 %/150 % và DPI 120/144 trong CI được điều khiển qua đúng đường của app
   (font factory + re-solve), không phải bằng một màn hình thật ở tỉ lệ đó.
 * Bản thử là **cross-build** (zig/MinGW) từ cùng cây mã đã chạy CI — bản phát hành
-  chính thức (MSVC, x64/ARM64/ARM64EC) sẽ được build bởi CI khi có tag.
+  chính thức (MSVC, x64/ARM64/ARM64EC) sẽ được build bởi CI của lượt tag.
 
-## 5. Việc còn lại (chờ bạn)
+## 6. Việc còn lại (chờ bạn)
 
-1. Chạy `TESTING.txt` (V0–V5) trên máy bạn với `KieeKeyApp.exe` + `SHA256SUMS.txt` đi kèm.
-2. Nếu mọi ô đạt: nhắn **"ok, merge"** → tôi merge PR #33 và tag `v1.3.0-beta8fix1`.
-3. Nếu còn sai: gửi ảnh chụp + chuỗi băm + bước thao tác; tôi mở lại vòng chẩn đoán với
+1. Chạy `TESTING_v1.3.0-beta8fix1.txt` (V0–V5) trên máy bạn với `KieeKeyApp.exe` +
+   `SHA256SUMS.txt` đi kèm gói bàn giao.
+2. Nếu còn sai: gửi ảnh chụp + chuỗi băm + bước thao tác; tôi mở lại vòng chẩn đoán với
    đúng trạng thái đó (không đoán).

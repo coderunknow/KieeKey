@@ -810,9 +810,9 @@ def check(repo: Path):
         scale_body = ''
     if scale_body:
         for needle, why in (
-                ('ctx.add(app[role], next[role]);',
+                ('ctx.add(app[role], next[role], role);',
                  "the app's own faces at the CURRENT dpi"),
-                ('ctx.add(g_probeFontHistory[role][i], next[role]);',
+                ('ctx.add(g_probeFontHistory[role][i], next[role], role);',
                  'the faces this probe applied earlier (a dpi change re-applies the '
                  "app's faces, a scale change leaves the probe's)")):
             if needle not in scale_body:
@@ -1222,6 +1222,50 @@ def check(repo: Path):
             "so judging Win32's usable/dead answer over all nine tabs reports a dead "
             "bar as a defect on every state whose own tab fits while a deeper tab "
             "lives in the same dialog")
+
+    # 12. v1.3.0-beta8fix1 (BS-22w): THE SCALE KNOWS EVERY FACE THE APP MINTED,
+    #     AND THE CAPTURE ONLY JUDGES A DIALOG THE PASS BUILT. The text-scale
+    #     mapping used to know the app's faces at the CURRENT dpi plus the
+    #     probe's own history, so a face rescaleChild applied at another dpi
+    #     survived the restore to 100 %: the plan measured its labels with the
+    #     bigger face, the solver widened the window (client 974x689 at app dpi
+    #     96, rowH 37 — run 35995128589's x64 finding on tree 55414e9, the very
+    #     tree run 35995109042 passed), and the blank-page check judged a
+    #     hybrid no pass built. The fix has three halves that must all hold:
+    #     every font writer reports into the registry with its RECORDED role
+    #     (no height guessing — at 150 % the body face is 19 px and the title
+    #     30 px, at 144 dpi the body face is 20 px), the restore is AUDITED and
+    #     a non-zero unmapped count fails the I11 pre-condition BEFORE the
+    #     capture runs, and the ink samples are a 4x3 grid strictly inside each
+    #     control so a painted control can never read `painted 0/3` again.
+    for needle, why in (
+            ('kieeKeyProbeRememberAppFont(replacement, replacementRole);',
+             'the rescale path reports every face it applies, with the role it '
+             'just classified (BS-22w) — an app-minted face from another dpi '
+             'that goes unreported is a face the scale path cannot undo and '
+             'the restore audit cannot see'),
+            ('g_probeAppFontRoles[i];',
+             'the scale maps an app-minted face by its RECORDED role (BS-22w) '
+             '— guessing the role from the face height misclassifies at '
+             '144 dpi, where the body face is 20 px'),
+            ('++g_probeUnmappedFonts;',
+             'the restore audit counts the controls still wearing a face this '
+             'process minted that is not one of the current scale (BS-22w)')):
+        if needle not in main:
+            failures.append(f"src/app/main.cpp: {needle} is gone — {why}")
+    for needle, why in (
+            ('const int unmapped = KieeKeyProbeUnmappedFontCount();',
+             'the harness reads the restore audit BEFORE the capture and fails '
+             'the I11 pre-condition (scenario_screen_paint_fonts) instead of '
+             'letting the screenshot judge a dialog this pass did not build '
+             '(BS-22w)'),
+            ('ex + ew * col / 5',
+             'the ink measurement samples a 4x3 grid strictly inside the '
+             'control (BS-22w) — three quarter-points on the middle row all '
+             'land in the space after a left-aligned label on a wide control '
+             'and read `painted 0/3` about a painted control')):
+        if needle not in probe:
+            failures.append(f"tools/ui_probe/ui_probe.cpp: {needle} is gone — {why}")
     return failures
 
 
@@ -1235,12 +1279,13 @@ def main() -> int:
         for f in failures:
             print(f"  - {f}")
         return 1
-    print("PAINT RULES OK — 11 rules: sibling clipping, window styles, "
+    print("PAINT RULES OK — 12 rules: sibling clipping, window styles, "
           "repaint-after-change, need-deduped reflow, unscrolled solver input, "
           "rescale-owns-its-resolve + total baseline drop (BS-18), symmetric "
           "scrollbar correction (+ the probe's blank-page, reflow, pixel and "
           "operation-sequence checks), authored solver input (BS-22), measure-"
-          "after-clamp + the probe's derived expectations (BS-22), one owner for the bar pair + narrow-only clamp + live-rectangle regions (BS-22c)")
+          "after-clamp + the probe's derived expectations (BS-22), one owner for the bar pair + narrow-only clamp + live-rectangle regions (BS-22c), "
+          "the scale knows every app-minted face + audited restore + interior ink grids (BS-22w)")
     return 0
 
 

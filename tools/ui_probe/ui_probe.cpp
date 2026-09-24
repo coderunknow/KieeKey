@@ -139,6 +139,7 @@ extern "C" int  KieeKeyProbeDisplayChange(HWND dlg);
 extern "C" void KieeKeyProbeSetWindowDpiOverride(UINT dpi);
 extern "C" int  KieeKeyProbeResize(HWND dlg, int clientW, int clientH);
 extern "C" int  KieeKeyProbeFontScale(HWND dlg, int percent);
+extern "C" int  KieeKeyProbeUnmappedFontCount(void);   // BS-22w: the scale restore's own audit
 // v1.3.0-beta8fix1 (bug BS-22g): the solver's own rectangle for a control.
 extern "C" int  KieeKeyProbeSolvedRect(HWND dlg, int id, int* out);
 extern "C" void KieeKeyProbeTypeRow(HWND dlg, int id, const wchar_t* text);
@@ -2099,6 +2100,33 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
     std::vector<std::uint32_t> beforePx, afterPx;
     int w = 0, h = 0;
     if (readScreenClient(dlg, &beforePx, &w, &h) && screenIsUsable(beforePx)) {
+        // v1.3.0-beta8fix1 (bug BS-22w): THE CAPTURE JUDGES A DIALOG THIS PASS
+        // BUILT. The pass restored its own text scale (KieeKeyProbeFontScale
+        // on the recovery path above); if that restore left any control
+        // wearing a face of another scale, the page's plan was measured with
+        // the bigger face and the solver widened the window to a hybrid layout
+        // no pass built — the 35995128589 x64 finding (`client 974x689 app dpi
+        // 96`, `rowH 37`: the 150 % strip's metrics on a 96-dpi pass) on the
+        // very tree another run passed. That is a broken pre-condition of THIS
+        // check, not a blank page: report it as the invariant that owns the
+        // claim, with the count, BEFORE the repaint below can make the capture
+        // look decisive.
+        ++g_invChecks[11];
+        {
+            KieeKeyProbeScrollState(dlg, &st);
+            const int unmapped = KieeKeyProbeUnmappedFontCount();
+            if (unmapped > 0) {
+                harnessFail(11, findings,
+                            "the pass's own text-scale restore left " +
+                                std::to_string(unmapped) +
+                                " control(s) wearing a face of another scale — "
+                                "the capture below would judge a dialog this "
+                                "pass did not build",
+                            "scenario_screen_paint_fonts dpi " +
+                                std::to_string(st.dpi) + " client " +
+                                std::to_string(w) + "x" + std::to_string(h));
+            }
+        }
         ::RedrawWindow(dlg, nullptr, nullptr,
                        RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW |
                            RDW_FRAME);
@@ -2142,19 +2170,40 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
             std::vector<POINT> samples;               // every sample the capture covers
             std::vector<std::vector<POINT>> perCtl;   // ... grouped by control
             std::string evidence;
+            // v1.3.0-beta8fix1 (bug BS-22w, part two): THREE X-POINTS ON THE
+            // MIDDLE ROW ARE NOT A MEASUREMENT OF INK. On a wide control whose
+            // label sits at the left edge, all three quarter-points land in
+            // the empty space after the text — a control that IS painted reads
+            // `painted 0/3`, and a page of such controls reads as the blank
+            // page this check hunts. The samples are now a 4x3 grid strictly
+            // INSIDE the control's rectangle (fifths across for col 1..4,
+            // quarters down for row 1..3, so no point can touch a border): a
+            // painted control of any width has its ink inside the grid.
+            const auto interiorSamples =
+                [](int ex, int ey, int ew, int eh, int clientW, int clientH,
+                   std::vector<POINT>* out) {
+                    out->clear();
+                    for (int row = 1; row <= 3; ++row) {
+                        const int y = ey + eh * row / 4;
+                        for (int col = 1; col <= 4; ++col) {
+                            const int x = ex + ew * col / 5;
+                            if (x < 0 || y < 0 || x >= clientW || y >= clientH) {
+                                continue;
+                            }
+                            out->push_back(POINT{x, y});
+                        }
+                    }
+                };
             for (const HarnessCtl& c : s.ctls) {
                 if (judged >= 8) { break; }
                 if (!c.shown || c.regionEmpty || c.ew < 24 || c.eh < 8) { continue; }
-                const int y = c.ey + c.eh / 2;
                 std::vector<POINT> mine;
+                interiorSamples(c.ex, c.ey, c.ew, c.eh, w, h, &mine);
                 int differs = 0;
-                for (int k = 1; k <= 3; ++k) {
-                    const int x = c.ex + c.ew * k / 4;
-                    if (x < 0 || y < 0 || x >= w || y >= h) { continue; }
-                    mine.push_back(POINT{x, y});
+                for (const POINT& pt : mine) {
                     const std::uint32_t px =
-                        beforePx[static_cast<std::size_t>(y) * static_cast<std::size_t>(w) +
-                                 static_cast<std::size_t>(x)];
+                        beforePx[static_cast<std::size_t>(pt.y) * static_cast<std::size_t>(w) +
+                                 static_cast<std::size_t>(pt.x)];
                     if (px != bg) { ++differs; }
                 }
                 if (mine.empty()) { ++uncovered; continue; }
@@ -2243,16 +2292,15 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
                 const int cw = static_cast<int>(cr.right - cr.left);
                 const int chh = static_cast<int>(cr.bottom - cr.top);
                 if (cw < 24 || chh < 8) { continue; }
-                const int y = static_cast<int>(cr.top) + chh / 2;
-                int sampled = 0;
+                std::vector<POINT> mine;
+                interiorSamples(static_cast<int>(cr.left), static_cast<int>(cr.top),
+                                cw, chh, w, h, &mine);
+                const int sampled = static_cast<int>(mine.size());
                 int differs = 0;
-                for (int k = 1; k <= 3; ++k) {
-                    const int x = static_cast<int>(cr.left) + cw * k / 4;
-                    if (x < 0 || y < 0 || x >= w || y >= h) { continue; }
-                    ++sampled;
+                for (const POINT& pt : mine) {
                     const std::uint32_t px =
-                        beforePx[static_cast<std::size_t>(y) * static_cast<std::size_t>(w) +
-                                 static_cast<std::size_t>(x)];
+                        beforePx[static_cast<std::size_t>(pt.y) * static_cast<std::size_t>(w) +
+                                 static_cast<std::size_t>(pt.x)];
                     if (px != bg) { ++differs; }
                 }
                 if (sampled == 0) { continue; }

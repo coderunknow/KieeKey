@@ -378,6 +378,50 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "MUST be measurable at the",
     ),
     (
+        "BS-22k the pass audit stops checking the window against the plan",
+        "tools/ui_probe/ui_probe.cpp",
+        "            checkPlanHeld(a, ctls);",
+        "            /* seeded: the pass audit does not compare the two */",
+        "checkPlanHeld(a, ctls); is gone",
+    ),
+    (
+        "BS-22k the harness stops checking the window against the plan",
+        "tools/ui_probe/ui_probe.cpp",
+        "        if (KieeKeyProbeSolvedRect(dlg, c.id, solved) == 0 || solved[2] <= 0) { continue; }",
+        "        if (true) { continue; }   // seeded: the window is never compared",
+        "KieeKeyProbeSolvedRect(dlg, c.id, solved) is gone",
+    ),
+    (
+        "BS-22j the probe stops treating a page button as growable",
+        "tools/ui_probe/ui_probe.cpp",
+        "                         (isButton && (style & BS_MULTILINE) != 0);",
+        "                         false;   // seeded: buttons are not measured",
+        "(isButton && (style & BS_MULTILINE) != 0); is gone",
+    ),
+    (
+        "BS-22j a page button stops being allowed to wrap",
+        "src/app/main.cpp",
+        "        style |= BS_MULTILINE;",
+        "        /* seeded: page labels stay single-line */",
+        "style |= BS_MULTILINE; is gone",
+    ),
+    (
+        "BS-22j the solver stops growing page buttons",
+        "src/app/main.cpp",
+        "                        ((style & SS_TYPEMASK) != SS_OWNERDRAW)) || pageButton;",
+        "                        ((style & SS_TYPEMASK) != SS_OWNERDRAW));",
+        "|| pageButton; is gone",
+    ),
+    (
+        "BS-22j the wrapped height is measured without the button's inset",
+        "src/app/main.cpp",
+        "            const int wrapW = (buttonTextPad > 0)\n"
+        "                ? std::max(1, static_cast<int>(spec.rect.w) - buttonTextPad)\n"
+        "                : static_cast<int>(spec.rect.w);",
+        "            const int wrapW = static_cast<int>(spec.rect.w);   // seeded",
+        "buttonTextPad) is gone",
+    ),
+    (
         "BS-22i the strip-cycle note stops being counted",
         "tools/ui_probe/ui_probe.cpp",
         "        ++g_stripCycleUnavailable;",
@@ -415,10 +459,16 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "            spec.rect = ok::layout::clampPageChildWidth(spec.rect, clampLimitRight);\n"
         "        }\n"
         "        if (spec.growable) {\n"
-        "            spec.requiredHeight = measureStaticTextHeightPx(c, spec.rect.w);\n"
+        "            const int wrapW = (buttonTextPad > 0)\n"
+        "                ? std::max(1, static_cast<int>(spec.rect.w) - buttonTextPad)\n"
+        "                : static_cast<int>(spec.rect.w);\n"
+        "            spec.requiredHeight = measureStaticTextHeightPx(c, wrapW);\n"
         "        }",
         "        if (spec.growable) {\n"
-        "            spec.requiredHeight = measureStaticTextHeightPx(c, spec.rect.w);\n"
+        "            const int wrapW = (buttonTextPad > 0)\n"
+        "                ? std::max(1, static_cast<int>(spec.rect.w) - buttonTextPad)\n"
+        "                : static_cast<int>(spec.rect.w);\n"
+        "            spec.requiredHeight = measureStaticTextHeightPx(c, wrapW);\n"
         "        }\n"
         "        if (spec.tab != ok::layout::ControlSpec::kAlwaysVisible) {\n"
         "            spec.rect = ok::layout::clampPageChildWidth(spec.rect, clampLimitRight);\n"

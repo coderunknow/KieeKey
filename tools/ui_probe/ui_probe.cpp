@@ -764,6 +764,30 @@ void checkReach(const Audit& a, const std::vector<Ctl>& ctls, int travelPx) {
 }
 
 // ---- e) the visible text fits its (visible) box ----------------------------
+// ---- f) the window is the rectangle the solver asked for -------------------
+// v1.3.0-beta8fix1 (bug BS-22k): the harness half of this check lives in I6;
+// this is the pass-audit half, which also covers the states the harness does not
+// visit (the pass's own client, the scroll offsets) and carries the state prefix.
+void checkPlanHeld(const Audit& a, const std::vector<Ctl>& ctls) {
+    for (const Ctl& c : ctls) {
+        if (c.tabpage < 0 || c.tabpage != a.tab || !c.shown || c.id == 0) { continue; }
+        int solved[4] = {0, 0, 0, 0};
+        if (KieeKeyProbeSolvedRect(a.dlg, c.id, solved) == 0 || solved[2] <= 0) { continue; }
+        ++g_checks;
+        const int dw = c.w - solved[2];
+        const int dh = c.h - solved[3];
+        if (dw > 1 || dw < -1 || dh > 1 || dh < -1) {
+            a.findings->push_back({"win32_rect",
+                a.prefix + "id " + std::to_string(c.id) + " (" + c.klass + ") lives " +
+                rectStr(c.x, c.y, c.w, c.h) + " but the solver's baseline is " +
+                rectStr(solved[0], solved[1], solved[2], solved[3]) + " (" +
+                std::to_string(dw) + " px wider, " + std::to_string(dh) +
+                " px taller) — the plan and the window disagree, so every row below "
+                "is placed against a size this window does not have"});
+        }
+    }
+}
+
 void checkTextFit(const Audit& a, const std::vector<Ctl>& ctls) {
     for (const Ctl& c : ctls) {
         if (c.text.empty() || c.groupBox || !c.onScreen) { continue; }
@@ -1363,10 +1387,19 @@ void readHarnessState(HWND dlg, const std::vector<HWND>& all, int tab,
             const int clsLen = ::GetClassNameW(child, cls, 32);
             const LONG_PTR style = ::GetWindowLongPtrW(child, GWL_STYLE);
             const bool isStatic = (clsLen == 6 && ::lstrcmpiW(cls, L"STATIC") == 0);
-            const bool isGroupBox = (style & BS_GROUPBOX) == BS_GROUPBOX;
-            c.growable = isStatic && !isGroupBox &&
-                         ((style & SS_TYPEMASK) != SS_ICON) &&
-                         ((style & SS_TYPEMASK) != SS_OWNERDRAW);
+            const bool isButton = (clsLen == 6 && ::lstrcmpiW(cls, L"BUTTON") == 0);
+            const bool isGroupBox = isButton && (style & BS_GROUPBOX) == BS_GROUPBOX;
+            // v1.3.0-beta8fix1 (bug BS-22j): AND EVERY PAGE BUTTON. The solver
+            // grows a page button to its own measured wrapped height (mkCtl gives
+            // each of them BS_MULTILINE so Windows really draws the second line),
+            // so the app's measurement is a contract for them too — that is
+            // precisely the row the clip class was made of. Only page controls
+            // reach this loop (the id tables decide), and only they carry the
+            // bit, so the style IS the flag.
+            c.growable = (isStatic && !isGroupBox &&
+                          ((style & SS_TYPEMASK) != SS_ICON) &&
+                          ((style & SS_TYPEMASK) != SS_OWNERDRAW)) ||
+                         (isButton && (style & BS_MULTILINE) != 0);
         }
         HRGN rgn = ::CreateRectRgn(0, 0, 0, 0);
         if (rgn != nullptr) {
@@ -1616,6 +1649,35 @@ void harnessAssert(HWND dlg, const HarnessState& s, const char* op, int step,
             }
         }
     }
+    // I6 (second half, v1.3.0-beta8fix1 bug BS-22k) — AND THE WINDOW IS THE
+    // RECTANGLE THE SOLVER ASKED FOR.
+    //
+    // A layout is only as good as the windows it was applied to. The x64 run
+    // 35974677491 measured the case: `id 625 (ComboBox) 220,415 398x40 and id 627
+    // (Static) 55,449 583x121 overlap by 398x6 px solved 220,675 398x31` — the
+    // plan put the combo at 31 px, the window it really has is 40 px, and the row
+    // placed against the plan's 31 px is covered by the combo's real 9 px. Win32
+    // decides a combo box's height (its item height plus borders), so the plan and
+    // the window can disagree after the solve that applied them, whatever caused
+    // it. This check names the control and both rectangles in every state, so the
+    // next round has the mechanism instead of a 6 px overlap.
+    for (const HarnessCtl& c : s.ctls) {
+        if (!c.shown || c.id == 0) { continue; }
+        int solved[4] = {0, 0, 0, 0};
+        if (KieeKeyProbeSolvedRect(dlg, c.id, solved) == 0 || solved[2] <= 0) { continue; }
+        ++g_invChecks[6];
+        const int dw = c.w - solved[2];
+        const int dh = c.h - solved[3];
+        if (dw > 1 || dw < -1 || dh > 1 || dh < -1) {
+            fail(6, "id " + std::to_string(c.id) + " lives " + rectStr(c.x, c.y, c.w, c.h) +
+                    " but the solver's baseline is " +
+                    rectStr(solved[0], solved[1], solved[2], solved[3]) + " (" +
+                    std::to_string(dw) + " px wider, " + std::to_string(dh) +
+                    " px taller) — the plan and the window disagree, so every row "
+                    "below is placed against a size this window does not have");
+            break;
+        }
+    }
     // I7 — at offset 0 a control fully inside the viewport carries no region.
     if (a.haveBaseline != 0 && a.offset == 0 && s.havePage) {
         const RECT vp{a.viewportX, a.viewportY, a.viewportX + a.viewportW,
@@ -1643,9 +1705,10 @@ void harnessAssert(HWND dlg, const HarnessState& s, const char* op, int step,
     // the solver applies it to ONE class of control — `spec.growable`:
     // a STATIC that is not a group box, not SS_ICON and not SS_OWNERDRAW
     // (src/app/main.cpp, the build loop; `requiredHeight` is set there and nowhere
-    // else, and `autoFit` grows exactly those boxes). Asking any other control the
-    // same question measures a rendering it never performs: a Button, check box or
-    // edit is SINGLE-LINE (BS_MULTILINE is not set anywhere in this dialog), so a
+    // else, and `autoFit` grows exactly those boxes) — or (v1.3.0-beta8fix1, bug
+    // BS-22j) a PAGE BUTTON, which carries BS_MULTILINE and is grown to the same
+    // measurement. Asking any other control the same question measures a rendering
+    // it never performs: an EDIT or a chrome button is SINGLE-LINE, so a
     // wrapped height of 64 px for a 33 px box describes two lines Win32 never
     // draws — and the check fired 1313 times in the 77e8fea run on exactly that
     // arithmetic (`id 591 needs 64px but its box is 33px tall`, id 591 being
@@ -2818,6 +2881,7 @@ int main(int argc, char** argv) {
 
             checkSinglePage(a, ctls);
             checkRegions(a, ctls);
+            checkPlanHeld(a, ctls);
             checkOverlaps(a, ctls);
             checkReach(a, ctls, travelPx);
             checkTextFit(a, ctls);

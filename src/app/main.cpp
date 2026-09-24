@@ -4106,6 +4106,30 @@ LRESULT CALLBACK comboWheelProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
 HWND mkCtl(HWND parent, LPCWSTR cls, LPCWSTR text, DWORD style, int x, int y,
            int w, int h, HMENU id) {
+    // v1.3.0-beta8fix1 (bug BS-22j): A PAGE BUTTON'S LABEL IS ALLOWED TO WRAP.
+    //
+    // Win32 draws a button's text on ONE line unless the style says otherwise
+    // ("BS_MULTILINE: allows multiple lines of text in the button rectangle"),
+    // and this dialog's page rows are authored one line tall at 100 %: the
+    // labels are long enough that the authored width is what makes them fit.
+    // Any scale that makes the text bigger than the box — the probe's text-scale
+    // passes are exactly the "Make text bigger" setting a user can turn on — then
+    // clips the tail of the label with no ellipsis, no tooltip and no way to
+    // scroll to it. The x64 run 35974677491 measured seven of them, every one a
+    // checkbox/radio label: `id 551 (Button) needs 716px ... shows 583px of 583
+    // (box 55,381 583x25, font 32px, text 64 chars)` — and the app's OWN
+    // measurement of that same row said 64 px, i.e. it knew the label needs two
+    // lines where it had planned one (see the solver's `pageButton` growth).
+    //
+    // The bit is set HERE, for every page BUTTON and no chrome one, so the
+    // decision lives in one place and cannot drift from the tabs' id tables:
+    // the always-visible row (ON/OFF, OK/Cancel/Apply) keeps its one-line
+    // labels, which is also what keeps its fixed band height valid.
+    if (::lstrcmpiW(cls, L"BUTTON") == 0 && (style & BS_GROUPBOX) != BS_GROUPBOX &&
+        settingsPageOf(static_cast<int>(reinterpret_cast<INT_PTR>(id))) !=
+            ok::layout::ControlSpec::kAlwaysVisible) {
+        style |= BS_MULTILINE;
+    }
     // v1.3.0-beta8 (bug BS-16b): WS_CLIPSIBLINGS on EVERY child. The tab
     // control is created first and its rectangle is the WHOLE page area, so it
     // sits UNDER ~120 page controls: without this flag its own repaint (a tab
@@ -5317,9 +5341,36 @@ void solveSettingsLayout(HWND hwnd) {
             (clsLen == 6 && ::lstrcmpiW(cls, L"BUTTON") == 0) &&
             ((style & BS_GROUPBOX) == BS_GROUPBOX);
         spec.groupBox = isGroupBox;
-        spec.growable = isStatic && !isGroupBox &&
-                        ((style & SS_TYPEMASK) != SS_ICON) &&
-                        ((style & SS_TYPEMASK) != SS_OWNERDRAW);
+        // v1.3.0-beta8fix1 (bug BS-22j): A PAGE BUTTON'S LABEL WRAPS, SO ITS
+        // HEIGHT IS MEASURED LIKE A LABEL'S.
+        //
+        // The BS-23 width requirement below tells the row how wide its text
+        // would like to be, but a page can be narrower than that (a small window,
+        // a bigger text scale) and the row is clamped to the page. A button whose
+        // box is one line tall then paints ONE clipped line: the user loses the
+        // tail of a setting's name. Windows wraps it instead — mkCtl gives every
+        // page BUTTON BS_MULTILINE — so the row has to be grown to the height the
+        // wrapped text needs, exactly like a growable STATIC label. The width used
+        // for that measurement is the width the row will really have: the clamp
+        // above has already run (BS-22b), minus the inset Windows keeps for the
+        // button's own glyph (a checkbox/radio label starts after its box, ~24 px
+        // at 96 dpi; a push button's text is centred with a small inset). The
+        // chrome row is excluded: its band is fixed and its labels are authored
+        // to fit one line.
+        const bool isButton = (clsLen == 6 && ::lstrcmpiW(cls, L"BUTTON") == 0);
+        const DWORD buttonType = isButton ? (style & BS_TYPEMASK) : 0;
+        const bool checkLike = isButton && (buttonType == BS_AUTOCHECKBOX ||
+                                            buttonType == BS_CHECKBOX ||
+                                            buttonType == BS_AUTORADIOBUTTON ||
+                                            buttonType == BS_RADIOBUTTON ||
+                                            buttonType == BS_3STATE ||
+                                            buttonType == BS_AUTO3STATE);
+        const bool pageButton = isButton && !isGroupBox &&
+                                spec.tab != ok::layout::ControlSpec::kAlwaysVisible;
+        const int buttonTextPad = pageButton ? (checkLike ? S(24) : S(12)) : 0;
+        spec.growable = (isStatic && !isGroupBox &&
+                         ((style & SS_TYPEMASK) != SS_ICON) &&
+                         ((style & SS_TYPEMASK) != SS_OWNERDRAW)) || pageButton;
         // v1.3.0-beta8fix1 (bug BS-22c): A COMBO BOX'S HEIGHT IS WIN32'S DECISION.
         //
         // A CBS_DROPDOWNLIST combo sizes its own closed window to its item height
@@ -5349,7 +5400,10 @@ void solveSettingsLayout(HWND hwnd) {
             spec.rect = ok::layout::clampPageChildWidth(spec.rect, clampLimitRight);
         }
         if (spec.growable) {
-            spec.requiredHeight = measureStaticTextHeightPx(c, spec.rect.w);
+            const int wrapW = (buttonTextPad > 0)
+                ? std::max(1, static_cast<int>(spec.rect.w) - buttonTextPad)
+                : static_cast<int>(spec.rect.w);
+            spec.requiredHeight = measureStaticTextHeightPx(c, wrapW);
         }
         // v1.3.0-beta8fix1 (bug BS-23): and how wide the text wants to be. Only
         // single-line text (a wrapped label's width is its box, not its longest
@@ -5365,14 +5419,8 @@ void solveSettingsLayout(HWND hwnd) {
                 int pad = 0;
                 if (isStatic) {
                     pad = S(2);
-                } else if (clsLen == 6 && ::lstrcmpiW(cls, L"BUTTON") == 0) {
-                    const bool gnarly = (style & BS_TYPEMASK) == BS_AUTOCHECKBOX ||
-                                        (style & BS_TYPEMASK) == BS_CHECKBOX ||
-                                        (style & BS_TYPEMASK) == BS_AUTORADIOBUTTON ||
-                                        (style & BS_TYPEMASK) == BS_RADIOBUTTON ||
-                                        (style & BS_TYPEMASK) == BS_3STATE ||
-                                        (style & BS_TYPEMASK) == BS_AUTO3STATE;
-                    pad = gnarly ? S(24) : S(12);
+                } else if (isButton) {
+                    pad = checkLike ? S(24) : S(12);
                 } else if (clsLen == 6 && ::lstrcmpiW(cls, L"COMBOBOX") == 0) {
                     pad = S(8);
                 } else {

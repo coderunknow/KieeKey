@@ -841,6 +841,38 @@ def check(repo: Path):
             ('settingsSyncScrollbarLatch(', 'the re-decision of the bar pair (BS-22c)')):
         if needle not in main:
             failures.append(f"main.cpp: {needle} is gone — {why}")
+    # v1.3.0-beta8fix1 (bug BS-22j): A LABEL THAT DOES NOT FIT ITS BOX MUST BE
+    # ABLE TO WRAP. A page BUTTON's label is authored to fit one line at 100 %,
+    # and Win32 paints a button on ONE line unless BS_MULTILINE says otherwise —
+    # so at a bigger text scale (or in a narrower window) the tail of the label
+    # is clipped with no ellipsis and no way to reach it. The x64 run 35974677491
+    # measured seven of them; the app's own measurement of one of those rows said
+    # 64 px where the plan had put a 25 px box. The fix has two halves that must
+    # both be present, so both are nailed here: mkCtl gives every page BUTTON the
+    # bit, and the solver grows the row to the wrapped height measured in the
+    # width the row will really have (after the clamp, minus the button's own
+    # text inset).
+    for needle, why in (
+            ('style |= BS_MULTILINE;',
+             'the button style that lets Windows wrap a page label (BS-22j) — '
+             'without it the grown row paints one clipped line and the height is '
+             'wasted'),
+            ('settingsPageOf(static_cast<int>(reinterpret_cast<INT_PTR>(id))) !=',
+             'the page/chrome split that decides WHICH buttons may wrap (BS-22j) — '
+             'the always-visible row keeps its fixed band and its one-line labels'),
+            ('const bool pageButton = isButton && !isGroupBox &&',
+             'the row class the solver must treat as growable (BS-22j)'),
+            ('const int buttonTextPad = pageButton ? (checkLike ? S(24) : S(12)) : 0;',
+             "the inset Windows keeps for the button's own glyph, so the label is "
+             'measured in the width it will really wrap in (BS-22j)'),
+            ('? std::max(1, static_cast<int>(spec.rect.w) - buttonTextPad)',
+             'the wrapped height measured in the row WIDTH the plan will apply — '
+             'after the clamp (BS-22b), which is the whole point (BS-22j)'),
+            ('((style & SS_TYPEMASK) != SS_OWNERDRAW)) || pageButton;',
+             'the growable flag that lets autoFit give the wrapping button its '
+             'measured height (BS-22j)')):
+        if needle not in main:
+            failures.append(f"main.cpp: {needle} is gone — {why}")
     for test in ('testRegionFollowsTheLiveRectangleNotTheBaseline()',
                  'testPageChildWidthIsClampedToThePage()'):
         if test not in read_or_empty(repo, 'tests/test_dialog_layout.cpp'):
@@ -905,6 +937,18 @@ def check(repo: Path):
             ('if (measurable) {',
              'the guard that runs the full invariant battery on the wrapped state '
              'even where the height growth is not measurable (BS-22i)'),
+            ('checkPlanHeld(a, ctls);',
+             'the pass audit\'s half of the plan-vs-window check (BS-22k) — the '
+             'harness sees the states it drives, the pass audit sees the pass\'s own '
+             'client and every scroll offset'),
+            ('KieeKeyProbeSolvedRect(dlg, c.id, solved)',
+             'the harness half of that check: the window against the rectangle the '
+             'solver applied, in every state, with both rectangles named (BS-22k)'),
+            ('(isButton && (style & BS_MULTILINE) != 0);',
+             "the probe's growable inference for page buttons (BS-22j) — the solver "
+             'grows them, so the app\'s own measurement is a contract for them and '
+             'I12 must judge them (a check that skips the rows the clip class was '
+             'made of is a check that never fires)'),
             ('int chromePainted = 0;',
              'the chrome half of that evidence (BS-22h) — a capture with the chrome '
              'and not the page is a page that was never painted, while one with '

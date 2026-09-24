@@ -1336,6 +1336,43 @@ void testLiveHeightIsPlannedAndPushesTheRowsBelow() {
         assert(plan.rects[1].h == 40);
         assert(plan.rects[2].y == 213 + 15);
     }
+    // 3b. v1.3.0-beta8fix1 (bug BS-22p): A WINDOW THAT IS SHORTER THAN THE AUTHORED
+    //     BOX IS PLANNED SHORTER TOO. The first BS-22l took the live height only
+    //     when it was larger, and the 35983713630 run measured the other direction
+    //     306 times (`id 596 lives 420,550 330x36 but the solver's baseline is
+    //     420,550 330x38`): the plan has to describe the window. Growth is still
+    //     measured against the AUTHORED box, so the rows below keep the spacing the
+    //     table gave them and a shorter window never pulls them up (a layout that
+    //     depended on the previous solve is the BS-22 defect).
+    {
+        ControlSpec shortCombo;
+        shortCombo.id = 504; shortCombo.tab = 0;
+        shortCombo.rect = Rect{128, 186, 210, 45};   // authored: taller than the window
+        shortCombo.liveHeight = 36;
+        std::vector<ControlSpec> v{shortCombo, label(627, 233, 20)};
+        const LayoutPlan plan = autoFit(v, 100, 600, 900);
+        assert(plan.rects[0].h == 36);          // the window, not the authored 45
+        assert(plan.rects[1].y == 233);         // and the row below does NOT move up
+        assert(plan.grownControls == 0);
+        assert(plan.totalGrowthPx == 0);
+    }
+    // 3c. and WHATEVER height the window reports (38 in one pass, 36 in the next) the
+    //     plan describes that window and the row below clears it — the shift follows
+    //     the real box by the same 2 px, which is the whole point: the alternative is
+    //     a row placed inside the combo's window (the 398x6 px overlap of
+    //     35980164209).
+    {
+        std::vector<ControlSpec> a{combo(186, 38), label(627, 213, 20)};
+        std::vector<ControlSpec> b{combo(186, 36), label(627, 213, 20)};
+        const LayoutPlan pa = autoFit(a, 100, 600, 900);
+        const LayoutPlan pb = autoFit(b, 100, 600, 900);
+        assert(pa.rects[0].h == 38 && pb.rects[0].h == 36);   // each pass describes its window
+        assert(pa.totalGrowthPx == 13 && pb.totalGrowthPx == 11);
+        assert(pa.rects[1].y == 213 + 13);
+        assert(pb.rects[1].y == 213 + 11);
+        assert(pa.rects[0].bottom() <= pa.rects[1].y);        // never inside the window
+        assert(pb.rects[0].bottom() <= pb.rects[1].y);
+    }
     // 4. the page's depth follows the real bottom, so the scroll range covers it
     //    (the row is not merely drawn lower — it is reachable).
     {

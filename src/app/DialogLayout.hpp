@@ -428,10 +428,19 @@ inline constexpr int kRowGapPx = 6;
         if (c.groupBox) { continue; }
         int want = c.rect.h;
         if (c.growable && c.requiredHeight > want) { want = c.requiredHeight; }
-        if (c.liveHeight > want) { want = c.liveHeight; }
+        // v1.3.0-beta8fix1 (bug BS-22p): AND THE WINDOW'S OWN SIZE WINS — IN BOTH
+        // DIRECTIONS. Taking it only when it was LARGER (the first BS-22l) left the
+        // plan describing a window that does not exist as soon as the control got
+        // SHORTER than the authored box, which is exactly what the 35983713630 run
+        // measured 306 times: `[I6] id 596 lives 420,550 330x36 but the solver's
+        // baseline is 420,550 330x38`. The plan describes the window, so the height
+        // is the measured one; only GROWTH moves the rows below (a control that got
+        // shorter does not pull its neighbours up, which would make the layout
+        // depend on the previous solve).
+        if (c.liveHeight > 0) { want = c.liveHeight; }
+        plan.rects[i].h = want;
         if (want > c.rect.h) {
-            growth[i] = want - c.rect.h;
-            plan.rects[i].h = want;
+            growth[i] = want - c.rect.h;          // only growth moves the rows below
             ++plan.grownControls;
             plan.totalGrowthPx += growth[i];
         }

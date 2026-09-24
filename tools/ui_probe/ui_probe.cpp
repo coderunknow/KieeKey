@@ -988,6 +988,52 @@ bool readScreenClient(HWND hwnd, std::vector<std::uint32_t>* px, int* w, int* h)
 // the frame on the desktop is not the frame the app draws (occlusion, a sibling
 // that repainted over the page, a capture of another window), and if it paints
 // nothing either, the app really has no content there.
+// v1.3.0-beta8fix1 (bug BS-22q): ONE RENDER, READ ANYWHERE.
+//
+// The screen-paint evidence needs more than a count of "points that differ from the
+// background sample": it has to say WHAT each frame shows at a point inside the
+// page but outside every control (is the page painted at all?) as well as at the
+// controls' own rows. Both answers come from the same WM_PRINTCLIENT frame, so this
+// returns the pixels themselves; the helpers below read them.
+bool renderCapture(HWND hwnd, std::vector<std::uint32_t>* px, int* w, int* h) {
+    if (hwnd == nullptr || px == nullptr || w == nullptr || h == nullptr) { return false; }
+    RECT client{};
+    if (::GetClientRect(hwnd, &client) == FALSE) { return false; }
+    const int cw = static_cast<int>(client.right - client.left);
+    const int ch = static_cast<int>(client.bottom - client.top);
+    if (cw <= 0 || ch <= 0 || cw > 4096 || ch > 4096) { return false; }
+    HDC screen = ::GetDC(nullptr);
+    if (screen == nullptr) { return false; }
+    HDC mem = ::CreateCompatibleDC(screen);
+    BITMAPINFO bi{};
+    bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bi.bmiHeader.biWidth = cw;
+    bi.bmiHeader.biHeight = -ch;
+    bi.bmiHeader.biPlanes = 1;
+    bi.bmiHeader.biBitCount = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+    void* bits = nullptr;
+    HBITMAP bmp = ::CreateDIBSection(screen, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+    bool ok = false;
+    if (bmp != nullptr && bits != nullptr && mem != nullptr) {
+        HGDIOBJ old = ::SelectObject(mem, bmp);
+        ::SendMessageW(hwnd, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(mem),
+                       static_cast<LPARAM>(PRF_CLIENT | PRF_CHILDREN | PRF_ERASEBKGND));
+        ::GdiFlush();
+        px->assign(static_cast<const std::uint32_t*>(bits),
+                   static_cast<const std::uint32_t*>(bits) +
+                       static_cast<std::size_t>(cw) * static_cast<std::size_t>(ch));
+        *w = cw;
+        *h = ch;
+        ok = true;
+        if (old != nullptr) { ::SelectObject(mem, old); }
+    }
+    if (bmp != nullptr) { ::DeleteObject(bmp); }
+    if (mem != nullptr) { ::DeleteDC(mem); }
+    ::ReleaseDC(nullptr, screen);
+    return ok;
+}
+
 int renderPaintCountAt(HWND hwnd, const std::vector<POINT>& pts, std::uint32_t bg) {
     if (hwnd == nullptr || pts.empty()) { return 0; }
     RECT client{};
@@ -1968,6 +2014,31 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
         ++g_fuzzChecks;
         harnessAssert(dlg, s, "scenario_after_recovery_ops", 0, 0, 100, findings);
     }
+    // v1.3.0-beta8fix1 (bug BS-22q): AND THE APP IS TOLD WHAT THE MONITOR SAYS NOW.
+    //
+    // Clearing the dpi override does not notify the dialog — the app goes on
+    // believing the 150 % scale it was told about, inside the pass's own window,
+    // until something re-reads the monitor. That is not a state a session produces
+    // (a real display change always tells the window) and it is not one of the
+    // recovery paths this scenario drives, yet the I8/I11 captures below were taken
+    // in it: the 35983713630 run's screen-paint finding is `client 543x689 app dpi
+    // 144` — the pass's own 96-dpi-sized window with the app laying out at 150 %,
+    // every row measured against a page it does not have. The restore is the same
+    // one R1 (BS-19) holds a pass to: the state this pass audits, at this pass's
+    // scale. Whatever the capture then shows is the app's own doing.
+    KieeKeyProbeSimulateDpi(dlg, nativeDpi);
+    KieeKeyProbeFontScale(dlg, 100);
+    KieeKeyProbeResize(dlg, static_cast<int>(origClient.right),
+                       static_cast<int>(origClient.bottom));
+    KieeKeyProbeReflowNow(dlg);
+    KieeKeyProbeSetOffset(dlg, 0);
+    KieeKeyProbeSelectTab(dlg, deepestTab);
+    {
+        HarnessState s;
+        readHarnessState(dlg, all, deepestTab, &s);
+        ++g_fuzzChecks;
+        harnessAssert(dlg, s, "scenario_screen_paint_state", 0, 0, 100, findings);
+    }
 
     // I8/I11 — the real screen, not a WM_PRINTCLIENT render: a forced full
     // repaint must not change one pixel, and the page must paint content.
@@ -2087,6 +2158,38 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
                 ++chromeJudged;
                 if (differs > 0) { ++chromePainted; }
             }
+            // v1.3.0-beta8fix1 (bug BS-22q): AND THE PAGE ITSELF, BOTH FRAMES. A
+            // point INSIDE the page but outside every control answers a question the
+            // controls' rows cannot: whether the page area is painted at all. The
+            // 35983713630 run's finding (`8 visible controls, none of their middle
+            // rows differs from the page background`) is consistent with two very
+            // different states — the page painted and its content missing, or the
+            // page never painted (the area showing the parent's background) — and
+            // this is the measurement that tells them apart. `pageBare` is two
+            // pixels inside the page's top-left corner: no control is authored
+            // there (the page's rows start at S(28)/S(30)).
+            std::uint32_t bareScreen = 0;
+            std::uint32_t bareRender = 0;
+            bool bareInCapture = false;
+            const int bareX = static_cast<int>(s.page.left) + 2;
+            const int bareY = static_cast<int>(s.page.top) + 2;
+            if (bareX >= 0 && bareY >= 0 && bareX < w && bareY < h) {
+                bareScreen =
+                    beforePx[static_cast<std::size_t>(bareY) * static_cast<std::size_t>(w) +
+                             static_cast<std::size_t>(bareX)];
+                bareInCapture = true;
+            }
+            {
+                std::vector<std::uint32_t> rpx;
+                int rw = 0, rh = 0;
+                if (renderCapture(dlg, &rpx, &rw, &rh) && bareX < rw && bareY < rh) {
+                    bareRender = rpx[static_cast<std::size_t>(bareY) *
+                                         static_cast<std::size_t>(rw) +
+                                     static_cast<std::size_t>(bareX)];
+                }
+            }
+            const bool pagePaintedOnScreen = bareInCapture && (bareScreen != bg);
+            const bool pagePaintedInRender = (bareRender != bg);
             // v1.3.0-beta8fix1 (bug BS-22m): AND THE SAME POINTS ON THE OTHER
             // FRAME. `afterPx` is the capture taken AFTER the forced full repaint
             // above (I8 already compares the two frames) — so a page that shows ink
@@ -2122,6 +2225,14 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
                 std::to_string(renderPaintCountAt(dlg, samples, bg)) + "/" +
                 std::to_string(samples.size()) + " chrome " +
                 std::to_string(chromePainted) + "/" + std::to_string(chromeJudged) +
+                " pageBare screen=" +
+                (bareInCapture ? std::to_string(bareScreen) : std::string("n/a")) +
+                " bg=" + std::to_string(bg) +
+                " render=" + std::to_string(bareRender) +
+                " pagePainted=" + std::string(pagePaintedOnScreen ? "screen"
+                                                                 : (pagePaintedInRender
+                                                                        ? "render-only"
+                                                                        : "neither")) +
                 " paintedAfter " +
                 (paintedAfter < 0 ? std::string("n/a")
                                   : std::to_string(paintedAfter) + "/" +
@@ -2158,6 +2269,15 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
                                 "frame taken after RedrawWindow() and none of them does "
                                 "in the frame before it — the content exists, and the "
                                 "app\'s own repaint path did not put it on the screen",
+                            ground);
+            } else if (judged >= 3 && painted == 0 && !pagePaintedOnScreen) {
+                harnessFail(11, findings,
+                            "the page area is the WINDOW's background: the capture shows "
+                            "the window's own background inside the page and at all " +
+                                std::to_string(judged) + " visible controls' rows, while the "
+                                "app's own render paints the page there — the page (and "
+                                "everything in it) was never put on the screen in this "
+                                "state",
                             ground);
             } else if (judged >= 3 && painted == 0) {
                 harnessFail(11, findings,

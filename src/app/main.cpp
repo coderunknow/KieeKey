@@ -5327,6 +5327,21 @@ void solveSettingsLayout(HWND hwnd) {
                 }
             }
         }
+        // v1.3.0-beta8fix1 (bug BS-22o): WHAT THE CONTROL SAYS IS THE TRUTH.
+        // `planTabs` decides whether the labels OUGHT to wrap; only the tab control
+        // knows whether they DID. Win32 can keep nine narrow labels in one row even
+        // with TCS_MULTILINE set (BS-22h measured it: `page top 114 strip 14/14
+        // rows 2`), and the other way round a taller single row moves the display
+        // rectangle with no wrap at all (35982159995: `page top 92 -> 100`,
+        // `rows 1`). Reading TCM_GETROWCOUNT after the re-layout above makes the
+        // reported row count describe the control instead of the plan's intention —
+        // it is what the probe reports as `stripRows` and what the strip cycle's
+        // wrap half is judged by. A control that answers 0 (should not happen)
+        // keeps the plan's number.
+        {
+            const LRESULT rows = ::SendMessageW(tabCtl, TCM_GETROWCOUNT, 0, 0);
+            if (rows > 0) { g_settingsScroll.stripRows = static_cast<int>(rows); }
+        }
     }
 
     // -- 1b. Pages: measure every label, autoFit. --

@@ -930,6 +930,12 @@ def check(repo: Path):
              'combo box answers SetWindowPos with its own height, and a plan that '
              'describes a window that does not exist is what put the row below it '
              'inside the combo (`[overlap] ... overlap by 398x6 px`)'),
+            ('const LRESULT rows = ::SendMessageW(tabCtl, TCM_GETROWCOUNT, 0, 0);',
+             "the app reading the tab control's OWN row count (BS-22o) — the plan's "
+             '`multiline` flag is an intention (Win32 can keep nine narrow labels in '
+             'one row even with TCS_MULTILINE set) and the display rectangle moves for '
+             'a taller single row too, so neither may stand in for "the labels '
+             'wrapped"'),
             ('++g_settingsSolvePass;',
              'the bounded second solve that reads the height the window really has '
              '(BS-22l) — the same guard the BS-14 width pass uses, so this is one '
@@ -948,11 +954,19 @@ def check(repo: Path):
             "(BS-22l) — the solve must stay a pure function of the authored layout "
             "(BS-22), and the design wants the authored box plus a measured height: "
             'ControlSpec::liveHeight exists for exactly that')
-    if 'if (c.liveHeight > want) { want = c.liveHeight; }' not in layout:
+    if 'if (c.liveHeight > 0) { want = c.liveHeight; }' not in layout:
         failures.append(
             "src/app/DialogLayout.hpp: the plan no longer takes the height the WINDOW "
-            "has (BS-22l) — a combo's real box then describes a window that does not "
-            "exist, and the row below it is placed inside it")
+            "has (BS-22l/BS-22p) — a combo's real box then describes a window that "
+            "does not exist, and the row below it is placed inside it. The window's "
+            "measurement wins in BOTH directions: taking it only when it was larger "
+            "left the plan at the authored height for a window that had got shorter "
+            "(35983713630: `id 596 lives 420,550 330x36 but the solver's baseline is "
+            "420,550 330x38`, 306 states)")
+    if 'plan.rects[i].h = want;' not in layout:
+        failures.append(
+            "src/app/DialogLayout.hpp: the plan no longer carries the height it "
+            "decided (BS-22l/BS-22p)")
     if 'std::vector<int> growth(controls.size(), 0);' not in layout:
         failures.append(
             "src/app/DialogLayout.hpp: the growth pass (the shift pass's input) is gone "
@@ -1017,6 +1031,22 @@ def check(repo: Path):
              '(a control off the captured frame is not evidence of a blank page) '
              '(BS-22g/BS-22m — the samples are now kept per control so the same '
              'points can be read on the post-repaint frame too)'),
+            ('const bool pagePaintedOnScreen = bareInCapture && (bareScreen != bg);',
+             'the measurement that tells "the page painted and its content is missing" '
+             'from "the page area is the window\'s background" (BS-22q) — a point '
+             'inside the page but outside every control, read on both frames'),
+            ("the page area is the WINDOW's background",
+             'the finding that names the second state (BS-22q)'),
+            ('KieeKeyProbeSimulateDpi(dlg, nativeDpi);\n    KieeKeyProbeFontScale(dlg, 100);\n'
+             '    KieeKeyProbeResize(dlg, static_cast<int>(origClient.right),\n'
+             '                       static_cast<int>(origClient.bottom));\n'
+             '    KieeKeyProbeReflowNow(dlg);\n'
+             '    KieeKeyProbeSetOffset(dlg, 0);\n'
+             '    KieeKeyProbeSelectTab(dlg, deepestTab);',
+             'the restore that puts the display-change scenario back at the state this '
+             'pass audits before it captures (BS-22q) — clearing the dpi override does '
+             'not notify the dialog, so the capture used to measure a 96-dpi window '
+             'the app believed was 144'),
             ('paintedAfter > 0) {',
              'the screen-paint finding telling a frame that never showed the content '
              'from one that showed it only after RedrawWindow() (BS-22m) — 35981669220 '

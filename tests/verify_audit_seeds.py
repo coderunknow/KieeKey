@@ -400,6 +400,20 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "renderedPts > 0 is gone",
     ),
     (
+        "BS-22q the screen-paint check stops naming the page area",
+        "tools/ui_probe/ui_probe.cpp",
+        "            const bool pagePaintedOnScreen = bareInCapture && (bareScreen != bg);",
+        "            const bool pagePaintedOnScreen = true;   // seeded: never ask",
+        "the measurement that tells",
+    ),
+    (
+        "BS-22o the app stops reading the control's own row count",
+        "src/app/main.cpp",
+        "            const LRESULT rows = ::SendMessageW(tabCtl, TCM_GETROWCOUNT, 0, 0);",
+        "            const LRESULT rows = 0;   // seeded: the plan decides alone",
+        "the app reading the tab control's OWN row count",
+    ),
+    (
         "BS-22n a combo that resizes itself asks for no reflow",
         "src/app/main.cpp",
         "    if (msg == WM_WINDOWPOSCHANGED && !g_settingsReflowPosted && g_settingsSolveDepth == 0) {",
@@ -424,7 +438,7 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
     (
         "BS-22l the live height stops moving the rows below it",
         "src/app/DialogLayout.hpp",
-        "        if (c.liveHeight > want) { want = c.liveHeight; }",
+        "        if (c.liveHeight > 0) { want = c.liveHeight; }",
         "        // seeded: the rows below stay on the authored box",
         "the plan no longer takes the height the WINDOW has",
     ),

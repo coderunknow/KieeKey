@@ -303,9 +303,10 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
     (
         "BS-22c the strip cycle stops proving it wrapped",
         "tools/ui_probe/ui_probe.cpp",
-        "            if (measurable && (wrapGrow <= 0 || wrapped.page.top < basePageTop)) {",
+        "            if (measurable &&\n"
+        "                (!wrappedRows || wrapGrow <= 0 || wrapped.page.top < basePageTop)) {",
         "            if (false) {   // seeded: no proof the labels wrapped",
-        "the proof that the strip really grew with the labels",
+        "the cycle refusing to report green when the labels did not wrap",
     ),
     (
         "BS-22c the latch stops following the window",
@@ -362,11 +363,11 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "no longer compares the shift with the value it started from",
     ),
     (
-        "BS-22h the strip cycle stops calibrating the client",
+        "BS-22o the strip cycle stops proving the labels wrap",
         "tools/ui_probe/ui_probe.cpp",
-        "        stripW = std::max(stripW0 * 2 / 3, stripW * 4 / 5);",
-        "        /* seeded: no search for a client where the strip can grow */",
-        "stripW = std::max(stripW0 * 2 / 3, stripW * 4 / 5); is gone",
+        "        stripW = std::max(wideW, stripW * 4 / 5);   // still one row: narrower",
+        "        /* seeded: no search for a client where the labels wrap */",
+        "stripW = std::max(wideW, stripW * 4 / 5);   // still one row: narrower is gone",
     ),
     (
         "BS-22g the blank-page finding stops cross-checking the render",
@@ -397,6 +398,13 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "                chromeJudged > 0 && chromePainted == 0) {",
         "            if (judged >= 3 && painted == 0) {",
         "renderedPts > 0 is gone",
+    ),
+    (
+        "BS-22n a combo that resizes itself asks for no reflow",
+        "src/app/main.cpp",
+        "    if (msg == WM_WINDOWPOSCHANGED && !g_settingsReflowPosted && g_settingsSolveDepth == 0) {",
+        "    if (false) {   // seeded: the resize the app did not ask for is ignored",
+        "is gone",
     ),
     (
         "BS-22m the strip cycle squeezes the pass into a 96-dpi-tall window",
@@ -481,7 +489,7 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
     (
         "BS-22g the screen check counts controls its capture does not cover",
         "tools/ui_probe/ui_probe.cpp",
-        "                if (sampled == 0) { ++uncovered; continue; }",
+        "                if (mine.empty()) { ++uncovered; continue; }",
         "                /* seeded: an uncovered control counts as painted nothing */",
         "skipping a control its capture does not cover",
     ),

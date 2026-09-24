@@ -2014,35 +2014,34 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
             int judged = 0;
             int painted = 0;
             int uncovered = 0;
-            std::vector<POINT> samples;   // every sample the capture really covers
+            std::vector<POINT> samples;               // every sample the capture covers
+            std::vector<std::vector<POINT>> perCtl;   // ... grouped by control
             std::string evidence;
             for (const HarnessCtl& c : s.ctls) {
                 if (judged >= 8) { break; }
                 if (!c.shown || c.regionEmpty || c.ew < 24 || c.eh < 8) { continue; }
                 const int y = c.ey + c.eh / 2;
-                int sampled = 0;
+                std::vector<POINT> mine;
                 int differs = 0;
                 for (int k = 1; k <= 3; ++k) {
                     const int x = c.ex + c.ew * k / 4;
                     if (x < 0 || y < 0 || x >= w || y >= h) { continue; }
-                    ++sampled;
+                    mine.push_back(POINT{x, y});
                     const std::uint32_t px =
                         beforePx[static_cast<std::size_t>(y) * static_cast<std::size_t>(w) +
                                  static_cast<std::size_t>(x)];
                     if (px != bg) { ++differs; }
                 }
-                if (sampled == 0) { ++uncovered; continue; }
+                if (mine.empty()) { ++uncovered; continue; }
                 ++judged;
-                for (int k = 1; k <= 3; ++k) {
-                    const int x = c.ex + c.ew * k / 4;
-                    if (x < 0 || y < 0 || x >= w || y >= h) { continue; }
-                    samples.push_back(POINT{x, y});
-                }
+                samples.insert(samples.end(), mine.begin(), mine.end());
+                perCtl.push_back(mine);
                 if (differs > 0) { ++painted; }
                 if (evidence.size() < 220) {
                     evidence += " " + std::to_string(c.id) + " " +
                                 rectStr(c.ex, c.ey, c.ew, c.eh) + " painted " +
-                                std::to_string(differs) + "/" + std::to_string(sampled);
+                                std::to_string(differs) + "/" +
+                                std::to_string(mine.size());
                 }
             }
             // v1.3.0-beta8h: and the SAME capture is read on the always-visible
@@ -2088,6 +2087,29 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
                 ++chromeJudged;
                 if (differs > 0) { ++chromePainted; }
             }
+            // v1.3.0-beta8fix1 (bug BS-22m): AND THE SAME POINTS ON THE OTHER
+            // FRAME. `afterPx` is the capture taken AFTER the forced full repaint
+            // above (I8 already compares the two frames) — so a page that shows ink
+            // there and background here is not a page that paints nothing: it is a
+            // page whose content did not reach the screen until something forced it
+            // to repaint. That is a different claim about a different mechanism, and
+            // it is reported as its own finding instead of being folded into "the
+            // page is blank".
+            int paintedAfter = -1;
+            if (!afterPx.empty() && afterPx.size() == beforePx.size()) {
+                paintedAfter = 0;
+                for (const std::vector<POINT>& mine : perCtl) {
+                    bool ink = false;
+                    for (const POINT& pt : mine) {
+                        const std::uint32_t px =
+                            afterPx[static_cast<std::size_t>(pt.y) *
+                                        static_cast<std::size_t>(w) +
+                                    static_cast<std::size_t>(pt.x)];
+                        if (px != bg) { ink = true; }
+                    }
+                    if (ink) { ++paintedAfter; }
+                }
+            }
             const std::string ground =
                 "scenario_screen_paint tab " + std::to_string(deepestTab) + " client " +
                 std::to_string(w) + "x" + std::to_string(h) + " app dpi " +
@@ -2100,6 +2122,10 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
                 std::to_string(renderPaintCountAt(dlg, samples, bg)) + "/" +
                 std::to_string(samples.size()) + " chrome " +
                 std::to_string(chromePainted) + "/" + std::to_string(chromeJudged) +
+                " paintedAfter " +
+                (paintedAfter < 0 ? std::string("n/a")
+                                  : std::to_string(paintedAfter) + "/" +
+                                        std::to_string(judged)) +
                 evidence;
             ++g_invChecks[11];
             const int renderedPts = renderPaintCountAt(dlg, samples, bg);
@@ -2124,6 +2150,15 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
                              "\"rendered\": " + std::to_string(renderedPts) + ", "
                              "\"pagePainted\": " + std::to_string(painted) + ", "
                              "\"chromeJudged\": " + std::to_string(chromeJudged) + "}");
+            } else if (judged >= 3 && painted == 0 && paintedAfter > 0) {
+                harnessFail(11, findings,
+                            "the page was blank until it was forced to repaint: " +
+                                std::to_string(paintedAfter) + " of " +
+                                std::to_string(judged) + " visible rows show ink in the "
+                                "frame taken after RedrawWindow() and none of them does "
+                                "in the frame before it — the content exists, and the "
+                                "app\'s own repaint path did not put it on the screen",
+                            ground);
             } else if (judged >= 3 && painted == 0) {
                 harnessFail(11, findings,
                             "the page paints background only: " + std::to_string(judged) +
@@ -2261,30 +2296,47 @@ int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCo
     // kind, the eb68391 run 81 of the second, `rows 1`, `stripShift seen 0 px`).
     // Six bounded steps, each one asking the APP's own plan (stripRows), and the
     // per-tab cycle still proves both halves for every tab.
-    const int stripW0 = std::max(wideW, ::MulDiv(wideW, static_cast<int>(passDpi), 96));
-    int stripW = stripW0;
-    bool measurable = false;
+    int stripW = std::max(wideW, ::MulDiv(wideW, static_cast<int>(passDpi), 96));
     KieeKeyProbeSimulateDpi(dlg, passDpi);
-    KieeKeyProbeFontScale(dlg, 100);
-    for (int attempt = 0; attempt < 6; ++attempt) {
+    // (a) A CLIENT WHERE THE STRIP IS ONE ROW at 100 %, asked of the APP's own plan
+    //     (`stripRows` — the harness may not assume it, the 904334c and eb68391 runs
+    //     both measured states where it was wrong). If the labels do not fit, give
+    //     the tab more room until they do.
+    for (int attempt = 0; attempt < 4; ++attempt) {
         KieeKeyProbeResize(dlg, stripW, clientH);
         KieeKeyProbeReflowNow(dlg);
+        KieeKeyProbeFontScale(dlg, 100);
         KieeKeyProbeSetOffset(dlg, 0);
         HarnessState probeState;
         readHarnessState(dlg, all, 0, &probeState);
-        const int shiftBefore = probeState.app.stripShift[0];
-        KieeKeyProbeFontScale(dlg, kWrapFontPct);
+        if (probeState.app.stripRows <= 1) { break; }
+        stripW += stripW / 4;
+    }
+    // (b) ... AND ONE WHERE THE SAME LABELS WRAP AT 150 %: both halves of the
+    //     transition have to be reachable at once, and the pass client alone is not
+    //     enough at every scale (at 120 dpi it already wraps at 100 %). The proof is
+    //     again the app's row count — the one signal that means "the labels do not
+    //     fit" — not the display-rectangle arithmetic, which can move for a taller
+    //     row without any wrap at all (35982159995 measured exactly that: page top
+    //     92 -> 100 with `rows 1` and no shift recorded, because a 1.5x font makes
+    //     the single row 8 px taller).
+    bool measurable = false;
+    for (int attempt = 0; attempt < 6 && !measurable; ++attempt) {
+        KieeKeyProbeResize(dlg, stripW, clientH);
         KieeKeyProbeReflowNow(dlg);
+        KieeKeyProbeFontScale(dlg, kWrapFontPct);
+        KieeKeyProbeSetOffset(dlg, 0);
+        HarnessState probeState;
         readHarnessState(dlg, all, 0, &probeState);
-        const bool grows = probeState.app.stripShift[0] > shiftBefore;
+        measurable = probeState.app.stripRows > 1;
         KieeKeyProbeFontScale(dlg, 100);
-        if (grows) { measurable = true; break; }
-        // At this width the labels fit the tab either way, so there is no
-        // transition to measure: try a narrower client.
-        stripW = std::max(stripW0 * 2 / 3, stripW * 4 / 5);
+        if (!measurable) {
+            stripW = std::max(wideW, stripW * 4 / 5);   // still one row: narrower
+        }
     }
     KieeKeyProbeResize(dlg, stripW, clientH);
     KieeKeyProbeReflowNow(dlg);
+    KieeKeyProbeFontScale(dlg, 100);
     KieeKeyProbeSetOffset(dlg, 0);
 
     // v1.3.0-beta8fix1 (bug BS-22i): A PASS THAT CANNOT GROW THE STRIP REPORTS
@@ -2368,11 +2420,20 @@ int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCo
             // control's display rectangle, `stripRows` from the plan), and the page
             // top may not move UP while the labels grow.
             const int wrapGrow = wrapped.app.stripShift[tab] - baseShift;
+            // v1.3.0-beta8fix1 (bug BS-22o): AND THE WRAP ITSELF IS THE APP'S OWN ROW
+            // COUNT. `stripShift` moving is what the user sees, but only `stripRows`
+            // says the labels did not fit: a 1.5x font makes the single row taller
+            // and the display rectangle moves without any wrap (see the calibration
+            // above). The scenario's calibration proved a client where this must be
+            // > 1, so a state that reports one row here is a state where the labels
+            // really did fit — and the cycle would be measuring nothing.
+            const bool wrappedRows = wrapped.app.stripRows > 1;
             if (measurable) {
                 harnessAssert(dlg, wrapped, "strip_cycle_wrapped", cycle, 0,
                               kWrapFontPct, findings);
             }
-            if (measurable && (wrapGrow <= 0 || wrapped.page.top < basePageTop)) {
+            if (measurable &&
+                (!wrappedRows || wrapGrow <= 0 || wrapped.page.top < basePageTop)) {
                 // A cycle that cannot reach the transition may not report it as
                 // corrected: the state below is one where the strip is still one
                 // row (or nothing was pushed down), so there is nothing to see.

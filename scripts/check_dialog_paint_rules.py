@@ -902,6 +902,28 @@ def check(repo: Path):
     # below it is what the 35980164209 run measured twice — `[I6] id 504 lives
     # 128,297 210x33 but the solver's baseline is 128,297 210x25` and `[overlap]
     # id 625 (ComboBox) ... and id 627 (Static) ... overlap by 398x6 px`.
+    # v1.3.0-beta8fix1 (bug BS-22n): A SIZE THE COMBO DECIDED IS A REFLOW REQUEST.
+    # Its live height changes again AFTER the solve (font change, theme change), and
+    # the plan then describes a window that does not exist — the 35981669220 run
+    # measured it 306 times, all combos, both signs (`lives 330x36 but the solver's
+    # baseline is 330x38`). The control's own notification has to ask for a reflow.
+    for needle, why in (
+            ('if (msg == WM_WINDOWPOSCHANGED && !g_settingsReflowPosted && '
+             'g_settingsSolveDepth == 0) {',
+             'the combo subclass asking for a reflow when the window it lives in '
+             'resized itself (BS-22n) — posted, guarded against re-entry, and only '
+             'when the app is not solving'),
+            ('::PostMessageW(dlg, WM_APP + 78, 0, 0);',
+             'the posted reflow request itself (BS-22n)'),
+            ('case WM_APP + 78:', 'the handler for that request (BS-22n)'),
+            ('bool settingsWindowFitsPlan(HWND child) noexcept {',
+             'the question the subclass asks — the live SIZE against the planned '
+             'rectangle (BS-22n); a move is not a resize and is ignored'),
+            ('const SettingsSolveScope solvingHere;',
+             'the scope guard that keeps the solver\'s own SetWindowPos calls from '
+             'looking like a control resizing itself (BS-22n)')):
+        if needle not in blank_comments(main):
+            failures.append(f"main.cpp: {needle} is gone — {why}")
     for needle, why in (
             ('if (static_cast<int>(live.right - live.left) != plan.rects[i].w ||',
              'the check that a window took the size it was given (BS-22l) — a '
@@ -970,19 +992,37 @@ def check(repo: Path):
     for needle, why in (
             ('::MulDiv(wideW, static_cast<int>(passDpi), 96)',
              'the dpi-scaled client each pass starts from (BS-22g)'),
-            ('const bool grows = probeState.app.stripShift[0] > shiftBefore;',
-             'the calibration that finds a client where growing the text really '
-             "grows the strip (BS-22h) — the displayed row count is Win32's answer "
-             'to the label widths, so a scenario may not assume it'),
-            ('stripW = std::max(stripW0 * 2 / 3, stripW * 4 / 5);',
-             'the bounded search for that client (BS-22h)'),
+            ('measurable = probeState.app.stripRows > 1;',
+             'the calibration that finds a client where the SAME labels wrap at the '
+             'wrap font (BS-22o) — the plan\'s row count is the only signal that means '
+             '"the labels do not fit": a 1.5x font also makes a single row taller and '
+             'moves the display rectangle without any wrap (35982159995 measured '
+             '`page top 92 -> 100` with `rows 1`)'),
+            ('stripW += stripW / 4;',
+             'the widen step of that search, for the scale where the labels do not fit '
+             'one row even at 100 % (BS-22o)'),
+            ('stripW = std::max(wideW, stripW * 4 / 5);   // still one row: narrower',
+             'the narrow step, for a client so wide that 150 % still fits (BS-22o)'),
+            ('const bool wrappedRows = wrapped.app.stripRows > 1;',
+             'the wrap proof itself — the per-tab cycle judges the app\'s own row count '
+             'as well as the page moving (BS-22o)'),
+            ('!wrappedRows || wrapGrow <= 0 || wrapped.page.top < basePageTop)) {',
+             'the cycle refusing to report green when the labels did not wrap or the '
+             'page did not pay for it (BS-22o/BS-22c)'),
             ('back.app.stripShift[tab] != baseShift',
              'the shrink direction compared with the same displayed height the '
              'cycle started from (BS-22h)'),
-            ('if (sampled == 0) { ++uncovered; continue; }',
+            ('if (mine.empty()) { ++uncovered; continue; }',
              'the screen-paint check skipping a control its capture does not cover '
              '(a control off the captured frame is not evidence of a blank page) '
-             '(BS-22g)'),
+             '(BS-22g/BS-22m — the samples are now kept per control so the same '
+             'points can be read on the post-repaint frame too)'),
+            ('paintedAfter > 0) {',
+             'the screen-paint finding telling a frame that never showed the content '
+             'from one that showed it only after RedrawWindow() (BS-22m) — 35981669220 '
+             'reported `the page paints background only` for a state where the app\'s '
+             'own repaint put every one of those rows on the screen, so the two states '
+             'have to be told apart by measurement'),
             ('if (judged < 3) {',
              'the screen-paint check refusing to report green when it could not '
              'judge three whole controls (BS-22g)'),

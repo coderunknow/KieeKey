@@ -649,6 +649,16 @@ int rowNeededHeightPx(HWND ctl) {
 
 // Set by the timer's row writers, consumed once per tick by the reflow below.
 bool g_settingsRowGrowthPending = false;
+// v1.3.0-beta8fix1 (bug BS-22n): set when a control RESIZED ITSELF and the size it
+// took no longer matches the plan (see comboWheelProc / settingsWindowFitsPlan).
+// The reflow is posted, so this flag is also what keeps a burst of child
+// notifications down to one request; the message handler clears it.
+bool g_settingsReflowPosted = false;
+// How deep the solver currently is. A control's own WM_WINDOWPOSCHANGED arrives
+// WHILE the solver is applying rectangles (SetWindowPos is synchronous), and the
+// baseline it would be compared against is half-written — so a resize seen from
+// inside a solve is not evidence of anything and asks for nothing.
+int g_settingsSolveDepth = 0;
 // id -> the required height this row last asked for. A row that still does not
 // fit after the solver has had its say must NOT keep asking every 500 ms:
 // re-solving is visible work (it moves every child and can move the window), and
@@ -4008,6 +4018,10 @@ void settingsUnshiftPageToAuthored() noexcept;
 // v1.3.0-beta8fix1 (bug BS-22c): the ONE writer of the bar latch + WS_VSCROLL
 // pair (defined with the solve machinery; the baseline drop uses it above that).
 bool settingsApplyScrollbarLatch(HWND hwnd, bool wantScroll, const char* who);
+// v1.3.0-beta8fix1 (bug BS-22n): does this child still have the rectangle the
+// solver planned for it? Asked by the combo subclass when the control resizes
+// itself (defined with the solve machinery, which owns the baseline).
+bool settingsWindowFitsPlan(HWND child) noexcept;
 bool settingsSyncScrollbarLatch(HWND hwnd);
 int settingsPageOf(int id);          // defined with the solve machinery below
 void settingsRepaintAll(HWND hwnd);  // ditto
@@ -4099,6 +4113,32 @@ LRESULT CALLBACK comboWheelProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         const HWND parent = ::GetParent(hwnd);
         if (parent != nullptr) { ::SendMessageW(parent, msg, wParam, lParam); }
         return 0;
+    }
+    // v1.3.0-beta8fix1 (bug BS-22n): A SIZE THE COMBO DECIDED IS A REFLOW REQUEST.
+    //
+    // A CBS_DROPDOWNLIST sizes its own window — at creation, and again on every
+    // font or theme change — and it does it when it processes the message, which
+    // can be AFTER the solve that sized the row. The plan then describes a window
+    // that does not exist and everything below it is placed against a height the
+    // window does not have. The 35981669220 x64 run measured 306 states of exactly
+    // that, all combos, in both directions:
+    //
+    //   [I6] id 596 lives 420,550 330x36 but the solver's baseline is
+    //        420,550 330x38 (0 px wider, -2 px taller)
+    //
+    // The solve reads the live size back before it returns (see the BS-22l pass in
+    // solveSettingsLayout), which catches a resize that happened during the solve.
+    // This catches the one that happens after it, from the control's own
+    // notification, and asks for the same reflow the runtime text growth does
+    // (BS-12) — POSTED, so it can never re-enter the pass that caused it, and only
+    // when the app is not already solving.
+    if (msg == WM_WINDOWPOSCHANGED && !g_settingsReflowPosted && g_settingsSolveDepth == 0) {
+        const HWND dlg = ::GetParent(hwnd);
+        if (dlg != nullptr && g.hSettings == dlg && !settingsWindowFitsPlan(hwnd)) {
+            g_settingsReflowPosted = true;
+            g_settingsRowGrowthPending = true;   // the timer's own path agrees
+            ::PostMessageW(dlg, WM_APP + 78, 0, 0);
+        }
     }
     if (msg == WM_NCDESTROY) { ::RemoveWindowSubclass(hwnd, comboWheelProc, 1); }
     return ::DefSubclassProc(hwnd, msg, wParam, lParam);
@@ -5144,10 +5184,42 @@ int settingsPageOf(int id) {
 
 // idempotent (re-solving an already-solved dialog changes nothing).
 void solveSettingsLayout(HWND hwnd);
+// v1.3.0-beta8fix1 (bug BS-22n): the solver's own depth, as a scope guard so every
+// early return (the BS-14 width pass, the BS-22l size read-back) releases it.
+struct SettingsSolveScope {
+    SettingsSolveScope() noexcept { ++g_settingsSolveDepth; }
+    ~SettingsSolveScope() noexcept { --g_settingsSolveDepth; }
+    SettingsSolveScope(const SettingsSolveScope&) = delete;
+    SettingsSolveScope& operator=(const SettingsSolveScope&) = delete;
+};
+
+// v1.3.0-beta8fix1 (bug BS-22n): does this child still have the rectangle the
+// solver planned for it? Only the SIZE is compared: scrolling moves a child
+// (applySettingsScrollOffset) and a move is not a resize. A child the baseline
+// does not know (a chrome control, or a page child before the first solve) is not
+// a mismatch — the question is about the plan the solver wrote, and it has not
+// written one for that child.
+bool settingsWindowFitsPlan(HWND child) noexcept {
+    if (child == nullptr || g_settingsScroll.solved.empty()) { return true; }
+    RECT rc{};
+    if (::GetWindowRect(child, &rc) == FALSE) { return true; }
+    const int w = static_cast<int>(rc.right - rc.left);
+    const int h = static_cast<int>(rc.bottom - rc.top);
+    for (const auto& entry : g_settingsScroll.solved) {
+        if (entry.first != child) { continue; }
+        return std::abs(w - entry.second.w) <= 1 && std::abs(h - entry.second.h) <= 1;
+    }
+    return true;
+}
+
 void solveSettingsLayout(HWND hwnd) {
     if (hwnd == nullptr) { return; }
     HWND tabCtl = ::GetDlgItem(hwnd, IDC_TAB);
     if (tabCtl == nullptr) { return; }
+    // Every WM_WINDOWPOSCHANGED this function causes is its own doing: the
+    // baseline is half-written while it runs, so the subclass' question (BS-22n)
+    // must not be asked about it.
+    const SettingsSolveScope solvingHere;
 
     const int dpi = static_cast<int>(g_settingsDpi != 0 ? g_settingsDpi : 96);
     const auto S = [dpi](int px) { return ::MulDiv(px, dpi, 96); };
@@ -7096,6 +7168,16 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         }
 
 #if defined(KIEEKEY_UI_PROBE)
+        case WM_APP + 78: {   // v1.3.0-beta8fix1 (BS-22n): a child resized itself
+            // Posted by comboWheelProc() when a combo box took a size the plan did
+            // not give it. One reflow, and the flag is cleared first so the reflow's
+            // own SetWindowPos calls cannot queue another.
+            g_settingsReflowPosted = false;
+            g_settingsRowGrowthPending = false;
+            reflowSettingsLayoutPreservingScroll(hwnd);
+            return 0;
+        }
+
         case WM_APP + 77:   // KieeKeyProbeFreezeUi: the probe owns the dialog now
             ::KillTimer(hwnd, 1);
             return 0;

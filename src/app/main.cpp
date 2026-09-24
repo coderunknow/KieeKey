@@ -4673,6 +4673,7 @@ struct SettingsScrollState {
     int  stripPlanClientW = 0;            // client width the plan was made with
     int  stripMeasuredRows = 0;           // the CONTROL's answer (item rects)
     int  stripMeasureCount = 0;           // how many solves re-read it
+    int  stripPlanFontPx = 0;             // height of the face the labels were measured with
     int  viewportBottom = 0;              // viewport.bottom after the refit
     int  offset = 0;                      // current scroll offset (px)
     int  range  = 0;                      // current tab's scroll range (px)
@@ -5252,7 +5253,42 @@ void solveSettingsLayout(HWND hwnd) {
     const int tabWidth = rcTab.right - rcTab.left;
     HDC tdc = ::GetDC(tabCtl);
     if (tdc != nullptr) {
-        HGDIOBJ oldFont = ::SelectObject(tdc, uiFont());
+        // v1.3.0-beta8fix1 (bug BS-22v): THE LABELS ARE MEASURED WITH THE FONT THE
+        // CONTROL DRAWS THEM WITH — the same source of truth the page rows already
+        // use (`measureSingleLineWidthPx` / `measureStaticTextHeightPx` select
+        // `WM_GETFONT` of the control).
+        //
+        // This block was the one measurement in the solve that selected `uiFont()`
+        // instead, and the two diverge the moment anything puts a different face on
+        // the tab control — the harness's text-scale path does exactly that, and so
+        // does any real "system text size" state the app's own face has not caught
+        // up with. The plan then measures 100 % labels while the control draws 1.5x
+        // ones: it answers `one row` for a strip the control has already wrapped,
+        // `stripRows` and the style bit describe a strip that is not on the screen,
+        // and the grow/shrink transition cannot be planned at all. The x64 run
+        // 68544ea measured it in the probe's own numbers: at a 150 % text scale the
+        // plan still asked `need 559` — the 100 % width, at every scale — while the
+        // control's item rectangles said two rows, so the strip cycle reported
+        // `not measurable ... a1:700/683 plan1(559/643) ctl1 ml0` and the native
+        // pass could not reach its two-row state.
+        //
+        // In the other direction the same divergence is the user-visible class this
+        // round exists for: a plan that says the labels fit while the control wraps
+        // or clips them hands the solver a strip that is not there.
+        HFONT tabLabelFont =
+            reinterpret_cast<HFONT>(::SendMessageW(tabCtl, WM_GETFONT, 0, 0));
+        if (tabLabelFont == nullptr) { tabLabelFont = uiFont(); }
+        HGDIOBJ oldFont = ::SelectObject(tdc, tabLabelFont);
+        // v1.3.0-beta8fix1 (bug BS-22v): and the height it measures at, so the probe
+        // can hold the two together (I1): the plan's font and the control's font must
+        // be the same face, and a state where they are not is reported with both
+        // numbers instead of being inferred from a row count that came out wrong.
+        {
+            TEXTMETRICW tm{};
+            if (::GetTextMetricsW(tdc, &tm) != FALSE) {
+                g_settingsScroll.stripPlanFontPx = static_cast<int>(tm.tmHeight);
+            }
+        }
         std::vector<int> labelW(9, 0);
         wchar_t buf[64];
         for (int i = 0; i < 9; ++i) {
@@ -8645,6 +8681,7 @@ struct KieeKeyProbeScrollStateT {
     int stripMeasuredRows;
     int stripMeasureCount;
     int stripStyleMultiline;
+    int stripPlanFontPx;
 };
 
 // The probe's mirror of this struct must agree with it byte for byte: a field
@@ -8688,6 +8725,7 @@ extern "C" void KieeKeyProbeScrollState(HWND dlg, KieeKeyProbeScrollStateT* out)
     out->stripPlanClientW = g_settingsScroll.stripPlanClientW;
     out->stripMeasuredRows = g_settingsScroll.stripMeasuredRows;
     out->stripMeasureCount = g_settingsScroll.stripMeasureCount;
+    out->stripPlanFontPx = g_settingsScroll.stripPlanFontPx;
     if (dlg != nullptr) {
         const HWND tabForStyle = ::GetDlgItem(dlg, IDC_TAB);
         out->stripStyleMultiline =

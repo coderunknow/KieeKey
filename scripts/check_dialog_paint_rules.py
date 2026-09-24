@@ -954,6 +954,18 @@ def check(repo: Path):
              'with TCM_GETROWCOUNT 2 and a two-row strip, so a rule that insists the '
              'last item is the lower one reads a wrapped control as one row and the '
              'probe\'s strip cycle can never reach its two-row state at native scale'),
+            ('::SelectObject(tdc, tabLabelFont);',
+             "the tab labels measured with the font the CONTROL wears (BS-22v) — "
+             '`WM_GETFONT`, the same source of truth measureSingleLineWidthPx() and '
+             'measureStaticTextHeightPx() already use for the page rows. This block '
+             'was the one measurement in the solve that selected uiFont() instead, so '
+             'the moment anything puts a different face on the tabs control (the '
+             "harness's text-scale path, any system-text-size state the app's own "
+             'face has not caught up with) the plan measures 100 % labels while the '
+             'control draws 1.5x ones: it answers `one row` for a strip the control '
+             'has already wrapped and the grow/shrink transition cannot be planned '
+             '(68544ea: `need 559` at every scale, `a1:700/683 plan1(559/643) '
+             'ctl1 ml0`)'),
             ('::RedrawWindow(hwnd, &pageRc, nullptr,',
              'the synchronous page repaint after the tab control is put at the bottom '
              'of the sibling order (BS-22t) — a z-order change reveals the page '
@@ -1021,6 +1033,14 @@ def check(repo: Path):
             ('const int wrapGrow = wrapped.app.stripShift[tab] - baseShift;',
              "the app's own displayed strip height as the comparison base "
              '(BS-22h)'),
+            ('the plan measured the nine tab labels with a different font ',
+             'the invariant that holds the two faces together (BS-22v/I1) — a plan '
+             'whose labels were measured with a font the control does not wear is '
+             'reported with both heights, instead of being inferred from a row count '
+             'that came out wrong'),
+            ('tabControlFontHeightPx(dlg)',
+             'the height of the face the tabs control wears right now (BS-22v) — the '
+             'other half of that comparison, measured the way the app measures it'),
             ('" plan " + std::to_string(st.app.stripPlanRows) + " need " +',
              "the strip decision's own arithmetic in the cycle's not-measurable note "
              "(BS-22u): the plan's row count and the width it decided on, beside the "

@@ -409,6 +409,20 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "the rule that both halves of the transition have to hold on that state",
     ),
     (
+        "BS-22v the tab labels are measured with the app's face, not the control's",
+        "src/app/main.cpp",
+        "        HGDIOBJ oldFont = ::SelectObject(tdc, tabLabelFont);",
+        "        HGDIOBJ oldFont = ::SelectObject(tdc, uiFont());   /* seeded */",
+        "the tab labels measured with the font the CONTROL wears",
+    ),
+    (
+        "BS-22v the probe stops comparing the plan's face with the control's",
+        "tools/ui_probe/ui_probe.cpp",
+        "                        \"the plan measured the nine tab labels with a different font \"",
+        "                        \"\" +   /* seeded: the two faces are not compared */",
+        "the invariant that holds the two faces together",
+    ),
+    (
         "BS-22u the strip cycle stops reporting the plan's own arithmetic",
         "tools/ui_probe/ui_probe.cpp",
         "            \" plan \" + std::to_string(st.app.stripPlanRows) + \" need \" +",

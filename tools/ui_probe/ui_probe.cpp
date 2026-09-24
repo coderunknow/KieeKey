@@ -124,6 +124,7 @@ struct ProbeScrollStateT {          // mirrors KieeKeyProbeScrollStateT (main.cp
     int stripMeasuredRows;
     int stripMeasureCount;
     int stripStyleMultiline;
+    int stripPlanFontPx;
 };
 extern "C" void KieeKeyProbeScrollState(HWND dlg, ProbeScrollStateT* out);
 // v1.3.0-beta8fix1 (bug BS-22c): the app answers with the size of ITS struct, and
@@ -2532,6 +2533,25 @@ std::string whereOf(const HarnessState& s, int tab, unsigned passDpi, int cycle,
            std::to_string(s.app.stripRows) + " step " + std::to_string(step);
 }
 
+// v1.3.0-beta8fix1 (bug BS-22v): THE FACE THE TAB CONTROL WEARS RIGHT NOW, measured
+// the same way the app measures it (select the control's font into a DC and read
+// its metrics). The plan must use THIS face for the nine labels; a plan that
+// measures 100 % labels while the control draws 1.5x ones answers "one row" for a
+// strip that is already wrapped.
+int tabControlFontHeightPx(HWND dlg) {
+    const HWND tabCtl = ::GetDlgItem(dlg, IDC_TAB);
+    if (tabCtl == nullptr) { return 0; }
+    HDC dc = ::GetDC(tabCtl);
+    if (dc == nullptr) { return 0; }
+    HGDIOBJ of = ::SelectObject(dc, reinterpret_cast<HGDIOBJ>(
+        ::SendMessageW(tabCtl, WM_GETFONT, 0, 0)));
+    TEXTMETRICW tm{};
+    const BOOL got = ::GetTextMetricsW(dc, &tm);
+    if (of != nullptr) { ::SelectObject(dc, of); }
+    ::ReleaseDC(tabCtl, dc);
+    return got != FALSE ? static_cast<int>(tm.tmHeight) : 0;
+}
+
 int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCount,
                                unsigned passDpi, unsigned nativeDpi,
                                const RECT& origClient,
@@ -2681,6 +2701,36 @@ int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCo
     readHarnessState(dlg, all, 0, &baseFinal);
     const bool baseOneRowFinal = baseFinal.app.stripRows <= 1;
 
+    // v1.3.0-beta8fix1 (bug BS-22v): AND THE PLAN MEASURED THE LABELS WITH THE FONT
+    // THE CONTROL DRAWS THEM WITH.
+    //
+    // This is the property the native pass was failing on without saying so: the
+    // plan answered `need 559` at every text scale (the 100 % width) while the
+    // control's item rectangles said two rows, so the strip's grow/shrink transition
+    // could not be planned and the cycle had nothing to measure
+    // (`a1:700/683 plan1(559/643) ctl1 ml0`, run 68544ea). A row count alone cannot
+    // say WHY the plan and the control disagree; these two heights can, and they are
+    // the same number in every state a user can reach.
+    {
+        HarnessState fontState;
+        readHarnessState(dlg, all, 0, &fontState);
+        const int ctlFontPx = tabControlFontHeightPx(dlg);
+        // A check counts only when it could measure both faces; "no finding" must
+        // never be a state where nothing was read.
+        if (ctlFontPx > 0 && fontState.app.stripPlanFontPx > 0) {
+            ++g_invChecks[1];
+        }
+        if (ctlFontPx > 0 && fontState.app.stripPlanFontPx > 0 &&
+            std::abs(ctlFontPx - fontState.app.stripPlanFontPx) > 1) {
+            harnessFail(1, findings,
+                        "the plan measured the nine tab labels with a different font "
+                        "than the tabs control draws them with: plan " +
+                            std::to_string(fontState.app.stripPlanFontPx) + " px, "
+                            "control " + std::to_string(ctlFontPx) + " px",
+                        whereOf(fontState, 0, passDpi, 0, 0, stripW, clientH, 100));
+        }
+    }
+
     // v1.3.0-beta8fix1 (bug BS-22i): A PASS THAT CANNOT GROW THE STRIP REPORTS
     // ITSELF. At 120/144 dpi the runner's screen (768 px tall) cannot give the
     // window the height the scale needs: the tab control is capped by
@@ -2709,7 +2759,9 @@ int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCo
             std::to_string(st.app.stripPlanAvailable) + " px at client " +
             std::to_string(st.app.stripPlanClientW) + " ctl " +
             std::to_string(st.app.stripMeasuredRows) + " ml " +
-            std::to_string(st.app.stripStyleMultiline) + " measured " +
+            std::to_string(st.app.stripStyleMultiline) + " font " +
+            std::to_string(st.app.stripPlanFontPx) + "/" +
+            std::to_string(tabControlFontHeightPx(dlg)) + " measured " +
             std::to_string(st.app.stripMeasureCount) + "x" + calib +
             " page " + rectStr(st.page) + " strip shift " +
             std::to_string(st.app.stripShift[0]) + " px rows " +

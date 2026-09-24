@@ -4654,6 +4654,25 @@ struct SettingsScrollState {
     // or the display rectangle it answers with describes the strip that was there
     // before the change (BS-10 for the grow, BS-22d for the shrink).
     int  stripRows = 1;
+    // v1.3.0-beta8fix1 (bug BS-22u): THE STRIP DECISION'S OWN ARITHMETIC.
+    //
+    // The probe's strip cycle asks the app "is the strip one row?" and the answer
+    // it got back (35991357693) described a state the dialog did not keep: the cycle
+    // read ONE row, stopped looking, and the state it then judged had TWO — with
+    // `rows 2` in the very same note. Two different things can produce that shape
+    // and they need different repairs: the PLAN can be wrong (the labels fit in one
+    // row by the app's own arithmetic, the control wraps them anyway because its
+    // per-item padding is bigger than the plan assumed), or the RECORD can be stale
+    // (the plan re-decided the strip at a width the dialog does not keep — the
+    // scrollbar takes 17 px of the client AFTER the plan was made). These numbers
+    // say which: what the plan decided, the width it was given to decide with, and
+    // how often the control's own answer has been re-read.
+    int  stripPlanRows = 1;               // the plan's row count (1 = one row)
+    int  stripPlanRequired = 0;           // width the chosen labels need, one row
+    int  stripPlanAvailable = 0;          // width the plan had to fit them into
+    int  stripPlanClientW = 0;            // client width the plan was made with
+    int  stripMeasuredRows = 0;           // the CONTROL's answer (item rects)
+    int  stripMeasureCount = 0;           // how many solves re-read it
     int  viewportBottom = 0;              // viewport.bottom after the refit
     int  offset = 0;                      // current scroll offset (px)
     int  range  = 0;                      // current tab's scroll range (px)
@@ -5253,6 +5272,17 @@ void solveSettingsLayout(HWND hwnd) {
         ::ReleaseDC(tabCtl, tdc);
         const ok::layout::TabPlan tabPlan = ok::layout::planTabs(
             labelW, labelW, tabWidth - S(16), S(18), S(22), S(6));
+        // v1.3.0-beta8fix1 (bug BS-22u): and the arithmetic it decided on, for the
+        // probe's strip cycle (see SettingsScrollState::stripPlanRows).
+        g_settingsScroll.stripPlanRows = tabPlan.rows;
+        g_settingsScroll.stripPlanRequired = tabPlan.requiredWidth;
+        g_settingsScroll.stripPlanAvailable = tabPlan.availableWidth;
+        {
+            RECT cliPlan{};
+            ::GetClientRect(hwnd, &cliPlan);
+            g_settingsScroll.stripPlanClientW =
+                static_cast<int>(cliPlan.right - cliPlan.left);
+        }
         const LONG_PTR tabStyle = ::GetWindowLongPtrW(tabCtl, GWL_STYLE);
         // v1.3.0-beta8 (bug BS-10): the style bit alone does NOT re-lay the control
         // out - TCM_ADJUSTRECT keeps answering with the OLD display rectangle until
@@ -5383,7 +5413,11 @@ void solveSettingsLayout(HWND hwnd) {
                     if (dy >= rowH / 2 || -dy >= rowH / 2) { rows = 2; }
                 }
             }
-            if (rows > 0) { g_settingsScroll.stripRows = rows; }
+            if (rows > 0) {
+                g_settingsScroll.stripRows = rows;
+                g_settingsScroll.stripMeasuredRows = rows;
+                ++g_settingsScroll.stripMeasureCount;
+            }
         }
     }
 
@@ -8601,6 +8635,16 @@ struct KieeKeyProbeScrollStateT {
     // "the labels did not wrap" findings describe a transition that DID happen:
     // `stripShift seen 29 px`).
     int stripRows;
+    // v1.3.0-beta8fix1 (bug BS-22u): the strip decision's own arithmetic — the
+    // plan's rows and the width it decided on, plus the tabs control's answer and
+    // how often it has been re-read (see SettingsScrollState in main.cpp).
+    int stripPlanRows;
+    int stripPlanRequired;
+    int stripPlanAvailable;
+    int stripPlanClientW;
+    int stripMeasuredRows;
+    int stripMeasureCount;
+    int stripStyleMultiline;
 };
 
 // The probe's mirror of this struct must agree with it byte for byte: a field
@@ -8638,7 +8682,19 @@ extern "C" void KieeKeyProbeScrollState(HWND dlg, KieeKeyProbeScrollStateT* out)
     out->stripRelayouts = g_probeStripRelayouts;
 #endif
     out->stripRows = g_settingsScroll.stripRows;
+    out->stripPlanRows = g_settingsScroll.stripPlanRows;
+    out->stripPlanRequired = g_settingsScroll.stripPlanRequired;
+    out->stripPlanAvailable = g_settingsScroll.stripPlanAvailable;
+    out->stripPlanClientW = g_settingsScroll.stripPlanClientW;
+    out->stripMeasuredRows = g_settingsScroll.stripMeasuredRows;
+    out->stripMeasureCount = g_settingsScroll.stripMeasureCount;
     if (dlg != nullptr) {
+        const HWND tabForStyle = ::GetDlgItem(dlg, IDC_TAB);
+        out->stripStyleMultiline =
+            (tabForStyle != nullptr &&
+             (::GetWindowLongPtrW(tabForStyle, GWL_STYLE) & TCS_MULTILINE) != 0)
+                ? 1
+                : 0;
         out->styleVScroll =
             (::GetWindowLongPtrW(dlg, GWL_STYLE) & WS_VSCROLL) != 0 ? 1 : 0;
         SCROLLINFO si{};

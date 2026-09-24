@@ -409,6 +409,13 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "the rule that both halves of the transition have to hold on that state",
     ),
     (
+        "BS-22u the strip cycle stops reporting the plan's own arithmetic",
+        "tools/ui_probe/ui_probe.cpp",
+        "            \" plan \" + std::to_string(st.app.stripPlanRows) + \" need \" +",
+        "            \"\" +   /* seeded: the plan's numbers are not reported */",
+        "the strip decision",
+    ),
+    (
         "BS-22t the revealed page is left unrepainted after the z-order change",
         "src/app/main.cpp",
         "        ::RedrawWindow(hwnd, &pageRc, nullptr,\n"

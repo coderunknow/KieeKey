@@ -1020,7 +1020,17 @@ def check(repo: Path):
              'cycle that cannot grow it is measuring a strip that did not move'),
             ('const int wrapGrow = wrapped.app.stripShift[tab] - baseShift;',
              "the app's own displayed strip height as the comparison base "
-             '(BS-22h)')):
+             '(BS-22h)'),
+            ('" plan " + std::to_string(st.app.stripPlanRows) + " need " +',
+             "the strip decision's own arithmetic in the cycle's not-measurable note "
+             "(BS-22u): the plan's row count and the width it decided on, beside the "
+             "tabs control's own answer and the client the dialog kept. Without it a "
+             "`not measurable` note cannot say whether the PLAN disagrees with the "
+             "control (its per-item padding is smaller than the control's) or the "
+             "RECORD is stale (the plan re-decided the strip at a width the dialog "
+             "does not keep — the scrollbar takes 17 px of the client after the "
+             "decision): 35991357693 left `rows 2` in the same note the cycle had "
+             "read as one row")):
         if needle not in probe:
             failures.append(f"tools/ui_probe/ui_probe.cpp: {needle} is gone — {why}")
     # v1.3.0-beta8fix1 (bug BS-22g/BS-22h): A MEASUREMENT MUST PROVE ITS

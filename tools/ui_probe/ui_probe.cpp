@@ -115,6 +115,15 @@ struct ProbeScrollStateT {          // mirrors KieeKeyProbeScrollStateT (main.cp
     int styleWrites;
     int latchDrifts;
     int stripRows;                  // the last plan's row count (1 = one row)
+    // v1.3.0-beta8fix1 (bug BS-22u): the strip decision's own arithmetic (see
+    // SettingsScrollState in main.cpp) — MUST MIRROR THE APP'S STRUCT, same order.
+    int stripPlanRows;
+    int stripPlanRequired;
+    int stripPlanAvailable;
+    int stripPlanClientW;
+    int stripMeasuredRows;
+    int stripMeasureCount;
+    int stripStyleMultiline;
 };
 extern "C" void KieeKeyProbeScrollState(HWND dlg, ProbeScrollStateT* out);
 // v1.3.0-beta8fix1 (bug BS-22c): the app answers with the size of ITS struct, and
@@ -2590,13 +2599,30 @@ int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCo
     //     (`stripRows` — the harness may not assume it, the 904334c and eb68391 runs
     //     both measured states where it was wrong). If the labels do not fit, give
     //     the tab more room until they do.
+    // v1.3.0-beta8fix1 (bug BS-22u): AND EVERY ATTEMPT IS RECORDED, WITH BOTH
+    // ANSWERS. The 35991357693 run stopped looking at the first attempt and then
+    // judged a two-row state: the note it left (`client 560x689 ... client
+    // 543x689 rows 2`) cannot say whether the plan said one row at a width the
+    // dialog does not keep, or the control disagreed with the plan at the width it
+    // does keep. `plan` is the app's arithmetic, `ctl` the tabs control's own
+    // answer, `kept` the client the dialog settled on (the scrollbar takes 17 px
+    // of the width the resize asked for).
+    std::string calib;
     for (int attempt = 0; attempt < 4; ++attempt) {
         KieeKeyProbeResize(dlg, stripW, clientH);
         KieeKeyProbeReflowNow(dlg);
+        ::Sleep(15);
         KieeKeyProbeFontScale(dlg, 100);
         KieeKeyProbeSetOffset(dlg, 0);
         HarnessState probeState;
         readHarnessState(dlg, all, 0, &probeState);
+        calib += " a" + std::to_string(attempt) + ":" + std::to_string(stripW) + "/" +
+                 std::to_string(probeState.client.right) + " plan" +
+                 std::to_string(probeState.app.stripPlanRows) + "(" +
+                 std::to_string(probeState.app.stripPlanRequired) + "/" +
+                 std::to_string(probeState.app.stripPlanAvailable) + ") ctl" +
+                 std::to_string(probeState.app.stripMeasuredRows) + " ml" +
+                 std::to_string(probeState.app.stripStyleMultiline);
         if (probeState.app.stripRows <= 1) { break; }
         stripW += stripW / 4;
     }
@@ -2621,7 +2647,9 @@ int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCo
     for (int attempt = 0; attempt < 6 && baseOneRow && !measurable; ++attempt) {
         KieeKeyProbeResize(dlg, stripW, clientH);
         KieeKeyProbeReflowNow(dlg);
+        ::Sleep(15);
         KieeKeyProbeFontScale(dlg, kWrapFontPct);
+        ::Sleep(15);
         KieeKeyProbeSetOffset(dlg, 0);
         HarnessState probeState;
         readHarnessState(dlg, all, 0, &probeState);
@@ -2673,12 +2701,19 @@ int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCo
         readHarnessState(dlg, all, 0, &st);
         const std::string note =
             "strip-cycle not measurable: pass dpi " + std::to_string(passDpi) +
-            " client " + std::to_string(stripW) + "x" + std::to_string(clientH) +
+            " asked " + std::to_string(stripW) + "x" + std::to_string(clientH) +
+            " kept " + std::to_string(st.client.right) + "x" +
+            std::to_string(st.client.bottom) +
+            " plan " + std::to_string(st.app.stripPlanRows) + " need " +
+            std::to_string(st.app.stripPlanRequired) + "/" +
+            std::to_string(st.app.stripPlanAvailable) + " px at client " +
+            std::to_string(st.app.stripPlanClientW) + " ctl " +
+            std::to_string(st.app.stripMeasuredRows) + " ml " +
+            std::to_string(st.app.stripStyleMultiline) + " measured " +
+            std::to_string(st.app.stripMeasureCount) + "x" + calib +
             " page " + rectStr(st.page) + " strip shift " +
             std::to_string(st.app.stripShift[0]) + " px rows " +
             std::to_string(st.app.stripRows) +
-            " rows, client " + std::to_string(st.client.right) + "x" +
-            std::to_string(st.client.bottom) +
             " — at this scale the app's own window leaves the nine labels " +
             (baseOneRowFinal ? "one row at 100 % but cannot gain a row (the tab "
                                "control's height is capped so the bottom row stays "

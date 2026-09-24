@@ -2077,19 +2077,35 @@ void harnessStep(HWND dlg, const std::vector<HWND>& all, int tabCount, int* curT
                 }
             }
             const auto reflowGround = [&](const char* phase) {
-                return std::string(phase) + " strip-before {" + stripBefore +
-                       "} strip-after1 {" + stripAfter1 + "} strip-after2 {" +
-                       stripAfter + "} plan-before {rows " +
-                       std::to_string(before.app.stripPlanRows) + " req " +
-                       std::to_string(before.app.stripPlanRequired) + " avail " +
-                       std::to_string(before.app.stripPlanAvailable) + " clientW " +
-                       std::to_string(before.app.stripPlanClientW) +
-                       "} plan-after {rows " +
-                       std::to_string(after.app.stripPlanRows) + " req " +
-                       std::to_string(after.app.stripPlanRequired) + " avail " +
-                       std::to_string(after.app.stripPlanAvailable) + " clientW " +
-                       std::to_string(after.app.stripPlanClientW) + "} || " +
-                       harnessStateStr(after, opName, step, seed, *fontPct);
+                // Compact on purpose: the CI annotation truncates long
+                // grounds, and every number here has to survive it. Plan
+                // numbers are rows/required/available@clientW; app numbers
+                // are the recorded strip shift before -> after.
+                const bool stripStable =
+                    (stripBefore == stripAfter1) && (stripAfter1 == stripAfter);
+                return std::string(phase) +
+                       (stripStable
+                            ? " strip identical x3 {" + stripBefore + "}"
+                            : " strip-before {" + stripBefore + "} a1 {" +
+                                  stripAfter1 + "} a2 {" + stripAfter + "}") +
+                       " plan " +
+                       std::to_string(before.app.stripPlanRows) + "/" +
+                       std::to_string(before.app.stripPlanRequired) + "/" +
+                       std::to_string(before.app.stripPlanAvailable) + "@" +
+                       std::to_string(before.app.stripPlanClientW) + " -> " +
+                       std::to_string(after.app.stripPlanRows) + "/" +
+                       std::to_string(after.app.stripPlanRequired) + "/" +
+                       std::to_string(after.app.stripPlanAvailable) + "@" +
+                       std::to_string(after.app.stripPlanClientW) +
+                       " app " +
+                       std::to_string(before.app.stripShift[*curTab]) + "->" +
+                       std::to_string(after.app.stripShift[*curTab]) +
+                       " step " + std::to_string(step) + " seed " +
+                       std::to_string(seed) + " tab " +
+                       std::to_string(*curTab) + " dpi " +
+                       std::to_string(after.app.dpi) + " offset " +
+                       std::to_string(after.app.offset) + "/" +
+                       std::to_string(after.app.range);
             };
             // I9 — v1.3.0-beta8fix1 (BS-22w follow-up): A REFLOW MUST CONVERGE.
             //

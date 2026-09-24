@@ -4,7 +4,7 @@
 **Nhánh:** `arena/01a0ce45-kieekey` (PR #33) — trên `9d0bf90` (tag `v1.3.0-beta8`), không rebase, không di chuyển tag
 **Commit cuối:** `e036e85` (cây sạch, đã push)
 **CI cuối:** run `35993697384` — **success**, cả 4 job: `Native regression (Linux)`, `x64`, `ARM64`, `ARM64EC` (job `Publish release` = skipped, đúng thiết kế: chưa có tag)
-**Bản thử:** `out/win-handover/KieeKeyApp.exe`, SHA-256 `fa6b749962583214b01d01ec00f2ec9a65948b4c5b77e2fd546068b96c038ffe` (1.914.880 byte, cross-build x86_64-windows-gnu từ đúng cây `e036e85`)
+**Bản thử:** `out/win-handover/KieeKeyApp.exe`, SHA-256 `1bf063caf6f8f75b24e82b9d00baba56a05ce14c7dd58ed030241039ed4506ab` (1.915.392 byte, cross-build x86_64-windows-gnu từ đúng cây đã vá BS-22w trên `main`)
 **Merge:** **CHƯA** · **Tag:** **CHƯA** — chờ bạn xác nhận trên máy Windows (V0–V5 trong `TESTING.txt`)
 
 ---
@@ -146,7 +146,7 @@ control.
 | Cách ly input | `python3 scripts/check_input_isolation.py` | **OK** |
 | SHA256SUMS | `bash scripts/gen_sha256sums.sh --check` | **in sync** |
 | Cảnh báo biên dịch | `zig c++ -Wall -Wextra -Wshadow` (mọi TU, probe + thường) | **0 cảnh báo, 0 lỗi** |
-| Bản dựng thử | `build_windows_exe.sh --arch=x86_64` ×2 | **cùng SHA-256** `676d21d6…ad52` (1.914.880 byte) — tái lập |
+| Bản dựng thử | `build_windows_exe.sh --arch=x86_64` ×2 | **cùng SHA-256** `1bf063ca…06ab` (1.915.392 byte) — tái lập |
 
 ---
 

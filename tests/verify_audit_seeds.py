@@ -298,10 +298,9 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
     (
         "BS-22c the strip cycle stops proving it wrapped",
         "tools/ui_probe/ui_probe.cpp",
-        "            if (wrapped.app.stripRows <= 1 ||\n"
-        "                (wrapped.page.top <= basePageTop && wrapped.app.stripSeen[tab] <= 0)) {",
+        "            if (wrapGrow <= 0 || wrapped.page.top < basePageTop) {",
         "            if (false) {   // seeded: no proof the labels wrapped",
-        "the proof that the strip really pushed the page down",
+        "the proof that the strip really grew with the labels",
     ),
     (
         "BS-22c the latch stops following the window",
@@ -351,18 +350,18 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "no longer maps the app's own faces at the CURRENT dpi",
     ),
     (
-        "BS-22g the strip cycle stops proving its one-row start",
+        "BS-22h the strip cycle forgets the height it started from",
         "tools/ui_probe/ui_probe.cpp",
-        "        if (base.app.stripRows > 1) {",
-        "        if (false) {   // seeded: a cycle from an already wrapped strip",
-        "base.app.stripRows > 1 is gone",
+        "        const int baseShift = base.app.stripShift[tab];",
+        "        /* seeded: the cycle does not record the height it started from */",
+        "no longer compares the shift with the value it started from",
     ),
     (
-        "BS-22g the strip cycle stops calibrating the client",
+        "BS-22h the strip cycle stops calibrating the client",
         "tools/ui_probe/ui_probe.cpp",
-        "        stripW = stripW * 5 / 4;   // too narrow to show the strip as one row",
-        "        /* seeded: the client is never widened for a one-row strip */",
-        "stripW = stripW * 5 / 4; is gone",
+        "        stripW = std::max(stripW0 * 2 / 3, stripW * 4 / 5);",
+        "        /* seeded: no search for a client where the strip can grow */",
+        "stripW = std::max(stripW0 * 2 / 3, stripW * 4 / 5); is gone",
     ),
     (
         "BS-22g the blank-page finding stops cross-checking the render",
@@ -415,7 +414,7 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
     (
         "BS-22b the strip cycle demands a zero shift again",
         "tools/ui_probe/ui_probe.cpp",
-        "            if (back.app.stripShift[tab] != base.app.stripShift[tab]) {",
+        "            if (back.app.stripShift[tab] != baseShift && back.page.top == basePageTop) {",
         "            if (back.app.stripShift[tab] != 0) {",
         "no longer compares the shift with the value it started from",
     ),

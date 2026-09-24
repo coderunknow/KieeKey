@@ -568,14 +568,16 @@ def check(repo: Path):
     #         all-tabs decision. Asking the usable/dead answer about all nine depths
     #         made the check contradict itself and I4 (which verifies the range
     #         against the CURRENT tab). The ruler is the current tab.
-    if 'back.app.stripShift[tab] != base.app.stripShift[tab]' not in probe:
+    if ('back.app.stripShift[tab] != baseShift &&' not in probe or
+            'const int baseShift = base.app.stripShift[tab];' not in probe):
         failures.append(
             "tools/ui_probe/ui_probe.cpp: the strip cycle no longer compares the "
-            "shift with the value it started from (BS-22) — with the authored input "
-            "the one-row shift is the display rectangle's inset (14 px at 96 dpi, by "
-            "design: the content starts at the display rect), so a `!= 0` test fails "
-            "on a correct dialog, while the accumulation this contract exists for is "
-            "a value that does not come back")
+            "shift with the value it started from (BS-22/BS-22h) — with the authored "
+            "input the one-row shift is the display rectangle's inset (14 px at "
+            "96 dpi, by design: the content starts at the display rect), so a `!= 0` "
+            "test fails on a correct dialog, while the accumulation this contract "
+            "exists for is a value that does not come back; the comparison base is "
+            "the displayed height the cycle recorded at 100 %")
     # 17. v1.3.0-beta8fix1 (bugs BS-22d / BS-23): TWO MORE MEASURED STATES.
     #     * BS-22d — the tab strip's row count is a layout change in BOTH
     #       directions. The grow direction forced a re-layout since BS-10; the
@@ -853,38 +855,34 @@ def check(repo: Path):
             ('kWrapFontPct', 'the text-scale driver of the strip cycle (BS-22c)'),
             ('KieeKeyProbeFontScale(dlg, kWrapFontPct)',
              'the wrap that makes the cycle measurable (BS-22c)'),
-            ('stripSeen[tab] <= 0',
-             'the proof that the strip really pushed the page down (BS-22c)')):
+            ('wrapGrow <= 0',
+             'the proof that the strip really grew with the labels (BS-22h) — the '
+             "app's stripShift comes from the tab control's display rectangle, so a "
+             'cycle that cannot grow it is measuring a strip that did not move'),
+            ('const int wrapGrow = wrapped.app.stripShift[tab] - baseShift;',
+             "the app's own displayed strip height as the comparison base "
+             '(BS-22h)')):
         if needle not in probe:
             failures.append(f"tools/ui_probe/ui_probe.cpp: {needle} is gone — {why}")
-    # v1.3.0-beta8fix1 (bug BS-22g): A MEASUREMENT MUST PROVE ITS PRECONDITION.
-    # Three checks were green-able in states where they measured nothing: the
-    # strip cycle ran from a strip that was already wrapped (54 I1 findings about a
-    # transition that had happened), the screen-paint check counted controls its
-    # capture did not cover as "painted nothing" (2 I11), and neither finding named
-    # the rectangle the app's own solver had applied.
+    # v1.3.0-beta8fix1 (bug BS-22g/BS-22h): A MEASUREMENT MUST PROVE ITS
+    # PRECONDITION. Three checks were green-able (or red-able) in states where they
+    # measured nothing: the strip cycle ran from a strip that was already wrapped
+    # (54 I1 findings about a transition that had happened) and then from a client
+    # so wide that 150 % still fitted one row (81 of them), the screen-paint check
+    # counted controls its capture did not cover as "painted nothing" (2 I11), and
+    # neither finding named the rectangle the app's own solver had applied.
     for needle, why in (
-            ('base.app.stripRows > 1',
-             'the proof that the strip cycle really starts from ONE row — a cycle in '
-             'a client too small to show one row measures a wrapped strip, not the '
-             'grow/shrink transition (BS-22g)'),
             ('::MulDiv(wideW, static_cast<int>(passDpi), 96)',
-             'the dpi-scaled client that lets a one-row strip exist at this pass '
-             '(BS-22g)'),
-            ('stripW = stripW * 5 / 4;',
-             'the calibration that widens the client until the strip really is ONE '
-             'row at 100 % (BS-22g)'),
-            ('const bool wraps = probeState.app.stripRows > 1;',
-             'the calibration that proves the labels WRAP at 150 % (BS-22g) — a '
-             'client wide enough to hold them either way has no transition to '
-             'measure, which is the other half of the same 81 findings'),
-            ('wrapped.app.stripRows <= 1 ||',
-             'the app\'s own plan as the first proof that the labels really wrapped '
-             '(BS-22g)'),
-            ('back.app.stripRows > 1',
-             'the same proof in the shrink direction: "the page top came back" now '
-             'also requires the plan to have put the strip back in one row '
-             '(BS-22g)'),
+             'the dpi-scaled client each pass starts from (BS-22g)'),
+            ('const bool grows = probeState.app.stripShift[0] > shiftBefore;',
+             'the calibration that finds a client where growing the text really '
+             "grows the strip (BS-22h) — the displayed row count is Win32's answer "
+             'to the label widths, so a scenario may not assume it'),
+            ('stripW = std::max(stripW0 * 2 / 3, stripW * 4 / 5);',
+             'the bounded search for that client (BS-22h)'),
+            ('back.app.stripShift[tab] != baseShift',
+             'the shrink direction compared with the same displayed height the '
+             'cycle started from (BS-22h)'),
             ('if (sampled == 0) { ++uncovered; continue; }',
              'the screen-paint check skipping a control its capture does not cover '
              '(a control off the captured frame is not evidence of a blank page) '
@@ -896,7 +894,11 @@ def check(repo: Path):
              "the screen-paint finding's cross-check against the frame the app would "
              'draw (WM_PRINTCLIENT): a capture that reads as background everywhere is '
              'either a blank page or somebody else\'s pixels, and only the render '
-             'tells the two apart (BS-22g)')):
+             'tells the two apart (BS-22g)'),
+            ('int chromePainted = 0;',
+             'the chrome half of that evidence (BS-22h) — a capture with the chrome '
+             'and not the page is a page that was never painted, while one with '
+             'neither is not this window\'s frame at all')):
         if needle not in probe:
             failures.append(f"tools/ui_probe/ui_probe.cpp: {needle} is gone — {why}")
     if 'KieeKeyProbeSolvedRect' not in main or 'KieeKeyProbeSolvedRect' not in probe:

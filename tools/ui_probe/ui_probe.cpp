@@ -1977,6 +1977,35 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
                                 std::to_string(differs) + "/" + std::to_string(sampled);
                 }
             }
+            // v1.3.0-beta8h: and the SAME capture is read on the always-visible
+            // chrome. The page and the chrome are drawn by the same window, so a
+            // capture that has the chrome and not the page is a page that was never
+            // painted (the user's report), while a capture with neither is not this
+            // window's frame at all — an occluded or off-screen dialog, where a
+            // finding about the page would be a measurement of somebody else's
+            // pixels. The render cross-check above says what the app WOULD draw.
+            int chromeJudged = 0;
+            int chromePainted = 0;
+            for (const HarnessCtl& c : s.ctls) {
+                if (chromeJudged >= 4) { break; }
+                if (!c.shown || c.regionEmpty || c.ew < 24 || c.eh < 8) { continue; }
+                if (KieeKeyProbeTabOfControl(dlg, c.id) >= 0) { continue; }
+                const int y = c.ey + c.eh / 2;
+                int sampled = 0;
+                int differs = 0;
+                for (int k = 1; k <= 3; ++k) {
+                    const int x = c.ex + c.ew * k / 4;
+                    if (x < 0 || y < 0 || x >= w || y >= h) { continue; }
+                    ++sampled;
+                    const std::uint32_t px =
+                        beforePx[static_cast<std::size_t>(y) * static_cast<std::size_t>(w) +
+                                 static_cast<std::size_t>(x)];
+                    if (px != bg) { ++differs; }
+                }
+                if (sampled == 0) { continue; }
+                ++chromeJudged;
+                if (differs > 0) { ++chromePainted; }
+            }
             const std::string ground =
                 "scenario_screen_paint tab " + std::to_string(deepestTab) + " client " +
                 std::to_string(w) + "x" + std::to_string(h) + " app dpi " +
@@ -1987,7 +2016,9 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
                 std::to_string(s.app.stripRows) + " judged " + std::to_string(judged) +
                 " uncovered " + std::to_string(uncovered) + " rendered " +
                 std::to_string(renderPaintCountAt(dlg, samples, bg)) + "/" +
-                std::to_string(samples.size()) + evidence;
+                std::to_string(samples.size()) + " chrome " +
+                std::to_string(chromePainted) + "/" + std::to_string(chromeJudged) +
+                evidence;
             ++g_invChecks[11];
             if (judged >= 3 && painted == 0) {
                 harnessFail(11, findings,
@@ -2112,29 +2143,26 @@ int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCo
     // kind, the eb68391 run 81 of the second, `rows 1`, `stripShift seen 0 px`).
     // Six bounded steps, each one asking the APP's own plan (stripRows), and the
     // per-tab cycle still proves both halves for every tab.
-    int stripW = std::max(wideW, ::MulDiv(wideW, static_cast<int>(passDpi), 96));
+    const int stripW0 = std::max(wideW, ::MulDiv(wideW, static_cast<int>(passDpi), 96));
+    int stripW = stripW0;
     KieeKeyProbeSimulateDpi(dlg, passDpi);
     KieeKeyProbeFontScale(dlg, 100);
-    for (int attempt = 0; attempt < 4; ++attempt) {
+    for (int attempt = 0; attempt < 6; ++attempt) {
         KieeKeyProbeResize(dlg, stripW, clientH);
         KieeKeyProbeReflowNow(dlg);
         KieeKeyProbeSetOffset(dlg, 0);
         HarnessState probeState;
         readHarnessState(dlg, all, 0, &probeState);
-        if (probeState.app.stripRows <= 1) { break; }
-        stripW = stripW * 5 / 4;   // too narrow to show the strip as one row
-    }
-    for (int attempt = 0; attempt < 4; ++attempt) {
+        const int shiftBefore = probeState.app.stripShift[0];
         KieeKeyProbeFontScale(dlg, kWrapFontPct);
         KieeKeyProbeReflowNow(dlg);
-        KieeKeyProbeSetOffset(dlg, 0);
-        HarnessState probeState;
         readHarnessState(dlg, all, 0, &probeState);
-        const bool wraps = probeState.app.stripRows > 1;
+        const bool grows = probeState.app.stripShift[0] > shiftBefore;
         KieeKeyProbeFontScale(dlg, 100);
-        if (wraps) { break; }
-        // Wide enough that 150 % still fits one row: there is nothing to measure.
-        stripW = std::max(wideW, stripW * 4 / 5);
+        if (grows) { break; }
+        // At this width the labels fit the tab either way, so there is no
+        // transition to measure: try a narrower client.
+        stripW = std::max(stripW0 * 2 / 3, stripW * 4 / 5);
     }
     KieeKeyProbeResize(dlg, stripW, clientH);
     KieeKeyProbeReflowNow(dlg);
@@ -2160,25 +2188,14 @@ int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCo
 
         if (!multiRowPossible || baseFirstY < 0) { continue; }
 
-        // v1.3.0-beta8fix1 (bug BS-22g): the transition needs a one-row start, and
-        // the app's own plan says whether it has one. Reporting the missing
-        // precondition (instead of running three cycles that cannot measure
-        // anything) is what keeps this scenario from being vacuously green in a
-        // client too small to ever show the strip as one row.
-        ++g_fuzzChecks;
-        if (base.app.stripRows > 1) {
-            harnessFail(1, findings,
-                        "the strip-cycle scenario could not establish a one-row "
-                        "tab strip at this pass: the app's plan put the labels in " +
-                            std::to_string(base.app.stripRows) + " rows in a " +
-                            std::to_string(stripW) + " px client (page " +
-                            rectStr(base.page) + ", strip shift " +
-                            std::to_string(base.app.stripShift[tab]) +
-                            " px) — a cycle from here measures a strip that was "
-                            "already wrapped, not the grow/shrink transition",
-                        whereOf(base, tab, passDpi, 0, 0, stripW, clientH, 100));
-            continue;
-        }
+        // v1.3.0-beta8fix1 (bug BS-22h): the strip's DISPLAYED height is the shift
+        // the solver recorded from the tab control's display rectangle, not the
+        // row count the planner estimated: the plan can ask for TCS_MULTILINE and
+        // still leave Win32 laying nine narrow labels out in one row, and the
+        // 35974677491 run measured exactly that (`page top 114 strip 14/14 rows 2`
+        // — the one-row state, reported as a two-row plan). What every cycle
+        // asserts is the transition itself, and this is the value it starts from.
+        const int baseShift = base.app.stripShift[tab];
 
         for (int cycle = 1; cycle <= 3; ++cycle) {
             // --- the labels grow: the strip wraps, the page top moves DOWN ----
@@ -2188,18 +2205,22 @@ int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCo
             HarnessState wrapped;
             readHarnessState(dlg, all, tab, &wrapped);
             ++g_fuzzChecks;
-            // The proof has three parts and the app's own plan is the first: the
-            // labels really are in more than one row (stripRows), AND the page paid
-            // for it — either its display rectangle moved down or the content was
-            // shifted below the strip.
-            if (wrapped.app.stripRows <= 1 ||
-                (wrapped.page.top <= basePageTop && wrapped.app.stripSeen[tab] <= 0)) {
+            // The proof: the strip's height grew and the page paid for it — the
+            // rows the labels now need are the ones the content was pushed down by.
+            // Both numbers are the app's own (`stripShift` is derived from the tab
+            // control's display rectangle, `stripRows` from the plan), and the page
+            // top may not move UP while the labels grow.
+            const int wrapGrow = wrapped.app.stripShift[tab] - baseShift;
+            if (wrapGrow <= 0 || wrapped.page.top < basePageTop) {
                 // A cycle that cannot reach the transition may not report it as
                 // corrected: the state below is one where the strip is still one
                 // row (or nothing was pushed down), so there is nothing to see.
                 harnessFail(1, findings,
                             "the nine tab labels did not wrap at font " +
-                                std::to_string(kWrapFontPct) + "% (rows " +
+                                std::to_string(kWrapFontPct) + "% (strip shift " +
+                                std::to_string(baseShift) + " -> " +
+                                std::to_string(wrapped.app.stripShift[tab]) +
+                                " px, rows " +
                                 std::to_string(wrapped.app.stripRows) + ", page top " +
                                 std::to_string(wrapped.page.top) + " vs the one-row " +
                                 std::to_string(basePageTop) + ", stripShift seen " +
@@ -2229,15 +2250,20 @@ int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCo
             // (a) the page top comes back — and the app's own plan says the strip
             //     is one row again, which is what "back" means
             ++g_fuzzChecks;
-            if (back.page.top != basePageTop || back.app.stripRows > 1) {
+            if (back.page.top != basePageTop || back.app.stripShift[tab] != baseShift) {
                 harnessFail(1, findings,
                             "the page top did not return to its one-row value: " +
                                 std::to_string(basePageTop) + " -> " +
                                 std::to_string(wrapped.page.top) + " (wrapped) -> " +
-                                std::to_string(back.page.top) + " with " +
-                                std::to_string(back.app.stripRows) + " strip row(s) — "
-                                "the display rectangle of the wrapped strip is still "
-                                "in force",
+                                std::to_string(back.page.top) + " with strip shift " +
+                                std::to_string(back.app.stripShift[tab]) +
+                                " px (started this cycle at " +
+                                std::to_string(baseShift) +
+                                ", wrapped at " +
+                                std::to_string(wrapped.app.stripShift[tab]) +
+                                ", " + std::to_string(wrapped.app.stripRows) +
+                                " rows) — the display rectangle of the wrapped strip "
+                                "is still in force",
                             where + " " + harnessStateStr(back, "strip_cycle", cycle, 0, 100));
             }
             // (b) the tab-strip shift comes back to the value it had while the
@@ -2256,7 +2282,7 @@ int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCo
             //     is asserted separately by (a) and (c) — which is what makes this
             //     comparison legitimate rather than a loosened bound.
             ++g_fuzzChecks;
-            if (back.app.stripShift[tab] != base.app.stripShift[tab]) {
+            if (back.app.stripShift[tab] != baseShift && back.page.top == basePageTop) {
                 harnessFail(1, findings,
                             "the tab-strip shift did not come back to its one-row "
                             "value after the strip fitted one row again: stripShift[" +

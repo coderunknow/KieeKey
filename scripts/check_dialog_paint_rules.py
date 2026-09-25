@@ -1443,7 +1443,12 @@ def check(repo: Path):
              'must be measured too'),
             ('setTheme(dlg, L" ", L" ");',
              'the documented opt-out of visual styles for the reopened tree '
-             '(BS-23b measurement, round 5)')):
+             '(BS-23b measurement, round 5)'),
+            ('da.prefix = "drag@" + std::to_string(passDpi) +',
+             'E8 the pixel audit WHILE scrolling (BS-23b measurement, round '
+             '6) - the user\'s third fact: dragging the scrollbar '
+             'duplicates text on Windows 10 LTSC; every earlier pixel audit '
+             'ran at rest, none watched a mid-scroll round-trip')):
         if needle not in probe:
             failures.append(f"tools/ui_probe/ui_probe.cpp: {needle} is gone - {why}")
     return failures

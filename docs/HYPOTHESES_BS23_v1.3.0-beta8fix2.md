@@ -1,10 +1,10 @@
 # BS-23 hypothesis log — v1.3.0-beta8fix2 (the 150 % photograph)
 
-Status: **Phase 2, round 5** — rounds 1-4 measured every CI-reachable state
-clean, window state AND pixels (the user's facts: persists across reopen; a
-tab click produces it, worst on tab 8; single 150 % monitor). Round 5
-measures the runner itself (host facts) and the other visual-style mode
-(E7). Nothing is fixed yet.
+Status: **Phase 2, round 6** — rounds 1-5 measured every CI-reachable state
+clean, window state AND pixels, both theme modes; the runner's own facts ride
+in the report. The user's third-pass facts name a SCROLLING defect (dragging
+the scrollbar duplicates text, Windows 10 LTSC). E8 watches the pixels WHILE
+the dialog scrolls. Nothing is fixed yet.
 Every line below carries the measured numbers that justify it. The layout is a
 contract between the window and its children — measure both ends; trusting
 either one is a new BS class.
@@ -233,3 +233,39 @@ a settle that trusts the control's own layout answer. If it stays green, the
 measurement record is complete (five rounds, every reachable axis clean) and
 the release proceeds on mechanism with UNVERIFIED (Windows) until the user's
 re-test on the real machine — with the hypothesis log as the evidence trail.
+
+## Round 5 verdict — theme mode is NOT the discriminator; the user's facts deepen
+
+Run **36139368885** (commit ab73c6c): E7 ran the classic-mode reopen at all
+three scales — geometry identical to themed in every number
+(client 823×689, page 22,169, stripRows 2 @150), pixel audit clean (screen
+checks 54 → **81**, 0 findings). Theme mode is not the axis. The report now
+carries the runner's own facts: `host: win 10.0.20348 appThemed 1 themeActive 1
+dwm 1 native dpi 96`. Five rounds, every axis the harness can drive on this
+runner, window state AND pixels: **0 violations**.
+
+Then Phase 0, third pass — the user's facts sharpened the picture:
+
+* the window is NOT resizable (the dialog ships without `WS_THICKFRAME`) — so
+  "kéo" in the user's words is the SCROLLBAR thumb, not a window edge;
+* **"kéo thì các chữ bị nhân bản" — dragging the scrollbar DUPLICATES text**,
+  on **Windows 10 LTSC 21H2** (build 19044 — the runner is Server 2022,
+  build 20348), x64.
+
+That is a SCROLLING defect, and it is a named one: the BS-13/BS-16a comment
+block in `main.cpp` quotes this exact symptom — *"the stale copies of text
+left behind while scrolling ('chữ bị duplicated')"* — and its fix was the
+full-dialog invalidation after the children move. Every pixel audit so far
+(E6/E7) ran at REST; none ever watched the dialog WHILE it scrolled.
+
+## Round 6 — the pixel audit WHILE scrolling (E8)
+
+E8 reopens themed on the worst tab (tab 8, Cấp độ), drives the app's OWN
+scroll channel (WM_VSCROLL line/page/bottom/top — the scrollbar's internal
+track position cannot be synthesized, but every code ends in the same tail
+`applySettingsScrollOffset`), walks the offset out and back, then audits the
+pixels. Anything the forced full repaint moves is content the desktop still
+holds from a mid-scroll frame — ghost text at an old offset. If E8 turns red
+the defect is in the scroll repaint path; if it stays green the measurement
+record is complete and the release proceeds on mechanism with UNVERIFIED
+(Windows).

@@ -877,6 +877,10 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "the override is the LAST word on the bound refitWindow receives",
     ),
     (
+        # v1.3.0-beta8fix2 round 6: E8 opens tall too, but through its OWN
+        # override call (dragWorkAreaBottom), so this literal stays unique to
+        # E5 and seeding it away still trips the "E5 the full-height open"
+        # needle.
         "BS-23c  the full-height open deleted",
         "tools/ui_probe/ui_probe.cpp",
         "        KieeKeyProbeSetWorkAreaOverride(0, 0, 1280, 1600);",
@@ -911,6 +915,13 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "                    setTheme(dlg, L\" \", L\" \");",
         "                    /* seeded: the tree keeps the runner's theme */",
         "the documented opt-out of visual styles",
+    ),
+    (
+        "BS-23b  the mid-scroll pixel audit deleted",
+        "tools/ui_probe/ui_probe.cpp",
+        "                        da.prefix = \"drag@\" + std::to_string(passDpi) +",
+        "                        da.prefix = std::string(\"(seeded) \") +",
+        "E8 the pixel audit WHILE scrolling",
     ),
 ]
 

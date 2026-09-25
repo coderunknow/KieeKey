@@ -2760,6 +2760,103 @@ int harnessScenarioOpenGeometry(HWND* dlgInOut, int tabCount, unsigned passDpi,
                     KieeKeyProbeSelectTab(dlg, 0);
                 }
             }
+            // E8 — the user's third fact: "kéo thì các chữ bị nhân bản" —
+            // dragging the scrollbar DUPLICATES text, on Windows 10 LTSC
+            // 21H2 (build 19044). Every pixel audit so far (E6/E7) ran at
+            // REST; no audit ever watched the dialog WHILE it scrolled.
+            //
+            // The scrollbar only EXISTS (a non-zero range) once the dialog
+            // stands at its FULL content height — the runner's 1024x768
+            // screen clamps the default open to 689 px of client where the
+            // range is still 0. Give the refit the same tall work area E5
+            // uses, reopen themed on the worst tab, drive the app's OWN
+            // channel (WM_VSCROLL: the line/page/bottom/top codes a real
+            // user action posts — the scrollbar's internal track position
+            // cannot be synthesized, but every code ends in the same tail:
+            // applySettingsScrollOffset), walk the offset out and back, and
+            // audit the pixels: anything the forced full repaint moves is
+            // content the desktop still holds from a mid-scroll frame —
+            // ghost text at an old offset, the photographed corruption.
+            {
+                const int dragWorkAreaBottom = 1600;   // the same headroom as E5
+                KieeKeyProbeSetWorkAreaOverride(0, 0, 1280, dragWorkAreaBottom);
+                KieeKeyProbeSetWindowDpiOverride(passDpi);
+                HWND dragged = KieeKeyProbeReopenSettings(dlg, tabs - 1);
+                KieeKeyProbeSetWindowDpiOverride(0);
+                if (dragged != nullptr) {
+                    dlg = dragged;
+                    *dlgInOut = dlg;
+                    pumpPostedMessages();
+                    ::KillTimer(dlg, 1);
+                    SCROLLINFO dsi{};
+                    dsi.cbSize = sizeof(dsi);
+                    dsi.fMask = SIF_ALL;
+                    const bool haveBar = ::GetScrollInfo(dlg, SB_VERT, &dsi) != FALSE;
+                    if (haveBar && dsi.nMax > static_cast<int>(dsi.nPage)) {
+                        const int steps = 12;
+                        for (int s = 0; s < steps; ++s) {
+                            ::SendMessageW(dlg, WM_VSCROLL,
+                                           MAKEWPARAM(SB_LINEDOWN, 0), 0);
+                            pumpPostedMessages();
+                        }
+                        ::SendMessageW(dlg, WM_VSCROLL,
+                                       MAKEWPARAM(SB_PAGEDOWN, 0), 0);
+                        pumpPostedMessages();
+                        ::SendMessageW(dlg, WM_VSCROLL,
+                                       MAKEWPARAM(SB_BOTTOM, 0), 0);
+                        pumpPostedMessages();
+                        // Audit MID-SCROLL at the deepest point: the strip a
+                        // scrolled-down frame vacated at the top must be empty
+                        // of ghost content before the trip even comes back.
+                        {
+                            std::vector<HWND> allMid = stableChildren(dlg);
+                            HarnessState ms;
+                            readHarnessState(dlg, allMid, tabs - 1, &ms);
+                            Audit ma{};
+                            ma.dlg = dlg;
+                            ma.tabsCtl = ::GetDlgItem(dlg, IDC_TAB);
+                            ma.client = ms.client;
+                            ma.page = ms.page;
+                            ma.tab = tabs - 1;
+                            ma.scalePercent = static_cast<int>((passDpi * 100U) / 96U);
+                            ma.prefix = "drag@" + std::to_string(passDpi) +
+                                        " bottom: ";
+                            ma.findings = findings;
+                            checkStalePixels(ma);
+                        }
+                        ::SendMessageW(dlg, WM_VSCROLL,
+                                       MAKEWPARAM(SB_LINEUP, 0), 0);
+                        pumpPostedMessages();
+                        ::SendMessageW(dlg, WM_VSCROLL,
+                                       MAKEWPARAM(SB_TOP, 0), 0);
+                        pumpPostedMessages();
+                        std::vector<HWND> allDrag = stableChildren(dlg);
+                        HarnessState ds;
+                        readHarnessState(dlg, allDrag, tabs - 1, &ds);
+                        Audit da{};
+                        da.dlg = dlg;
+                        da.tabsCtl = ::GetDlgItem(dlg, IDC_TAB);
+                        da.client = ds.client;
+                        da.page = ds.page;
+                        da.tab = tabs - 1;
+                        da.scalePercent = static_cast<int>((passDpi * 100U) / 96U);
+                        da.prefix = "drag@" + std::to_string(passDpi) + ": ";
+                        da.findings = findings;
+                        checkStalePixels(da);
+                        g_passEntryNotes.push_back(
+                            "drag @" + std::to_string(passDpi) +
+                            " dpi: out " + std::to_string(steps) +
+                            "xLINEDOWN+PAGEDOWN+BOTTOM back TOP, offset " +
+                            std::to_string(ds.app.offset) + "/" +
+                            std::to_string(ds.app.range));
+                    } else {
+                        g_passEntryNotes.push_back(
+                            "drag @" + std::to_string(passDpi) +
+                            " dpi: no bar or range at open, drag skipped");
+                    }
+                }
+                KieeKeyProbeSetWorkAreaOverride(0, 0, 0, 0);
+            }
         }
     }
 

@@ -191,7 +191,46 @@ its soundness stays owned by I6 (live == baseline) and I12 (box holds the
 solver's own measurement — the BS-12 growth-loss class), which assert on the
 same post-state every step. Paint-gate rule 12 gained the two needles
 (`reflowStripShape`, the convergence clause); the seed harness grew to
-**86 checks, 0 misses**. App code untouched by the follow-up.
+**86 checks, 0 misses**. App code untouched by the follow-up *so far* —
+see part 2.
+
+### BS-22w follow-up, part 2 — the 17 px the bar took (BS-22x, app fix)
+
+Two more CI rounds turned the follow-up from a harness story into an app
+bug with exact numbers. `36020387531` (@`a4096c1`) compacted the finding
+ground so the annotation survived, and it named the state: strip identical
+on all three reads (`rows 2 rowH 26 dispTop 181 fontPx 21`), plan
+`3/715/321@381` on both sides, app shift unchanged — the solver was a
+fixed point of its own arithmetic; the world it planned against was not.
+A wrong first reading — "the tab header reserves three rows while the
+items sit in two" — produced a display-rectangle reconciliation patch
+(@`926c96f`, reverted here): the probe's row count was the liar. It
+compared item 0's top with item N−1's and answered a binary *1 or 2*,
+saturating at the second row — the control honestly had three rows
+(dispTop 181 = 99 + 3 × 26 + pad, exactly consistent), and the harness
+said so from `36022345344`'s ground on. (The probe's strip reader counts
+every item top now, bucketed at half a row height.)
+
+The real defect, BS-22x: **every page row is clamped at
+`client.right − S(12)` measured before the scrollbar latch is decided.**
+The latch can flip *inside the same solve* ("solve-planned", and BS-18's
+"solve-final"); the flip re-fits the tab control to the bar-on client —
+but when that re-fit lands on a width the tab control already had (an
+earlier solve had sized it for a bar-on client, and the bar has since
+hidden under it — hiding only widens the client and never moves the tab
+control), BS-14's tab-width re-solve trigger sees no change. The rows
+stay clamped at the bar-off bound, 17 px wider than the window they live
+in; the next identical solve, planning with the bar on, clamps them 17 px
+narrower — `id 610 (36,181 344x420 -> 36,181 327x420)`: call one clamped
+at the bar-off client (398 − 18 − 36 = 344), call two at the bar-on
+client (381 − 18 − 36 = 327). A solve must be a fixed point of itself;
+this one was not.
+
+The fix is the third trigger in the same bounded pass-0 guard family: at
+the end of a solve, recompute the client bound; if the bar moved it after
+the rows were measured, one extra bounded solve re-plans against the
+width the window actually keeps. Presentation layer only — no engine,
+hook, TSF, persistence or invariant change.
 
 ## The fix (UI/presentation only — no engine, hook, TSF or persistence change)
 

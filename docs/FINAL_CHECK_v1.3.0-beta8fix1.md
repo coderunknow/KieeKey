@@ -4,7 +4,7 @@
 **Nhánh:** `arena/01a0ce45-kieekey` (PR #33) — trên `9d0bf90` (tag `v1.3.0-beta8`), không rebase, không di chuyển tag
 **Commit cuối:** `e036e85` (cây sạch, đã push)
 **CI cuối:** run `35993697384` — **success**, cả 4 job: `Native regression (Linux)`, `x64`, `ARM64`, `ARM64EC` (job `Publish release` = skipped, đúng thiết kế: chưa có tag)
-**Bản thử:** `out/win-handover/KieeKeyApp.exe`, SHA-256 `1bf063caf6f8f75b24e82b9d00baba56a05ce14c7dd58ed030241039ed4506ab` (1.915.392 byte, cross-build x86_64-windows-gnu từ đúng cây đã vá BS-22w trên `main`)
+**Bản thử:** `out/win-handover/KieeKeyApp.exe`, SHA-256 `4ecda0de02d7db1d924d190fb0b4f50a70b9745a75cf7cfc9d615beea21695ff` (1.914.880 byte, cross-build x86_64-windows-gnu từ đúng cây đã vá BS-22w + BS-22x trên `main`)
 **Merge:** **CHƯA** · **Tag:** **CHƯA** — chờ bạn xác nhận trên máy Windows (V0–V5 trong `TESTING.txt`)
 
 ---
@@ -133,7 +133,7 @@ control.
 
 ---
 
-## 3. Cổng kiểm (cây đã vá BS-22w, trên `main`)
+## 3. Cổng kiểm (cây đã vá BS-22w + BS-22x, trên `main`)
 
 | Cổng | Lệnh | Kết quả |
 |---|---|---|
@@ -146,7 +146,7 @@ control.
 | Cách ly input | `python3 scripts/check_input_isolation.py` | **OK** |
 | SHA256SUMS | `bash scripts/gen_sha256sums.sh --check` | **in sync** |
 | Cảnh báo biên dịch | `zig c++ -Wall -Wextra -Wshadow` (mọi TU, probe + thường) | **0 cảnh báo, 0 lỗi** |
-| Bản dựng thử | `build_windows_exe.sh --arch=x86_64` ×2 | **cùng SHA-256** `1bf063ca…06ab` (1.915.392 byte) — tái lập |
+| Bản dựng thử | `build_windows_exe.sh --arch=x86_64` ×2 | **cùng SHA-256** `4ecda0de…695ff` (1.914.880 byte) — tái lập |
 
 ---
 
@@ -158,6 +158,19 @@ control.
 | `35995128589` | push tag `v1.3.0-beta8fix1` | **failure** — chỉ `x64` (1 vi phạm `inv_I11=1`); `Publish release` = **skipped** ⇒ **chưa phát hành gì** |
 | `35994523368` | cây PR (`c72abe2`) | **success** — 4/4 job |
 | `35993697384` | cây PR (`e036e85`) | **success** — 4/4 job |
+
+### Chuỗi run của vòng vá (PR #34, nhánh `arena/01a0d3b1-kieekey`)
+
+Linux / ARM64 / ARM64EC xanh ở **mọi** run dưới đây; `Publish release` bị
+skip vì x64 đỏ (đúng thiết kế). Số liệu lấy từ annotations của job x64.
+
+| run | commit | kết quả x64 |
+|---|---|---|
+| `36012001327` | `1e749be` | **failure** — `inv_I9=3`; first: reflow moved id 611 (chữ ký BS-22w đã biến mất: `I11:6/0`) |
+| `36016664252` | `212fd7d` | **failure** — `inv_I9=3`; strip identical 2 bên, mirror app identical |
+| `36018651106` | `067a113` | **failure** — `inv_I9=11` (I9 = hội tụ); first: id 610 `344x420 -> 327x420` (−17 px) |
+| `36020387531` | `a4096c1` | **failure** — `inv_I9=11`, cùng first; ground lộ plan `3/715/321@381` |
+| `36022345344` | `926c96f` | **failure** — `inv_I9=11`, cùng first; ground nén còn nguyên ⇒ chẩn đoán BS-22x (client 398 → 381 giữa 2 lần solve) |
 
 Chữ ký của lượt đỏ (nguyên văn từ annotation của job `x64`, job
 `107618125297`):

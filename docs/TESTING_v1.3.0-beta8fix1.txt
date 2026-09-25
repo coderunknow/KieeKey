@@ -8,8 +8,8 @@ KieeKey không ghi đè gì hệ thống, gỡ = xoá thư mục.
 
 Bản dựng thử (cross-build từ đúng cây đã vá BS-22w):
   Tệp      : KieeKeyApp.exe
-  Kích cỡ  : 1.915.392 byte
-  SHA-256  : 1bf063caf6f8f75b24e82b9d00baba56a05ce14c7dd58ed030241039ed4506ab
+  Kích cỡ  : 1.914.880 byte
+  SHA-256  : 4ecda0de02d7db1d924d190fb0b4f50a70b9745a75cf7cfc9d615beea21695ff
   Phiên bản: chuỗi UI 1.3.0-beta8fix1 · PE 1.3.0.10 · manifest 1.3.0.10
 
 --------------------------------------------------------------------------------
@@ -18,7 +18,7 @@ V0 — ĐỐI CHIẾU BẢN DỰNG (bắt buộc làm trước tiên)
 V0.1  Mở PowerShell trong thư mục chứa KieeKeyApp.exe.
 V0.2  Chạy:  Get-FileHash .\KieeKeyApp.exe -Algorithm SHA256
 V0.3  So với chuỗi ở đầu trang này.
-V0.4  MÃ BĂM CHUẨN: 1bf063caf6f8f75b24e82b9d00baba56a05ce14c7dd58ed030241039ed4506ab
+V0.4  MÃ BĂM CHUẨN: 4ecda0de02d7db1d924d190fb0b4f50a70b9745a75cf7cfc9d615beea21695ff
       (khớp ⇒ bản bạn cầm đúng là bản đã kiểm. Không khớp ⇒ dừng, báo lại.)
 V0.5  (Tuỳ chọn) Kiểm toàn bộ gói:  sha256sum -c SHA256SUMS.txt
       (từ thư mục CHA của gói; phải có dòng "OK" cho từng tệp.)

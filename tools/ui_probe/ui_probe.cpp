@@ -1920,20 +1920,45 @@ std::string reflowStripShape(HWND dlg) {
     int dispTop = -1;
     int fontPx = 0;
     RECT first{};
-    RECT last{};
     const int count = static_cast<int>(
         ::SendMessageW(tabCtl, TCM_GETITEMCOUNT, 0, 0));
+    // v1.3.0-beta8fix1 (BS-22w follow-up, part 2): COUNT THE ROWS THERE ARE.
+    // The first cut compared item 0's top with item N-1's and answered a
+    // binary "1 or 2" — saturated at the second row and LIED at three: x64
+    // run 36022345344 read "rows 2" off a strip whose display rectangle
+    // reserved three rows (dispTop 181 = tab top 99 + 3 x rowH 26 + pad),
+    // the arithmetic agreed with the control, and a whole wrong-model app
+    // patch ("the header contradicts the items") was committed and reverted
+    // on the discrepancy. The count is a real one now: every item's top,
+    // sorted and bucketed at half a row height so rounding cannot split a
+    // row.
     if (count > 0 &&
         ::SendMessageW(tabCtl, TCM_GETITEMRECT, 0,
                        reinterpret_cast<LPARAM>(&first)) != FALSE) {
         rows = 1;
         rowH = static_cast<int>(first.bottom - first.top);
-        if (count > 1 &&
-            ::SendMessageW(tabCtl, TCM_GETITEMRECT,
-                           static_cast<WPARAM>(count - 1),
-                           reinterpret_cast<LPARAM>(&last)) != FALSE) {
-            const int dy = static_cast<int>(last.top) - static_cast<int>(first.top);
-            if (dy >= rowH / 2 || -dy >= rowH / 2) { rows = 2; }
+        int tops[64];
+        int seen = 0;
+        for (int i = 0; i < count && seen < 64; ++i) {
+            RECT rcItem{};
+            if (::SendMessageW(tabCtl, TCM_GETITEMRECT, static_cast<WPARAM>(i),
+                               reinterpret_cast<LPARAM>(&rcItem)) == FALSE) {
+                break;
+            }
+            tops[seen++] = static_cast<int>(rcItem.top);
+        }
+        for (int i = 1; i < seen; ++i) {
+            const int key = tops[i];
+            int j = i - 1;
+            for (; j >= 0 && tops[j] > key; --j) { tops[j + 1] = tops[j]; }
+            tops[j + 1] = key;
+        }
+        int rowAnchor = tops[0];
+        for (int i = 1; i < seen; ++i) {
+            if (tops[i] - rowAnchor >= rowH / 2) {
+                ++rows;
+                rowAnchor = tops[i];
+            }
         }
     }
     RECT adj{};

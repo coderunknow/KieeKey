@@ -5443,9 +5443,6 @@ void solveSettingsLayout(HWND hwnd) {
             RECT first{};
             RECT last{};
             int rows = 0;
-            int rowH = 0;   // v1.3.0-beta8fix1 (BS-22w follow-up): hoisted — the
-                            // header/items reconciliation below needs the row
-                            // height even where the wrap decision does not.
             if (::SendMessageW(tabCtl, TCM_GETITEMCOUNT, 0, 0) > 0 &&
                 ::SendMessageW(tabCtl, TCM_GETITEMRECT, 0,
                                reinterpret_cast<LPARAM>(&first)) != FALSE) {
@@ -5474,7 +5471,7 @@ void solveSettingsLayout(HWND hwnd) {
                     // A wrap moves an item by a whole row; items on one row share
                     // their top exactly. Half a tab height is the tolerance, so a
                     // selected tab drawn a pixel or two lower is still one row.
-                    rowH = std::max(1, static_cast<int>(first.bottom - first.top));
+                    const int rowH = std::max(1, static_cast<int>(first.bottom - first.top));
                     const int dy = static_cast<int>(last.top) - static_cast<int>(first.top);
                     if (dy >= rowH / 2 || -dy >= rowH / 2) { rows = 2; }
                 }
@@ -5483,50 +5480,6 @@ void solveSettingsLayout(HWND hwnd) {
                 g_settingsScroll.stripRows = rows;
                 g_settingsScroll.stripMeasuredRows = rows;
                 ++g_settingsScroll.stripMeasureCount;
-            }
-            // v1.3.0-beta8fix1 (bug BS-22w follow-up): THE HEADER AND THE ITEMS
-            // MUST AGREE. TCM_ADJUSTRECT's display rectangle — the rectangle
-            // the whole page hangs from — reserves header space for the
-            // control's OWN row count, and the item rectangles above are the
-            // rows its items actually sit in. After a width change the two can
-            // answer from different moments of the control's asynchronous
-            // re-layout: the x64 run 36020387531 measured a state where the
-            // header reserved THREE rows (display top 181 = tab top 99 + 3 x
-            // rowH 26 + pad) while the items sat in TWO — the page was planned
-            // a full row lower than the items need, every row's clamp ran
-            // against a page that is not there, and consecutive solves kept
-            // trading the difference (id 610: 344x420 -> 327x420, 17 px).
-            // The two answers differ by exactly a row height when they
-            // disagree: for `rows` item rows the consistent display top is
-            // first.top + rows*rowH (one row: first.bottom). When the display
-            // rectangle disagrees, make the control re-lay out — the same
-            // size nudge the shrink path above uses — so the display
-            // rectangle this solve plans against is the one the items live
-            // in. Counted, like every other nudge.
-            if (rows > 0 && rowH > 0) {
-                RECT dispNow = rcTab;
-                ::SendMessageW(tabCtl, TCM_ADJUSTRECT, FALSE,
-                               reinterpret_cast<LPARAM>(&dispNow));
-                const int expectedDispTop =
-                    static_cast<int>(first.top) + rows * rowH;
-                if (static_cast<int>(dispNow.top) != expectedDispTop) {
-                    RECT tabNow{};
-                    ::GetWindowRect(tabCtl, &tabNow);
-                    const int tabW2 = static_cast<int>(tabNow.right - tabNow.left);
-                    const int tabH2 = static_cast<int>(tabNow.bottom - tabNow.top);
-                    if (tabW2 > 0 && tabH2 > 1) {
-                        ::SetWindowPos(tabCtl, nullptr, 0, 0, tabW2, tabH2 - 1,
-                                       SWP_NOMOVE | SWP_NOZORDER |
-                                           SWP_NOACTIVATE);
-                        ::SetWindowPos(tabCtl, nullptr, 0, 0, tabW2, tabH2,
-                                       SWP_NOMOVE | SWP_NOZORDER |
-                                           SWP_NOACTIVATE);
-                        ::UpdateWindow(tabCtl);
-#if defined(KIEEKEY_UI_PROBE)
-                        ++g_probeStripRelayouts;
-#endif
-                    }
-                }
             }
         }
     }
@@ -6083,6 +6036,45 @@ void solveSettingsLayout(HWND hwnd) {
                 --g_settingsSolvePass;
                 return;
             }
+        }
+        // v1.3.0-beta8fix1 (bug BS-22x): AND THE WIDTH THE BAR TOOK, AFTER THE
+        // ROWS WERE CLAMPED.
+        //
+        // Every page row above is clamped at `clampLimitRight` — client.right
+        // - S(12), measured while the rows are measured. The bar's latch,
+        // though, is decided LATER in this very call: the "solve-planned"
+        // apply and the BS-18 "solve-final" both can turn WS_VSCROLL on
+        // mid-solve, and a bar takes its width out of the client (17 px at
+        // the failing scale). What follows the flip re-fits the TAB CONTROL
+        // to the new client — but when that re-fit lands on the width the
+        // tab control already had (an earlier solve had already sized it for
+        // a bar-on client, and the bar has since hidden under it: hiding
+        // only widens the client and moves the tab control not at all),
+        // BS-14's tab-width trigger sees no change. The rows stay clamped at
+        // the bar-off bound, 17 px wider than the window they live in — and
+        // the next identical solve, now planning with the bar on, clamps
+        // them 17 px narrower. The solve has stopped being a fixed point,
+        // and the convergence invariant measures exactly that: x64 run
+        // 36022345344, first finding `[I9] the reflow did not converge: a
+        // second identical re-solve moved id 610 (36,181 344x420 -> 36,181
+        // 327x420)` — call one clamped id 610 at the bar-off client
+        // (398 - 18 - 36 = 344), the bar arrived before the call ended, call
+        // two clamped at the bar-on client (381 - 18 - 36 = 327).
+        //
+        // So the last trigger asks BS-14's question about the BOUND instead
+        // of the control: recompute the client bound this call ends with; if
+        // the bar moved it after the rows were measured, one bounded
+        // re-solve plans against the width the window actually keeps. Same
+        // one-extra-pass bound as its two siblings above.
+        RECT cliGuard{};
+        ::GetClientRect(hwnd, &cliGuard);
+        const int clampLimitNow =
+            static_cast<int>(cliGuard.right) - S(12);
+        if (clampLimitNow != clampLimitRight) {
+            ++g_settingsSolvePass;
+            solveSettingsLayout(hwnd);
+            --g_settingsSolvePass;
+            return;
         }
     }
 

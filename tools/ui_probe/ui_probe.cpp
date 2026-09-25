@@ -2781,18 +2781,30 @@ int harnessScenarioOpenGeometry(HWND* dlgInOut, int tabCount, unsigned passDpi,
                 const int dragWorkAreaBottom = 1600;   // the same headroom as E5
                 KieeKeyProbeSetWorkAreaOverride(0, 0, 1280, dragWorkAreaBottom);
                 KieeKeyProbeSetWindowDpiOverride(passDpi);
-                HWND dragged = KieeKeyProbeReopenSettings(dlg, tabs - 1);
+                // Reopen on tab 0: the bar's range latches PER TAB at open
+                // (round 2's flip-flop) — tab 0 is the tab E5 proved carries
+                // a range at full height; tab 8 is visited after the trip,
+                // the way the user got there: switch, then drag.
+                HWND dragged = KieeKeyProbeReopenSettings(dlg, 0);
                 KieeKeyProbeSetWindowDpiOverride(0);
                 if (dragged != nullptr) {
                     dlg = dragged;
                     *dlgInOut = dlg;
                     pumpPostedMessages();
                     ::KillTimer(dlg, 1);
-                    SCROLLINFO dsi{};
-                    dsi.cbSize = sizeof(dsi);
-                    dsi.fMask = SIF_ALL;
-                    const bool haveBar = ::GetScrollInfo(dlg, SB_VERT, &dsi) != FALSE;
-                    if (haveBar && dsi.nMax > static_cast<int>(dsi.nPage)) {
+                    const auto dragRoundTrip = [&](int tabForAudit,
+                                                   const std::string& label) {
+                        SCROLLINFO dsi{};
+                        dsi.cbSize = sizeof(dsi);
+                        dsi.fMask = SIF_ALL;
+                        const bool haveBar =
+                            ::GetScrollInfo(dlg, SB_VERT, &dsi) != FALSE;
+                        if (!haveBar || dsi.nMax <= static_cast<int>(dsi.nPage)) {
+                            g_passEntryNotes.push_back(
+                                "drag @" + std::to_string(passDpi) + " dpi " +
+                                label + ": no bar or range, drag skipped");
+                            return;
+                        }
                         const int steps = 12;
                         for (int s = 0; s < steps; ++s) {
                             ::SendMessageW(dlg, WM_VSCROLL,
@@ -2811,16 +2823,16 @@ int harnessScenarioOpenGeometry(HWND* dlgInOut, int tabCount, unsigned passDpi,
                         {
                             std::vector<HWND> allMid = stableChildren(dlg);
                             HarnessState ms;
-                            readHarnessState(dlg, allMid, tabs - 1, &ms);
+                            readHarnessState(dlg, allMid, tabForAudit, &ms);
                             Audit ma{};
                             ma.dlg = dlg;
                             ma.tabsCtl = ::GetDlgItem(dlg, IDC_TAB);
                             ma.client = ms.client;
                             ma.page = ms.page;
-                            ma.tab = tabs - 1;
+                            ma.tab = tabForAudit;
                             ma.scalePercent = static_cast<int>((passDpi * 100U) / 96U);
-                            ma.prefix = "drag@" + std::to_string(passDpi) +
-                                        " bottom: ";
+                            ma.prefix = "drag@" + std::to_string(passDpi) + " " +
+                                        label + " bottom: ";
                             ma.findings = findings;
                             checkStalePixels(ma);
                         }
@@ -2832,28 +2844,28 @@ int harnessScenarioOpenGeometry(HWND* dlgInOut, int tabCount, unsigned passDpi,
                         pumpPostedMessages();
                         std::vector<HWND> allDrag = stableChildren(dlg);
                         HarnessState ds;
-                        readHarnessState(dlg, allDrag, tabs - 1, &ds);
+                        readHarnessState(dlg, allDrag, tabForAudit, &ds);
                         Audit da{};
                         da.dlg = dlg;
                         da.tabsCtl = ::GetDlgItem(dlg, IDC_TAB);
                         da.client = ds.client;
                         da.page = ds.page;
-                        da.tab = tabs - 1;
+                        da.tab = tabForAudit;
                         da.scalePercent = static_cast<int>((passDpi * 100U) / 96U);
                         da.prefix = "drag@" + std::to_string(passDpi) + ": ";
                         da.findings = findings;
                         checkStalePixels(da);
                         g_passEntryNotes.push_back(
-                            "drag @" + std::to_string(passDpi) +
-                            " dpi: out " + std::to_string(steps) +
+                            "drag @" + std::to_string(passDpi) + " dpi " +
+                            label + ": out " + std::to_string(steps) +
                             "xLINEDOWN+PAGEDOWN+BOTTOM back TOP, offset " +
                             std::to_string(ds.app.offset) + "/" +
                             std::to_string(ds.app.range));
-                    } else {
-                        g_passEntryNotes.push_back(
-                            "drag @" + std::to_string(passDpi) +
-                            " dpi: no bar or range at open, drag skipped");
-                    }
+                    };
+                    dragRoundTrip(0, "t0");
+                    KieeKeyProbeSelectTab(dlg, tabs - 1);
+                    pumpPostedMessages();
+                    dragRoundTrip(tabs - 1, "t" + std::to_string(tabs - 1));
                 }
                 KieeKeyProbeSetWorkAreaOverride(0, 0, 0, 0);
             }

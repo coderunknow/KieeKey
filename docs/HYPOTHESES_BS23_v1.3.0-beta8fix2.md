@@ -260,12 +260,22 @@ full-dialog invalidation after the children move. Every pixel audit so far
 
 ## Round 6 — the pixel audit WHILE scrolling (E8)
 
-E8 reopens themed on the worst tab (tab 8, Cấp độ), drives the app's OWN
-scroll channel (WM_VSCROLL line/page/bottom/top — the scrollbar's internal
-track position cannot be synthesized, but every code ends in the same tail
-`applySettingsScrollOffset`), walks the offset out and back, then audits the
-pixels. Anything the forced full repaint moves is content the desktop still
-holds from a mid-scroll frame — ghost text at an old offset. If E8 turns red
-the defect is in the scroll repaint path; if it stays green the measurement
+First E8 attempt reopened on tab 8 at the DEFAULT geometry: range 0, drag
+skipped — and the reason is itself a measurement: the bar's range latches
+PER TAB at open (round 2's flip-flop), and tab 8 latches 0. The range only
+exists at the FULL-HEIGHT geometry (E5's work-area override: range 227 @150,
+tab 0) — exactly the "bar shown with overflowing content" state of the
+photograph.
+
+E8 final design: give the refit the same tall work area, reopen on TAB 0
+(the tab E5 proved carries a range), drive the app's OWN scroll channel
+(WM_VSCROLL line/page/bottom/top — the scrollbar's internal track position
+cannot be synthesized, but every code ends in the same tail
+`applySettingsScrollOffset`), walk the offset out and back with a pixel
+audit MID-SCROLL at the deepest point and another after the trip. Then the
+user's exact sequence: switch to tab 8 (Cấp độ), drag again, audit again.
+Anything the forced full repaint moves is content the desktop still holds
+from a mid-scroll frame — ghost text at an old offset. If E8 turns red the
+defect is in the scroll repaint path; if it stays green the measurement
 record is complete and the release proceeds on mechanism with UNVERIFIED
 (Windows).

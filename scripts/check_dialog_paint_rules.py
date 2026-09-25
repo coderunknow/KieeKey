@@ -1305,6 +1305,17 @@ def check(repo: Path):
             ('int openSettles;',
              'the open-path settle counter in the probe-visible struct '
              '(BS-23a measurement)'),
+            ('RECT g_probeWorkAreaOverride{};',
+             'the work-area override that makes the height axis measurable '
+             '(BS-23c measurement) - the runner clamps every window to 689 px '
+             "of client height, the user's default open wants ~1034"),
+            ('rcWork = g_probeWorkAreaOverride;',
+             'the override is the LAST word on the bound refitWindow receives '
+             "(BS-23c measurement) - after the monitor's own answer, so the "
+             'harness can give the dialog headroom the runner cannot'),
+            ('extern "C" void KieeKeyProbeSetWorkAreaOverride(int left, int top,',
+             'the probe entry point for the work-area override (BS-23c '
+             'measurement)'),
             ('int barShowReflows;',
              'the bar-appearance reflow counter in the probe-visible struct '
              '(BS-23c measurement)')):
@@ -1355,7 +1366,8 @@ def check(repo: Path):
             ('KieeKeyProbeSetWindowDpiOverride(passDpi);\n        HWND fresh = KieeKeyProbeReopenSettings(dlg, openTab);',
              "the scenario opens at the pass's scale through the override "
              '(BS-23a measurement)'),
-            ('for (int w = 560; w <= 1000; w += 20) {',
+            ('const int sweepH = static_cast<int>(openedClient.bottom);\n'
+             '            for (int w = 560; w <= 1000; w += 20) {',
              'the width sweep: the default open width (840 at 144 dpi) is '
              'inside it and the wrap decision moves through it (BS-23a/b/c '
              'measurement)'),
@@ -1394,7 +1406,25 @@ def check(repo: Path):
              'not the pure MulDiv frame KieeKeyProbeSimulateDpi applies'),
             ('harnessAssert(dlg, st, allUp, "scenario_dpichanged_up", static_cast<int>(upDpi), 0, 100, findings);',
              'the state a real dpi transition UP leaves behind is judged '
-             '(BS-23c measurement)')):
+             '(BS-23c measurement)'),
+            ('KieeKeyProbeSetWorkAreaOverride(0, 0, 1280, 1600);',
+             'E5 the full-height open: the scenario gives the refit a taller '
+             'work area (BS-23c measurement) - the photograph\'s true geometry '
+             'is ~1034 px tall; the runner\'s own screen clamps to 689'),
+            ('const int tallH = static_cast<int>(st.client.bottom);\n'
+             '            for (int w = 560; w <= 1000; w += 20) {',
+             'the FULL-HEIGHT width sweep (BS-23c measurement) - the bar '
+             'decision moves through it at the user\'s true window height'),
+            ('harnessAssert(dlg, st, allTall, "scenario_open_tall", 0, 0, 100, findings);',
+             'the full-height open state is judged by the full battery '
+             '(BS-23c measurement)'),
+            ('harnessAssert(dlg, ds, allTall, "scenario_tall_width_tab8", w, 0, 100, findings);',
+             'the deep tab is judged at every width of the full-height sweep '
+             '(BS-23c measurement) - a bar that appears for the deep tab '
+             'narrows the client under rows planned for the wide one (F3/F6)'),
+            ('KieeKeyProbeSetWorkAreaOverride(0, 0, 0, 0);',
+             'the work-area override is cleared before the handover restore '
+             '(BS-23c measurement) - no later check may run with a faked bound')):
         if needle not in probe:
             failures.append(f"tools/ui_probe/ui_probe.cpp: {needle} is gone - {why}")
     return failures

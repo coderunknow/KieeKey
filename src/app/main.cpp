@@ -3485,6 +3485,14 @@ void showTab(int tab);   // fwd (defined below; used by settingsToControls)
 // "what scale is this window at". Probe-only: without -DKIEEKEY_UI_PROBE this
 // global and this branch do not exist.
 UINT g_probeWindowDpiOverride = 0;
+// v1.3.0-beta8fix2 (bug BS-23c measurement): the CI runner's work area is
+// 1024x768, so the dialog's own refit clamps every audited window to 689 px
+// of client height — while the user's photograph was taken in a default-open
+// window that wants ~1034 px at 150 %. The height axis (which tabs fit, which
+// need the bar, and therefore which client width the rows were planned for)
+// was unmeasurable. The override lies to the ONE read that feeds refitWindow
+// (the work area of solveSettingsLayout); an empty rect turns it off.
+RECT g_probeWorkAreaOverride{};
 #endif
 
 UINT windowDpi(HWND hwnd) noexcept {
@@ -5780,6 +5788,15 @@ void solveSettingsLayout(HWND hwnd) {
         mi.cbSize = sizeof(mi);
         if (::GetMonitorInfoW(mon, &mi)) { rcWork = mi.rcWork; }
     }
+#if defined(KIEEKEY_UI_PROBE)
+    // v1.3.0-beta8fix2 (bug BS-23c measurement): the probe's work-area
+    // override — the last word on the bound refitWindow() receives, so the
+    // harness can give the dialog the headroom the runner's own screen cannot.
+    if (g_probeWorkAreaOverride.right > g_probeWorkAreaOverride.left &&
+        g_probeWorkAreaOverride.bottom > g_probeWorkAreaOverride.top) {
+        rcWork = g_probeWorkAreaOverride;
+    }
+#endif
     const ok::layout::WindowRefit fit = ok::layout::refitWindow(
         ok::layout::Rect{rcDlg.left, rcDlg.top,
                          rcDlg.right - rcDlg.left, rcDlg.bottom - rcDlg.top},
@@ -8970,6 +8987,20 @@ extern "C" int KieeKeyProbeDisplayChange(HWND dlg) {
 // scenario so no later check runs with a faked scale.
 extern "C" void KieeKeyProbeSetWindowDpiOverride(UINT dpi) {
     g_probeWindowDpiOverride = dpi;
+}
+
+// v1.3.0-beta8fix2 (bug BS-23c measurement): the harness's ability to say
+// "the monitor's work area is this big" — see the note above
+// g_probeWorkAreaOverride. (0,0,0,0) clears it. The dialog's refit then grows
+// the window to the height a real desktop with that work area allows, so the
+// harness can audit the ~1034 px-tall default-open geometry the user's
+// photograph was taken in — the runner's own 1024x768 screen clamps every
+// window it creates to 689 px of client height.
+extern "C" void KieeKeyProbeSetWorkAreaOverride(int left, int top,
+                                                int right, int bottom) {
+    RECT r{static_cast<LONG>(left), static_cast<LONG>(top),
+           static_cast<LONG>(right), static_cast<LONG>(bottom)};
+    g_probeWorkAreaOverride = r;
 }
 
 // Resize the dialog to a target CLIENT size (a work-area / monitor change).

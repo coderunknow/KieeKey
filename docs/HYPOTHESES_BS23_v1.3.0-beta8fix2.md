@@ -118,11 +118,47 @@ the user's machine from the CI runner, one fact at a time:
   axis; the height axis stays **UNVERIFIED (Windows)** until the user
   re-tests on the real machine.
 
-## Round 2 plan
+## Round 2 verdict — the tray/tick/growth/monitor-move axes are CLEAN too
 
-Probe-only extension of the open scenario with E1–E4. If a discriminator turns
-red, the violating state rides in the annotation (firstViolations), and the
-fix commit for that hypothesis gets its BS name (BS-23a/b/c reserved). If all
-stay green, the photograph's driver lives in H5 — the height axis — and the
-fix must be justified by mechanism (the bar-shown-after-solve arithmetic) with
-the release carrying UNVERIFIED (Windows) until the user confirms.
+Run **36123983333** (commit 0156fda): E1 opened the dialog onto tabs 0, 4 and
+8 at all three scales; E2 landed two ticks on each fresh dialog; E3 grew a
+live row at the open geometry and let the tick's one reflow consume it; E4
+sent a real WM_DPICHANGED with a work-area-clamped suggested rect up one
+scale and back. 4929 harness assertions, 9 scenarios, **0 violations**;
+I13 577170/0, I14 19080/0, I15 48788/0, R1 6/0.
+
+One new measured fact stands out — the bar decision at open time depends on
+the tab the dialog opens onto:
+
+```
+open @144 dpi tab 0: client 823x689   (bar shown: 840 - 17)
+open @144 dpi tab 4: client 823x689   (bar shown)
+open @144 dpi tab 8: client 840x689   (bar HIDDEN: tab 8 fits, range 0)
+```
+
+Same at 120 dpi (683 vs 700). The all-tabs intent keeps the style bit, and
+Windows' per-tab SetScrollInfo answer hides the bar for a tab that fits — the
+flip-flop BS-22c built `settingsAdoptScrollbarVisibility` for. Every state it
+passes through self-heals at the runner's clamped height: I15 found no row
+past the page's right edge in any of them.
+
+## Round 3 — the height axis made measurable (E5)
+
+The runner's 1024×768 screen clamps every window to 689 px of client height;
+the user's default open at 150 % wants ~1034 px (the pass derivation measured
+`target 1050x1034`). At the user's height most tabs FIT — the bar decision,
+and therefore the client width the rows are planned for, is a different state
+space than anything round 1/2 could reach. E5 adds a probe-only work-area
+override (`KieeKeyProbeSetWorkAreaOverride`, honored last by the solve's
+refit bound) and reopens the dialog under a 1280×1600 work area at each
+pass's scale: open state, tab walk, and a width sweep 560..1000 in which a
+shallow and the deep tab alternate at every width — the exact sequence in
+which a bar that appears for the deep tab narrows the client under rows
+planned for the wide one (the F3/F6 class).
+
+If E5 turns red, the violating state names the operation and the rectangles,
+and the fix gets its BS name from the mechanism it measures. If it stays
+green, the photograph's driver is specific to the native-150 % machine (font
+metrics, the OS's own suggested rects, monitor topology) and the remaining
+fixes ride on mechanism with the release carrying UNVERIFIED (Windows) until
+the user confirms on the real machine.

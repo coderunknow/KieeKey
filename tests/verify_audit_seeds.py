@@ -807,8 +807,12 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
     (
         "BS-23a  the width sweep shrinks to a single width",
         "tools/ui_probe/ui_probe.cpp",
-        "    for (int w = 560; w <= 1000; w += 20) {",
-        "    for (int w = 560; w <= 560; w += 20) {   /* seeded: one width, no sweep */",
+        # anchored with the line above: the full-height sweep (E5) has the
+        # same loop header, and only the round-1 sweep may shrink here.
+        "            const int sweepH = static_cast<int>(openedClient.bottom);\n"
+        "            for (int w = 560; w <= 1000; w += 20) {",
+        "            const int sweepH = static_cast<int>(openedClient.bottom);\n"
+        "            for (int w = 560; w <= 560; w += 20) {   /* seeded: one width, no sweep */",
         "the width sweep",
     ),
     (
@@ -864,6 +868,20 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "            ::SendMessageW(dlg, WM_DPICHANGED, static_cast<WPARAM>(upDpi),",
         "            /* seeded: the monitor-move message is never sent */",
         "E4 a REAL WM_DPICHANGED",
+    ),
+    (
+        "BS-23c  the work-area override stops reaching the refit",
+        "src/app/main.cpp",
+        "        rcWork = g_probeWorkAreaOverride;",
+        "        /* seeded: the override never reaches the refit */",
+        "the override is the LAST word on the bound refitWindow receives",
+    ),
+    (
+        "BS-23c  the full-height open deleted",
+        "tools/ui_probe/ui_probe.cpp",
+        "        KieeKeyProbeSetWorkAreaOverride(0, 0, 1280, 1600);",
+        "        KieeKeyProbeSetWorkAreaOverride(0, 0, 0, 0);   /* seeded: no headroom */",
+        "E5 the full-height open",
     ),
 ]
 

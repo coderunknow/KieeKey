@@ -82,6 +82,12 @@ extern "C" HWND KieeKeyProbeOpenSettings(int tab);
 // open a fresh dialog on `tab` — the OPEN path at the current dpi override,
 // i.e. the geometry the user's photograph was taken in (default size, 150 %).
 extern "C" HWND KieeKeyProbeReopenSettings(HWND dlg, int tab);
+// v1.3.0-beta8fix2 (bug BS-23c measurement): the work area the solver's refit
+// receives — (0,0,0,0) clears it. Lets the harness give the dialog the
+// headroom the runner's own screen cannot (the user's default-open window is
+// ~1034 px tall at 150 %; the runner clamps to 689).
+extern "C" void KieeKeyProbeSetWorkAreaOverride(int left, int top,
+                                                int right, int bottom);
 extern "C" int  KieeKeyProbeSelectTab(HWND dlg, int tab);
 // CA-03 diagnostics: the app's OWN required text height for a control (the same
 // DrawTextW call the solver uses), so the probe can compare instead of assume.
@@ -2652,6 +2658,85 @@ int harnessScenarioOpenGeometry(HWND* dlgInOut, int tabCount, unsigned passDpi,
                 harnessAssert(dlg, st, allDown, "scenario_dpichanged_back", static_cast<int>(passDpi), 0, 100, findings);
             }
         }
+    }
+
+    // E5 — the FULL-HEIGHT open (bug BS-23c measurement, the H5 axis). The
+    // runner's 1024x768 screen clamps every window it creates to 689 px of
+    // client height, while the user's default open at 150 % wants ~1034. The
+    // height axis decides which tabs fit and which need the bar — and
+    // therefore which client width the rows were planned for. Give the refit
+    // a taller work area and judge the photograph's true geometry: the open
+    // state, a tab walk, and a width sweep in which a shallow and a deep tab
+    // alternate at every width (the bar decision moves through the sweep).
+    {
+        KieeKeyProbeSetWorkAreaOverride(0, 0, 1280, 1600);
+        KieeKeyProbeSetWindowDpiOverride(passDpi);
+        HWND tall = KieeKeyProbeReopenSettings(dlg, 0);
+        KieeKeyProbeSetWindowDpiOverride(0);
+        if (tall != nullptr) {
+            dlg = tall;
+            *dlgInOut = dlg;
+            pumpPostedMessages();
+            ::KillTimer(dlg, 1);
+            std::vector<HWND> allTall = stableChildren(dlg);
+            HarnessState st;
+            readHarnessState(dlg, allTall, 0, &st);
+            const std::string tallNote =
+                "open @" + std::to_string(passDpi) +
+                " dpi FULL-HEIGHT: client " + std::to_string(st.client.right) +
+                "x" + std::to_string(st.client.bottom) + " page " +
+                rectStr(st.page) + " stripRows " +
+                std::to_string(st.app.stripRows) + " need/avail " +
+                std::to_string(st.app.stripPlanRequired) + "/" +
+                std::to_string(st.app.stripPlanAvailable) + " range " +
+                std::to_string(st.app.range) + " bar " +
+                (st.app.styleVScroll != 0 ? "on" : "off");
+            g_passEntryNotes.push_back(tallNote);
+            std::printf("ui_probe: [open-geometry] %s\n", tallNote.c_str());
+            harnessTrace("{\"scenario\": \"open_tall\", \"client\": \"" +
+                         std::to_string(st.client.right) + "x" +
+                         std::to_string(st.client.bottom) + "\", \"page\": \"" +
+                         rectStr(st.page) + "\", \"range\": " +
+                         std::to_string(st.app.range) + ", \"bar\": " +
+                         (st.app.styleVScroll != 0 ? "1" : "0") +
+                         ", \"passDpi\": " + std::to_string(passDpi) + "}");
+            ++g_fuzzChecks;
+            harnessAssert(dlg, st, allTall, "scenario_open_tall", 0, 0, 100, findings);
+            for (int t = 0; t < tabs; ++t) {
+                KieeKeyProbeSelectTab(dlg, t);
+                pumpPostedMessages();
+                HarnessState ts;
+                readHarnessState(dlg, allTall, t, &ts);
+                ++g_fuzzChecks;
+                harnessAssert(dlg, ts, allTall, "scenario_tall_tab_sweep", t, 0, 100, findings);
+            }
+            KieeKeyProbeSelectTab(dlg, 0);
+            const int tallH = static_cast<int>(st.client.bottom);
+            for (int w = 560; w <= 1000; w += 20) {
+                KieeKeyProbeResize(dlg, w, tallH);
+                KieeKeyProbeReflowNow(dlg);
+                pumpPostedMessages();
+                allTall = stableChildren(dlg);   // a solve can create/destroy children
+                HarnessState ws;
+                readHarnessState(dlg, allTall, 0, &ws);
+                ++g_fuzzChecks;
+                harnessAssert(dlg, ws, allTall, "scenario_tall_width_sweep", w, 0, 100, findings);
+                // Alternate the deep/shallow tabs at this width: a bar that
+                // appears for the deep tab narrows the client under rows that
+                // were planned for the wide one (the F3/F6 class).
+                KieeKeyProbeSelectTab(dlg, 8 < tabs ? 8 : tabs - 1);
+                HarnessState ds;
+                readHarnessState(dlg, allTall, 8 < tabs ? 8 : tabs - 1, &ds);
+                ++g_fuzzChecks;
+                harnessAssert(dlg, ds, allTall, "scenario_tall_width_tab8", w, 0, 100, findings);
+                KieeKeyProbeSelectTab(dlg, 0);
+                HarnessState ss;
+                readHarnessState(dlg, allTall, 0, &ss);
+                ++g_fuzzChecks;
+                harnessAssert(dlg, ss, allTall, "scenario_tall_width_tab0", w, 0, 100, findings);
+            }
+        }
+        KieeKeyProbeSetWorkAreaOverride(0, 0, 0, 0);
     }
 
     // 5. Restore the pass's handover state (R1 judges it): same dpi, client,

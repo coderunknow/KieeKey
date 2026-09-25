@@ -1430,7 +1430,20 @@ def check(repo: Path):
              "measurement) - the stale-pixel audit the per-tab run applies at "
              'the PASS geometry, applied here to the DEFAULT-OPEN dialog tab '
              'by tab, after the user\'s facts: the breakage persists across '
-             'reopens and a tab click produces it')):
+             'reopens and a tab click produces it'),
+            ('std::string hostFacts() {',
+             'the runner\'s own facts in the report (BS-23b measurement, '
+             'round 5) - after four clean rounds the machine itself is the '
+             'last unmeasured axis: OS build, visual styles, composition'),
+            ('if (const SetWindowThemeFn setTheme = probeSetWindowTheme()) {',
+             'E7 the OTHER theme mode (BS-23b measurement, round 5) - the tab '
+             'control lays its items out and paints them differently in the '
+             'classic and themed modes, and the strip\'s row decision '
+             'negotiates with it; whichever mode the runner is in, the other '
+             'must be measured too'),
+            ('setTheme(dlg, L" ", L" ");',
+             'the documented opt-out of visual styles for the reopened tree '
+             '(BS-23b measurement, round 5)')):
         if needle not in probe:
             failures.append(f"tools/ui_probe/ui_probe.cpp: {needle} is gone - {why}")
     return failures

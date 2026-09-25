@@ -1,9 +1,10 @@
 # BS-23 hypothesis log — v1.3.0-beta8fix2 (the 150 % photograph)
 
-Status: **Phase 2, round 4** — rounds 1-3 measured every CI-reachable state
-clean; the user's second-pass facts (persists across reopen; a tab click
-produces it, worst on tab 8; single 150 % monitor) point at a paint-level
-state. E6 judges it at the photographed geometry. Nothing is fixed yet.
+Status: **Phase 2, round 5** — rounds 1-4 measured every CI-reachable state
+clean, window state AND pixels (the user's facts: persists across reopen; a
+tab click produces it, worst on tab 8; single 150 % monitor). Round 5
+measures the runner itself (host facts) and the other visual-style mode
+(E7). Nothing is fixed yet.
 Every line below carries the measured numbers that justify it. The layout is a
 contract between the window and its children — measure both ends; trusting
 either one is a new BS class.
@@ -196,7 +197,39 @@ taken at the DEFAULT-OPEN geometry (823 px, two-row strip).
 After the default open at the pass's scale, walk the nine tabs and run the
 stale-pixel audit on each: capture the screen, force the app's full repaint,
 capture again — any pixel that moved is content the desktop held that the
-app does not draw. If E6 turns red, the finding names the tab, the pixel
-count and the first coordinate, and BS-23b belongs to the repaint path. If
-it stays green, the remaining discriminators need the user's next
-photographs (whole window incl. the title bar, immediately after reopen).
+app does not draw. ## Round 4 verdict — the pixels at the photographed geometry are CLEAN too
+
+Run **36137870873** (commit 882997e): E6 ran the stale-pixel audit on the
+default-open dialog at all three scales, tab by tab — screen capture, forced
+full repaint, capture again. Screen checks 27 → **54** (+27 open-geometry
+audits), **0 findings**. The desktop holds exactly what the app draws, at
+823 px under a two-row strip, after every one of the nine tab switches.
+
+Four rounds, every axis the harness can drive — open path, tray-open tabs,
+landed ticks, growth reflows, real WM_DPICHANGED, full height, width sweeps
+with the bar flipping, the pixel truth: **0 violations**. The beta8fix1 tree
+is coherent in every state this runner can produce.
+
+## Round 5 — the runner itself is the last unmeasured axis (E7 + host facts)
+
+What still separates the runner from the user's machine is the runner:
+Windows Server 2022 CI image vs. the user's desktop Windows at 150 %. The
+tab control's item layout and paint are a negotiation with comctl32/uxtheme,
+and **visual styles change both** — classic vs. themed mode lays the strip
+out differently (padding, row height), and the app's row-count decision
+trusts its own measurement against the control's. Round 5:
+
+* the report now carries the runner's facts: OS build via RtlGetVersion,
+  IsAppThemed/IsThemeActive, DWM composition (`host:` entry note + JSON
+  `host` key),
+* E7 reopens the dialog at the pass's scale and opts that window tree OUT of
+  visual styles (`SetWindowTheme(hwnd, L" ", L" ")`, the documented
+  opt-out), forces a re-layout, and judges the battery + the stale-pixel
+  audit tab by tab — so whichever mode the runner itself is in, the OTHER
+  one is measured.
+
+If E7 turns red, BS-23b belongs to the theme-mode negotiation and the fix is
+a settle that trusts the control's own layout answer. If it stays green, the
+measurement record is complete (five rounds, every reachable axis clean) and
+the release proceeds on mechanism with UNVERIFIED (Windows) until the user's
+re-test on the real machine — with the hypothesis log as the evidence trail.

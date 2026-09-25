@@ -2083,6 +2083,70 @@ void pumpPostedMessages() {
     }
 }
 
+// v1.3.0-beta8fix2 (bug BS-23b measurement, round 5): FACTS ABOUT THE RUNNER.
+// Four green measurement rounds proved that every state this harness can reach
+// is coherent; the last unmeasured axis is the machine the probe runs on. The
+// OS build decides which comctl32/uxtheme the tab control negotiates with, and
+// visual styles change how that control lays its items out and paints them —
+// the strip's row decision depends on it. RtlGetVersion via GetProcAddress
+// (GetVersionExW is deprecation-warning bait under /W4 /WX); the theme and
+// composition answers come from uxtheme/dwmapi the same dynamic way the app
+// probes every other late API.
+std::string hostFacts() {
+    int major = 0, minor = 0, build = 0;
+    if (const HMODULE ntdll = ::GetModuleHandleW(L"ntdll.dll")) {
+        using Fn = LONG(WINAPI*)(OSVERSIONINFOEXW*);
+        const auto fn = reinterpret_cast<Fn>(::GetProcAddress(ntdll, "RtlGetVersion"));
+        if (fn != nullptr) {
+            OSVERSIONINFOEXW vi{};
+            vi.dwOSVersionInfoSize = sizeof(vi);
+            if (fn(&vi) == 0) {
+                major = static_cast<int>(vi.dwMajorVersion);
+                minor = static_cast<int>(vi.dwMinorVersion);
+                build = static_cast<int>(vi.dwBuildNumber);
+            }
+        }
+    }
+    int appThemed = -1, themeActive = -1, composed = -1;
+    if (const HMODULE ux = ::LoadLibraryW(L"uxtheme.dll")) {
+        using BoolFn = BOOL(WINAPI*)();
+        const auto isAppThemed =
+            reinterpret_cast<BoolFn>(::GetProcAddress(ux, "IsAppThemed"));
+        const auto isThemeActive =
+            reinterpret_cast<BoolFn>(::GetProcAddress(ux, "IsThemeActive"));
+        if (isAppThemed != nullptr) { appThemed = isAppThemed() ? 1 : 0; }
+        if (isThemeActive != nullptr) { themeActive = isThemeActive() ? 1 : 0; }
+        if (const HMODULE dwm = ::LoadLibraryW(L"dwmapi.dll")) {
+            using DwmFn = HRESULT(WINAPI*)(BOOL*);
+            const auto dwmEnabled =
+                reinterpret_cast<DwmFn>(::GetProcAddress(dwm, "DwmIsCompositionEnabled"));
+            if (dwmEnabled != nullptr) {
+                BOOL on = FALSE;
+                if (dwmEnabled(&on) == S_OK) { composed = on ? 1 : 0; }
+            }
+            ::FreeLibrary(dwm);
+        }
+        ::FreeLibrary(ux);
+    }
+    return "host: win " + std::to_string(major) + "." + std::to_string(minor) +
+           "." + std::to_string(build) + " appThemed " + std::to_string(appThemed) +
+           " themeActive " + std::to_string(themeActive) + " dwm " +
+           std::to_string(composed);
+}
+
+// v1.3.0-beta8fix2 (round 5): the documented opt-out of visual styles for one
+// window tree — SetWindowTheme(hwnd, L" ", L" "). Lets E7 measure the OTHER
+// theme mode whichever mode the runner itself is in.
+using SetWindowThemeFn = HRESULT(WINAPI*)(HWND, LPCWSTR, LPCWSTR);
+SetWindowThemeFn probeSetWindowTheme() {
+    static const SetWindowThemeFn fn = [] {
+        const HMODULE ux = ::LoadLibraryW(L"uxtheme.dll");
+        if (ux == nullptr) { return static_cast<SetWindowThemeFn>(nullptr); }
+        return reinterpret_cast<SetWindowThemeFn>(::GetProcAddress(ux, "SetWindowTheme"));
+    }();
+    return fn;
+}
+
 void sendWheel(HWND dlg, int notches, const RECT& page) {
     if (notches == 0) { return; }
     POINT pt{page.left + (page.right - page.left) / 2,
@@ -2638,6 +2702,64 @@ int harnessScenarioOpenGeometry(HWND* dlgInOut, int tabCount, unsigned passDpi,
                 harnessAssert(dlg, st, all, "scenario_width_sweep_tab", t, 0, 100, findings);
             }
             KieeKeyProbeSelectTab(dlg, 0);
+            // E7 — the OTHER theme mode (round 5). Four rounds measured the
+            // dialog in whichever visual-style mode this runner has; the tab
+            // control lays its items out and paints them differently in the
+            // classic and themed modes, and the strip's row decision is a
+            // negotiation with it. Reopen, opt this window tree OUT of visual
+            // styles (the documented SetWindowTheme(" ", " ") opt-out), force
+            // a re-layout, judge the battery and the pixel audit again — so
+            // whichever mode the runner itself is in, the other one is
+            // measured too.
+            if (const SetWindowThemeFn setTheme = probeSetWindowTheme()) {
+                KieeKeyProbeSetWindowDpiOverride(passDpi);
+                HWND classic = KieeKeyProbeReopenSettings(dlg, 0);
+                KieeKeyProbeSetWindowDpiOverride(0);
+                if (classic != nullptr) {
+                    dlg = classic;
+                    *dlgInOut = dlg;
+                    setTheme(dlg, L" ", L" ");
+                    ::SetWindowPos(dlg, nullptr, 0, 0, 0, 0,
+                                   SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+                                   SWP_NOACTIVATE | SWP_FRAMECHANGED);
+                    KieeKeyProbeReflowNow(dlg);
+                    pumpPostedMessages();
+                    ::KillTimer(dlg, 1);
+                    std::vector<HWND> allClassic = stableChildren(dlg);
+                    HarnessState cs;
+                    readHarnessState(dlg, allClassic, 0, &cs);
+                    g_passEntryNotes.push_back(
+                        "open @" + std::to_string(passDpi) +
+                        " dpi CLASSIC: client " + std::to_string(cs.client.right) +
+                        "x" + std::to_string(cs.client.bottom) + " page " +
+                        rectStr(cs.page) + " stripRows " +
+                        std::to_string(cs.app.stripRows) + " need/avail " +
+                        std::to_string(cs.app.stripPlanRequired) + "/" +
+                        std::to_string(cs.app.stripPlanAvailable));
+                    ++g_fuzzChecks;
+                    harnessAssert(dlg, cs, allClassic, "scenario_classic_open", 0, 0, 100, findings);
+                    for (int t = 0; t < tabs; ++t) {
+                        KieeKeyProbeSelectTab(dlg, t);
+                        pumpPostedMessages();
+                        HarnessState ts;
+                        readHarnessState(dlg, allClassic, t, &ts);
+                        ++g_fuzzChecks;
+                        harnessAssert(dlg, ts, allClassic, "scenario_classic_tab_sweep", t, 0, 100, findings);
+                        Audit ca{};
+                        ca.dlg = dlg;
+                        ca.tabsCtl = ::GetDlgItem(dlg, IDC_TAB);
+                        ca.client = ts.client;
+                        ca.page = ts.page;
+                        ca.tab = t;
+                        ca.scalePercent = static_cast<int>((passDpi * 100U) / 96U);
+                        ca.prefix = "classic@" + std::to_string(passDpi) +
+                                    " tab " + std::to_string(t) + ": ";
+                        ca.findings = findings;
+                        checkStalePixels(ca);
+                    }
+                    KieeKeyProbeSelectTab(dlg, 0);
+                }
+            }
         }
     }
 
@@ -3962,6 +4084,15 @@ int main(int argc, char** argv) {
     std::printf("ui_probe: settings dialog %p, dpi=%u (%d%%)\n",
                 static_cast<void*>(dlg), static_cast<unsigned>(nativeDpi),
                 static_cast<int>((nativeDpi * 100U) / 96U));
+    // v1.3.0-beta8fix2 (round 5): the runner's own facts ride in the report —
+    // after four clean measurement rounds the machine itself is the last
+    // unmeasured axis (OS build, visual styles, composition).
+    {
+        const std::string host = hostFacts() + " native dpi " +
+                                 std::to_string(static_cast<unsigned>(nativeDpi));
+        std::printf("ui_probe: %s\n", host.c_str());
+        g_passEntryNotes.push_back(host);
+    }
 
     std::vector<std::pair<std::string, int>> byKind;
     const auto noteKind = [&byKind](const std::string& kind) {
@@ -3992,6 +4123,7 @@ int main(int argc, char** argv) {
     std::string json;
     json += "{\n \"tool\": \"kieekey_ui_probe\",\n";
     json += " \"nativeDpi\": " + std::to_string(static_cast<unsigned>(nativeDpi)) + ",\n";
+    json += " \"host\": \"" + jsonEscape(hostFacts()) + "\",\n";
     json += " \"tabs\": [\n";
     int totalControls = 0;
     bool firstTabEntry = true;
@@ -4553,14 +4685,14 @@ int main(int argc, char** argv) {
             ",\n \"invariants\": \"" + jsonEscape(invSummary) + "\"" +
             ",\n \"traceLines\": " + std::to_string(g_traceLines) +
             ",\n \"passEntries\": [";
-    for (std::size_t i = 0; i < g_passEntryNotes.size() && i < 16; ++i) {
+    for (std::size_t i = 0; i < g_passEntryNotes.size() && i < 24; ++i) {
         json += std::string(i > 0 ? ", " : "") + "\"" + jsonEscape(g_passEntryNotes[i]) + "\"";
     }
     json += "],\n \"handover\": [";
     // v1.3.0-beta8fix1 (bug BS-19): the handover notes and one example state per
     // violated invariant ride in the JSON, so the CI digest can carry the state
     // that produced a count (see the workflow's operation-sequence line).
-    for (std::size_t i = 0; i < g_handoverNotes.size() && i < 16; ++i) {
+    for (std::size_t i = 0; i < g_handoverNotes.size() && i < 24; ++i) {
         json += std::string(i > 0 ? ", " : "") + "\"" + jsonEscape(g_handoverNotes[i]) + "\"";
     }
     json += "],\n \"firstViolations\": [";

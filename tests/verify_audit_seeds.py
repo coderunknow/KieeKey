@@ -894,6 +894,24 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "                pa.prefix = std::string(\"(seeded) \") +",
         "E6 the pixel truth",
     ),
+    # v1.3.0-beta8fix2 round 5: four clean measurement rounds leave the runner
+    # itself as the last unmeasured axis — its OS build / visual styles ride
+    # in the report, and the OTHER theme mode is measured by reopening with
+    # the documented SetWindowTheme opt-out.
+    (
+        "BS-23b  the runner's own facts stop riding in the report",
+        "tools/ui_probe/ui_probe.cpp",
+        "std::string hostFacts() {",
+        "std::string hostFactsRemoved() {   /* seeded: the host facts are gone */",
+        "the runner's own facts in the report",
+    ),
+    (
+        "BS-23b  the classic-mode reopen stops opting out of visual styles",
+        "tools/ui_probe/ui_probe.cpp",
+        "                    setTheme(dlg, L\" \", L\" \");",
+        "                    /* seeded: the tree keeps the runner's theme */",
+        "the documented opt-out of visual styles",
+    ),
 ]
 
 # Files scripts/check_dialog_paint_rules.py reads, relative to the repo root.

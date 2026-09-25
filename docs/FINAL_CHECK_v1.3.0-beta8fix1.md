@@ -171,6 +171,7 @@ skip vì x64 đỏ (đúng thiết kế). Số liệu lấy từ annotations c�
 | `36018651106` | `067a113` | **failure** — `inv_I9=11` (I9 = hội tụ); first: id 610 `344x420 -> 327x420` (−17 px) |
 | `36020387531` | `a4096c1` | **failure** — `inv_I9=11`, cùng first; ground lộ plan `3/715/321@381` |
 | `36022345344` | `926c96f` | **failure** — `inv_I9=11`, cùng first; ground nén còn nguyên ⇒ chẩn đoán BS-22x (client 398 → 381 giữa 2 lần solve) |
+| `36096242680` | `ada65db` | **success — 4/4 job**; harness `4320 steps / 4734 assertions / 0 violations` — I9 sạch, mọi bất biến xanh |
 
 Chữ ký của lượt đỏ (nguyên văn từ annotation của job `x64`, job
 `107618125297`):

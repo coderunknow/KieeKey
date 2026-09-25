@@ -232,6 +232,15 @@ the rows were measured, one extra bounded solve re-plans against the
 width the window actually keeps. Presentation layer only — no engine,
 hook, TSF, persistence or invariant change.
 
+CI closed the loop: run `36096242680` on this fix is **green 4/4** (x64,
+Linux, ARM64, ARM64EC) with the fuzz harness at `4320 steps / 4734
+assertions / 0 violations` — I9 clean for the first time since the
+convergence clause landed. (One incident on the way: the sandbox was
+restored from a snapshot and the local clone fell back to the base
+commit; the workspace files carried the full fix, so the BS-22x commit
+was rebuilt byte-identically on top of the pushed chain as `ada65db` —
+SHA256SUMS verified the reconstruction.)
+
 ## The fix (UI/presentation only — no engine, hook, TSF or persistence change)
 
 1. **`applySettingsDpiScale()` owns the whole transition**: rescale → drop the

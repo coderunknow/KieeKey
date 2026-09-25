@@ -1352,7 +1352,7 @@ def check(repo: Path):
             ('int harnessScenarioOpenGeometry(HWND* dlgInOut, int tabCount, unsigned passDpi,',
              'the open-path scenario (BS-23a measurement) - it replaces the '
              'dialog, so it takes the handle by pointer'),
-            ('KieeKeyProbeSetWindowDpiOverride(passDpi);\n    HWND fresh = KieeKeyProbeReopenSettings(dlg, 0);',
+            ('KieeKeyProbeSetWindowDpiOverride(passDpi);\n        HWND fresh = KieeKeyProbeReopenSettings(dlg, openTab);',
              "the scenario opens at the pass's scale through the override "
              '(BS-23a measurement)'),
             ('for (int w = 560; w <= 1000; w += 20) {',
@@ -1373,9 +1373,28 @@ def check(repo: Path):
              "the posted-message drain a real session's loop provides "
              '(BS-23a measurement) - timer messages are dropped, not '
              'dispatched'),
-            ('harnessAssert(dlg, open, all, "scenario_open_default", 0, 0, 100, findings);',
+            ('harnessAssert(dlg, open, all, "scenario_open_default", openTab, 0, 100, findings);',
              'the photographed state itself is judged by the full battery '
-             '(BS-23a measurement)')):
+             '(BS-23a measurement)'),
+            ('static const int kOpenTabs[] = {0, 4, 8};',
+             'E1 the tray-open sequence: the dialog is opened ONTO tabs 0, 4 '
+             'and 8 (BS-23b measurement) — the tray menu opens specific tabs, '
+             'and round 1 (run 36122792718) only opened tab 0'),
+            ('harnessAssert(dlg, st, all, "scenario_open_tick", 0, 0, 100, findings);',
+             'E2 a tick that LANDS on the fresh dialog is judged (BS-23a '
+             'measurement) — the user\'s dialog ticks twice a second from '
+             'WM_CREATE on; round 1 dropped them'),
+            ('harnessAssert(dlg, st, all, "scenario_open_growth", 0, 0, 100, findings);',
+             'E3 a growth row at the open geometry is judged (BS-23a '
+             'measurement) — a live row outgrowing its box asks for exactly '
+             'one reflow, consumed by the tick'),
+            ('::SendMessageW(dlg, WM_DPICHANGED, static_cast<WPARAM>(upDpi),',
+             'E4 a REAL WM_DPICHANGED with the work-area-clamped suggested '
+             'rect (BS-23c measurement) — the OS\'s answer to a monitor move, '
+             'not the pure MulDiv frame KieeKeyProbeSimulateDpi applies'),
+            ('harnessAssert(dlg, st, allUp, "scenario_dpichanged_up", static_cast<int>(upDpi), 0, 100, findings);',
+             'the state a real dpi transition UP leaves behind is judged '
+             '(BS-23c measurement)')):
         if needle not in probe:
             failures.append(f"tools/ui_probe/ui_probe.cpp: {needle} is gone - {why}")
     return failures

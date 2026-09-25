@@ -1,0 +1,128 @@
+# BS-23 hypothesis log — v1.3.0-beta8fix2 (the 150 % photograph)
+
+Status: **Phase 2** — measurement rounds discriminate; nothing is fixed yet.
+Every line below carries the measured numbers that justify it. The layout is a
+contract between the window and its children — measure both ends; trusting
+either one is a new BS class.
+
+## The field evidence (user photograph)
+
+Default window size, 150 % DPI, tab "Cấp độ" just selected:
+
+* **F1** — title `KieeKey v1.3.0-beta8fix1` drawn twice: once correct in the
+  header, once ~150 px lower, overlapping the groupbox label of the Cấp độ page.
+* **F2** — selected tab is Cấp độ (tab 8) but the page body still shows
+  Thông tin (tab 4) content.
+* **F3/F6** — rows clipped mid-glyph at the dialog's RIGHT edge while the
+  vertical scrollbar IS visible.
+* **F4** — the tab strip wraps to two rows at the default size (row 2: Chaos,
+  AI, Cấp độ stretched wide) with no user resize.
+* **F5** — page content starts above the visible area; the groupbox label
+  touches the page top / overlaps the chrome band.
+
+(`unikeynt.exe` warning in the screenshot is correct functionality, not a bug.)
+
+## The CI blind spot (measured)
+
+v1.3.0-beta8fix1 CI was 4/4 green (run 36097548730) with 4320 fuzz steps and
+0 violations because **no scale pass ever entered the open path**: the 144-dpi
+pass entered at 991 px client because it inherited the pass before it (683),
+which inherited the first (543). Now instrumented (PR #35, run 36122792718):
+
+```
+pass @150% ... (derive: inherit 683x689 +bar 17 target 1050x1034 @dpi 144/96)
+```
+
+The target 1050×1034 is clamped by the runner's work area to 991×689 — that
+is the whole 991 px mystery. The default open at 144 dpi is S(560) = 840 frame
+width minus the scrollbar = **823 px client**, a geometry the old harness had
+never solved.
+
+## Round 1 verdict — the open path alone is CLEAN at every CI-reachable state
+
+Run **36122792718** (commit 280734f, measurement-only): the new open-path
+scenario reopened the dialog at each pass's scale through the app's own
+WM_CREATE path and judged it with three new invariants after every operation:
+
+```
+open @96  dpi: client 543x689  page 16,114 511x521  stripRows 2 need/avail 559/503
+open @120 dpi: client 683x689  page 19,139 645x493  stripRows 2 need/avail 679/633
+open @144 dpi: client 823x689  page 22,169 779x453  stripRows 2 need/avail 841/763
+I13 hide-set     568821 checks / 0 violations
+I14 chrome band   18804 checks / 0 violations
+I15 right edge    47966 checks / 0 violations
+R1 handover           6 checks / 0 violations   (4320 fuzz steps, 9 scenarios)
+```
+
+Measured consequences:
+
+* **H1 is REFUTED** as a stand-alone cause: opening the dialog at the default
+  size on a 150 % scale does not, by itself, produce any F state the
+  invariants can see. The strip wrapping to two rows at the default size (F4)
+  is the PLAN's own arithmetic (need 841 > avail 763 at 144 dpi) — F4 is not a
+  defect, it is the geometry the rest of the photograph was drawn in.
+* The open path needs no settle: `stripRows == measuredRows == planRows == 2`
+  at all three scales, `openSettles 0`.
+* I13's 568,821 checks include the open state, a full tab sweep at the open
+  geometry and a width sweep 560→1000 px at each scale: showTab's hide-set is
+  intact on every state the round could reach.
+
+So the user's state requires a driver the round did not apply. What separates
+the user's machine from the CI runner, one fact at a time:
+
+| axis | CI runner | user |
+|---|---|---|
+| native dpi | 96 (the 150 % layout runs under a dpi OVERRIDE) | native 144 |
+| window height | clamped to 689 client (work area 1024×768) | default open wants ~950-1034 |
+| dialog history | opened fresh on tab 0, audited at once | opened (possibly via tray menu onto a specific tab), lived through ticks |
+| 500 ms tick | killed by the audit before it can land in the harness | alive the whole session (live rows grow twice a second) |
+| dpi transitions | driven through KieeKeyProbeSimulateDpi | real WM_DPICHANGED / WM_DISPLAYCHANGE from the OS |
+
+## Hypotheses (Phase 2)
+
+* **H2 — tray-open sequence.** The dialog was opened ONTO a non-zero tab (the
+  tray's "Thông tin & giới thiệu" opens tab 4) and the user then walked to
+  tab 8. Round 1 only opened on tab 0. If F1/F2 appear, the hide-set failure
+  is a function of the OPEN tab, and the double title is IDC_STAT_INFO_NAME
+  (tab 4's own name label, the only other window that carries the title text)
+  leaking while tab 8 is selected — the ~150 px offset matches that label's
+  solved position under a two-row strip.
+  *Discriminator E1*: reopen at tabs {0, 4, 8} per pass; full battery + tab
+  sweep after each.
+
+* **H3 — the live tick on a fresh two-row dialog.** The user's dialog had
+  lived: the 500 ms tick rewrites live rows (uptime, diagnostics, arcade/AI
+  status, coach advice) and a row that outgrows its box asks for exactly one
+  reflow (`g_settingsRowGrowthPending` → `reflowSettingsLayoutPreservingScroll`
+  at the end of the tick). Round 1's open scenario dropped timer messages; the
+  growth reflow never landed at the open geometry. If F states appear after
+  ticks/growth at the open geometry, the reflow's interaction with the
+  two-row strip (or with the bar decision) is the driver.
+  *Discriminator E2/E3*: land real ticks (SendMessage WM_TIMER) and a typed
+  growth row at the open geometry, then assert.
+
+* **H4 — a real DPI/display transition while open.** The user changed scale or
+  moved the dialog between monitors with the dialog OPEN; the OS-suggested
+  rect of a real WM_DPICHANGED (clamped to the monitor's work area, not pure
+  MulDiv) lands a different frame than KieeKeyProbeSimulateDpi applies.
+  F3/F6 (rows past the right edge under a visible bar) is exactly what a
+  frame that did NOT get the scrollbar's 26 px subtracted looks like.
+  *Discriminator E4*: send a real WM_DPICHANGED with a work-area-clamped
+  suggested rect at the open geometry, up and back down.
+
+* **H5 — the height axis (NOT REPRODUCIBLE IN CI).** The runner's work area
+  caps the client at 689 px; the user's default open wants ~950+. At the
+  user's height most tabs fit without the scrollbar and switching to a deep
+  tab can flip the bar after the solve planned rows for the wider client —
+  the bar-shown-after-solve class (F3/F6). The width sweep covers the width
+  axis; the height axis stays **UNVERIFIED (Windows)** until the user
+  re-tests on the real machine.
+
+## Round 2 plan
+
+Probe-only extension of the open scenario with E1–E4. If a discriminator turns
+red, the violating state rides in the annotation (firstViolations), and the
+fix commit for that hypothesis gets its BS name (BS-23a/b/c reserved). If all
+stay green, the photograph's driver lives in H5 — the height axis — and the
+fix must be justified by mechanism (the bar-shown-after-solve arithmetic) with
+the release carrying UNVERIFIED (Windows) until the user confirms.

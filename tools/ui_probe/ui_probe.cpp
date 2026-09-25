@@ -2458,108 +2458,200 @@ void harnessStep(HWND dlg, const std::vector<HWND>& all, int tabCount, int* curT
 
 // v1.3.0-beta8fix2 — THE OPEN-PATH SCENARIO (bugs BS-23a/b/c, measurement).
 //
-// The four green rounds audited the 150 % layout through the DPI-CHANGE path:
-// the dialog was opened at the runner's own scale and then RESCALED. The user's
-// photograph was taken on the OPEN path — the dialog created at the default
-// size on a 150 % monitor — and no pass ever entered it: the 144-dpi pass
-// entered at 991 px client because it inherited the pass before it (683), which
-// inherited the first (543). The default open at 144 dpi is S(560) = 840 frame
-// width — a geometry this harness had never solved, and the one where the tab
-// strip wraps to two rows. This scenario opens it:
+// Round 1 (CI run 36122792718) measured the open path CLEAN at every
+// CI-reachable state: default opens at 96/120/144 dpi with the strip wrapped
+// to two rows, a full tab sweep and a width sweep 560..1000 px — I13/I14/I15
+// found nothing (568821 / 18804 / 47966 checks, 0 violations). The
+// photograph's driver therefore needs a discriminant the round did not apply.
+// Round 2 adds them, one experiment per axis that separates the user's
+// machine from the runner (docs/HYPOTHESES_BS23_v1.3.0-beta8fix2.md):
 //
-//   1. reopen through the app's OWN open path at the pass's dpi override,
-//   2. measure the open state (the photographed state),
-//   3. walk the tabs at that geometry (the photographed stale page),
-//   4. sweep the width 560..1000 at the same dpi (the wrap moves through the
-//      sweep; the default 840 is inside it), plus a tab walk at the narrowest
-//      width (the deepest wrap),
-//   5. restore the state R1 hands to the next audit.
+//   E1 — the tray-open sequence: reopen ONTO tabs 0, 4 and 8 (the tray menu
+//        opens specific tabs; round 1 only opened tab 0), battery + tab sweep
+//        after each,
+//   E2 — a landed tick on the fresh dialog (the audit kills the timer; the
+//        user's dialog ticks twice a second),
+//   E3 — a growth row at the open geometry (a live row outgrows its box and
+//        the tick's one reflow consumes it),
+//   E4 — a REAL WM_DPICHANGED with a work-area-clamped suggested rect (the
+//        OS's answer to a monitor move), up one scale and back,
+//   and the round-1 width sweep + narrowest-width tab walk on the tab-0 open.
 //
-// The scenario REPLACES the dialog; the caller must re-read its child set.
+// The scenario REPLACES the dialog (possibly several times); the caller must
+// re-read its child set.
 int harnessScenarioOpenGeometry(HWND* dlgInOut, int tabCount, unsigned passDpi,
                                 const RECT& origClient,
                                 std::vector<Finding>* findings) {
     ++g_scenarioRuns;
     const int before = g_fuzzFailures;
     HWND dlg = *dlgInOut;
-
-    // 1. The open path at the pass's scale (the override makes windowDpi()
-    //    answer the pass's dpi during the frame's S(560)xS(622) sizing).
-    KieeKeyProbeSetWindowDpiOverride(passDpi);
-    HWND fresh = KieeKeyProbeReopenSettings(dlg, 0);
-    KieeKeyProbeSetWindowDpiOverride(0);
-    if (fresh == nullptr) {
-        harnessTrace("{\"scenario\": \"open_geometry\", \"result\": "
-                     "\"reopen-refused, kept the old dialog\"}");
-        return g_fuzzFailures - before;
-    }
-    dlg = fresh;
-    *dlgInOut = dlg;
-    pumpPostedMessages();
-    std::vector<HWND> all = stableChildren(dlg);
-
-    // 2. The photographed state: default open at the pass's scale.
-    HarnessState open;
-    readHarnessState(dlg, all, 0, &open);
-    const RECT openedClient = open.client;
-    const std::string openNote =
-        "open @" + std::to_string(passDpi) + " dpi: default-open client " +
-        std::to_string(openedClient.right) + "x" +
-        std::to_string(openedClient.bottom) + " page " + rectStr(open.page) +
-        " stripRows " + std::to_string(open.app.stripRows) + " measured " +
-        std::to_string(open.app.stripMeasuredRows) + " plan rows " +
-        std::to_string(open.app.stripPlanRows) + " need/avail " +
-        std::to_string(open.app.stripPlanRequired) + "/" +
-        std::to_string(open.app.stripPlanAvailable) + " openSettles " +
-        std::to_string(open.app.openSettles);
-    g_passEntryNotes.push_back(openNote);
-    std::printf("ui_probe: [open-geometry] %s\n", openNote.c_str());
-    harnessTrace("{\"scenario\": \"open_geometry\", \"client\": \"" +
-                 std::to_string(openedClient.right) + "x" +
-                 std::to_string(openedClient.bottom) + "\", \"page\": \"" +
-                 rectStr(open.page) + "\", \"stripRows\": " +
-                 std::to_string(open.app.stripRows) + ", \"measuredRows\": " +
-                 std::to_string(open.app.stripMeasuredRows) +
-                 ", \"passDpi\": " + std::to_string(passDpi) + "}");
-    ++g_fuzzChecks;
-    harnessAssert(dlg, open, all, "scenario_open_default", 0, 0, 100, findings);
-
-    // 3. Tab walk at the open geometry (the photograph: tab 8 selected, tab 4's
-    //    body still on the page).
     const int tabs = tabCount < 9 ? tabCount : 9;
-    for (int t = 0; t < tabs; ++t) {
-        KieeKeyProbeSelectTab(dlg, t);
-        pumpPostedMessages();
-        HarnessState st;
-        readHarnessState(dlg, all, t, &st);
-        ++g_fuzzChecks;
-        harnessAssert(dlg, st, all, "scenario_open_tab_sweep", t, 0, 100, findings);
-    }
-    KieeKeyProbeSelectTab(dlg, 0);
 
-    // 4. Width sweep at the pass's scale: the wrap decision moves through the
-    //    sweep, and the default open width (840 at 144 dpi) is inside it.
-    const int sweepH = static_cast<int>(openedClient.bottom);
-    for (int w = 560; w <= 1000; w += 20) {
-        KieeKeyProbeResize(dlg, w, sweepH);
-        KieeKeyProbeReflowNow(dlg);
+    static const int kOpenTabs[] = {0, 4, 8};   // E1: the tray-open sequence
+    for (int openTab : kOpenTabs) {
+        // 1. The open path at the pass's scale, onto this tab (the override
+        //    makes windowDpi() answer the pass's dpi during the frame's
+        //    S(560)xS(622) sizing).
+        KieeKeyProbeSetWindowDpiOverride(passDpi);
+        HWND fresh = KieeKeyProbeReopenSettings(dlg, openTab);
+        KieeKeyProbeSetWindowDpiOverride(0);
+        if (fresh == nullptr) {
+            harnessTrace("{\"scenario\": \"open_geometry\", \"result\": "
+                         "\"reopen-refused, kept the old dialog\"}");
+            break;
+        }
+        dlg = fresh;
+        *dlgInOut = dlg;
         pumpPostedMessages();
-        HarnessState st;
-        readHarnessState(dlg, all, 0, &st);
+        ::KillTimer(dlg, 1);   // the scenario owns the clock; E2/E3 send ticks
+        std::vector<HWND> all = stableChildren(dlg);
+
+        // 2. The photographed state: default open at the pass's scale.
+        HarnessState open;
+        readHarnessState(dlg, all, openTab, &open);
+        const RECT openedClient = open.client;
+        const std::string openNote =
+            "open @" + std::to_string(passDpi) + " dpi tab " +
+            std::to_string(openTab) + ": default-open client " +
+            std::to_string(openedClient.right) + "x" +
+            std::to_string(openedClient.bottom) + " page " + rectStr(open.page) +
+            " stripRows " + std::to_string(open.app.stripRows) + " measured " +
+            std::to_string(open.app.stripMeasuredRows) + " plan rows " +
+            std::to_string(open.app.stripPlanRows) + " need/avail " +
+            std::to_string(open.app.stripPlanRequired) + "/" +
+            std::to_string(open.app.stripPlanAvailable) + " openSettles " +
+            std::to_string(open.app.openSettles);
+        g_passEntryNotes.push_back(openNote);
+        std::printf("ui_probe: [open-geometry] %s\n", openNote.c_str());
+        harnessTrace("{\"scenario\": \"open_geometry\", \"openTab\": " +
+                     std::to_string(openTab) + ", \"client\": \"" +
+                     std::to_string(openedClient.right) + "x" +
+                     std::to_string(openedClient.bottom) + "\", \"page\": \"" +
+                     rectStr(open.page) + "\", \"stripRows\": " +
+                     std::to_string(open.app.stripRows) + ", \"measuredRows\": " +
+                     std::to_string(open.app.stripMeasuredRows) +
+                     ", \"passDpi\": " + std::to_string(passDpi) + "}");
         ++g_fuzzChecks;
-        harnessAssert(dlg, st, all, "scenario_width_sweep", w, 0, 100, findings);
+        harnessAssert(dlg, open, all, "scenario_open_default", openTab, 0, 100, findings);
+
+        // 3. Tab walk at the open geometry (the photograph: tab 8 selected,
+        //    another tab's body still on the page).
+        for (int t = 0; t < tabs; ++t) {
+            KieeKeyProbeSelectTab(dlg, t);
+            pumpPostedMessages();
+            HarnessState st;
+            readHarnessState(dlg, all, t, &st);
+            ++g_fuzzChecks;
+            harnessAssert(dlg, st, all, "scenario_open_tab_sweep", t, openTab, 100, findings);
+        }
+        KieeKeyProbeSelectTab(dlg, 0);
+
+        if (openTab == 0) {
+            // E2 — a tick that LANDS on the fresh dialog. The user's dialog
+            // ticks every 500 ms from WM_CREATE on; round 1 dropped them.
+            ::SendMessageW(dlg, WM_TIMER, 1, 0);
+            ::SendMessageW(dlg, WM_TIMER, 1, 0);
+            pumpPostedMessages();
+            {
+                HarnessState st;
+                readHarnessState(dlg, all, 0, &st);
+                ++g_fuzzChecks;
+                harnessAssert(dlg, st, all, "scenario_open_tick", 0, 0, 100, findings);
+            }
+            // E3 — a growth row at the open geometry: a live row outgrows its
+            // box, and the tick's ONE reflow consumes the request.
+            const int rowId = liveRowForTab(dlg, 0);
+            if (rowId != 0) {
+                std::wstring text;
+                for (int i = 0; i < 6; ++i) {
+                    text += L"Dòng chẩn đoán mở rộng ";
+                    text += std::to_wstring(i + 1);
+                    text += L": bộ gõ vẫn đang chạy bình thường.\r\n";
+                }
+                KieeKeyProbeTypeRow(dlg, rowId, text.c_str());
+                ::SendMessageW(dlg, WM_TIMER, 1, 0);   // consume the pending reflow
+                pumpPostedMessages();
+                HarnessState st;
+                readHarnessState(dlg, all, 0, &st);
+                ++g_fuzzChecks;
+                harnessAssert(dlg, st, all, "scenario_open_growth", 0, 0, 100, findings);
+            }
+            // 4. Width sweep at the pass's scale: the wrap decision moves
+            //    through the sweep, and the default open width (840 at 144
+            //    dpi) is inside it.
+            const int sweepH = static_cast<int>(openedClient.bottom);
+            for (int w = 560; w <= 1000; w += 20) {
+                KieeKeyProbeResize(dlg, w, sweepH);
+                KieeKeyProbeReflowNow(dlg);
+                pumpPostedMessages();
+                HarnessState st;
+                readHarnessState(dlg, all, 0, &st);
+                ++g_fuzzChecks;
+                harnessAssert(dlg, st, all, "scenario_width_sweep", w, 0, 100, findings);
+            }
+            //    And the tab walk at the sweep's narrowest width, where the
+            //    strip wraps deepest — the two-row band the photograph was
+            //    taken with.
+            KieeKeyProbeResize(dlg, 560, sweepH);
+            KieeKeyProbeReflowNow(dlg);
+            pumpPostedMessages();
+            for (int t = 0; t < tabs; ++t) {
+                KieeKeyProbeSelectTab(dlg, t);
+                HarnessState st;
+                readHarnessState(dlg, all, t, &st);
+                ++g_fuzzChecks;
+                harnessAssert(dlg, st, all, "scenario_width_sweep_tab", t, 0, 100, findings);
+            }
+            KieeKeyProbeSelectTab(dlg, 0);
+        }
     }
-    //    And the tab walk at the sweep's narrowest width, where the strip wraps
-    //    deepest — the two-row band the photograph was taken with.
-    KieeKeyProbeResize(dlg, 560, sweepH);
-    KieeKeyProbeReflowNow(dlg);
-    pumpPostedMessages();
-    for (int t = 0; t < tabs; ++t) {
-        KieeKeyProbeSelectTab(dlg, t);
-        HarnessState st;
-        readHarnessState(dlg, all, t, &st);
-        ++g_fuzzChecks;
-        harnessAssert(dlg, st, all, "scenario_width_sweep_tab", t, 0, 100, findings);
+
+    // E4 — a REAL WM_DPICHANGED at the open geometry: the OS's own message
+    // with the monitor's SUGGESTED rect, clamped to the work area the way the
+    // OS does it — not the pure MulDiv frame KieeKeyProbeSimulateDpi applies.
+    // One step up in scale, then back to the pass's scale.
+    {
+        const unsigned upDpi = (passDpi >= 144U) ? 192U : 144U;
+        RECT rc{};
+        if (::GetWindowRect(dlg, &rc) != FALSE) {
+            RECT work{};
+            ::SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
+            const auto suggested = [&](unsigned dpi) {
+                RECT s = rc;
+                s.right = s.left + ::MulDiv(rc.right - rc.left, static_cast<int>(dpi),
+                                            static_cast<int>(passDpi));
+                s.bottom = s.top + ::MulDiv(rc.bottom - rc.top, static_cast<int>(dpi),
+                                            static_cast<int>(passDpi));
+                if (s.bottom > work.bottom) { s.bottom = work.bottom; }   // the OS clamps
+                if (s.right > work.right) { s.right = work.right; }
+                return s;
+            };
+            KieeKeyProbeSetWindowDpiOverride(upDpi);
+            RECT up = suggested(upDpi);
+            ::SendMessageW(dlg, WM_DPICHANGED, static_cast<WPARAM>(upDpi),
+                           reinterpret_cast<LPARAM>(&up));
+            pumpPostedMessages();
+            {
+                std::vector<HWND> allUp = stableChildren(dlg);
+                HarnessState st;
+                readHarnessState(dlg, allUp, 0, &st);
+                ++g_fuzzChecks;
+                harnessAssert(dlg, st, allUp, "scenario_dpichanged_up", static_cast<int>(upDpi), 0, 100, findings);
+            }
+            KieeKeyProbeSetWindowDpiOverride(passDpi);
+            RECT down = suggested(passDpi);
+            ::SendMessageW(dlg, WM_DPICHANGED, static_cast<WPARAM>(passDpi),
+                           reinterpret_cast<LPARAM>(&down));
+            pumpPostedMessages();
+            KieeKeyProbeSetWindowDpiOverride(0);
+            {
+                std::vector<HWND> allDown = stableChildren(dlg);
+                HarnessState st;
+                readHarnessState(dlg, allDown, 0, &st);
+                ++g_fuzzChecks;
+                harnessAssert(dlg, st, allDown, "scenario_dpichanged_back", static_cast<int>(passDpi), 0, 100, findings);
+            }
+        }
     }
 
     // 5. Restore the pass's handover state (R1 judges it): same dpi, client,
@@ -4347,14 +4439,14 @@ int main(int argc, char** argv) {
             ",\n \"invariants\": \"" + jsonEscape(invSummary) + "\"" +
             ",\n \"traceLines\": " + std::to_string(g_traceLines) +
             ",\n \"passEntries\": [";
-    for (std::size_t i = 0; i < g_passEntryNotes.size() && i < 8; ++i) {
+    for (std::size_t i = 0; i < g_passEntryNotes.size() && i < 16; ++i) {
         json += std::string(i > 0 ? ", " : "") + "\"" + jsonEscape(g_passEntryNotes[i]) + "\"";
     }
     json += "],\n \"handover\": [";
     // v1.3.0-beta8fix1 (bug BS-19): the handover notes and one example state per
     // violated invariant ride in the JSON, so the CI digest can carry the state
     // that produced a count (see the workflow's operation-sequence line).
-    for (std::size_t i = 0; i < g_handoverNotes.size() && i < 8; ++i) {
+    for (std::size_t i = 0; i < g_handoverNotes.size() && i < 16; ++i) {
         json += std::string(i > 0 ? ", " : "") + "\"" + jsonEscape(g_handoverNotes[i]) + "\"";
     }
     json += "],\n \"firstViolations\": [";

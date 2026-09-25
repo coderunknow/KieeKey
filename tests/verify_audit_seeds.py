@@ -832,6 +832,39 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "            if (false) {   /* seeded: the right edge is never judged */",
         "effRight > s.page.right + 1",
     ),
+    # v1.3.0-beta8fix2 round 2 (docs/HYPOTHESES_BS23_v1.3.0-beta8fix2.md):
+    # round 1 (run 36122792718) measured the open path clean, so the
+    # discriminants that separate the user's machine from the runner must stay
+    # load-bearing — E1 the tray-open sequence, E2 the landed tick, E3 the
+    # growth row, E4 the real WM_DPICHANGED.
+    (
+        "BS-23b  the tray-open sequence shrinks to tab 0",
+        "tools/ui_probe/ui_probe.cpp",
+        "    static const int kOpenTabs[] = {0, 4, 8};   // E1: the tray-open sequence",
+        "    static const int kOpenTabs[] = {0};   /* seeded: only tab 0 is opened */",
+        "E1 the tray-open sequence",
+    ),
+    (
+        "BS-23a  the landed tick stops being judged",
+        "tools/ui_probe/ui_probe.cpp",
+        "                harnessAssert(dlg, st, all, \"scenario_open_tick\", 0, 0, 100, findings);",
+        "                /* seeded: the landed tick is never judged */",
+        "E2 a tick that LANDS",
+    ),
+    (
+        "BS-23a  the growth row stops being judged",
+        "tools/ui_probe/ui_probe.cpp",
+        "                harnessAssert(dlg, st, all, \"scenario_open_growth\", 0, 0, 100, findings);",
+        "                /* seeded: the growth row is never judged */",
+        "E3 a growth row",
+    ),
+    (
+        "BS-23c  the real WM_DPICHANGED is never sent",
+        "tools/ui_probe/ui_probe.cpp",
+        "            ::SendMessageW(dlg, WM_DPICHANGED, static_cast<WPARAM>(upDpi),",
+        "            /* seeded: the monitor-move message is never sent */",
+        "E4 a REAL WM_DPICHANGED",
+    ),
 ]
 
 # Files scripts/check_dialog_paint_rules.py reads, relative to the repo root.

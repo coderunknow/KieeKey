@@ -1,0 +1,83 @@
+================================================================================
+KieeKey v1.3.0-beta8fix1 — KẾ HOẠCH THỬ TRÊN MÁY BẠN (V0–V5)
+================================================================================
+Bản này dành cho người thử trên Windows thật. CI đã chạy đủ 4 job trên cùng
+cây mã (build MSVC, 8/8 CTest, UI probe 0 vi phạm, 0 finding); những gì CHỈ
+máy bạn trả lời được được đánh dấu trong từng mục. Mọi bước đều an toàn:
+KieeKey không ghi đè gì hệ thống, gỡ = xoá thư mục.
+
+Bản dựng thử (cross-build từ đúng cây đã vá BS-22w):
+  Tệp      : KieeKeyApp.exe
+  Kích cỡ  : 1.914.880 byte
+  SHA-256  : 4ecda0de02d7db1d924d190fb0b4f50a70b9745a75cf7cfc9d615beea21695ff
+  Phiên bản: chuỗi UI 1.3.0-beta8fix1 · PE 1.3.0.10 · manifest 1.3.0.10
+
+--------------------------------------------------------------------------------
+V0 — ĐỐI CHIẾU BẢN DỰNG (bắt buộc làm trước tiên)
+--------------------------------------------------------------------------------
+V0.1  Mở PowerShell trong thư mục chứa KieeKeyApp.exe.
+V0.2  Chạy:  Get-FileHash .\KieeKeyApp.exe -Algorithm SHA256
+V0.3  So với chuỗi ở đầu trang này.
+V0.4  MÃ BĂM CHUẨN: 4ecda0de02d7db1d924d190fb0b4f50a70b9745a75cf7cfc9d615beea21695ff
+      (khớp ⇒ bản bạn cầm đúng là bản đã kiểm. Không khớp ⇒ dừng, báo lại.)
+V0.5  (Tuỳ chọn) Kiểm toàn bộ gói:  sha256sum -c SHA256SUMS.txt
+      (từ thư mục CHA của gói; phải có dòng "OK" cho từng tệp.)
+      → Chỉ máy bạn xác nhận được: kết quả khớp/tác.
+
+--------------------------------------------------------------------------------
+V1 — KHỞI ĐỘNG & 9 TAB KHÔNG MẤT NỘI DUNG (lỗi gốc "mất nội dung")
+--------------------------------------------------------------------------------
+V1.1  Mở KieeKeyApp.exe (nếu Windows SmartScreen hỏi: "More info" → "Run anyway").
+V1.2  Biểu tượng khay xuất hiện. Nhấp đúp biểu tượng → hộp thoại Cài đặt mở.
+V1.3  Lần lượt mở TẤT CẢ 9 tab. Ở mỗi tab, kiểm:
+        - trang có NỘI DUNG (không phải nền trống không);
+        - không chữ nào bị cắt đôi, chồng lên nhau, hay "kéo lên trên";
+        - nhóm (group box) bao trọn các điều khiển của nó.
+V1.4  Thu nhỏ cửa sổ tới mức thấp nhất rồi kéo về to: nội dung không biến mất,
+      không lệ lưới, thanh cuộn xuất/biến mất hợp lý.
+V1.5  Đổi tab đi tab lại nhanh 10 lần: không có "bóng" chữ cũ nằm lại.
+      → UNVERIFIED (Windows): chỉ màn hình thật của bạn trả lời được.
+
+--------------------------------------------------------------------------------
+V2 — ĐỔI CỠ CHỮ HỆ THỐNG (125 %/150 %) — đường của BS-22w
+--------------------------------------------------------------------------------
+V2.1  Settings → System → Display → Scale: đặt 125 %, đăng xuất/đăng nhập lại
+      (hoặc đổi Scale trực tiếp nếu máy cho phép).
+V2.2  Mở lại Cài đặt của KieeKey: 9 tab vẫn đầy đủ nội dung, nhãn tab không
+      gấp thành 2 hàng kỳ dị, không control nào tràn ra ngoài khung.
+V2.3  Lặp với 150 %.
+V2.4  Đổi màn hình sang tỉ lệ khác (hoặc cắm/rút màn hình ngoài nếu có):
+      hộp thoại tự sắp lại, không cần mở lại. Đây là đường đi của lỗi BS-22w —
+      bản vá làm phép ĐO của harness đúng, còn hành vi app bạn thấy phải là
+      bố cục ổn định ở mọi tỉ lệ.
+      → UNVERIFIED (Windows): CI chỉ có một màn hình 96 dpi.
+
+--------------------------------------------------------------------------------
+V3 — BỘ GÕ (không đụng tới bản sửa, nhưng là "hợp đồng" của bản phát hành)
+--------------------------------------------------------------------------------
+V3.1  Bật KieeKey, gõ:  nguoi  → phải ra "người";  duong → "đường";
+      viet65 → "việt";  nghjeen → "nghềên" theo bộ đang chọn.
+V3.2  Tắt KieeKey (nhấp phải biểu tượng khay → Thoát): game/ổ ứng dụng khác
+      KHÔNG còn nhận biến đổi — chỉ có app đang chạy mới được phục vụ.
+V3.3  Gõ trong game (chạy với quyền admin nếu game cần): phím chơi game không
+      bị ăn vào bởi bộ gõ (đường cách ly input — cổng check_input_isolation).
+      → UNVERIFIED (Windows): hành vi game thật chỉ có máy bạn đo được.
+
+--------------------------------------------------------------------------------
+V4 — BÁO CÁO CHẨN ĐOÁN (nếu cần gửi lại)
+--------------------------------------------------------------------------------
+V4.1  Trong Cài đặt → tab chẩn đoán: bấm tạo báo cáo. Đầu báo cáo phải có
+      dòng nhận dạng bản dựng (phiên bản + mã băm) khớp V0.4.
+V4.2  Cuối báo cáo có tổng kết đếm phím/hook — phải khác 0 sau khi bạn đã gõ.
+V4.3  Gửi kèm: chuỗi SHA-256 ở V0.4, tỉ lệ màn hình đang đặt, các bước đã làm.
+
+--------------------------------------------------------------------------------
+V5 — GỬI KẾT QUẢ
+--------------------------------------------------------------------------------
+Đạt hết: trả lời "V0–V5 ok" (ghi rõ SHA-256 đã đối chiếu).
+Còn sai: gửi (a) mục nào đỏ, (b) ảnh chụp, (c) chuỗi băm, (d) bước thao tác
+ngay trước lúc sai. Không đoán lại từ đầu — báo cáo sẽ đi thẳng vào đúng
+trạng thái đó.
+
+— KieeKey v1.3.0-beta8fix1 (BS-22w) — tài liệu thử; kèm SHA256SUMS.txt của gói —
+================================================================================

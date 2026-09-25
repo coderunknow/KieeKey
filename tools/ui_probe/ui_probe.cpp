@@ -139,6 +139,7 @@ extern "C" int  KieeKeyProbeDisplayChange(HWND dlg);
 extern "C" void KieeKeyProbeSetWindowDpiOverride(UINT dpi);
 extern "C" int  KieeKeyProbeResize(HWND dlg, int clientW, int clientH);
 extern "C" int  KieeKeyProbeFontScale(HWND dlg, int percent);
+extern "C" int  KieeKeyProbeUnmappedFontCount(void);   // BS-22w: the scale restore's own audit
 // v1.3.0-beta8fix1 (bug BS-22g): the solver's own rectangle for a control.
 extern "C" int  KieeKeyProbeSolvedRect(HWND dlg, int id, int* out);
 extern "C" void KieeKeyProbeTypeRow(HWND dlg, int id, const wchar_t* text);
@@ -1901,6 +1902,94 @@ void sendWheel(HWND dlg, int notches, const RECT& page) {
                    MAKELPARAM(pt.x, pt.y));
 }
 
+// v1.3.0-beta8fix1 (BS-22w follow-up, instrumentation only): THE STRIP'S OWN
+// SHAPE AT THIS INSTANT, as the CONTROL shows it — the row count from the item
+// rectangles (the same measurement the solver trusts, BS-22t), the item row
+// height, the display rectangle's top (TCM_ADJUSTRECT), the label font's pixel
+// height and the tab control's rectangle. A reflow that changes any of these
+// is a strip reshape riding the reflow — and the page moving up by exactly
+// that amount is the app's own BS-22d contract (the page comes back when the
+// strip does). The I9 finding has to carry these numbers so a bare
+// before/after pair cannot be read as drift when it is a reshape (and the
+// other way round).
+std::string reflowStripShape(HWND dlg) {
+    const HWND tabCtl = ::GetDlgItem(dlg, IDC_TAB);
+    if (tabCtl == nullptr) { return "tabctl n/a"; }
+    int rows = 0;
+    int rowH = 0;
+    int dispTop = -1;
+    int fontPx = 0;
+    RECT first{};
+    const int count = static_cast<int>(
+        ::SendMessageW(tabCtl, TCM_GETITEMCOUNT, 0, 0));
+    // v1.3.0-beta8fix1 (BS-22w follow-up, part 2): COUNT THE ROWS THERE ARE.
+    // The first cut compared item 0's top with item N-1's and answered a
+    // binary "1 or 2" — saturated at the second row and LIED at three: x64
+    // run 36022345344 read "rows 2" off a strip whose display rectangle
+    // reserved three rows (dispTop 181 = tab top 99 + 3 x rowH 26 + pad),
+    // the arithmetic agreed with the control, and a whole wrong-model app
+    // patch ("the header contradicts the items") was committed and reverted
+    // on the discrepancy. The count is a real one now: every item's top,
+    // sorted and bucketed at half a row height so rounding cannot split a
+    // row.
+    if (count > 0 &&
+        ::SendMessageW(tabCtl, TCM_GETITEMRECT, 0,
+                       reinterpret_cast<LPARAM>(&first)) != FALSE) {
+        rows = 1;
+        rowH = static_cast<int>(first.bottom - first.top);
+        int tops[64];
+        int seen = 0;
+        for (int i = 0; i < count && seen < 64; ++i) {
+            RECT rcItem{};
+            if (::SendMessageW(tabCtl, TCM_GETITEMRECT, static_cast<WPARAM>(i),
+                               reinterpret_cast<LPARAM>(&rcItem)) == FALSE) {
+                break;
+            }
+            tops[seen++] = static_cast<int>(rcItem.top);
+        }
+        for (int i = 1; i < seen; ++i) {
+            const int key = tops[i];
+            int j = i - 1;
+            for (; j >= 0 && tops[j] > key; --j) { tops[j + 1] = tops[j]; }
+            tops[j + 1] = key;
+        }
+        int rowAnchor = tops[0];
+        for (int i = 1; i < seen; ++i) {
+            if (tops[i] - rowAnchor >= rowH / 2) {
+                ++rows;
+                rowAnchor = tops[i];
+            }
+        }
+    }
+    RECT adj{};
+    ::GetWindowRect(tabCtl, &adj);
+    ::MapWindowPoints(nullptr, dlg, reinterpret_cast<POINT*>(&adj), 2);
+    const int tabX = static_cast<int>(adj.left);
+    const int tabY = static_cast<int>(adj.top);
+    const int tabW = static_cast<int>(adj.right - adj.left);
+    const int tabH = static_cast<int>(adj.bottom - adj.top);
+    // Same convention as solveSettingsLayout: the adjust runs on (and answers
+    // in) the dialog's client coordinates.
+    ::SendMessageW(tabCtl, TCM_ADJUSTRECT, FALSE, reinterpret_cast<LPARAM>(&adj));
+    dispTop = static_cast<int>(adj.top);
+    const HFONT f = reinterpret_cast<HFONT>(::SendMessageW(tabCtl, WM_GETFONT, 0, 0));
+    if (f != nullptr) {
+        if (const HDC dc = ::GetDC(tabCtl)) {
+            const HGDIOBJ old = ::SelectObject(dc, f);
+            TEXTMETRICW tm{};
+            if (::GetTextMetricsW(dc, &tm) != FALSE) {
+                fontPx = static_cast<int>(tm.tmHeight);
+            }
+            ::SelectObject(dc, old);
+            ::ReleaseDC(tabCtl, dc);
+        }
+    }
+    return "rows " + std::to_string(rows) + " rowH " + std::to_string(rowH) +
+           " dispTop " + std::to_string(dispTop) + " fontPx " +
+           std::to_string(fontPx) + " tabRect " +
+           rectStr(tabX, tabY, tabW, tabH);
+}
+
 // Run one operation from the app's own paths, then assert every invariant.
 void harnessStep(HWND dlg, const std::vector<HWND>& all, int tabCount, int* curTab,
                  int* fontPct, unsigned nativeDpi, const RECT& origClient,
@@ -1941,33 +2030,185 @@ void harnessStep(HWND dlg, const std::vector<HWND>& all, int tabCount, int* curT
         case kOpReflow: {
             HarnessState before;
             readHarnessState(dlg, all, *curTab, &before);
+            // v1.3.0-beta8fix1 (BS-22w follow-up): THE BASELINE AS THE PREVIOUS
+            // SOLVE LEFT IT, per control, BEFORE this reflow touches anything —
+            // the only way to tell "the previous plan already said this" from
+            // "the live window drifted off the plan".
+            std::vector<int> solvedBeforeFlat(before.ctls.size() * 4, 0);
+            std::vector<char> haveSolvedBefore(before.ctls.size(), 0);
+            for (std::size_t i = 0; i < before.ctls.size(); ++i) {
+                haveSolvedBefore[i] = static_cast<char>(
+                    KieeKeyProbeSolvedRect(dlg, before.ctls[i].id,
+                                           &solvedBeforeFlat[i * 4]) != 0);
+            }
+            // v1.3.0-beta8fix1 (BS-22w follow-up, instrumentation): the strip's
+            // own shape on both sides of the reflow (rows from the item
+            // rectangles, row height, display top, label font px, tab rect) —
+            // a reshape riding the reflow moves the page BY DESIGN (BS-22d),
+            // and the numbers say which case a move is.
+            const std::string stripBefore = reflowStripShape(dlg);
+            KieeKeyProbeReflowNow(dlg);
+            HarnessState after1;
+            readHarnessState(dlg, all, *curTab, &after1);
+            const std::string stripAfter1 = reflowStripShape(dlg);
+            // v1.3.0-beta8fix1 (BS-22w follow-up): THE CONVERGENCE PASS. The
+            // strip scenario fixed this discipline for strip reads (BS-22u:
+            // read the state after it settles); the reflow invariant below
+            // now demands the same of the whole layout. Why the old direction
+            // clauses had to go, and what owns their duty — see the comment
+            // at the judgment, which carries the three runs' evidence.
             KieeKeyProbeReflowNow(dlg);
             HarnessState after;
             readHarnessState(dlg, all, *curTab, &after);
-            // I9 — a reflow may grow the page, never move it up/sideways and
-            // never make it shallower.
-            ++g_invChecks[9];
-            if (after.deepestUnscrolledBottom < before.deepestUnscrolledBottom - 1) {
-                harnessFail(9, findings,
-                            "the reflow made the page shallower (" +
-                                std::to_string(before.deepestUnscrolledBottom) +
-                                " -> " + std::to_string(after.deepestUnscrolledBottom) + ")",
-                            harnessStateStr(after, opName, step, seed, *fontPct));
+            const std::string stripAfter = reflowStripShape(dlg);
+            if (stripBefore != stripAfter1 || stripAfter1 != stripAfter) {
+                harnessTrace("{\"scenario\": \"reflow_strip_shape\", \"tab\": " +
+                             std::to_string(*curTab) + ", \"step\": " +
+                             std::to_string(step) + ", \"seed\": " +
+                             std::to_string(seed) + ", \"before\": \"" +
+                             stripBefore + "\", \"after1\": \"" + stripAfter1 +
+                             "\", \"after2\": \"" + stripAfter + "\"}");
             } else {
-                for (std::size_t i = 0; i < after.ctls.size(); ++i) {
+                // Evidence, not a finding: every move pass 1 made rides in
+                // the trace (ui_probe_trace.jsonl) together with the
+                // rectangle the PREVIOUS solve had planned for the moved
+                // control, so a settle correction is never silent and never
+                // anonymous.
+                for (std::size_t i = 0; i < after1.ctls.size(); ++i) {
+                    if (i >= before.ctls.size()) { break; }
                     const HarnessCtl& b = before.ctls[i];
-                    const HarnessCtl& a = after.ctls[i];
-                    if (b.hwnd != a.hwnd) { continue; }
-                    if (a.x < b.x - 1 || (a.y + after.app.offset) <
-                                         (b.y + before.app.offset) - 1) {
-                        harnessFail(9, findings,
-                                    "the reflow moved id " + std::to_string(a.id) +
-                                        " up/sideways (" + rectStr(b.x, b.y, b.w, b.h) +
-                                        " -> " + rectStr(a.x, a.y, a.w, a.h) + ")",
-                                    harnessStateStr(after, opName, step, seed, *fontPct));
+                    const HarnessCtl& c = after1.ctls[i];
+                    if (b.hwnd != c.hwnd) { continue; }
+                    if (c.x != b.x || c.y != b.y || c.w != b.w || c.h != b.h) {
+                        harnessTrace("{\"scenario\": \"reflow_settle_move\", "
+                                     "\"tab\": " + std::to_string(*curTab) +
+                                     ", \"step\": " + std::to_string(step) +
+                                     ", \"seed\": " + std::to_string(seed) +
+                                     ", \"id\": " + std::to_string(c.id) +
+                                     ", \"from\": \"" +
+                                     rectStr(b.x, b.y, b.w, b.h) +
+                                     "\", \"to\": \"" +
+                                     rectStr(c.x, c.y, c.w, c.h) +
+                                     "\", \"solvedBefore\": \"" +
+                                     (haveSolvedBefore[i]
+                                          ? rectStr(solvedBeforeFlat[i * 4],
+                                                    solvedBeforeFlat[i * 4 + 1],
+                                                    solvedBeforeFlat[i * 4 + 2],
+                                                    solvedBeforeFlat[i * 4 + 3])
+                                          : std::string("n/a")) +
+                                     "\"}");
                         break;
                     }
                 }
+            }
+            const auto reflowGround = [&](const char* phase) {
+                // Compact on purpose: the CI annotation truncates long
+                // grounds, and every number here has to survive it. Plan
+                // numbers are rows/required/available@clientW; app numbers
+                // are the recorded strip shift before -> after.
+                const bool stripStable =
+                    (stripBefore == stripAfter1) && (stripAfter1 == stripAfter);
+                return std::string(phase) +
+                       (stripStable
+                            ? " strip identical x3 {" + stripBefore + "}"
+                            : " strip-before {" + stripBefore + "} a1 {" +
+                                  stripAfter1 + "} a2 {" + stripAfter + "}") +
+                       " plan " +
+                       std::to_string(before.app.stripPlanRows) + "/" +
+                       std::to_string(before.app.stripPlanRequired) + "/" +
+                       std::to_string(before.app.stripPlanAvailable) + "@" +
+                       std::to_string(before.app.stripPlanClientW) + " -> " +
+                       std::to_string(after.app.stripPlanRows) + "/" +
+                       std::to_string(after.app.stripPlanRequired) + "/" +
+                       std::to_string(after.app.stripPlanAvailable) + "@" +
+                       std::to_string(after.app.stripPlanClientW) +
+                       " app " +
+                       std::to_string(before.app.stripShift[*curTab]) + "->" +
+                       std::to_string(after.app.stripShift[*curTab]) +
+                       " step " + std::to_string(step) + " seed " +
+                       std::to_string(seed) + " tab " +
+                       std::to_string(*curTab) + " dpi " +
+                       std::to_string(after.app.dpi) + " offset " +
+                       std::to_string(after.app.offset) + "/" +
+                       std::to_string(after.app.range);
+            };
+            // I9 — v1.3.0-beta8fix1 (BS-22w follow-up): A REFLOW MUST CONVERGE.
+            //
+            // The clause this replaces ("a reflow never moves a control
+            // up/sideways, never makes the page shallower") held the live
+            // window still across the reflow and read any upward move as
+            // drift. Three runs took that clause apart:
+            //
+            //   36012001327  [I9] the reflow moved id 611 up/sideways
+            //                (66,224 330x33 -> 66,203 330x33),
+            //                step 31 seed 3, op reflow, tab 8, dpi 144;
+            //   36016664252  the same move with the strip's own shape on both
+            //                sides — IDENTICAL (rows 2 rowH 26 dispTop 155
+            //                fontPx 21, tabRect 18,99 444x524) and the app's
+            //                own mirror identical too (shift96 3, offset 0):
+            //                no reshape, no bar flip inside the reflow;
+            //   36018651106  the convergence pass: a second identical re-solve
+            //                moved id 610 (36,181 344x420 -> 36,181 327x420)
+            //                — 17 px, the scrollbar's own width at 144 dpi.
+            //
+            // The reading those numbers force: the solve's settle cascade
+            // (window refit, bar latch, the tab control's asynchronous
+            // re-layout — BS-10/BS-14/BS-22d all live here) crosses
+            // OPERATION boundaries. An earlier op can leave the live layout
+            // one settle behind the plan; THIS reflow's first pass is then
+            // the plan catching up, and the direction clauses punished
+            // exactly that — a correction. The same runs show the catch for
+            // real drift is NOT the direction of one pass but the
+            // convergence of two: a solve that keeps moving controls when
+            // its inputs stand still.
+            //
+            // So the invariant is now: TWO identical re-solves in a row must
+            // agree — same control list, same rectangles (to a pixel of
+            // placement tolerance), same page depth. That fails on every
+            // drift the old clause caught that can actually happen from a
+            // settled start (an unstable or oscillating solve moves in pass
+            // 2 by definition), and it fails on the settle cascade itself
+            // the moment the cascade needs more passes than the reflow gets
+            // — which is the app-side bug shape (a solve that returns a
+            // layout inconsistent with the window it leaves behind,
+            // BS-14/BS-15 class) made directly visible. What it no longer
+            // pretends to see is the correction of a state an EARLIER op
+            // left stale. That state's soundness is owned where it is
+            // measurable on this very post-state, by invariants asserted on
+            // every step: I6 (live == the solver's baseline) and I12 (a
+            // grown row's box holds the solver's own measurement — the
+            // BS-12 growth-loss class, caught the moment the box loses the
+            // growth, on any op).
+            ++g_invChecks[9];
+            bool converged = (after1.ctls.size() == after.ctls.size()) &&
+                             (after1.deepestUnscrolledBottom ==
+                              after.deepestUnscrolledBottom);
+            std::string convDetail;
+            if (converged) {
+                for (std::size_t i = 0; i < after.ctls.size(); ++i) {
+                    const HarnessCtl& c1 = after1.ctls[i];
+                    const HarnessCtl& c2 = after.ctls[i];
+                    if (c1.hwnd != c2.hwnd) { continue; }
+                    const int dx = c2.x - c1.x;
+                    const int dy = c2.y - c1.y;
+                    if (dx < -1 || dx > 1 || dy < -1 || dy > 1 ||
+                        c2.w != c1.w || c2.h != c1.h) {
+                        converged = false;
+                        convDetail = "id " + std::to_string(c2.id) + " (" +
+                                     rectStr(c1.x, c1.y, c1.w, c1.h) + " -> " +
+                                     rectStr(c2.x, c2.y, c2.w, c2.h) + ")";
+                        break;
+                    }
+                }
+            } else {
+                convDetail = "the control list or the page depth changed "
+                             "between the two passes";
+            }
+            if (!converged) {
+                harnessFail(9, findings,
+                            "the reflow did not converge: a second identical "
+                                "re-solve moved " + convDetail,
+                            reflowGround("reflow-convergence"));
             }
             break;
         }
@@ -2099,6 +2340,33 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
     std::vector<std::uint32_t> beforePx, afterPx;
     int w = 0, h = 0;
     if (readScreenClient(dlg, &beforePx, &w, &h) && screenIsUsable(beforePx)) {
+        // v1.3.0-beta8fix1 (bug BS-22w): THE CAPTURE JUDGES A DIALOG THIS PASS
+        // BUILT. The pass restored its own text scale (KieeKeyProbeFontScale
+        // on the recovery path above); if that restore left any control
+        // wearing a face of another scale, the page's plan was measured with
+        // the bigger face and the solver widened the window to a hybrid layout
+        // no pass built — the 35995128589 x64 finding (`client 974x689 app dpi
+        // 96`, `rowH 37`: the 150 % strip's metrics on a 96-dpi pass) on the
+        // very tree another run passed. That is a broken pre-condition of THIS
+        // check, not a blank page: report it as the invariant that owns the
+        // claim, with the count, BEFORE the repaint below can make the capture
+        // look decisive.
+        ++g_invChecks[11];
+        {
+            KieeKeyProbeScrollState(dlg, &st);
+            const int unmapped = KieeKeyProbeUnmappedFontCount();
+            if (unmapped > 0) {
+                harnessFail(11, findings,
+                            "the pass's own text-scale restore left " +
+                                std::to_string(unmapped) +
+                                " control(s) wearing a face of another scale — "
+                                "the capture below would judge a dialog this "
+                                "pass did not build",
+                            "scenario_screen_paint_fonts dpi " +
+                                std::to_string(st.dpi) + " client " +
+                                std::to_string(w) + "x" + std::to_string(h));
+            }
+        }
         ::RedrawWindow(dlg, nullptr, nullptr,
                        RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW |
                            RDW_FRAME);
@@ -2142,19 +2410,40 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
             std::vector<POINT> samples;               // every sample the capture covers
             std::vector<std::vector<POINT>> perCtl;   // ... grouped by control
             std::string evidence;
+            // v1.3.0-beta8fix1 (bug BS-22w, part two): THREE X-POINTS ON THE
+            // MIDDLE ROW ARE NOT A MEASUREMENT OF INK. On a wide control whose
+            // label sits at the left edge, all three quarter-points land in
+            // the empty space after the text — a control that IS painted reads
+            // `painted 0/3`, and a page of such controls reads as the blank
+            // page this check hunts. The samples are now a 4x3 grid strictly
+            // INSIDE the control's rectangle (fifths across for col 1..4,
+            // quarters down for row 1..3, so no point can touch a border): a
+            // painted control of any width has its ink inside the grid.
+            const auto interiorSamples =
+                [](int ex, int ey, int ew, int eh, int clientW, int clientH,
+                   std::vector<POINT>* out) {
+                    out->clear();
+                    for (int row = 1; row <= 3; ++row) {
+                        const int y = ey + eh * row / 4;
+                        for (int col = 1; col <= 4; ++col) {
+                            const int x = ex + ew * col / 5;
+                            if (x < 0 || y < 0 || x >= clientW || y >= clientH) {
+                                continue;
+                            }
+                            out->push_back(POINT{x, y});
+                        }
+                    }
+                };
             for (const HarnessCtl& c : s.ctls) {
                 if (judged >= 8) { break; }
                 if (!c.shown || c.regionEmpty || c.ew < 24 || c.eh < 8) { continue; }
-                const int y = c.ey + c.eh / 2;
                 std::vector<POINT> mine;
+                interiorSamples(c.ex, c.ey, c.ew, c.eh, w, h, &mine);
                 int differs = 0;
-                for (int k = 1; k <= 3; ++k) {
-                    const int x = c.ex + c.ew * k / 4;
-                    if (x < 0 || y < 0 || x >= w || y >= h) { continue; }
-                    mine.push_back(POINT{x, y});
+                for (const POINT& pt : mine) {
                     const std::uint32_t px =
-                        beforePx[static_cast<std::size_t>(y) * static_cast<std::size_t>(w) +
-                                 static_cast<std::size_t>(x)];
+                        beforePx[static_cast<std::size_t>(pt.y) * static_cast<std::size_t>(w) +
+                                 static_cast<std::size_t>(pt.x)];
                     if (px != bg) { ++differs; }
                 }
                 if (mine.empty()) { ++uncovered; continue; }
@@ -2243,16 +2532,15 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
                 const int cw = static_cast<int>(cr.right - cr.left);
                 const int chh = static_cast<int>(cr.bottom - cr.top);
                 if (cw < 24 || chh < 8) { continue; }
-                const int y = static_cast<int>(cr.top) + chh / 2;
-                int sampled = 0;
+                std::vector<POINT> mine;
+                interiorSamples(static_cast<int>(cr.left), static_cast<int>(cr.top),
+                                cw, chh, w, h, &mine);
+                const int sampled = static_cast<int>(mine.size());
                 int differs = 0;
-                for (int k = 1; k <= 3; ++k) {
-                    const int x = static_cast<int>(cr.left) + cw * k / 4;
-                    if (x < 0 || y < 0 || x >= w || y >= h) { continue; }
-                    ++sampled;
+                for (const POINT& pt : mine) {
                     const std::uint32_t px =
-                        beforePx[static_cast<std::size_t>(y) * static_cast<std::size_t>(w) +
-                                 static_cast<std::size_t>(x)];
+                        beforePx[static_cast<std::size_t>(pt.y) * static_cast<std::size_t>(w) +
+                                 static_cast<std::size_t>(pt.x)];
                     if (px != bg) { ++differs; }
                 }
                 if (sampled == 0) { continue; }

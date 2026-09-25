@@ -3932,6 +3932,19 @@ HFONT uiFont() noexcept      { return cachedFont(13, FW_NORMAL); }
 HFONT uiFontBold() noexcept  { return cachedFont(13, FW_SEMIBOLD); }
 HFONT uiFontTitle() noexcept { return cachedFont(20, FW_SEMIBOLD); }
 
+// v1.3.0-beta8fix1 (bug BS-22w): EVERY face this process puts on a control is
+// reported here — the app's three roles at any dpi (rescaleChild, mkCtl, the
+// two title labels, the bold toggle button) and the faces the probe's scale
+// loop applies. The text-scale path needs the full set to build its old->new
+// mapping, and the restore audit needs it to tell "a face of ANOTHER scale"
+// from "a face this process never minted". Probe builds define it next to the
+// other probe entry points; every other build gets the no-op below, so the
+// call sites stay unconditional and identical in both builds.
+extern "C" void kieeKeyProbeRememberAppFont(HFONT f, int role);
+#if !defined(KIEEKEY_UI_PROBE)
+extern "C" void kieeKeyProbeRememberAppFont(HFONT, int) { }
+#endif
+
 //===========================================================================
 // v1.2.0 Stable — live DPI re-scaling of an OPEN settings dialog.
 //
@@ -3989,6 +4002,17 @@ BOOL CALLBACK rescaleChild(HWND child, LPARAM lp) noexcept {
     else if (cur == ctx->oldNormal) { replacement = ctx->newNormal; }
     if (replacement != nullptr && replacement != cur) {
         ::SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(replacement), TRUE);
+        // v1.3.0-beta8fix1 (bug BS-22w): report the face this rescale just put
+        // on the control, with the role the classification above just decided.
+        // Without it the scale path's mapping table only knew the faces of the
+        // CURRENT dpi, so a control re-classified at 150 % kept that face when
+        // the text scale returned to 100 % — the plan measured its labels with
+        // the bigger face, the solver widened the window, and the capture
+        // judged a hybrid dialog no pass built (run 35995128589's x64 finding:
+        // client 974x689 at app dpi 96, rowH 37 from the 150 % strip).
+        const int replacementRole = (cur == ctx->oldTitle) ? 2
+                                    : (cur == ctx->oldBold) ? 1 : 0;
+        kieeKeyProbeRememberAppFont(replacement, replacementRole);
     }
     return TRUE;
 }
@@ -4184,6 +4208,9 @@ HWND mkCtl(HWND parent, LPCWSTR cls, LPCWSTR text, DWORD style, int x, int y,
                                x, y, w, h, parent, id, g.hInst, nullptr);
     if (c) {
         ::SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont()), TRUE);
+        // v1.3.0-beta8fix1 (bug BS-22w): the face every new control starts on
+        // is role 0 of the current scale — report it like every other writer.
+        kieeKeyProbeRememberAppFont(uiFont(), 0);
         // v1.3.0-beta8 (bug UX-01): the wheel scrolls the DIALOG, never the
         // selection — see comboWheelProc().
         wchar_t real[32]{};
@@ -6010,6 +6037,45 @@ void solveSettingsLayout(HWND hwnd) {
                 return;
             }
         }
+        // v1.3.0-beta8fix1 (bug BS-22x): AND THE WIDTH THE BAR TOOK, AFTER THE
+        // ROWS WERE CLAMPED.
+        //
+        // Every page row above is clamped at `clampLimitRight` — client.right
+        // - S(12), measured while the rows are measured. The bar's latch,
+        // though, is decided LATER in this very call: the "solve-planned"
+        // apply and the BS-18 "solve-final" both can turn WS_VSCROLL on
+        // mid-solve, and a bar takes its width out of the client (17 px at
+        // the failing scale). What follows the flip re-fits the TAB CONTROL
+        // to the new client — but when that re-fit lands on the width the
+        // tab control already had (an earlier solve had already sized it for
+        // a bar-on client, and the bar has since hidden under it: hiding
+        // only widens the client and moves the tab control not at all),
+        // BS-14's tab-width trigger sees no change. The rows stay clamped at
+        // the bar-off bound, 17 px wider than the window they live in — and
+        // the next identical solve, now planning with the bar on, clamps
+        // them 17 px narrower. The solve has stopped being a fixed point,
+        // and the convergence invariant measures exactly that: x64 run
+        // 36022345344, first finding `[I9] the reflow did not converge: a
+        // second identical re-solve moved id 610 (36,181 344x420 -> 36,181
+        // 327x420)` — call one clamped id 610 at the bar-off client
+        // (398 - 18 - 36 = 344), the bar arrived before the call ended, call
+        // two clamped at the bar-on client (381 - 18 - 36 = 327).
+        //
+        // So the last trigger asks BS-14's question about the BOUND instead
+        // of the control: recompute the client bound this call ends with; if
+        // the bar moved it after the rows were measured, one bounded
+        // re-solve plans against the width the window actually keeps. Same
+        // one-extra-pass bound as its two siblings above.
+        RECT cliGuard{};
+        ::GetClientRect(hwnd, &cliGuard);
+        const int clampLimitNow =
+            static_cast<int>(cliGuard.right) - S(12);
+        if (clampLimitNow != clampLimitRight) {
+            ++g_settingsSolvePass;
+            solveSettingsLayout(hwnd);
+            --g_settingsSolvePass;
+            return;
+        }
     }
 
     // v1.3.0-beta8 (bug CA-06): the layout self-check is NOT run here. It walks
@@ -6578,6 +6644,9 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                                WS_CHILD | WS_VISIBLE, S(58), S(12), S(360), S(28),
                                reinterpret_cast<HMENU>(IDC_STAT_HEAD_TITLE));
                 ::SendMessageW(t, WM_SETFONT, reinterpret_cast<WPARAM>(uiFontTitle()), TRUE);
+                // v1.3.0-beta8fix1 (bug BS-22w): the header title's face is the
+                // title role (2) of the current scale — report it.
+                kieeKeyProbeRememberAppFont(uiFontTitle(), 2);
             }
             mkCtl(hwnd, L"STATIC", L"",
                   WS_CHILD | WS_VISIBLE, S(58), S(42), S(490), S(18),
@@ -6881,6 +6950,9 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                                WS_CHILD | WS_VISIBLE, S(28), S(110), S(400), S(34),
                                reinterpret_cast<HMENU>(IDC_STAT_INFO_NAME));
                 ::SendMessageW(n, WM_SETFONT, reinterpret_cast<WPARAM>(uiFontTitle()), TRUE);
+                // v1.3.0-beta8fix1 (bug BS-22w): the About tab's name label is
+                // the title role (2) of the current scale — report it.
+                kieeKeyProbeRememberAppFont(uiFontTitle(), 2);
             }
             mkCtl(hwnd, L"STATIC", L"",
                   WS_CHILD | WS_VISIBLE, S(28), S(148), S(500), S(64),
@@ -7166,6 +7238,9 @@ LRESULT CALLBACK settingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                           S(12), S(580), S(240), S(30),
                           reinterpret_cast<HMENU>(IDC_BTN_TOGGLE));
                 ::SendMessageW(tg, WM_SETFONT, reinterpret_cast<WPARAM>(uiFontBold()), TRUE);
+                // v1.3.0-beta8fix1 (bug BS-22w): the toggle's face is the bold
+                // role (1) of the current scale — report it.
+                kieeKeyProbeRememberAppFont(uiFontBold(), 1);
             }
             mkCtl(hwnd, L"BUTTON", L"OK", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
                   S(300), S(580), S(76), S(30), reinterpret_cast<HMENU>(IDOK));
@@ -8464,6 +8539,73 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
 }
 
 //===========================================================================
+// v1.3.0-beta8fix1 (BS-22w) — THE SCALE KNOWS EVERY FACE THE APP MINTED.
+//
+// KieeKeyProbeFontScale used to map only the faces it could SEE at call time:
+// the app's three roles at the CURRENT dpi (uiFont/uiFontBold/uiFontTitle)
+// and every face the probe itself had applied (g_probeFontHistory). A face
+// the APP minted at a DIFFERENT dpi — applySettingsDpiScale re-mints per
+// scale and rescaleChild hands the new faces to every control it can
+// re-classify — is in neither set. When the harness's text scale then
+// returned to 100 %, those controls kept the bigger face: the plan measured
+// its labels with it, the solver widened the window, and the capture judged
+// a hybrid dialog NO pass ever built. That is the x64 run 35995128589's
+// finding on tree 55414e9 — the tree another run (35995109042) passed —
+// because WHICH pass leaves WHICH face behind depends on how the previous
+// pass's rescale interleaved with the scale cycle: the flake followed the
+// timing, not the tree.
+//
+// The registry below is the missing set. Every place the app puts a font on
+// a control reports here (the call sites are unconditional; non-probe builds
+// compile them to the no-op declared next to uiFont()). Roles are RECORDED
+// at the call site, never guessed back from the face height: at 150 % the
+// body face is 19 px and the title face 30 px, but at 144 dpi the body face
+// is 20 px — a height guess misclassifies exactly the faces this exists for.
+//===========================================================================
+#if defined(KIEEKEY_UI_PROBE)
+HFONT g_probeAppFonts[32]{};      // every face this process ever applied
+int g_probeAppFontRoles[32]{};    // ...with the role it was applied as
+int g_probeAppFontCount = 0;
+int g_probeUnmappedFonts = 0;     // the restore audit's count (exported)
+
+// The definition carries the same C linkage as the declaration next to
+// uiFont(): a plain C++ definition here would be a SECOND, ambiguous symbol.
+extern "C" void kieeKeyProbeRememberAppFont(HFONT f, int role) {
+    if (f == nullptr || role < 0 || role > 2) { return; }
+    for (int i = 0; i < g_probeAppFontCount; ++i) {
+        if (g_probeAppFonts[i] == f) { return; }   // known handle: keep its role
+    }
+    if (g_probeAppFontCount < 32) {   // sizeof(g_probeAppFonts)/sizeof(HFONT)
+        g_probeAppFonts[g_probeAppFontCount] = f;
+        g_probeAppFontRoles[g_probeAppFontCount] = role;
+        ++g_probeAppFontCount;
+    }
+}
+
+// The restore audit: how many controls still wear a face this process minted
+// (any dpi, any scale) that is NOT one of the three faces of the scale the
+// pass just restored? Zero is the only state the capture below may judge —
+// `lp` is the three-face array of the target scale.
+BOOL CALLBACK kieeKeyProbeCountUnmappedFont(HWND child, LPARAM lp) {
+    const HFONT* next = reinterpret_cast<const HFONT*>(lp);
+    if (next == nullptr) { return TRUE; }
+    const HFONT cur = reinterpret_cast<HFONT>(
+        ::SendMessageW(child, WM_GETFONT, 0, 0));
+    if (cur == nullptr) { return TRUE; }
+    for (int role = 0; role < 3; ++role) {
+        if (cur == next[role]) { return TRUE; }   // the current scale: mapped
+    }
+    for (int i = 0; i < g_probeAppFontCount; ++i) {
+        if (g_probeAppFonts[i] == cur) {
+            ++g_probeUnmappedFonts;
+            break;
+        }
+    }
+    return TRUE;
+}
+#endif   // KIEEKEY_UI_PROBE
+
+//===========================================================================
 // v1.3.0-beta8 (CA-03) — PROBE-ONLY entry points (never in the shipped exe).
 //
 // tools/ui_probe/ui_probe.cpp compiles this file with -DKIEEKEY_UI_PROBE and
@@ -8810,19 +8952,21 @@ extern "C" int KieeKeyProbeResize(HWND dlg, int clientW, int clientH) {
 // change matched nothing and the labels never widened — the first violating state
 // of the 8ba7da0 x64 run, tab 0 cycle 1 at the 120 dpi pass ("the nine tab labels
 // did not wrap at font 150% (page top 109 vs the one-row 109)").
-struct KieeKeyProbeFontPair { HFONT from; HFONT to; };
+struct KieeKeyProbeFontPair { HFONT from; HFONT to; int role; };
 struct KieeKeyProbeFontCtx {
-    static constexpr int kMaxPairs = 3 * (1 + 8);   // roles x (app face + history)
+    // v1.3.0-beta8fix1 (bug BS-22w): the +32 is the app-minted registry below —
+    // every face the app ever applied, at any dpi, mapped by its recorded role.
+    static constexpr int kMaxPairs = 3 * (1 + 8) + 32;   // roles x (app face + history) + the registry
     KieeKeyProbeFontPair pairs[kMaxPairs]{};
     int count = 0;
-    void add(HFONT from, HFONT to) {
+    void add(HFONT from, HFONT to, int role) {
         if (from == nullptr || to == nullptr || from == to || count >= kMaxPairs) {
             return;   // already the target (or unclassifiable): leave it alone
         }
         for (int i = 0; i < count; ++i) {
             if (pairs[i].from == from) { return; }
         }
-        pairs[count++] = KieeKeyProbeFontPair{from, to};
+        pairs[count++] = KieeKeyProbeFontPair{from, to, role};
     }
 };
 static BOOL CALLBACK kieeKeyProbeApplyFont(HWND child, LPARAM lp) {
@@ -8835,6 +8979,11 @@ static BOOL CALLBACK kieeKeyProbeApplyFont(HWND child, LPARAM lp) {
         if (ctx->pairs[i].from == cur) {
             ::SendMessageW(child, WM_SETFONT,
                            reinterpret_cast<WPARAM>(ctx->pairs[i].to), TRUE);
+            // v1.3.0-beta8fix1 (bug BS-22w): the apply loop of
+            // KieeKeyProbeFontScale reports the face it just put on a control
+            // with the role the table recorded for it — the loop's own role
+            // index, never a height guess.
+            kieeKeyProbeRememberAppFont(ctx->pairs[i].to, ctx->pairs[i].role);
             break;
         }
     }
@@ -8882,13 +9031,32 @@ extern "C" int KieeKeyProbeFontScale(HWND dlg, int percent) {
     const HFONT app[3] = {uiFont(), uiFontBold(), uiFontTitle()};
     KieeKeyProbeFontCtx ctx;
     for (int role = 0; role < 3; ++role) {
-        ctx.add(app[role], next[role]);            // what the app itself applies
+        ctx.add(app[role], next[role], role);          // what the app itself applies
         for (int i = 0; i < g_probeFontHistoryCount[role]; ++i) {
-            ctx.add(g_probeFontHistory[role][i], next[role]);   // what we applied
+            ctx.add(g_probeFontHistory[role][i], next[role], role);  // what we applied
         }
+    }
+    // v1.3.0-beta8fix1 (bug BS-22w): and every face the APP applied since the
+    // dialog opened — the registry the font writers feed — mapped by its
+    // RECORDED role, not by a height guess (at 150 % the body face is 19 px
+    // and the title 30 px; at 144 dpi the body face is 20 px, so a guess
+    // misclassifies exactly the faces that broke the mapping).
+    for (int i = 0; i < g_probeAppFontCount; ++i) {
+        const int role = g_probeAppFontRoles[i];
+        ctx.add(g_probeAppFonts[i], next[role], role);
     }
     ::EnumChildWindows(dlg, &kieeKeyProbeApplyFont, reinterpret_cast<LPARAM>(&ctx));
     for (int role = 0; role < 3; ++role) { kieeKeyProbeRememberFont(role, next[role]); }
+    // v1.3.0-beta8fix1 (bug BS-22w): AUDIT THE RESTORE THIS CALL JUST DID.
+    // After the mapping ran, no control may still wear a face of another
+    // scale: a survivor means the layout is about to be planned with a face
+    // this pass did not choose, and the solver will size the window to a
+    // hybrid no pass built. The count is exported for the ui_probe harness,
+    // which turns a non-zero count into an I11 pre-condition failure BEFORE
+    // the capture judges the page.
+    g_probeUnmappedFonts = 0;
+    ::EnumChildWindows(dlg, &kieeKeyProbeCountUnmappedFont,
+                       reinterpret_cast<LPARAM>(next));
     // The controls changed size underneath the solved layout: everything the
     // solver measured is stale, which is exactly the condition the layout must
     // survive.
@@ -8896,6 +9064,9 @@ extern "C" int KieeKeyProbeFontScale(HWND dlg, int percent) {
     solveSettingsLayout(dlg);
     return percent;
 }
+
+// v1.3.0-beta8fix1 (bug BS-22w): the restore audit's result, for the harness.
+extern "C" int KieeKeyProbeUnmappedFontCount(void) { return g_probeUnmappedFonts; }
 
 // The app's own runtime-growth path for a live row (the 500 ms tick's).
 extern "C" void KieeKeyProbeTypeRow(HWND dlg, int id, const wchar_t* text) {

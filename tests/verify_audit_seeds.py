@@ -883,6 +883,17 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "        KieeKeyProbeSetWorkAreaOverride(0, 0, 0, 0);   /* seeded: no headroom */",
         "E5 the full-height open",
     ),
+    # v1.3.0-beta8fix2 round 4: the user's facts (the breakage persists across
+    # reopens; a tab click produces it, especially tab 8) point at a
+    # paint-level state — the stale-pixel audit must run at the photographed
+    # geometry, not only at the pass geometry.
+    (
+        "BS-23b  the open-geometry pixel audit deleted",
+        "tools/ui_probe/ui_probe.cpp",
+        "                pa.prefix = \"open@\" + std::to_string(passDpi) +",
+        "                pa.prefix = std::string(\"(seeded) \") +",
+        "E6 the pixel truth",
+    ),
 ]
 
 # Files scripts/check_dialog_paint_rules.py reads, relative to the repo root.

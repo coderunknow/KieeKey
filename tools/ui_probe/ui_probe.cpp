@@ -2553,6 +2553,35 @@ int harnessScenarioOpenGeometry(HWND* dlgInOut, int tabCount, unsigned passDpi,
         KieeKeyProbeSelectTab(dlg, 0);
 
         if (openTab == 0) {
+            // E6 — pixel truth at the photographed geometry (round 4, after the
+            // user's facts: the breakage PERSISTS across reopens and a TAB
+            // CLICK produces it, especially tab 8 — a paint-level state the
+            // window-state invariants cannot see). checkStalePixels is the
+            // check whose own finding text describes the photograph ("pixels
+            // of moved, hidden or painted-through controls were left behind");
+            // the per-tab audit runs it at the PASS geometry only. Run it here
+            // on the DEFAULT-OPEN dialog, tab by tab: capture the screen,
+            // force the full repaint, capture again — any pixel that moved is
+            // content the desktop held that the app does not draw.
+            for (int t = 0; t < tabs; ++t) {
+                KieeKeyProbeSelectTab(dlg, t);
+                pumpPostedMessages();
+                HarnessState ps;
+                readHarnessState(dlg, all, t, &ps);
+                Audit pa{};
+                pa.dlg = dlg;
+                pa.tabsCtl = ::GetDlgItem(dlg, IDC_TAB);
+                pa.client = ps.client;
+                pa.page = ps.page;
+                pa.tab = t;
+                pa.scalePercent = static_cast<int>((passDpi * 100U) / 96U);
+                pa.prefix = "open@" + std::to_string(passDpi) +
+                            " tab " + std::to_string(t) + ": ";
+                pa.findings = findings;
+                checkStalePixels(pa);
+            }
+            KieeKeyProbeSelectTab(dlg, 0);
+            pumpPostedMessages();
             // E2 — a tick that LANDS on the fresh dialog. The user's dialog
             // ticks every 500 ms from WM_CREATE on; round 1 dropped them.
             ::SendMessageW(dlg, WM_TIMER, 1, 0);

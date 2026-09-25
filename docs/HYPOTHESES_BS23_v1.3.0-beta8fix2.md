@@ -1,6 +1,9 @@
 # BS-23 hypothesis log — v1.3.0-beta8fix2 (the 150 % photograph)
 
-Status: **Phase 2** — measurement rounds discriminate; nothing is fixed yet.
+Status: **Phase 2, round 4** — rounds 1-3 measured every CI-reachable state
+clean; the user's second-pass facts (persists across reopen; a tab click
+produces it, worst on tab 8; single 150 % monitor) point at a paint-level
+state. E6 judges it at the photographed geometry. Nothing is fixed yet.
 Every line below carries the measured numbers that justify it. The layout is a
 contract between the window and its children — measure both ends; trusting
 either one is a new BS class.
@@ -156,9 +159,44 @@ shallow and the deep tab alternate at every width — the exact sequence in
 which a bar that appears for the deep tab narrows the client under rows
 planned for the wide one (the F3/F6 class).
 
-If E5 turns red, the violating state names the operation and the rectangles,
-and the fix gets its BS name from the mechanism it measures. If it stays
-green, the photograph's driver is specific to the native-150 % machine (font
-metrics, the OS's own suggested rects, monitor topology) and the remaining
-fixes ride on mechanism with the release carrying UNVERIFIED (Windows) until
-the user confirms on the real machine.
+## Round 3 verdict — the height axis is CLEAN too
+
+Run **36134839800** (commit 7e1327a): E5 reopened under a 1280×1600 work
+area at all three scales. The dialog's natural full height measured **749 px
+of client** (not 1034 — the pass's 1034 was the clamped 689 scaled up, not a
+content depth), with the bar ON and range 0/47/227 at 96/120/144 dpi. The
+full-height open state, a nine-tab walk, and a width sweep 560..1000 with a
+shallow and the deep tab alternating at every width: **0 violations**
+(I13 605847/0, I14 20028/0, I15 52703/0, 5166 assertions, 9 scenarios).
+
+## The user's facts (Phase 0, second pass — asked after round 3)
+
+* **The breakage PERSISTS across close-and-reopen** (same state every time).
+* **A tab click produces it**: "bấm tab thì bị đè. Mất nội dung. Nhất là khi
+  bấm tab 'Cấp độ'." — pressing tabs overlaps content and loses content,
+  worst on tab 8 (Cấp độ).
+* **Single monitor, 150 % scale from boot.** No multi-monitor, no mid-session
+  scale change.
+* More photographs come with the next prompt.
+
+Persistence across reopen rules out transient races and points at a state
+that is DETERMINISTIC on this machine — the dialog rebuilds the same broken
+frame from the same inputs every time. The tab-click trigger plus "đè"
+(overlap) plus "mất nội dung" (lost content) is the signature of a
+**paint-level** defect: the window state can be perfectly correct (every
+window-state invariant green, as rounds 1-3 measured) while the PIXELS the
+user sees are a mixture of frames — exactly what the window-state invariants
+cannot see and what `checkStalePixels` was written to catch ("pixels of
+moved, hidden or painted-through controls were left behind"). That check has
+only ever run at the PASS geometry (991 px at 150 %); the photograph was
+taken at the DEFAULT-OPEN geometry (823 px, two-row strip).
+
+## Round 4 — E6, the pixel truth at the photographed geometry
+
+After the default open at the pass's scale, walk the nine tabs and run the
+stale-pixel audit on each: capture the screen, force the app's full repaint,
+capture again — any pixel that moved is content the desktop held that the
+app does not draw. If E6 turns red, the finding names the tab, the pixel
+count and the first coordinate, and BS-23b belongs to the repaint path. If
+it stays green, the remaining discriminators need the user's next
+photographs (whole window incl. the title bar, immediately after reopen).

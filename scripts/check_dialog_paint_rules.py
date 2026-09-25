@@ -1424,7 +1424,13 @@ def check(repo: Path):
              'narrows the client under rows planned for the wide one (F3/F6)'),
             ('KieeKeyProbeSetWorkAreaOverride(0, 0, 0, 0);',
              'the work-area override is cleared before the handover restore '
-             '(BS-23c measurement) - no later check may run with a faked bound')):
+             '(BS-23c measurement) - no later check may run with a faked bound'),
+            ('pa.prefix = "open@" + std::to_string(passDpi) +',
+             'E6 the pixel truth at the photographed geometry (BS-23b '
+             "measurement) - the stale-pixel audit the per-tab run applies at "
+             'the PASS geometry, applied here to the DEFAULT-OPEN dialog tab '
+             'by tab, after the user\'s facts: the breakage persists across '
+             'reopens and a tab click produces it')):
         if needle not in probe:
             failures.append(f"tools/ui_probe/ui_probe.cpp: {needle} is gone - {why}")
     return failures

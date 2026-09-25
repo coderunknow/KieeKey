@@ -5054,6 +5054,19 @@ int g_probeLatchDrifts = 0;
 // How many times the tab strip needed the size-change nudge to re-lay out after it
 // went back to one row (see the strip block in solveSettingsLayout).
 int g_probeStripRelayouts = 0;
+// v1.3.0-beta8fix2 (bug BS-23a): how many times the OPEN-PATH SETTLE had to
+// correct the layout after the first solve — the strip settling on a row count
+// the solve did not measure (see the WM_APP + 79 handler). 0 while the settle
+// never fires; a state the probe judges is always a settled one.
+int g_probeOpenSettles = 0;
+// v1.3.0-beta8fix2 (bug BS-23c): how many times a scrollbar that APPEARED after
+// its solve (a tab switch revealing an overflowing tab) asked for the one reflow
+// that re-plans the rows against the narrower client (see
+// settingsAdoptScrollbarVisibility). The beta8fix1 comment claimed the bar can
+// only ever be HIDDEN after the solve; the user's 150 % photograph (rows clipped
+// mid-glyph at the right edge, bar VISIBLE) is the counter-example this counter
+// instruments.
+int g_probeBarShowReflows = 0;
 const char* g_probeLatchWriter = "init";
 const char* g_probeStyleWriter = "init";
 #endif
@@ -8642,6 +8655,33 @@ extern "C" HWND KieeKeyProbeOpenSettings(int tab) {
     return g.hSettings;
 }
 
+// v1.3.0-beta8fix2 (bug BS-23a, measurement) — THE OPEN PATH AT A GIVEN SCALE.
+//
+// Four green rounds audited the 150 % layout through the DPI-CHANGE path
+// (KieeKeyProbeSimulateDpi rescales an ALREADY-OPEN dialog), while the user's
+// photograph was taken on the OPEN path: the dialog created at the default size
+// on a 150 % monitor, first solve in WM_CREATE, strip wrapping to two rows at
+// the default width. The two paths are not the same measurement: the open path
+// sizes the frame to S(560)xS(622) BEFORE any solve runs, and its first solve
+// reads a tab control that has never been re-laid out.
+//
+// This entry point closes the dialog through the app's OWN close path
+// (WM_CLOSE: the timer is killed, the close-time self-check is captured, the
+// window is destroyed and g.hSettings is cleared) and opens a fresh one on
+// `tab`, so the first solve runs exactly where a real session's first solve
+// runs. Combined with KieeKeyProbeSetWindowDpiOverride() the probe opens the
+// dialog at any scale the runner's own desktop cannot produce. Returns the new
+// dialog, or nullptr when the close did not happen (the old dialog is still up
+// and the probe must keep judging IT).
+extern "C" HWND KieeKeyProbeReopenSettings(HWND dlg, int tab) {
+    if (dlg != nullptr && g.hSettings == dlg) {
+        ::SendMessageW(dlg, WM_CLOSE, 0, 0);
+    }
+    if (g.hSettings != nullptr) { return nullptr; }
+    openSettingsDialog(tab);
+    return g.hSettings;
+}
+
 // CA-03 diagnostics: the app's OWN required height for a control at its current
 // width, so the probe can print its measurement next to the solver's instead of
 // assuming they agree (they did not, on the first runs — see the clip findings
@@ -8824,6 +8864,12 @@ struct KieeKeyProbeScrollStateT {
     int stripMeasureCount;
     int stripStyleMultiline;
     int stripPlanFontPx;
+    // v1.3.0-beta8fix2 (bugs BS-23a/BS-23c): the open-path settle and the
+    // bar-appearance reflow counters (see g_probeOpenSettles /
+    // g_probeBarShowReflows). MUST STAY LAST, in this order: the probe carries
+    // a mirror of this struct and compares the size at start-up.
+    int openSettles;
+    int barShowReflows;
 };
 
 // The probe's mirror of this struct must agree with it byte for byte: a field
@@ -8859,6 +8905,8 @@ extern "C" void KieeKeyProbeScrollState(HWND dlg, KieeKeyProbeScrollStateT* out)
     out->styleWrites = g_probeStyleWrites;
     out->latchDrifts = g_probeLatchDrifts;
     out->stripRelayouts = g_probeStripRelayouts;
+    out->openSettles = g_probeOpenSettles;
+    out->barShowReflows = g_probeBarShowReflows;
 #endif
     out->stripRows = g_settingsScroll.stripRows;
     out->stripPlanRows = g_settingsScroll.stripPlanRows;

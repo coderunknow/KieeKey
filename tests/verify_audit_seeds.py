@@ -646,8 +646,10 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "BS-19  the scale-pass handover stops being asserted",
         "tools/ui_probe/ui_probe.cpp",
         # anchored on the DPI half of the contract: the counter alone appears
-        # twice (the handover asserts both the DPI and the client size)
-        "++g_invChecks[13];\n        if (handed.app.dpi != passDpi) {",
+        # twice (the handover asserts both the DPI and the client size). Slot 16
+        # since v1.3.0-beta8fix2 moved R1 out of slot 13 to make room for
+        # I13/I14/I15.
+        "++g_invChecks[16];\n        if (handed.app.dpi != passDpi) {",
         "if (handed.app.dpi != passDpi) {",
         "the handover assertion itself",
     ),
@@ -706,8 +708,10 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
     (
         "BS-18  the probe's invariant battery deleted",
         "tools/ui_probe/ui_probe.cpp",
-        "void harnessAssert(HWND dlg, const HarnessState& s, const char* op, int step,",
-        "void harnessAssertDisabled(HWND dlg, const HarnessState& s, const char* op, int step,",
+        # v1.3.0-beta8fix2: the battery also takes the dialog's COMPLETE child
+        # set now (the hide-set can only be judged across the unselected tabs).
+        "void harnessAssert(HWND dlg, const HarnessState& s, const std::vector<HWND>& all,",
+        "void harnessAssertDisabled(HWND dlg, const HarnessState& s, const std::vector<HWND>& all,",
         "harnessAssert",
     ),
     (
@@ -771,6 +775,62 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "                            \"the reflow did not converge: a second identical \"",
         "                            \"/* seeded: convergence never judged */ \"",
         "the reflow did not converge",
+    ),
+    # v1.3.0-beta8fix2 (BS-23a/BS-23b/BS-23c): THE PHOTOGRAPH HAS A HARNESS.
+    # The user's 150 % photograph (double title, stale page, right-edge clip
+    # under a visible bar, two-row strip at the default size) defines states no
+    # earlier round could reach. These seeds prove the measurement contract is
+    # load-bearing: the reopen entry point, the open-path scenario (open state,
+    # tab sweep, width sweep), and the three invariants (I13 hide-set, I14
+    # chrome band incl. the duplicate-title walk, I15 right edge).
+    (
+        "BS-23a  the reopen entry point deleted",
+        "src/app/main.cpp",
+        "extern \"C\" HWND KieeKeyProbeReopenSettings(HWND dlg, int tab) {",
+        "extern \"C\" HWND KieeKeyProbeReopenSettingsRemoved(HWND dlg, int tab) {",
+        "KieeKeyProbeReopenSettings",
+    ),
+    (
+        "BS-23a  the reopen stops closing through the app's own path",
+        "src/app/main.cpp",
+        "    ::SendMessageW(dlg, WM_CLOSE, 0, 0);",
+        "    /* seeded: the dialog is never closed, only re-opened over it */",
+        "the reopen closes through the app's own WM_CLOSE path",
+    ),
+    (
+        "BS-23a  the open-path scenario deleted",
+        "tools/ui_probe/ui_probe.cpp",
+        "int harnessScenarioOpenGeometry(HWND* dlgInOut, int tabCount, unsigned passDpi,",
+        "int harnessScenarioOpenGeometryRemoved(HWND* dlgInOut, int tabCount, unsigned passDpi,",
+        "the open-path scenario",
+    ),
+    (
+        "BS-23a  the width sweep shrinks to a single width",
+        "tools/ui_probe/ui_probe.cpp",
+        "    for (int w = 560; w <= 1000; w += 20) {",
+        "    for (int w = 560; w <= 560; w += 20) {   /* seeded: one width, no sweep */",
+        "the width sweep",
+    ),
+    (
+        "BS-23b  the hide-set invariant stops judging",
+        "tools/ui_probe/ui_probe.cpp",
+        "        if (shown != (page == tab)) {",
+        "        if (false) {   /* seeded: the hide-set is never judged */",
+        "shown != (page == tab)",
+    ),
+    (
+        "BS-23b  the duplicate-title walk allows every copy",
+        "tools/ui_probe/ui_probe.cpp",
+        "                const bool allowedInfoName = id == IDC_STAT_INFO_NAME && tab == 4;",
+        "                const bool allowedInfoName = true;   /* seeded: every copy allowed */",
+        "IDC_STAT_INFO_NAME && tab == 4",
+    ),
+    (
+        "BS-23c  the right-edge invariant stops judging",
+        "tools/ui_probe/ui_probe.cpp",
+        "            if (effRight > s.page.right + 1) {",
+        "            if (false) {   /* seeded: the right edge is never judged */",
+        "effRight > s.page.right + 1",
     ),
 ]
 

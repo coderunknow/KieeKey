@@ -413,17 +413,19 @@ def check(repo: Path):
     #    the one the NEXT pass audited: the run 35866022217 red was measured on a
     #    leftover layout (children 1.5x the authored width in a 399 px client),
     #    and the probe blamed the product for it. The handover is now asserted
-    #    (invariant slot 13: app dpi == the pass's dpi, client size == the pass's
-    #    client size, and the restored state passes I1..I12), and the report
+    #    (invariant slot 16 — slot 13 until v1.3.0-beta8fix2 moved it to make
+    #    room for I13/I14/I15: app dpi == the pass's dpi, client size == the
+    #    pass's client size, and the restored state passes I1..I15), and the report
     #    validates its own braces before writing — a missing '+' between two
     #    adjacent literals is legal C++ and produced a ui_probe.json no parser
     #    accepts (CI run 35874350649 died with no annotation at all).
     for needle, why in (
             ('g_handoverNotes', 'the handover note of every scale pass (BS-19)'),
             ('jsonBalanced(', "the report's own brace check (BS-19)"),
-            ('++g_invChecks[13];\n        if (handed.app.dpi != passDpi) {',
-             'the handover assertion itself (BS-19: the DPI half of the contract)'),
-            ('harnessAssert(dlg, handed, "restore"',
+            ('++g_invChecks[16];\n        if (handed.app.dpi != passDpi) {',
+             'the handover assertion itself (BS-19: the DPI half of the contract; '
+             'slot 16 since v1.3.0-beta8fix2 made room for I13/I14/I15)'),
+            ('harnessAssert(dlg, handed, all, "restore"',
              'the restored state judged by the full invariant battery (BS-19)'),
             ('{125, 120U}', 'the 125 % scale pass (BS-19: 100/125/150 % coverage)')):
         if needle not in probe:
@@ -1276,6 +1278,106 @@ def check(repo: Path):
              'it fails right here')):
         if needle not in probe:
             failures.append(f"tools/ui_probe/ui_probe.cpp: {needle} is gone — {why}")
+
+    # 17. v1.3.0-beta8fix2 (bugs BS-23a/BS-23b/BS-23c, MEASUREMENT): THE
+    #     PHOTOGRAPH HAS A HARNESS. The user's 150 % photograph showed states
+    #     the four green rounds could not reach: a dialog OPENED at the default
+    #     size on a 150 % monitor (no scale pass ever entered the open path -
+    #     the 144-dpi pass entered at 991 px client because it inherited the
+    #     pass before it), a tab selected whose old page was still on screen
+    #     (F2), the title painted twice (F1), and rows clipped past the right
+    #     edge while the scrollbar was visible (F3/F6). The measurement
+    #     contract: an entry point that reopens through the app's OWN open path
+    #     at the pass's dpi override, a scenario that drives it (open state,
+    #     tab sweep, width sweep 560..1000), and three invariants judged after
+    #     EVERY operation on the COMPLETE child set: I13 the hide-set, I14 the
+    #     chrome band (including the duplicate-title walk), I15 the right edge.
+    for needle, why in (
+            ('extern "C" HWND KieeKeyProbeReopenSettings(HWND dlg, int tab) {',
+             "the probe entry point that reopens the dialog through the app's "
+             'OWN open path (BS-23a measurement) - the first solve then runs in '
+             "WM_CREATE at the override dpi, where a real session's first solve "
+             'runs'),
+            ('::SendMessageW(dlg, WM_CLOSE, 0, 0);',
+             "the reopen closes through the app's own WM_CLOSE path (BS-23a "
+             'measurement) - the timer kill, the close-time self-check and the '
+             'destroy all belong to it'),
+            ('int openSettles;',
+             'the open-path settle counter in the probe-visible struct '
+             '(BS-23a measurement)'),
+            ('int barShowReflows;',
+             'the bar-appearance reflow counter in the probe-visible struct '
+             '(BS-23c measurement)')):
+        if needle not in main:
+            failures.append(f"src/app/main.cpp: {needle} is gone - {why}")
+    try:
+        assert_body = function_body(probe, r'void harnessAssert\s*\('
+                                    r'HWND dlg, const HarnessState& s, '
+                                    r'const std::vector<HWND>& all[^)]*\)')
+    except ValueError:
+        assert_body = ''
+        failures.append(
+            "tools/ui_probe/ui_probe.cpp: harnessAssert() no longer takes the "
+            "dialog's COMPLETE child set (BS-23b measurement) - the hide-set "
+            "can only be judged by looking at the tabs that are NOT selected")
+    if assert_body:
+        for needle, why in (
+                ('const int page = KieeKeyProbeTabOfControl(dlg, id);',
+                 "I13 the hide-set: every child's page is asked of the app "
+                 '(BS-23b measurement)'),
+                ('shown != (page == tab)',
+                 'I13 the hide-set: visible iff it belongs to the selected tab '
+                 '(BS-23b measurement) - the photographed state was tab 8 '
+                 "selected with tab 4's body still on the page"),
+                ('IDC_STAT_HEAD_TITLE',
+                 'I14 the chrome band: the header title is part of the band '
+                 'contract (BS-23b measurement)'),
+                ('rectsOverlap(r, s.page)',
+                 'I14 the chrome band: chrome may not reach into the page '
+                 '(BS-23b measurement) - the photograph showed the groupbox '
+                 'label touching the title'),
+                ('IDC_STAT_INFO_NAME && tab == 4',
+                 "I14 the duplicate-title walk: the Information tab's own name "
+                 'label is the only other window allowed to carry the title '
+                 'text, and only on its own tab (BS-23b measurement) - every '
+                 'other copy is the photographed double title'),
+                ('effRight > s.page.right + 1',
+                 "I15 the right edge: every visible page child fits the page's "
+                 'right edge (BS-23c measurement) - the photograph showed rows '
+                 'clipped mid-glyph with the scrollbar visible')):
+            if needle not in assert_body:
+                failures.append(
+                    f"tools/ui_probe/ui_probe.cpp: {needle} is gone - {why}")
+    for needle, why in (
+            ('int harnessScenarioOpenGeometry(HWND* dlgInOut, int tabCount, unsigned passDpi,',
+             'the open-path scenario (BS-23a measurement) - it replaces the '
+             'dialog, so it takes the handle by pointer'),
+            ('KieeKeyProbeSetWindowDpiOverride(passDpi);\n    HWND fresh = KieeKeyProbeReopenSettings(dlg, 0);',
+             "the scenario opens at the pass's scale through the override "
+             '(BS-23a measurement)'),
+            ('for (int w = 560; w <= 1000; w += 20) {',
+             'the width sweep: the default open width (840 at 144 dpi) is '
+             'inside it and the wrap decision moves through it (BS-23a/b/c '
+             'measurement)'),
+            ('harnessScenarioOpenGeometry(&dlg, tabCount, passDpi, origClient, &findings);',
+             'the harness runs the open scenario FIRST and judges everything '
+             'afterwards on the fresh dialog (BS-23a measurement)'),
+            ('all = stableChildren(dlg);   // the open scenario replaced the dialog',
+             'the child set is re-read after the reopen (BS-23a measurement) - '
+             'judging fresh windows through stale HWNDs is a crash, not a '
+             'finding'),
+            ('tabsCtl = ::GetDlgItem(dlg, IDC_TAB);',
+             'the per-tab audit of the NEXT pass reads the fresh tab control '
+             '(BS-23a measurement)'),
+            ('void pumpPostedMessages() {',
+             "the posted-message drain a real session's loop provides "
+             '(BS-23a measurement) - timer messages are dropped, not '
+             'dispatched'),
+            ('harnessAssert(dlg, open, all, "scenario_open_default", 0, 0, 100, findings);',
+             'the photographed state itself is judged by the full battery '
+             '(BS-23a measurement)')):
+        if needle not in probe:
+            failures.append(f"tools/ui_probe/ui_probe.cpp: {needle} is gone - {why}")
     return failures
 
 
@@ -1289,13 +1391,14 @@ def main() -> int:
         for f in failures:
             print(f"  - {f}")
         return 1
-    print("PAINT RULES OK — 12 rules: sibling clipping, window styles, "
+    print("PAINT RULES OK — 13 rules: sibling clipping, window styles, "
           "repaint-after-change, need-deduped reflow, unscrolled solver input, "
           "rescale-owns-its-resolve + total baseline drop (BS-18), symmetric "
           "scrollbar correction (+ the probe's blank-page, reflow, pixel and "
           "operation-sequence checks), authored solver input (BS-22), measure-"
           "after-clamp + the probe's derived expectations (BS-22), one owner for the bar pair + narrow-only clamp + live-rectangle regions (BS-22c), "
-          "the scale knows every app-minted face + audited restore + interior ink grids (BS-22w)")
+          "the scale knows every app-minted face + audited restore + interior ink grids (BS-22w), "
+          "the photograph has a harness: open-path reopen + open/tab/width scenario + I13 hide-set / I14 chrome band / I15 right edge (BS-23a/b/c)")
     return 0
 
 

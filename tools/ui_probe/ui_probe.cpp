@@ -78,6 +78,10 @@
 // The probe-only surface of src/app/main.cpp (compiled into this target).
 extern "C" void KieeKeyProbeInit(HINSTANCE hInst);
 extern "C" HWND KieeKeyProbeOpenSettings(int tab);
+// v1.3.0-beta8fix2 (bug BS-23a): close through the app's own WM_CLOSE path and
+// open a fresh dialog on `tab` — the OPEN path at the current dpi override,
+// i.e. the geometry the user's photograph was taken in (default size, 150 %).
+extern "C" HWND KieeKeyProbeReopenSettings(HWND dlg, int tab);
 extern "C" int  KieeKeyProbeSelectTab(HWND dlg, int tab);
 // CA-03 diagnostics: the app's OWN required text height for a control (the same
 // DrawTextW call the solver uses), so the probe can compare instead of assume.
@@ -125,6 +129,10 @@ struct ProbeScrollStateT {          // mirrors KieeKeyProbeScrollStateT (main.cp
     int stripMeasureCount;
     int stripStyleMultiline;
     int stripPlanFontPx;
+    // v1.3.0-beta8fix2 (bugs BS-23a/BS-23c): open-path settle and
+    // bar-appearance reflow instrumentation — MUST MIRROR THE APP'S STRUCT.
+    int openSettles;
+    int barShowReflows;
 };
 extern "C" void KieeKeyProbeScrollState(HWND dlg, ProbeScrollStateT* out);
 // v1.3.0-beta8fix1 (bug BS-22c): the app answers with the size of ITS struct, and
@@ -501,6 +509,14 @@ RECT clientRectOf(HWND parent, HWND child) {
 }
 
 bool rectEmpty(const RECT& r) { return r.right <= r.left || r.bottom <= r.top; }
+
+// v1.3.0-beta8fix2 (bugs BS-23a/b/c): do two rectangles share area? Used by the
+// chrome-band invariant (I14) — the photographed state had the header title
+// painting inside the page's own band.
+bool rectsOverlap(const RECT& a, const RECT& b) {
+    return a.left < b.right && b.left < a.right &&
+           a.top < b.bottom && b.top < a.bottom;
+}
 
 RECT intersectRect(const RECT& a, const RECT& b) {
     RECT o{std::max(a.left, b.left), std::max(a.top, b.top),
@@ -1388,8 +1404,12 @@ int g_fuzzFailures = 0;
 int g_scenarioRuns = 0;
 int g_scenarioFailures = 0;
 int g_traceLines = 0;
-int g_invChecks[14] = {};
-int g_invFailures[14] = {};
+// Slots 1-12: I1..I12 (see harnessAssert / checkAll for what each asserts).
+// Slots 13-15 (v1.3.0-beta8fix2, bugs BS-23a/b/c): I13 the hide-set, I14 the
+// chrome band, I15 the right edge — the states the user's 150 % photograph
+// measured. Slot 16: R1, the cross-pass handover assertion.
+int g_invChecks[17] = {};
+int g_invFailures[17] = {};
 std::string g_trace;
 
 void harnessTrace(const std::string& line) {
@@ -1571,14 +1591,14 @@ std::string harnessStateStr(const HarnessState& s, const char* op, int step,
 // per invariant so the red run names the operation, the seed, the DPI, the
 // offset and the page rectangle that produced it. Bounded (one per invariant,
 // 420 chars) so the digest stays a line.
-std::string g_invExample[14];
+std::string g_invExample[17];
 std::vector<std::string> g_handoverNotes;   // one per scale pass, for the digest
 std::vector<std::string> g_passEntryNotes;  // what each pass started from
 
 void harnessFail(int inv, std::vector<Finding>* findings, const std::string& why,
                  const std::string& state) {
     ++g_invFailures[inv];
-    if (inv >= 0 && inv < 14 && g_invExample[inv].empty()) {
+    if (inv >= 0 && inv < 17 && g_invExample[inv].empty()) {
         std::string ex = why + " || " + state;
         if (ex.size() > 420) { ex.resize(417); ex += "..."; }
         g_invExample[inv] = std::move(ex);
@@ -1590,7 +1610,11 @@ void harnessFail(int inv, std::vector<Finding>* findings, const std::string& why
                  jsonEscape(why) + "\", \"state\": \"" + jsonEscape(state) + "\"}");
 }
 
-void harnessAssert(HWND dlg, const HarnessState& s, const char* op, int step,
+// v1.3.0-beta8fix2: `all` is the dialog's COMPLETE child set (every tab's
+// controls, the chrome, the tab control) — the hide-set (I13) can only be
+// judged by looking at the tabs that are NOT selected.
+void harnessAssert(HWND dlg, const HarnessState& s, const std::vector<HWND>& all,
+                   const char* op, int step,
                    int seed, int fontPct, std::vector<Finding>* findings) {
     const ProbeScrollStateT& a = s.app;
     const std::string state = harnessStateStr(s, op, step, seed, fontPct);
@@ -1841,6 +1865,147 @@ void harnessAssert(HWND dlg, const HarnessState& s, const char* op, int step,
             }
         }
     }
+    // v1.3.0-beta8fix2 (bug BS-23b measurement) — I13, THE HIDE-SET.
+    //
+    // The user's photograph showed "Cấp độ" SELECTED while "Thông tin"'s body
+    // was still on the page: a dialog with two tab pages on it at once. showTab()
+    // owns that contract (one page shown, eight hidden), and every operation
+    // ends in a state showTab() produced — so the contract is assertable after
+    // EVERY operation, on EVERY child, not just the selected tab's. This is the
+    // walk the fuzz never did: it read the selected tab's rectangles and called
+    // them coherent.
+    for (HWND child : all) {
+        const int id = ::GetDlgCtrlID(child);
+        const int page = KieeKeyProbeTabOfControl(dlg, id);
+        if (page < 0) { continue; }   // chrome and the tab control itself
+        ++g_invChecks[13];
+        const bool shown = ::IsWindowVisible(child) != FALSE;
+        if (shown != (page == tab)) {
+            fail(13, "id " + std::to_string(id) + " belongs to tab " +
+                    std::to_string(page) + " but is " +
+                    (shown ? "VISIBLE" : "hidden") + " while tab " +
+                    std::to_string(tab) + " is selected — two pages on one "
+                    "dialog is the photographed stale tab");
+            break;
+        }
+    }
+    // v1.3.0-beta8fix2 (bug BS-23b measurement) — I14, THE CHROME BAND.
+    //
+    // The header (icon 552 / title 553 / status 554) lives ABOVE the tab
+    // control, and the title text exists at most twice on a healthy dialog: the
+    // chrome title always, and the Information tab's own name label when that
+    // tab is selected (id 558 legitimately carries the same string). The
+    // photograph showed the title drawn twice on the Level page — tab 4's name
+    // label still visible on tab 8 — and the groupbox label touching the chrome.
+    // This invariant asserts the band from the outside: the three chrome
+    // controls are visible, none of them reaches into the tab band or the page,
+    // and no OTHER visible static carries the title text.
+    {
+        HWND tabCtl = ::GetDlgItem(dlg, IDC_TAB);
+        RECT tabR{};
+        const bool haveTabR = tabCtl != nullptr &&
+            ::GetWindowRect(tabCtl, &tabR) != FALSE;
+        if (haveTabR) {
+            POINT tl{tabR.left, tabR.top};
+            ::ScreenToClient(dlg, &tl);
+            tabR.right -= tabR.left - tl.x;
+            tabR.bottom -= tabR.top - tl.y;
+            tabR.left = tl.x;
+            tabR.top = tl.y;
+        }
+        static const int kChrome[] = {IDC_STAT_HEAD_ICON, IDC_STAT_HEAD_TITLE,
+                                      IDC_STAT_HEAD_STATUS};
+        for (int cid : kChrome) {
+            HWND h = ::GetDlgItem(dlg, cid);
+            if (h == nullptr) { continue; }
+            ++g_invChecks[14];
+            if (::IsWindowVisible(h) == FALSE) {
+                fail(14, "chrome id " + std::to_string(cid) + " is HIDDEN — the "
+                        "header band is always-visible chrome");
+                continue;
+            }
+            const RECT r = clientRectOf(dlg, h);
+            if (haveTabR && r.bottom > tabR.top + 1) {
+                fail(14, "chrome id " + std::to_string(cid) + " ends at y=" +
+                        std::to_string(r.bottom) + ", inside the tab band that "
+                        "starts at y=" + std::to_string(tabR.top));
+            }
+            if (s.havePage && rectsOverlap(r, s.page)) {
+                fail(14, "chrome id " + std::to_string(cid) + " " + rectStr(r) +
+                        " overlaps the page " + rectStr(s.page) + " — the page's "
+                        "top-edge accounting reached under the chrome (the "
+                        "photographed groupbox touching the title)");
+            }
+            for (const HarnessCtl& c : s.ctls) {
+                if (!c.shown || c.regionEmpty) { continue; }
+                const int rx = c.hasRegion ? c.x + c.rl : c.x;
+                const int ry = c.hasRegion ? c.y + c.rt : c.y;
+                const int rw = c.hasRegion ? c.rr - c.rl : c.w;
+                const int rh = c.hasRegion ? c.rb - c.rt : c.h;
+                const RECT cr{rx, ry, rx + rw, ry + rh};
+                if (rectsOverlap(r, cr)) {
+                    fail(14, "chrome id " + std::to_string(cid) + " " + rectStr(r) +
+                            " overlaps page child id " + std::to_string(c.id) + " " +
+                            rectStr(cr));
+                    break;
+                }
+            }
+        }
+        // The duplicate-title walk: exactly the chrome title (and the Information
+        // tab's own label, on that tab) may carry the title string.
+        HWND titleH = ::GetDlgItem(dlg, IDC_STAT_HEAD_TITLE);
+        wchar_t title[128] = L"";
+        if (titleH != nullptr) {
+            ::GetWindowTextW(titleH, title, 128);
+        }
+        if (title[0] != L'\0') {
+            ++g_invChecks[14];
+            int leakId = 0;
+            for (HWND child : all) {
+                if (::IsWindowVisible(child) == FALSE) { continue; }
+                wchar_t cls[32] = L"";
+                ::GetClassNameW(child, cls, 32);
+                if (::lstrcmpiW(cls, L"Static") != 0) { continue; }
+                const int id = ::GetDlgCtrlID(child);
+                if (id == IDC_STAT_HEAD_TITLE) { continue; }
+                const bool allowedInfoName = id == IDC_STAT_INFO_NAME && tab == 4;
+                wchar_t text[128] = L"";
+                ::GetWindowTextW(child, text, 128);
+                if (::lstrcmpW(text, title) != 0) { continue; }
+                if (!allowedInfoName) { leakId = id; break; }
+            }
+            if (leakId != 0) {
+                fail(14, "the header title text is also painted by id " +
+                        std::to_string(leakId) + " while tab " +
+                        std::to_string(tab) + " is selected — the photographed "
+                        "double title (a second copy of the chrome title inside "
+                        "the page)");
+            }
+        }
+    }
+    // v1.3.0-beta8fix2 (bug BS-23c measurement) — I15, THE RIGHT EDGE.
+    //
+    // The photograph showed rows clipped mid-glyph at the dialog's right edge
+    // while the scrollbar WAS visible: content wider than the client it was
+    // planned for. Every visible child of the selected tab must fit the page's
+    // right edge — its window rect when it carries no region, the region box
+    // when it does (a scrolled row is clipped by its region, not its window).
+    // One pixel of slack covers a region the OS rounds by one; more than that is
+    // ink outside the client it was drawn in.
+    if (s.havePage) {
+        for (const HarnessCtl& c : s.ctls) {
+            if (!c.shown || c.regionEmpty) { continue; }
+            ++g_invChecks[15];
+            const int effRight = c.hasRegion ? c.x + c.rr : c.x + c.w;
+            if (effRight > s.page.right + 1) {
+                fail(15, "id " + std::to_string(c.id) + " reaches x=" +
+                        std::to_string(effRight) + " but the page ends at x=" +
+                        std::to_string(s.page.right) + " — content past the right "
+                        "edge (the photographed mid-glyph clip)");
+                break;
+            }
+        }
+    }
 }
 
 // The operation set. Every one of these is a path the app itself runs.
@@ -1889,6 +2054,27 @@ std::vector<HWND> stableChildren(HWND dlg) {
         all.push_back(c);
     }
     return all;
+}
+
+// v1.3.0-beta8fix2 (bugs BS-23a/b/c): drain the messages a real session's loop
+// would have delivered by now (the open path's own posted work, and — once the
+// settle exists — its posted correction). Timer messages are DROPPED, not
+// dispatched: the probe owns the dialog while it judges it, and an injected
+// 500 ms tick would rewrite the live rows between the operation and the check
+// that reads them.
+void pumpPostedMessages() {
+    for (int round = 0; round < 6; ++round) {
+        MSG m{};
+        bool any = false;
+        while (::PeekMessageW(&m, nullptr, 0, 0, PM_REMOVE)) {
+            if (m.message == WM_TIMER) { continue; }
+            ::TranslateMessage(&m);
+            ::DispatchMessageW(&m);
+            any = true;
+        }
+        ::Sleep(10);
+        if (!any) { break; }
+    }
 }
 
 void sendWheel(HWND dlg, int notches, const RECT& page) {
@@ -2267,7 +2453,127 @@ void harnessStep(HWND dlg, const std::vector<HWND>& all, int tabCount, int* curT
     HarnessState s;
     readHarnessState(dlg, all, *curTab, &s);
     ++g_fuzzChecks;
-    harnessAssert(dlg, s, opName, step, seed, *fontPct, findings);
+    harnessAssert(dlg, s, all, opName, step, seed, *fontPct, findings);
+}
+
+// v1.3.0-beta8fix2 — THE OPEN-PATH SCENARIO (bugs BS-23a/b/c, measurement).
+//
+// The four green rounds audited the 150 % layout through the DPI-CHANGE path:
+// the dialog was opened at the runner's own scale and then RESCALED. The user's
+// photograph was taken on the OPEN path — the dialog created at the default
+// size on a 150 % monitor — and no pass ever entered it: the 144-dpi pass
+// entered at 991 px client because it inherited the pass before it (683), which
+// inherited the first (543). The default open at 144 dpi is S(560) = 840 frame
+// width — a geometry this harness had never solved, and the one where the tab
+// strip wraps to two rows. This scenario opens it:
+//
+//   1. reopen through the app's OWN open path at the pass's dpi override,
+//   2. measure the open state (the photographed state),
+//   3. walk the tabs at that geometry (the photographed stale page),
+//   4. sweep the width 560..1000 at the same dpi (the wrap moves through the
+//      sweep; the default 840 is inside it), plus a tab walk at the narrowest
+//      width (the deepest wrap),
+//   5. restore the state R1 hands to the next audit.
+//
+// The scenario REPLACES the dialog; the caller must re-read its child set.
+int harnessScenarioOpenGeometry(HWND* dlgInOut, int tabCount, unsigned passDpi,
+                                const RECT& origClient,
+                                std::vector<Finding>* findings) {
+    ++g_scenarioRuns;
+    const int before = g_fuzzFailures;
+    HWND dlg = *dlgInOut;
+
+    // 1. The open path at the pass's scale (the override makes windowDpi()
+    //    answer the pass's dpi during the frame's S(560)xS(622) sizing).
+    KieeKeyProbeSetWindowDpiOverride(passDpi);
+    HWND fresh = KieeKeyProbeReopenSettings(dlg, 0);
+    KieeKeyProbeSetWindowDpiOverride(0);
+    if (fresh == nullptr) {
+        harnessTrace("{\"scenario\": \"open_geometry\", \"result\": "
+                     "\"reopen-refused, kept the old dialog\"}");
+        return g_fuzzFailures - before;
+    }
+    dlg = fresh;
+    *dlgInOut = dlg;
+    pumpPostedMessages();
+    std::vector<HWND> all = stableChildren(dlg);
+
+    // 2. The photographed state: default open at the pass's scale.
+    HarnessState open;
+    readHarnessState(dlg, all, 0, &open);
+    const RECT openedClient = open.client;
+    const std::string openNote =
+        "open @" + std::to_string(passDpi) + " dpi: default-open client " +
+        std::to_string(openedClient.right) + "x" +
+        std::to_string(openedClient.bottom) + " page " + rectStr(open.page) +
+        " stripRows " + std::to_string(open.app.stripRows) + " measured " +
+        std::to_string(open.app.stripMeasuredRows) + " plan rows " +
+        std::to_string(open.app.stripPlanRows) + " need/avail " +
+        std::to_string(open.app.stripPlanRequired) + "/" +
+        std::to_string(open.app.stripPlanAvailable) + " openSettles " +
+        std::to_string(open.app.openSettles);
+    g_passEntryNotes.push_back(openNote);
+    std::printf("ui_probe: [open-geometry] %s\n", openNote.c_str());
+    harnessTrace("{\"scenario\": \"open_geometry\", \"client\": \"" +
+                 std::to_string(openedClient.right) + "x" +
+                 std::to_string(openedClient.bottom) + "\", \"page\": \"" +
+                 rectStr(open.page) + "\", \"stripRows\": " +
+                 std::to_string(open.app.stripRows) + ", \"measuredRows\": " +
+                 std::to_string(open.app.stripMeasuredRows) +
+                 ", \"passDpi\": " + std::to_string(passDpi) + "}");
+    ++g_fuzzChecks;
+    harnessAssert(dlg, open, all, "scenario_open_default", 0, 0, 100, findings);
+
+    // 3. Tab walk at the open geometry (the photograph: tab 8 selected, tab 4's
+    //    body still on the page).
+    const int tabs = tabCount < 9 ? tabCount : 9;
+    for (int t = 0; t < tabs; ++t) {
+        KieeKeyProbeSelectTab(dlg, t);
+        pumpPostedMessages();
+        HarnessState st;
+        readHarnessState(dlg, all, t, &st);
+        ++g_fuzzChecks;
+        harnessAssert(dlg, st, all, "scenario_open_tab_sweep", t, 0, 100, findings);
+    }
+    KieeKeyProbeSelectTab(dlg, 0);
+
+    // 4. Width sweep at the pass's scale: the wrap decision moves through the
+    //    sweep, and the default open width (840 at 144 dpi) is inside it.
+    const int sweepH = static_cast<int>(openedClient.bottom);
+    for (int w = 560; w <= 1000; w += 20) {
+        KieeKeyProbeResize(dlg, w, sweepH);
+        KieeKeyProbeReflowNow(dlg);
+        pumpPostedMessages();
+        HarnessState st;
+        readHarnessState(dlg, all, 0, &st);
+        ++g_fuzzChecks;
+        harnessAssert(dlg, st, all, "scenario_width_sweep", w, 0, 100, findings);
+    }
+    //    And the tab walk at the sweep's narrowest width, where the strip wraps
+    //    deepest — the two-row band the photograph was taken with.
+    KieeKeyProbeResize(dlg, 560, sweepH);
+    KieeKeyProbeReflowNow(dlg);
+    pumpPostedMessages();
+    for (int t = 0; t < tabs; ++t) {
+        KieeKeyProbeSelectTab(dlg, t);
+        HarnessState st;
+        readHarnessState(dlg, all, t, &st);
+        ++g_fuzzChecks;
+        harnessAssert(dlg, st, all, "scenario_width_sweep_tab", t, 0, 100, findings);
+    }
+
+    // 5. Restore the pass's handover state (R1 judges it): same dpi, client,
+    //    scale 100, offset 0, tab 0 — the dialog the next audit expects.
+    KieeKeyProbeSimulateDpi(dlg, passDpi);
+    KieeKeyProbeFontScale(dlg, 100);
+    KieeKeyProbeResize(dlg, static_cast<int>(origClient.right),
+                       static_cast<int>(origClient.bottom));
+    KieeKeyProbeReflowNow(dlg);
+    KieeKeyProbeSetOffset(dlg, 0);
+    KieeKeyProbeSelectTab(dlg, 0);
+    const int failures = g_fuzzFailures - before;
+    if (failures > 0) { ++g_scenarioFailures; }
+    return failures;
 }
 
 // The named, deterministic scenario: what a display change does to a dialog the
@@ -2296,7 +2602,7 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
         HarnessState s;
         readHarnessState(dlg, all, deepestTab, &s);
         ++g_fuzzChecks;
-        harnessAssert(dlg, s, "scenario_display_change_mid_scroll", 0, 0, 100, findings);
+        harnessAssert(dlg, s, all, "scenario_display_change_mid_scroll", 0, 0, 100, findings);
     }
     // The app's own recovery paths: a reflow, a return to the top, a tab switch.
     KieeKeyProbeReflowNow(dlg);
@@ -2307,7 +2613,7 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
         HarnessState s;
         readHarnessState(dlg, all, deepestTab, &s);
         ++g_fuzzChecks;
-        harnessAssert(dlg, s, "scenario_after_recovery_ops", 0, 0, 100, findings);
+        harnessAssert(dlg, s, all, "scenario_after_recovery_ops", 0, 0, 100, findings);
     }
     // v1.3.0-beta8fix1 (bug BS-22q): AND THE APP IS TOLD WHAT THE MONITOR SAYS NOW.
     //
@@ -2332,7 +2638,7 @@ int harnessScenario(HWND dlg, const std::vector<HWND>& all, int tabCount,
         HarnessState s;
         readHarnessState(dlg, all, deepestTab, &s);
         ++g_fuzzChecks;
-        harnessAssert(dlg, s, "scenario_screen_paint_state", 0, 0, 100, findings);
+        harnessAssert(dlg, s, all, "scenario_screen_paint_state", 0, 0, 100, findings);
     }
 
     // I8/I11 — the real screen, not a WM_PRINTCLIENT render: a forced full
@@ -3126,7 +3432,7 @@ int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCo
             // really did fit — and the cycle would be measuring nothing.
             const bool wrappedRows = wrapped.app.stripRows > 1;
             if (measurable) {
-                harnessAssert(dlg, wrapped, "strip_cycle_wrapped", cycle, 0,
+                harnessAssert(dlg, wrapped, all, "strip_cycle_wrapped", cycle, 0,
                               kWrapFontPct, findings);
             }
             if (measurable &&
@@ -3157,7 +3463,7 @@ int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCo
             KieeKeyProbeSetOffset(dlg, 0);
             HarnessState back;
             readHarnessState(dlg, all, tab, &back);
-            harnessAssert(dlg, back, "strip_cycle_back", cycle, 0, 100, findings);
+            harnessAssert(dlg, back, all, "strip_cycle_back", cycle, 0, 100, findings);
             int backFirstY = -1;
             int backFirstId = 0;
             for (const HarnessCtl& c : back.ctls) {
@@ -3229,7 +3535,7 @@ int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCo
             }
             // (d) the ordinary invariants hold in the restored state too
             ++g_fuzzChecks;
-            harnessAssert(dlg, back, "strip_cycle", cycle, 0, 100, findings);
+            harnessAssert(dlg, back, all, "strip_cycle", cycle, 0, 100, findings);
         }
     }
 
@@ -3241,9 +3547,10 @@ int harnessScenarioStripCycles(HWND dlg, const std::vector<HWND>& all, int tabCo
     return g_fuzzFailures - before;
 }
 
-int runSequenceHarness(HWND dlg, int tabCount, unsigned nativeDpi, unsigned passDpi,
+int runSequenceHarness(HWND* dlgInOut, int tabCount, unsigned nativeDpi, unsigned passDpi,
                        int stepsPerTab,
                        std::vector<std::pair<std::string, int>>* byKind) {
+    HWND dlg = *dlgInOut;
     std::vector<HWND> all = stableChildren(dlg);
     RECT origClient{};
     origClient.right = 800;
@@ -3252,8 +3559,17 @@ int runSequenceHarness(HWND dlg, int tabCount, unsigned nativeDpi, unsigned pass
     std::vector<Finding> findings;
     const int before = g_fuzzFailures;
 
+    // v1.3.0-beta8fix2 (bugs BS-23a/b/c): the OPEN path at this pass's scale —
+    // the geometry the photograph was taken in, and the one no scale pass ever
+    // entered. Runs FIRST: it replaces the dialog, so everything below it must
+    // judge the fresh one.
     const int scenarioFailures =
-        harnessScenario(dlg, all, tabCount, nativeDpi, origClient, &findings);
+        harnessScenarioOpenGeometry(&dlg, tabCount, passDpi, origClient, &findings);
+    *dlgInOut = dlg;
+    all = stableChildren(dlg);   // the open scenario replaced the dialog
+
+    // The display-change scenario: what a display change does mid-scroll.
+    harnessScenario(dlg, all, tabCount, nativeDpi, origClient, &findings);
     // v1.3.0-beta8fix1 (bug BS-21): the tab-strip reshape transition, driven
     // deterministically (one row -> multi-row -> one row, three cycles, every
     // tab) instead of waiting for the seeded walk to stumble into it.
@@ -3329,9 +3645,9 @@ int runSequenceHarness(HWND dlg, int tabCount, unsigned nativeDpi, unsigned pass
         g_handoverNotes.push_back(handover);
         std::printf("ui_probe: [handover] %s\n", handover.c_str());
 
-        ++g_invChecks[13];
+        ++g_invChecks[16];
         if (handed.app.dpi != passDpi) {
-            harnessFail(13, &findings,
+            harnessFail(16, &findings,
                         "the harness handed the next step a dialog solved at dpi " +
                             std::to_string(handed.app.dpi) + " but this pass audits dpi " +
                             std::to_string(passDpi) +
@@ -3340,7 +3656,7 @@ int runSequenceHarness(HWND dlg, int tabCount, unsigned nativeDpi, unsigned pass
                             "after this point describes the fuzz's leftover layout",
                         harnessStateStr(handed, "restore", stepsPerTab, 0, 100));
         }
-        ++g_invChecks[13];
+        ++g_invChecks[16];
         // The client WIDTH is a function of WS_VSCROLL (a scrollbar is non-client):
         // a handover whose width differs from the pass's own by exactly one
         // scrollbar is the same window with the bar on the other side of its
@@ -3351,7 +3667,7 @@ int runSequenceHarness(HWND dlg, int tabCount, unsigned nativeDpi, unsigned pass
         const bool widthOk = std::abs(widthDelta) <= 2 ||
                              (barW > 0 && std::abs(std::abs(widthDelta) - barW) <= 1);
         if (!widthOk || std::abs(handed.client.bottom - origClient.bottom) > 2) {
-            harnessFail(13, &findings,
+            harnessFail(16, &findings,
                         "the harness handed the next step a dialog of " +
                             std::to_string(handed.client.right) + "x" +
                             std::to_string(handed.client.bottom) +
@@ -3364,10 +3680,10 @@ int runSequenceHarness(HWND dlg, int tabCount, unsigned nativeDpi, unsigned pass
                             "window size no operation of this pass ever set",
                         harnessStateStr(handed, "restore", stepsPerTab, 0, 100));
         }
-        // The restored state is judged by the same I1..I12 battery every
+        // The restored state is judged by the same I1..I15 battery every
         // operation is: a handover that is scaled right but incoherent is not a
         // handover.
-        harnessAssert(dlg, handed, "restore", stepsPerTab, 0, 100, &findings);
+        harnessAssert(dlg, handed, all, "restore", stepsPerTab, 0, 100, &findings);
     }
 
     const int failures = g_fuzzFailures - before;
@@ -3378,10 +3694,15 @@ int runSequenceHarness(HWND dlg, int tabCount, unsigned nativeDpi, unsigned pass
                  ", \"scenarioFailures\": " + std::to_string(scenarioFailures) +
                  ", \"seeds\": 8, \"fontScales\": \"100/125/150\", \"stepsPerTab\": " +
                  std::to_string(stepsPerTab) + "}");
-    for (std::size_t i = 1; i <= 12; ++i) {
+    for (std::size_t i = 1; i <= 16; ++i) {
         if (g_invChecks[i] > 0) {
-            std::printf("  [inv] I%-2zu %6d checks, %d violations\n", i,
-                        g_invChecks[i], g_invFailures[i]);
+            if (i == 16) {
+                std::printf("  [inv] R1  %6d checks, %d violations\n",
+                            g_invChecks[i], g_invFailures[i]);
+            } else {
+                std::printf("  [inv] I%-2zu %6d checks, %d violations\n", i,
+                            g_invChecks[i], g_invFailures[i]);
+            }
         }
     }
     for (const Finding& f : findings) {
@@ -3444,7 +3765,9 @@ int main(int argc, char** argv) {
         byKind.emplace_back(kind, 1);
     };
 
-    const HWND tabsCtl = ::GetDlgItem(dlg, IDC_TAB);
+    // Non-const: the open-path scenario inside runSequenceHarness() can replace
+    // the dialog, and the per-tab audit below must judge the FRESH tab control.
+    HWND tabsCtl = ::GetDlgItem(dlg, IDC_TAB);
     LRESULT tabCount = tabsCtl != nullptr ? ::SendMessageW(tabsCtl, TCM_GETITEMCOUNT, 0, 0) : 0;
     if (tabCount <= 0) { tabCount = 9; }
 
@@ -3474,6 +3797,12 @@ int main(int argc, char** argv) {
         // changes the scale, so a pass is reproducible on its own.
         RECT passClient{};
         ::GetClientRect(dlg, &passClient);
+        // v1.3.0-beta8fix2 (bugs BS-23a/b/c): record what the pass DERIVES its
+        // size from, so the report answers the "why did the 144-dpi pass start
+        // at 991 px?" question with numbers instead of archaeology: the client
+        // it inherited, the scrollbar it added back, the scale it applied.
+        const RECT inheritClient = passClient;
+        int barComp = 0;
         // v1.3.0-beta8fix1 (bug BS-22c): A PASS DOES NOT INHERIT THE SCROLLBAR'S
         // WIDTH. The bar is the APP's decision, re-made for every geometry; a
         // client already deflated by it and then scaled hands the pass a window
@@ -3487,7 +3816,8 @@ int main(int argc, char** argv) {
         // charged twice; the 42 px it cost are the whole finding class.
         if ((::GetWindowLongPtrW(dlg, GWL_STYLE) & WS_VSCROLL) != 0) {
             const int barW = ::GetSystemMetrics(SM_CXVSCROLL);
-            passClient.right += (barW > 0 ? barW : 0);
+            barComp = barW > 0 ? barW : 0;
+            passClient.right += barComp;
         }
         if (pass.dpi != nativeDpi) {
             passClient.right = static_cast<LONG>(
@@ -3524,11 +3854,18 @@ int main(int argc, char** argv) {
             HarnessState ready;
             readHarnessState(dlg, stableChildren(dlg), 0, &ready);
             const std::string entryNote =
-                "pass @%d%% start: app dpi " + std::to_string(ready.app.dpi) +
+                "pass @" + std::to_string(pass.percent) + "% start: app dpi " +
+                std::to_string(ready.app.dpi) +
                 " client " + std::to_string(ready.client.right) + "x" +
                 std::to_string(ready.client.bottom) + " page " + rectStr(ready.page) +
                 " offset " + std::to_string(ready.app.offset) + " baseline " +
-                (ready.app.haveBaseline != 0 ? "yes" : "NO");
+                (ready.app.haveBaseline != 0 ? "yes" : "NO") +
+                " (derive: inherit " + std::to_string(inheritClient.right) + "x" +
+                std::to_string(inheritClient.bottom) + " +bar " +
+                std::to_string(barComp) + " target " +
+                std::to_string(passClient.right) + "x" +
+                std::to_string(passClient.bottom) + " @dpi " +
+                std::to_string(pass.dpi) + "/" + std::to_string(nativeDpi) + ")";
             g_passEntryNotes.push_back(entryNote);
             std::printf("ui_probe: pass @%d%% starts: app dpi %u client %ldx%ld page %s "
                         "offset %d baseline %s\n",
@@ -3968,8 +4305,12 @@ int main(int argc, char** argv) {
 
         // v1.3.0-beta8fix1: the state-sequence half — the named display-change
         // scenario plus the seeded fuzz pass, for THIS scale pass.
-        runSequenceHarness(dlg, static_cast<int>(tabCount), nativeDpi, pass.dpi,
+        runSequenceHarness(&dlg, static_cast<int>(tabCount), nativeDpi, pass.dpi,
                            fuzzSteps, &byKind);
+        // The open-path scenario may have replaced the dialog: the per-tab audit
+        // of the NEXT pass must read the fresh tab control (same ids, same tab
+        // count — a fresh HWND).
+        tabsCtl = ::GetDlgItem(dlg, IDC_TAB);
     }
 
     // The harness's own counters (v1.3.0-beta8fix1). They exist so a green run
@@ -3977,13 +4318,15 @@ int main(int argc, char** argv) {
     // number of evaluated invariant instances and the violations per invariant
     // are all in the report, and the same numbers ride in the CI digest line.
     std::string invSummary;
-    for (std::size_t i = 1; i <= 13; ++i) {
+    for (std::size_t i = 1; i <= 16; ++i) {
         if (g_invChecks[i] == 0 && g_invFailures[i] == 0) { continue; }
-        // Slot 13 is the handover contract ("R1"): it is not an app invariant
+        // Slot 16 is the handover contract ("R1"): it is not an app invariant
         // but it is measured, counted and reported the same way, because a
         // handover violation is what turns every finding after it into noise.
+        // (v1.3.0-beta8fix2: R1 moved from slot 13 to 16 to make room for the
+        // hide-set, chrome-band and right-edge invariants of the photograph.)
         invSummary += std::string(invSummary.empty() ? "" : " ") +
-                      (i == 13 ? std::string("R1") : ("I" + std::to_string(i))) + ":" +
+                      (i == 16 ? std::string("R1") : ("I" + std::to_string(i))) + ":" +
                       std::to_string(g_invChecks[i]) + "/" +
                       std::to_string(g_invFailures[i]);
     }
@@ -4004,23 +4347,23 @@ int main(int argc, char** argv) {
             ",\n \"invariants\": \"" + jsonEscape(invSummary) + "\"" +
             ",\n \"traceLines\": " + std::to_string(g_traceLines) +
             ",\n \"passEntries\": [";
-    for (std::size_t i = 0; i < g_passEntryNotes.size() && i < 4; ++i) {
+    for (std::size_t i = 0; i < g_passEntryNotes.size() && i < 8; ++i) {
         json += std::string(i > 0 ? ", " : "") + "\"" + jsonEscape(g_passEntryNotes[i]) + "\"";
     }
     json += "],\n \"handover\": [";
     // v1.3.0-beta8fix1 (bug BS-19): the handover notes and one example state per
     // violated invariant ride in the JSON, so the CI digest can carry the state
     // that produced a count (see the workflow's operation-sequence line).
-    for (std::size_t i = 0; i < g_handoverNotes.size() && i < 4; ++i) {
+    for (std::size_t i = 0; i < g_handoverNotes.size() && i < 8; ++i) {
         json += std::string(i > 0 ? ", " : "") + "\"" + jsonEscape(g_handoverNotes[i]) + "\"";
     }
     json += "],\n \"firstViolations\": [";
     {
         bool firstEx = true;
-        for (std::size_t i = 0; i < 14; ++i) {
+        for (std::size_t i = 0; i < 17; ++i) {
             if (g_invExample[i].empty()) { continue; }
             json += std::string(firstEx ? "" : ", ") + "{\"inv\": \"" +
-                    (i == 13 ? std::string("R1") : ("I" + std::to_string(i))) +
+                    (i == 16 ? std::string("R1") : ("I" + std::to_string(i))) +
                     "\", \"state\": \"" + jsonEscape(g_invExample[i]) + "\"}";
             firstEx = false;
         }

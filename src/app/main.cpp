@@ -4918,8 +4918,29 @@ void settingsScrollSetTab(HWND hwnd, int tabIndex); // defined below showTab
 // WS_CLIPCHILDREN the paint skips every child rectangle.
 void settingsRepaintAll(HWND hwnd) {
     if (hwnd == nullptr) { return; }
-    ::InvalidateRect(hwnd, nullptr, TRUE);
-    ::UpdateWindow(hwnd);
+    // v1.3.0-beta8fix2 (bug BS-23d): THE SUPERSET THE PROBE'S OWN PIXEL AUDIT
+    // PROVES RESTORES A CLEAN FRAME.
+    //
+    // InvalidateRect(NULL, TRUE) + UpdateWindow erased exactly the dialog's
+    // own invalid region — and seven measurement rounds on the CI runner said
+    // that was enough there: at rest (E6), through a synthesized scroll
+    // round-trip (E8), and through a REAL thumb drag driven by SendInput
+    // (E9), the desktop never held a pixel the app did not draw.
+    //
+    // The user's machine (Windows 10 LTSC 21H2) still shows the ghost class:
+    // old tab content over the new one after a click, text duplicated while
+    // dragging the scrollbar. Those are states where SOME member of the tree
+    // holds a frame the dialog's own paint can never reach — a moved,
+    // region-clipped child whose own update region went stale; a band the
+    // non-client area owns. RedrawWindow with ERASE + ALLCHILDREN + FRAME
+    // invalidates and redraws the WHOLE tree synchronously — the exact
+    // primitive the probe's checkStalePixels uses to force the truth — so no
+    // member of the tree can keep a previous frame across a state change.
+    // One call, no loop, no timer: a superset of the old pair by
+    // construction.
+    ::RedrawWindow(hwnd, nullptr, nullptr,
+                   RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN |
+                   RDW_UPDATENOW | RDW_FRAME);
 }
 
 } // namespace

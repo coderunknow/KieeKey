@@ -930,6 +930,21 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "                            bool ok = false;   /* seeded: the real drag never starts */",
         "E9 a REAL thumb drag",
     ),
+    # v1.3.0-beta8fix2 Phase 3: the fix itself is pinned. Seven measurement
+    # rounds proved the runner clean on every reachable axis; the user's
+    # machine (Windows 10 LTSC) still shows the ghost class, so the repaint
+    # after a state change became the whole-tree redraw superset. Seeding it
+    # back to the narrow pair must fail the paint rules.
+    (
+        "BS-23d  the repaint superset reverted to the narrow pair",
+        "src/app/main.cpp",
+        "    ::RedrawWindow(hwnd, nullptr, nullptr,\n"
+        "                   RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN |\n"
+        "                   RDW_UPDATENOW | RDW_FRAME);",
+        "    ::InvalidateRect(hwnd, nullptr, TRUE);   /* seeded: the narrow pair */\n"
+        "    ::UpdateWindow(hwnd);",
+        "lost the redraw superset (BS-23d)",
+    ),
 ]
 
 # Files scripts/check_dialog_paint_rules.py reads, relative to the repo root.

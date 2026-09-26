@@ -1,10 +1,11 @@
 # BS-23 hypothesis log — v1.3.0-beta8fix2 (the 150 % photograph)
 
-Status: **Phase 2, round 7** — rounds 1-6 measured every CI-reachable state
-clean: window state, pixels at rest and through a full synthesized scroll
-trip, both theme modes; the scrollbar's range latches per tab at open. The
-user's facts name a REAL thumb drag as the trigger (text duplicates on
-Windows 10 LTSC); E9 drives the real drag with SendInput. Nothing is fixed yet.
+Status: **Phase 3** — seven measurement rounds proved every CI-reachable
+state clean (window state AND pixels, themed and classic, at rest and through
+a REAL thumb drag; the runner's facts ride in the report). The user's defect
+lives on the axis separating the machines (Win10 LTSC 19044 vs Server 2022
+20348). BS-23d ships the repaint superset — pinned, UNVERIFIED (Windows)
+until the user's re-test.
 Every line below carries the measured numbers that justify it. The layout is a
 contract between the window and its children — measure both ends; trusting
 either one is a new BS class.
@@ -306,3 +307,43 @@ computed from SCROLLINFO + SM_CXVSCROLL/SM_CYHSCROLL), pulled down half the
 track with SendInput in 12 steps of ~16 ms, pixels audited at the dragged
 position and after the trip home. If the runner refuses the drag (no
 foreground), the note says so and the audit is skipped — never faked.
+
+## Round 7 verdict — the REAL drag is clean too; the measurement record is complete
+
+Run 36204704672 (commit 218da79): the real OS thumb drag worked — offset
+47/47 @120, 227/227 @144 — pixels audited mid-drag and after the trip home:
+**0 findings** (screen checks 85 → 89).
+
+Seven rounds, every axis the harness can drive on this runner, window state
+AND pixels, themed and classic, at rest and mid-scroll, synthesized and
+real: **0 violations, 0 findings**. The beta8fix1 tree is coherent in every
+state this machine can produce. The user's defect lives on the axis that
+separates the machines: Windows 10 LTSC 21H2 (build 19044) vs. the runner's
+Windows Server 2022 (build 20348).
+
+## Phase 3 — BS-23d: the repaint superset (the fix, UNVERIFIED (Windows))
+
+`showTab` is already fully idempotent (every control of every tab gets an
+explicit SW_SHOW/SW_HIDE, the scroll offset resets per tab, the bar latch
+re-syncs, a full repaint follows) — nothing to fix there. The one mechanism
+left whose effect is PROVEN is the repaint itself:
+
+* `settingsRepaintAll` was `InvalidateRect(NULL, TRUE) + UpdateWindow` —
+  it erased exactly the dialog's own invalid region, and seven rounds said
+  that was enough on the runner;
+* the user's ghosts (old tab content over the new one after a click, text
+  duplicated while dragging the scrollbar) are states where SOME member of
+  the tree holds a frame the dialog's own paint can never reach — a moved,
+  region-clipped child whose own update region went stale; a band the
+  non-client area owns;
+* BS-23d replaces the pair with `RedrawWindow(hwnd, nullptr, nullptr,
+  RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW |
+  RDW_FRAME)` — the exact primitive the probe's own checkStalePixels uses
+  to force a clean frame, a superset of the old pair by construction, one
+  call, no loop, no timer.
+
+Honest limits: nothing on the runner FAILS, so no run id pair can be shown
+for "red on beta8fix1, green on fix". The fix is mechanism-hardening pinned
+by paint rule 3 and a seed (110 caught), shipped UNVERIFIED (Windows) until
+the user's re-test on the real machine — the acceptance the master prompt
+demands is the user's photograph of a clean dialog.

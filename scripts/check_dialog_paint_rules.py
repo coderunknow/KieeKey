@@ -175,6 +175,15 @@ def check(repo: Path):
         failures.append("main.cpp: settingsRepaintAll() is gone — nothing repaints "
                         "the client area the children do not cover (BS-16a)")
     else:
+        repaint = function_body(main, r'void settingsRepaintAll\s*\(HWND hwnd\)')
+        if '::RedrawWindow(hwnd, nullptr, nullptr,' not in repaint or \
+                'RDW_ALLCHILDREN' not in repaint or 'RDW_FRAME' not in repaint:
+            failures.append(
+                "main.cpp: settingsRepaintAll() lost the redraw superset (BS-23d) — "
+                "the whole tree must be invalidated and redrawn synchronously "
+                "(ERASE + ALLCHILDREN + UPDATENOW + FRAME); the narrow "
+                "InvalidateRect/UpdateWindow pair leaves members of the tree "
+                "holding a previous frame on the user's machine")
         for name, pattern in (
                 ('showTab', r'void showTab\s*\(int tab\)'),
                 ('applySettingsScrollOffset', r'void applySettingsScrollOffset\s*\(HWND hwnd\)'),

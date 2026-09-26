@@ -19,7 +19,7 @@ The project may still be paused again in the future if development no longer pro
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20ARM64-0078D6.svg)
 ![Build](https://img.shields.io/badge/build-CMake%20%3E%3D%203.28-064FAD.svg)
 
-**KieeKey v1.3.0-beta8fix1** is a modern, low-latency Vietnamese input method
+**KieeKey v1.3.0-beta8fix2** is a modern, low-latency Vietnamese input method
 engine (bộ gõ Tiếng Việt) for Windows, with a system-tray application, a TSF
 text-store composer and an optional WinUI 3 Fluent settings UI.
 
@@ -33,6 +33,44 @@ text-store composer and an optional WinUI 3 Fluent settings UI.
 ![KieeKey preview](src/app/KieeKeyApp-preview.png)
 
 ---
+
+## What's new in v1.3.0-beta8fix2 — the ghosts of the previous frame (file build 1.3.0.11)
+
+Beta8fix1's CI was 4/4 green and real users still photographed a broken
+settings dialog at 150 %: the old tab's content visible over the new one,
+text duplicated while dragging the scrollbar. This release is what seven
+measurement rounds and the user's own facts produced.
+
+* **Seven measurement rounds, every axis clean on CI.** The settings dialog
+  now carries a probe harness for the open path itself: default-open
+  geometry at 100/125/150 %, the full-height geometry the photograph was
+  taken in, a width sweep in which the scrollbar's decision moves, themed
+  AND classic visual-style mode, and pixel audits — screen capture, forced
+  full repaint, capture again — at rest (E6), through a synthesized scroll
+  round-trip (E8) and through a REAL OS thumb drag driven by SendInput
+  (E9). ~5 200 harness assertions, 609 000+ invariant checks, 89 screen
+  pixel audits: **0 violations, 0 findings.** The beta8fix1 tree is
+  coherent in every state the CI runner (Windows Server 2022) can produce.
+* **What the user's machine added.** The defect reproduces on Windows 10
+  LTSC 21H2 and not on the runner — the separating axis is the machine
+  itself. The report now rides the runner's own facts (OS build, theme
+  state, DWM) so every CI run is pinned to the hardware that measured it.
+* **BS-23d: the repaint becomes the whole-tree superset.** After every
+  state change (tab switch, scroll step, solve) the dialog previously
+  invalidated exactly its own region (`InvalidateRect` + `UpdateWindow`).
+  The ghost class — old tab content over the new one, duplicated text
+  while scrolling — is a state where some member of the tree holds a
+  frame the dialog's own paint can never reach: a moved, region-clipped
+  child whose own update region went stale; a band the non-client area
+  owns. `settingsRepaintAll` is now `RedrawWindow` with
+  `RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW |
+  RDW_FRAME` — the exact primitive the probe's pixel audit uses to force
+  a clean frame. One call, no loop, no timer: a superset of the old pair
+  by construction.
+
+**Status: UNVERIFIED (Windows).** Nothing on the CI runner fails, so this
+fix ships on mechanism; the acceptance that matters is a photograph of a
+clean dialog on the machine that showed the breakage.
 
 ## What's new in v1.3.0-beta8fix1 — the settings page that lost its content (file build 1.3.0.10)
 

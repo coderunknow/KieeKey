@@ -197,8 +197,8 @@ constexpr wchar_t kAppVersion[]     = L"1.3.0";           // numeric, 3-part
 // v1.2.2 RC1: [[maybe_unused]] — this is a documented VERSION CARRIER
 // (check_version.py reads it), not a code-level constant; the UI shows the
 // title/version forms. Keeping it zero-maintenance and warning-clean.
-[[maybe_unused]] constexpr wchar_t kAppVersionFull[] = L"1.3.0-beta8fix1";  // with channel
-constexpr wchar_t kAppTitle[]       = L"KieeKey v1.3.0-beta8fix1";  // sync with kAppVersionFull
+[[maybe_unused]] constexpr wchar_t kAppVersionFull[] = L"1.3.0-beta8fix2";  // with channel
+constexpr wchar_t kAppTitle[]       = L"KieeKey v1.3.0-beta8fix2";  // sync with kAppVersionFull
 
 //---------------------------------------------------------------------------
 // v1.3.0-beta8 (RS-06) — WHICH BUILD IS THIS?
@@ -6582,7 +6582,7 @@ std::string buildIdentityUtf8() {
     std::string out = "\n=== Bản dựng (build identity) ===\n";
     out += "Ứng dụng      : KieeKey ";
     out += OPENKEY_KIEEKEY_VERSION_STRING;
-    out += " (PE file version 1.3.0.10)\n";
+    out += " (PE file version 1.3.0.11)\n";
     out += "SHA-256       : ";
     out += hex.empty() ? "không đọc được file đang chạy" : hex;
     out += "\n";

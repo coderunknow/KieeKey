@@ -63,8 +63,8 @@ import pathlib
 # word; the PE VERSIONINFO needs a 4-part number, the manifest needs 4 parts,
 # and the UI shows the 3-part form plus the channel.
 DEFAULT_EXPECT = "1.3.0"
-CHANNEL = "beta8fix1"
-BUILD_REVISION = 10
+CHANNEL = "beta8fix2"
+BUILD_REVISION = 11
 
 
 def _fail(msg: str) -> None:

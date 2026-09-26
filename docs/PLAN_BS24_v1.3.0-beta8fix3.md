@@ -91,11 +91,20 @@ SmartScreen là quá nhiều rào chắn) và việc tải file rời từ chat 
 bất tiện. Hành động: (1) đóng gói **MỘT zip duy nhất**
 (`kieekey-ui-probe-handoff-win-x64.zip`: bat + ps1 + exe + pdb +
 `READ_ME_TRUOC_1_phang.txt` 3 bước) — chỉ cần giải nén và đúp chuột vào 1
-file; (2) phát hành zip thành **GitHub draft release** (link tải bền, không
-phụ thuộc chat viewer) — draft release KHÔNG phải release KieeKey, không
-canh tag, xóa được bất cứ lúc nào; (3) mọi hướng dẫn rút xuống "3 việc".
-Kỷ luật kỹ thuật không đổi: H4 (probe trên máy thật) + H2 (clean boot) vẫn
-là hai trục sống; không code trước data.
+file; (2) sandbox không upload được tài sản release
+(`uploads.github.com` bị chặn) → zip được commit lên nhánh
+`arena/01a0db54-kieekey` (commit `fea838e`) làm kênh tải bền:
+`https://github.com/coderunknow/KieeKey/raw/arena/01a0db54-kieekey/handoff/kieekey-ui-probe-handoff-win-x64.zip`
+— artifact TẠM, gỡ sau Phase 1; (3) mọi hướng dẫn rút xuống "3 việc".
+
+**Lượt 4 (2026-09-26) — PROBE ĐANG CHẠY TRÊN MÁY THẬT:** người dùng tải
+zip thành công, giải nén, đúp chuột `run_probe_and_report.bat` — cửa sổ
+Cài đặt tự mở, tự chuyển tab (trạng thái "chạy tốt"). Đang chờ dòng
+"DONE." + file `kieekey-report-<thời-gian>.zip` + ảnh S1–S3 ở lượt chat kế.
+Công cụ phân tích đã sẵn sàng: `handoff/analyze_report.py`
+(exit 0 = SẠCH trên máy thật, exit 2 = RED trên máy thật = mỏ neo Phase
+2→3). Clean boot (H2) CHỜ KẾT QUẢ PROBE — không làm trước để giữ baseline
+sạch. Không code app nào cho tới khi có data.
 
 ## 2. Sự kiện người dùng (nguyên văn, tổng hợp từ 4 vòng)
 

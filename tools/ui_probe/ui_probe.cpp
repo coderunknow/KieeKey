@@ -2866,6 +2866,110 @@ int harnessScenarioOpenGeometry(HWND* dlgInOut, int tabCount, unsigned passDpi,
                     KieeKeyProbeSelectTab(dlg, tabs - 1);
                     pumpPostedMessages();
                     dragRoundTrip(tabs - 1, "t" + std::to_string(tabs - 1));
+                    // E9 — a REAL thumb drag (round 7). WM_VSCROLL SB_THUMBTRACK
+                    // cannot be synthesized with SendMessage: the scrollbar
+                    // control owns its track position and only moves it for a
+                    // real mouse drag — and the app reads si.nTrackPos, not
+                    // the message. The user's exact gesture IS that drag, so
+                    // drive the real one: the mouse onto the thumb, pulled
+                    // down with SendInput, pixels audited at the dragged
+                    // position and after the trip home. If the runner refuses
+                    // the drag (no foreground), the note says so and the audit
+                    // is skipped — never faked.
+                    KieeKeyProbeSelectTab(dlg, 0);
+                    pumpPostedMessages();
+                    {
+                        SCROLLINFO tsi{};
+                        tsi.cbSize = sizeof(tsi);
+                        tsi.fMask = SIF_ALL;
+                        const bool barThere =
+                            ::GetScrollInfo(dlg, SB_VERT, &tsi) != FALSE &&
+                            tsi.nMax > static_cast<int>(tsi.nPage);
+                        if (!barThere) {
+                            g_passEntryNotes.push_back(
+                                "thumb @" + std::to_string(passDpi) +
+                                " dpi: no bar or range, real drag skipped");
+                        } else {
+                            RECT cli{};
+                            ::GetClientRect(dlg, &cli);
+                            POINT origin{0, 0};
+                            ::ClientToScreen(dlg, &origin);
+                            const int barW = ::GetSystemMetrics(SM_CXVSCROLL);
+                            const int arrowH = ::GetSystemMetrics(SM_CYHSCROLL);
+                            const int trackTop = origin.y + cli.top + arrowH;
+                            const int trackH =
+                                static_cast<int>(cli.bottom - cli.top) - 2 * arrowH;
+                            const int trackRange = std::max(
+                                1, static_cast<int>(tsi.nMax) -
+                                       static_cast<int>(tsi.nPage) + 1);
+                            const int thumbH = std::max(
+                                arrowH,
+                                static_cast<int>((static_cast<long long>(trackH) *
+                                                  (static_cast<int>(tsi.nPage) + 1)) /
+                                                 (static_cast<int>(tsi.nMax) + 1)));
+                            const int thumbTop = trackTop + static_cast<int>(
+                                (static_cast<long long>(trackH - thumbH) *
+                                 static_cast<int>(tsi.nPos)) / trackRange);
+                            // The client rect EXCLUDES the standard bar: its
+                            // left edge is cli.right, so the thumb's center
+                            // sits half a bar width to the RIGHT of it.
+                            const int x = origin.x + cli.right + barW / 2;
+                            const int y = thumbTop + thumbH / 2;
+                            const auto sendMouse = [](DWORD flags, int dx, int dy) {
+                                INPUT in{};
+                                in.type = INPUT_MOUSE;
+                                in.mi.dwFlags = flags;
+                                in.mi.dx = dx;
+                                in.mi.dy = dy;
+                                return ::SendInput(1, &in, sizeof(in)) == 1;
+                            };
+                            ::SetForegroundWindow(dlg);
+                            ::SetCursorPos(x, y);
+                            ::Sleep(80);
+                            bool ok = sendMouse(MOUSEEVENTF_LEFTDOWN, 0, 0);
+                            const int pullPx = trackH / 2;
+                            const int steps = 12;
+                            for (int s = 0; s < steps && ok; ++s) {
+                                ok = sendMouse(MOUSEEVENTF_MOVE, 0, pullPx / steps);
+                                ::Sleep(16);
+                            }
+                            sendMouse(MOUSEEVENTF_LEFTUP, 0, 0);
+                            ::Sleep(40);
+                            pumpPostedMessages();
+                            tsi.fMask = SIF_ALL;
+                            ::GetScrollInfo(dlg, SB_VERT, &tsi);
+                            const int movedTo = static_cast<int>(tsi.nPos);
+                            if (movedTo > 0) {
+                                std::vector<HWND> allThumb = stableChildren(dlg);
+                                HarnessState hs;
+                                readHarnessState(dlg, allThumb, 0, &hs);
+                                Audit ta{};
+                                ta.dlg = dlg;
+                                ta.tabsCtl = ::GetDlgItem(dlg, IDC_TAB);
+                                ta.client = hs.client;
+                                ta.page = hs.page;
+                                ta.tab = 0;
+                                ta.scalePercent = static_cast<int>((passDpi * 100U) / 96U);
+                                ta.prefix = "thumb@" + std::to_string(passDpi) + ": ";
+                                ta.findings = findings;
+                                checkStalePixels(ta);
+                                ::SendMessageW(dlg, WM_VSCROLL,
+                                               MAKEWPARAM(SB_TOP, 0), 0);
+                                pumpPostedMessages();
+                                checkStalePixels(ta);
+                                g_passEntryNotes.push_back(
+                                    "thumb @" + std::to_string(passDpi) +
+                                    " dpi: REAL drag to offset " +
+                                    std::to_string(movedTo) + "/" +
+                                    std::to_string(hs.app.range));
+                            } else {
+                                g_passEntryNotes.push_back(
+                                    "thumb @" + std::to_string(passDpi) +
+                                    " dpi: SendInput drag not accepted "
+                                    "(no foreground?), real drag skipped");
+                            }
+                        }
+                    }
                 }
                 KieeKeyProbeSetWorkAreaOverride(0, 0, 0, 0);
             }
@@ -4794,14 +4898,14 @@ int main(int argc, char** argv) {
             ",\n \"invariants\": \"" + jsonEscape(invSummary) + "\"" +
             ",\n \"traceLines\": " + std::to_string(g_traceLines) +
             ",\n \"passEntries\": [";
-    for (std::size_t i = 0; i < g_passEntryNotes.size() && i < 24; ++i) {
+    for (std::size_t i = 0; i < g_passEntryNotes.size() && i < 32; ++i) {
         json += std::string(i > 0 ? ", " : "") + "\"" + jsonEscape(g_passEntryNotes[i]) + "\"";
     }
     json += "],\n \"handover\": [";
     // v1.3.0-beta8fix1 (bug BS-19): the handover notes and one example state per
     // violated invariant ride in the JSON, so the CI digest can carry the state
     // that produced a count (see the workflow's operation-sequence line).
-    for (std::size_t i = 0; i < g_handoverNotes.size() && i < 24; ++i) {
+    for (std::size_t i = 0; i < g_handoverNotes.size() && i < 32; ++i) {
         json += std::string(i > 0 ? ", " : "") + "\"" + jsonEscape(g_handoverNotes[i]) + "\"";
     }
     json += "],\n \"firstViolations\": [";

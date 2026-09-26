@@ -1,10 +1,10 @@
 # BS-23 hypothesis log — v1.3.0-beta8fix2 (the 150 % photograph)
 
-Status: **Phase 2, round 6** — rounds 1-5 measured every CI-reachable state
-clean, window state AND pixels, both theme modes; the runner's own facts ride
-in the report. The user's third-pass facts name a SCROLLING defect (dragging
-the scrollbar duplicates text, Windows 10 LTSC). E8 watches the pixels WHILE
-the dialog scrolls. Nothing is fixed yet.
+Status: **Phase 2, round 7** — rounds 1-6 measured every CI-reachable state
+clean: window state, pixels at rest and through a full synthesized scroll
+trip, both theme modes; the scrollbar's range latches per tab at open. The
+user's facts name a REAL thumb drag as the trigger (text duplicates on
+Windows 10 LTSC); E9 drives the real drag with SendInput. Nothing is fixed yet.
 Every line below carries the measured numbers that justify it. The layout is a
 contract between the window and its children — measure both ends; trusting
 either one is a new BS class.
@@ -279,3 +279,30 @@ from a mid-scroll frame — ghost text at an old offset. If E8 turns red the
 defect is in the scroll repaint path; if it stays green the measurement
 record is complete and the release proceeds on mechanism with UNVERIFIED
 (Windows).
+
+## Round 6 verdict — the synthesized scroll trip is CLEAN; the bar is per-tab
+
+Runs 36143698814 → 36203136100 (commits dd2967e…9bf6ae1): E8's round-trip
+ran on tab 0 at full height — offset out 12×LINEDOWN+PAGEDOWN+BOTTOM and
+back TOP, pixel audit mid-scroll at the deepest point and after the trip:
+**0 findings** (@120 range 47, @144 range 227; screen checks 81 → 85). Two
+measurements came out of the attempts:
+
+* the scrollbar's range latches PER TAB at open: tab 8 latches **0** at
+  every scale while tab 0 carries the range — the flip-flop of round 2,
+  now named at the open geometry,
+* at the default (clamped) geometry the range is 0 everywhere; scrolling
+  only exists once the dialog stands at its full content height — the
+  "bar shown with overflowing content" state of the photograph.
+
+## Round 7 — the REAL thumb drag (E9)
+
+E8's WM_VSCROLL codes end in the same tail as a drag, but SB_THUMBTRACK is
+the one code that cannot be synthesized with SendMessage: the scrollbar
+control owns its track position and only moves it for a real mouse drag —
+and the app reads `si.nTrackPos`, not the message. The user's exact gesture
+IS that drag. E9 drives the real one: the mouse onto the thumb (geometry
+computed from SCROLLINFO + SM_CXVSCROLL/SM_CYHSCROLL), pulled down half the
+track with SendInput in 12 steps of ~16 ms, pixels audited at the dragged
+position and after the trip home. If the runner refuses the drag (no
+foreground), the note says so and the audit is skipped — never faked.

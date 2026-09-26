@@ -923,6 +923,13 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "                        da.prefix = std::string(\"(seeded) \") +",
         "E8 the pixel audit WHILE scrolling",
     ),
+    (
+        "BS-23b  the real thumb drag never starts",
+        "tools/ui_probe/ui_probe.cpp",
+        "                            bool ok = sendMouse(MOUSEEVENTF_LEFTDOWN, 0, 0);",
+        "                            bool ok = false;   /* seeded: the real drag never starts */",
+        "E9 a REAL thumb drag",
+    ),
 ]
 
 # Files scripts/check_dialog_paint_rules.py reads, relative to the repo root.

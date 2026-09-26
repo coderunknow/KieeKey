@@ -1448,7 +1448,13 @@ def check(repo: Path):
              'E8 the pixel audit WHILE scrolling (BS-23b measurement, round '
              '6) - the user\'s third fact: dragging the scrollbar '
              'duplicates text on Windows 10 LTSC; every earlier pixel audit '
-             'ran at rest, none watched a mid-scroll round-trip')):
+             'ran at rest, none watched a mid-scroll round-trip'),
+            ('bool ok = sendMouse(MOUSEEVENTF_LEFTDOWN, 0, 0);',
+             'E9 a REAL thumb drag (BS-23b measurement, round 7) - '
+             'SB_THUMBTRACK cannot be synthesized with SendMessage: the '
+             'scrollbar control owns its track position and the app reads '
+             'si.nTrackPos; the user\'s exact gesture is the drag itself, '
+             'so the probe drives the real one with SendInput')):
         if needle not in probe:
             failures.append(f"tools/ui_probe/ui_probe.cpp: {needle} is gone - {why}")
     return failures

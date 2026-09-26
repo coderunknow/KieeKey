@@ -1,0 +1,35 @@
+kieekey_ui_probe.exe — provenance (Phase-0 field handoff, v1.3.0-beta8fix3)
+============================================================================
+sha256   : e3f6f8bd7b1fa958eef9ba5ab729b230a9b99938a744ea56a2131e1cc82762db
+           (build of 2026-09-26 inside the handoff zip. Earlier handoff builds
+           38aef72e...e9cb5 and 34d992b8...45b8 carry the SAME code; the byte
+           diff between builds is only the PDB path recorded at compile time,
+           because the sandbox rebuilds from scratch after each reset.)
+size     : 2120192 bytes (PE32+ x86_64, subsystem CONSOLE)
+source   : github.com/coderunknow/KieeKey, branch arena/01a0db54-kieekey,
+           branched from main @ 8a31d9f2 (merge of PR #36) — the exact tree of
+           v1.3.0-beta8fix2 (UI string 1.3.0-beta8fix2, PE 1.3.0.11), UNMODIFIED.
+build    : cross-compiled on Linux with zig 0.16.0 (target x86_64-windows-gnu,
+           -O2 -DNDEBUG, -std=c++23, -DKIEEKEY_UI_PROBE) — the repo's documented
+           local cross-build path (scripts/build_windows_exe.sh); TU set = the
+           kieekey_ui_probe CMake target (CMakeLists.txt L298-313), linked as a
+           console app (the probe's own main()). Reproducible via
+           handoff/build_probe.sh. NOT the MSVC release build; the CI-built
+           probe of the same tree (run 36206247560) could not be fetched from
+           this sandbox (Azure artifact storage unreachable).
+behaviour: opens the REAL settings dialog through the app's own creation path,
+           PerMonitorV2 (SetProcessDpiAwarenessContext in the probe's main),
+           first pass = the machine's native scale, then 100/125/150 % passes.
+           No hook, no tray, no singleton mutex, no settings writes.
+           Prints host facts ("host: win 10.0.19044 ... native dpi 144" on the
+           user's machine) and refuses to run if its scroll-state mirror struct
+           drifted from the app's.
+output   : <outDir>/ui_probe.json, tab*.png (REAL screen captures incl. frame),
+           ui_probe_trace.jsonl
+zip      : handoff/kieekey-ui-probe-handoff-win-x64.zip (the Phase-0 hand-off;
+           sha256 0dd80e6eb73bf5225156d5f3a2720740ec702055e4522809320c9b5c97c2b369;
+           committed as a TEMPORARY hand-off artefact — remove after Phase 1)
+usage    : kieekey_ui_probe.exe <outDir> [fuzzSteps=60]
+note     : 119 -Wall -Wextra warnings from the cross compiler (redefinition of
+           _WIN32_WINNT in vendored headers); zero errors; the MSVC /W4 /WX
+           CI build of this exact probe source is the authoritative one.

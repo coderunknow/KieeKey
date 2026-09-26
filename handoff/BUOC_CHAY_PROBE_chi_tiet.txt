@@ -1,0 +1,94 @@
+HƯỚNG DẪN TỪNG BƯỚC — CHẠY kieekey_ui_probe.exe TRÊN MÁY CỦA BẠN
+=================================================================
+(BS-24, cho KieeKey v1.3.0-beta8fix2 · thời gian: ~10 phút, trong đó
+ 3–5 phút là chờ máy tự chạy)
+
+BƯỚC 0 — CHUẨN BỊ THƯ MỤC (2 phút)
+----------------------------------
+1. Mở File Explorer (phím Win + E) → ở Desktop bấm chuột phải → New →
+   Folder → đặt tên "kk-probe".
+2. Lưu 4 file NÀY vào trong thư mục kk-probe (chúng nằm trong viewer file
+   của cuộc chat này — bấm từng file để tải về, lưu vào kk-probe):
+     - kieekey_ui_probe.exe       (chương trình đo)
+     - kieekey_ui_probe.pdb       (file symbol — CŨNG để chung 1 chỗ)
+     - collect_report.ps1         (script thu thập)
+     - run_probe_and_report.bat   (file bấm 1 lần cho chạy tất cả)
+   => Trong kk-probe phải có ĐỦ 4 file này ở CÙNG MỘT thư mục.
+   (Các file .txt hướng dẫn không cần copy vào, chỉ để đọc.)
+
+BƯỚC 1 — TRẠNG THÁI MÁY TRƯỚC KHI CHẠY (2 phút)
+-----------------------------------------------
+3. ĐÓNG cửa sổ "Cài đặt" của KieeKey (BIỂN lại icon tray của app trong khay
+   hệ thống — report cần đếm tiến trình; probe chạy song song an toàn,
+   không đụng vào app).
+4. Không mở app toàn màn hình, không khóa màn hình trong lúc probe chạy.
+5. RẤT HỮU ÍCH: chụp ngay ảnh S1 — mở lại cửa sổ Cài đặt (bản đang lỗi),
+   chụp bằng điện thoại TOÀN BỘ cửa sổ KỂ CẢ THANH TIÊU ĐỀ (hoặc Win+Shift+S
+   rồi vẽ khung lấy trọn cả thanh tiêu đề). Lưu lại để gửi.
+
+BƯỚC 2 — CHẠY (3–5 phút, KHÔNG CẦN LÀM GÌ HẰNG)
+------------------------------------------------
+6. Vào thư mục kk-probe → đúp chuột vào  run_probe_and_report.bat .
+7. Nếu hiện màn xanh "Windows protected your PC" (SmartScreen):
+   bấm "More info" → bấm "Run anyway".
+8. Một cửa sổ console màu đen hiện ra, in dòng:
+     "KieeKey BS-24 field evidence collector"
+     "working folder : ..."
+   rồi các dòng thu thập. Sau đó cửa sổ "Cài đặt" của KieeKey TỰ MỞ, tự
+   chuyển qua lại các tab, tự kéo thanh cuộn. ĐỪNG CHẠM VÀO, đừng click,
+   đừng mở cửa sổ khác đè lên.
+9. Chờ hết (khoảng 3–5 phút). Xong, console in:
+     "DONE. Send back this file:"  + đường dẫn file zip
+   rồi "Press any key to continue . . ."
+10. Bấm TÙY Ý phím nào đó → console đóng.
+
+BƯỚC 3 — GỬI KẾT QUẢ
+--------------------
+11. Trong thư mục kk-probe sẽ có file MỚI:
+       kieekey-report-<ngày-giờ>.zip     (vài MB)
+12. GỬI file zip đó vào cuộc chat (kéo thả hoặc bấm đính kèm), kèm theo:
+     - S1: ảnh toàn bộ cửa sổ (đã chụp ở bước 5)
+     - S2: ảnh tab "Cấp độ" (và các tab khác nếu thấy lỗi — chụp cả thanh
+       tiêu đề)
+     - S3: nếu bắt được khoảnh khắc chữ bị nhân bản khi kéo thanh cuộn,
+       chụp NGAY lúc đó
+13. Gặp lỗi ở bất kỳ bước nào: ĐỪNG XÓA gì, copy nguyên văn chữ lỗi trong
+    console (tất cả các dòng màu đỏ/đen) vào chat.
+
+NẾU GẶP TRƯỜNG HỢP ĐẶC BIỆT
+---------------------------
+- .bat không chạy / bị chặn: chuột phải run_probe_and_report.bat →
+  "Run as administrator".
+- .bat mở rồi MẤT RONG ngay (không kịp thấy chữ gì): mở PowerShell bằng
+  tay và chạy (để thấy lỗi):  cd C:\Users\<ban>\Desktop\kk-probe
+  rồi:  powershell -NoProfile -ExecutionPolicy Bypass -File .\collect_report.ps1
+- Console in "kieekey_ui_probe.exe must sit next to this script": bạn đã
+  lưu 4 file vào các thư mục khác nhau → copy đủ 4 file về chung 1 chỗ.
+- Console in dòng màu đỏ bắt đầu bằng "At C:\...\collect_report.ps1:":
+  copy NGUYÊN VẸN 5–10 dòng lỗi đó vào chat.
+- Antivirus báo "scan" hoặc chặn: cho phép (Allow). Nếu nó XÓA file, báo
+  cho mình tên phần mềm AV đó.
+- Trong lúc probe chạy, có cửa sổ khác che mất cửa sổ Cài đặt: không sao,
+  Alt+Tab để đưa cửa sổ Cài đặt lên trước rồi tiếp tục chờ.
+- Máy không cho lưu vào Desktop: tạo kk-probe trong Documents — nguyên tắc
+  duy nhất là 4 file phải cùng 1 thư mục.
+
+CLEAN BOOT — BƯỚC TÙY CHỌN SAU KHI GỬI PROBE (H2)
+-------------------------------------------------
+Chỉ làm khi mình yêu cầu ở vòng sau, hoặc khi bạn muốn chủ động. ~15 phút.
+14. Phím Win+R → gõ "msconfig" → Enter.
+15. Tab "Services": tích vào ô "Hide all Microsoft services" → bấm
+    "Disable all".
+16. Tab "Startup": bấm "Open Task Manager" → trong tab "Startup apps":
+    chuột phải TỪNG ứng dụng → "Disable" (hoặc gạt công tắc).
+17. Đóng Task Manager và msconfig → bấm "Restart".
+18. Máy khởi động lại → đăng nhập → mở KieeKey → làm lại S1–S3 → chụp →
+    gửi, và GHI RÕ trong chat: "clean boot: hết lỗi / lỗi vẫn còn".
+19. ĐỂ KHÔI PHỤC: Win+R → msconfig → tab "General" → chọn "Normal startup"
+    → OK → Restart.
+
+GHI NHỚ NGẮN
+------------
+- 4 file cùng 1 thư mục · đóng cửa sổ Cài đặt trước khi chạy · đừng chạm
+  vào cửa sổ trong lúc probe chạy · gửi ZIP + S1 + S2 + S3 cùng 1 lúc.
+- Lỗi thì KHÔNG XÓA gì, copy nguyên văn chữ trong console.

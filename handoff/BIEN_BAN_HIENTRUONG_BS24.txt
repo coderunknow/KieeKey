@@ -1,0 +1,41 @@
+BIÊN BẢN HIỆN TRƯỜNG — KieeKey BS-24 ("chữ bị nhân bản", v1.3.0-beta8fix3)
+==========================================================================
+Mục đích: một trang duy nhất để bất kỳ ai đọc cũng biết MÁY GÌ, BẢN GÌ,
+TRẠNG THÁI GÌ — không cần hỏi lại. In ra hoặc copy vào chat.
+
+Ngày/giờ ....................................................:
+Máy (winver: Windows 10 LTSC 21H2 — build 19044?) ...........:
+Scale (Settings → Display; ghi PRESET 150% hay CUSTOM) ......:
+Số MÀN HÌNH + độ phân giải ..................................:
+GPU + version driver (VD: NVIDIA 32.xx.xx) ..................:
+
+TIẾN TRÌNH (H1/H7)
+Số lượng KieeKeyApp.exe (Task Manager → Details) ...........:
+Đường dẫn exe đang chạy .....................................:
+File version của exe đang chạy ..............................:
+SHA-256 exe đang chạy (đối chiếu SHA256SUMS của release) ...:
+
+DIALOG
+Thanh tiêu đề (chụp/ghi NGUYÊN VĂN, gồm mã [..] trong ngoặc)::
+Nhãn phiên bản trong header dialog ..........................:
+Ở tab nào thì lỗi hiện (Cấp độ? tab khác?) ..................:
+Thao tác cuối cùng trước khi thấy lỗi ........................:
+Lỗi còn tồn tại sau ĐÓNG – MỞ LẠI dialog? (có/không) .......:
+
+BỘ GÕ / OVERLAY (H2)
+Các chương trình khác đang chạy (IME, OBS, patch, AV) .......:
+Đã clean boot? (có/không) → hết lỗi? (có/không) ............:
+
+ẢNH CHỤP
+  [ ] S1 toàn bộ cửa sổ KỂ CẢ thanh tiêu đề (trước probe)
+  [ ] S2 từng tab (riêng tab Cấp độ)
+  [ ] S3 ngay khi thấy chữ nhân bản khi kéo thanh cuộn
+  [ ] S4 sau clean boot
+
+PROBE
+  [ ] kieekey-report-*.zip đã gửi (kèm exit code trong console.log)
+  [ ] host line trong ui_probe.json: "host: win ...... native dpi ......"
+
+GHI CHÚ KHÁC
+............................................................................
+............................................................................

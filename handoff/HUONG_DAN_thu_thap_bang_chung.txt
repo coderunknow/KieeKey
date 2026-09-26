@@ -1,0 +1,53 @@
+KieeKey — THU THẬP BẰNG CHỨNG TRÊN MÁY THẬT (BS-24, cho v1.3.0-beta8fix3)
+===========================================================================
+Trạng thái hiện hành: bản beta8fix2 (PE 1.3.0.11) CHƯA XÁC NHẬN SẠCH trên máy
+của bạn ("Không khác gì hết. Lỗi tương tự.") — theo kỷ luật của hồ sơ BS-23,
+chúng tôi KHÔNG sửa tiếp theo phỏng đoán. Bước tiếp theo là ĐO TRÊN MÁY CỦA
+BẠN bằng đúng code dialog hiện tại, và hoàn tất 6 câu hỏi Phase 0.
+
+ĐÃ BIẾT (lượt 1, 2026-09-26): header dialog ghi v1.3.0-beta8fix2 · File
+version 1.3.0.11 · 1 tiến trình KieeKeyApp.exe · không tự khai bộ gõ/overlay
+khác · scale preset 150% chuẩn. H1/H5/H7 gần như loại — còn thiếu bằng chứng
+byte-level (SHA) + probe trên máy thật (H4) + clean boot (H2).
+
+GÓI NÀY LÀ GÌ
+-------------
+- kieekey_ui_probe.exe: chương trình ĐO (không phải bản vá). Nó mở đúng cửa
+  sổ Cài đặt thật (cùng class, cùng code layout, cùng code scroll như
+  KieeKeyApp.exe bản beta8fix2 — đúng code đang chạy trên máy bạn), chạy toàn
+  bộ bộ kiểm tra mà phòng đo đã chạy 7 vòng: đúng scale 150% thật, đúng font
+  thật, đủ 9 tab, kéo thumb thanh cuộn THẬT, và audit pixel trên màn hình
+  thật. Nó KHÔNG cài hook bàn phím, KHÔNG tạo tray, KHÔNG sửa settings, và
+  chạy được CÙNG LÚC với KieeKeyApp.exe đang chạy (không đụng mutex). Nó tự
+  khai báo môi trường trong báo cáo: "host: win 10.0.19044 ... native dpi 144".
+- collect_report.ps1 + run_probe_and_report.bat: thu thập MÔI TRƯỜNG TRƯỚC
+  (OS build, LogPixels, DWM/theme, GPU + driver, số tiến trình + File version
+  + SHA-256 của MỖI KieeKeyApp.exe, tasklist, cửa sổ nào phủ vùng dialog),
+  SAU đó chạy probe, rồi zip tất cả thành 1 file.
+- kieekey_ui_probe.pdb: symbol file — nếu probe rơi crash, giúp đọc crash log.
+  Không chạy nó.
+- BUOC_CHAY_PROBE_chi_tiet.txt: hướng dẫn từng bước (BẮT BUỘC đọc trước).
+
+CÁCH CHẠY (khoảng 3–5 phút probe + 2 phút chuẩn bị)
+----------------------------------------------------
+Xem BUOC_CHAY_PROBE_chi_tiet.txt — tóm tắt:
+1. 4 file (exe, pdb, ps1, bat) vào CÙNG MỘT thư mục (vd: kk-probe).
+2. Đóng cửa sổ Cài đặt của app (bỏ app chạy trong tray).
+3. Chụp S1: toàn bộ cửa sổ Cài đặt KỂ CẢ THANH TIÊU ĐỀ.
+4. Đúp run_probe_and_report.bat → chờ 3–5 phút, ĐỪNG CHẠM cửa sổ.
+5. Gửi file kieekey-report-<thời-gian>.zip + S1 + S2 (tab Cấp độ) + S3
+   (khi bắt được chữ nhân bản, nếu có).
+
+CLEAN BOOT (H2 — làm sau probe, ~15 phút; chi tiết ở file bước-chi-tiet 14–19)
+-------------------------------------------------------------------------------
+Win+R → msconfig → Services → tick "Hide all Microsoft services" → Disable
+all → Startup → Open Task Manager → disable tất cả → restart → test S1–S3 →
+chụp → GHI RÕ "clean boot: hết lỗi / lỗi vẫn còn" → bật lại (Normal startup).
+
+BẢNG ĐỐI CHIẾU BẢN DỰNG (H1)
+-----------------------------
+- beta8fix2: File version 1.3.0.11 · UI string 1.3.0-beta8fix2
+- beta8fix1: File version 1.3.0.10 · UI string 1.3.0-beta8fix1
+Thanh tiêu đề dialog luôn kèm mã SHA ngắn trong [..] — đối chiếu
+SHA256SUMS.txt của release thì biết byte-for-byte đang chạy bản nào.
+(report probe tự ghi SHA-256 đầy đủ của exe đang chạy — không cần đối chiếu tay)

@@ -197,8 +197,8 @@ constexpr wchar_t kAppVersion[]     = L"1.3.0";           // numeric, 3-part
 // v1.2.2 RC1: [[maybe_unused]] — this is a documented VERSION CARRIER
 // (check_version.py reads it), not a code-level constant; the UI shows the
 // title/version forms. Keeping it zero-maintenance and warning-clean.
-[[maybe_unused]] constexpr wchar_t kAppVersionFull[] = L"1.3.0-beta8fix1";  // with channel
-constexpr wchar_t kAppTitle[]       = L"KieeKey v1.3.0-beta8fix1";  // sync with kAppVersionFull
+[[maybe_unused]] constexpr wchar_t kAppVersionFull[] = L"1.3.0-beta8fix2";  // with channel
+constexpr wchar_t kAppTitle[]       = L"KieeKey v1.3.0-beta8fix2";  // sync with kAppVersionFull
 
 //---------------------------------------------------------------------------
 // v1.3.0-beta8 (RS-06) — WHICH BUILD IS THIS?
@@ -3485,6 +3485,14 @@ void showTab(int tab);   // fwd (defined below; used by settingsToControls)
 // "what scale is this window at". Probe-only: without -DKIEEKEY_UI_PROBE this
 // global and this branch do not exist.
 UINT g_probeWindowDpiOverride = 0;
+// v1.3.0-beta8fix2 (bug BS-23c measurement): the CI runner's work area is
+// 1024x768, so the dialog's own refit clamps every audited window to 689 px
+// of client height — while the user's photograph was taken in a default-open
+// window that wants ~1034 px at 150 %. The height axis (which tabs fit, which
+// need the bar, and therefore which client width the rows were planned for)
+// was unmeasurable. The override lies to the ONE read that feeds refitWindow
+// (the work area of solveSettingsLayout); an empty rect turns it off.
+RECT g_probeWorkAreaOverride{};
 #endif
 
 UINT windowDpi(HWND hwnd) noexcept {
@@ -4910,8 +4918,29 @@ void settingsScrollSetTab(HWND hwnd, int tabIndex); // defined below showTab
 // WS_CLIPCHILDREN the paint skips every child rectangle.
 void settingsRepaintAll(HWND hwnd) {
     if (hwnd == nullptr) { return; }
-    ::InvalidateRect(hwnd, nullptr, TRUE);
-    ::UpdateWindow(hwnd);
+    // v1.3.0-beta8fix2 (bug BS-23d): THE SUPERSET THE PROBE'S OWN PIXEL AUDIT
+    // PROVES RESTORES A CLEAN FRAME.
+    //
+    // InvalidateRect(NULL, TRUE) + UpdateWindow erased exactly the dialog's
+    // own invalid region — and seven measurement rounds on the CI runner said
+    // that was enough there: at rest (E6), through a synthesized scroll
+    // round-trip (E8), and through a REAL thumb drag driven by SendInput
+    // (E9), the desktop never held a pixel the app did not draw.
+    //
+    // The user's machine (Windows 10 LTSC 21H2) still shows the ghost class:
+    // old tab content over the new one after a click, text duplicated while
+    // dragging the scrollbar. Those are states where SOME member of the tree
+    // holds a frame the dialog's own paint can never reach — a moved,
+    // region-clipped child whose own update region went stale; a band the
+    // non-client area owns. RedrawWindow with ERASE + ALLCHILDREN + FRAME
+    // invalidates and redraws the WHOLE tree synchronously — the exact
+    // primitive the probe's checkStalePixels uses to force the truth — so no
+    // member of the tree can keep a previous frame across a state change.
+    // One call, no loop, no timer: a superset of the old pair by
+    // construction.
+    ::RedrawWindow(hwnd, nullptr, nullptr,
+                   RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN |
+                   RDW_UPDATENOW | RDW_FRAME);
 }
 
 } // namespace
@@ -5054,6 +5083,19 @@ int g_probeLatchDrifts = 0;
 // How many times the tab strip needed the size-change nudge to re-lay out after it
 // went back to one row (see the strip block in solveSettingsLayout).
 int g_probeStripRelayouts = 0;
+// v1.3.0-beta8fix2 (bug BS-23a): how many times the OPEN-PATH SETTLE had to
+// correct the layout after the first solve — the strip settling on a row count
+// the solve did not measure (see the WM_APP + 79 handler). 0 while the settle
+// never fires; a state the probe judges is always a settled one.
+int g_probeOpenSettles = 0;
+// v1.3.0-beta8fix2 (bug BS-23c): how many times a scrollbar that APPEARED after
+// its solve (a tab switch revealing an overflowing tab) asked for the one reflow
+// that re-plans the rows against the narrower client (see
+// settingsAdoptScrollbarVisibility). The beta8fix1 comment claimed the bar can
+// only ever be HIDDEN after the solve; the user's 150 % photograph (rows clipped
+// mid-glyph at the right edge, bar VISIBLE) is the counter-example this counter
+// instruments.
+int g_probeBarShowReflows = 0;
 const char* g_probeLatchWriter = "init";
 const char* g_probeStyleWriter = "init";
 #endif
@@ -5767,6 +5809,15 @@ void solveSettingsLayout(HWND hwnd) {
         mi.cbSize = sizeof(mi);
         if (::GetMonitorInfoW(mon, &mi)) { rcWork = mi.rcWork; }
     }
+#if defined(KIEEKEY_UI_PROBE)
+    // v1.3.0-beta8fix2 (bug BS-23c measurement): the probe's work-area
+    // override — the last word on the bound refitWindow() receives, so the
+    // harness can give the dialog the headroom the runner's own screen cannot.
+    if (g_probeWorkAreaOverride.right > g_probeWorkAreaOverride.left &&
+        g_probeWorkAreaOverride.bottom > g_probeWorkAreaOverride.top) {
+        rcWork = g_probeWorkAreaOverride;
+    }
+#endif
     const ok::layout::WindowRefit fit = ok::layout::refitWindow(
         ok::layout::Rect{rcDlg.left, rcDlg.top,
                          rcDlg.right - rcDlg.left, rcDlg.bottom - rcDlg.top},
@@ -6531,7 +6582,7 @@ std::string buildIdentityUtf8() {
     std::string out = "\n=== Bản dựng (build identity) ===\n";
     out += "Ứng dụng      : KieeKey ";
     out += OPENKEY_KIEEKEY_VERSION_STRING;
-    out += " (PE file version 1.3.0.10)\n";
+    out += " (PE file version 1.3.0.11)\n";
     out += "SHA-256       : ";
     out += hex.empty() ? "không đọc được file đang chạy" : hex;
     out += "\n";
@@ -8642,6 +8693,33 @@ extern "C" HWND KieeKeyProbeOpenSettings(int tab) {
     return g.hSettings;
 }
 
+// v1.3.0-beta8fix2 (bug BS-23a, measurement) — THE OPEN PATH AT A GIVEN SCALE.
+//
+// Four green rounds audited the 150 % layout through the DPI-CHANGE path
+// (KieeKeyProbeSimulateDpi rescales an ALREADY-OPEN dialog), while the user's
+// photograph was taken on the OPEN path: the dialog created at the default size
+// on a 150 % monitor, first solve in WM_CREATE, strip wrapping to two rows at
+// the default width. The two paths are not the same measurement: the open path
+// sizes the frame to S(560)xS(622) BEFORE any solve runs, and its first solve
+// reads a tab control that has never been re-laid out.
+//
+// This entry point closes the dialog through the app's OWN close path
+// (WM_CLOSE: the timer is killed, the close-time self-check is captured, the
+// window is destroyed and g.hSettings is cleared) and opens a fresh one on
+// `tab`, so the first solve runs exactly where a real session's first solve
+// runs. Combined with KieeKeyProbeSetWindowDpiOverride() the probe opens the
+// dialog at any scale the runner's own desktop cannot produce. Returns the new
+// dialog, or nullptr when the close did not happen (the old dialog is still up
+// and the probe must keep judging IT).
+extern "C" HWND KieeKeyProbeReopenSettings(HWND dlg, int tab) {
+    if (dlg != nullptr && g.hSettings == dlg) {
+        ::SendMessageW(dlg, WM_CLOSE, 0, 0);
+    }
+    if (g.hSettings != nullptr) { return nullptr; }
+    openSettingsDialog(tab);
+    return g.hSettings;
+}
+
 // CA-03 diagnostics: the app's OWN required height for a control at its current
 // width, so the probe can print its measurement next to the solver's instead of
 // assuming they agree (they did not, on the first runs — see the clip findings
@@ -8824,6 +8902,12 @@ struct KieeKeyProbeScrollStateT {
     int stripMeasureCount;
     int stripStyleMultiline;
     int stripPlanFontPx;
+    // v1.3.0-beta8fix2 (bugs BS-23a/BS-23c): the open-path settle and the
+    // bar-appearance reflow counters (see g_probeOpenSettles /
+    // g_probeBarShowReflows). MUST STAY LAST, in this order: the probe carries
+    // a mirror of this struct and compares the size at start-up.
+    int openSettles;
+    int barShowReflows;
 };
 
 // The probe's mirror of this struct must agree with it byte for byte: a field
@@ -8859,6 +8943,8 @@ extern "C" void KieeKeyProbeScrollState(HWND dlg, KieeKeyProbeScrollStateT* out)
     out->styleWrites = g_probeStyleWrites;
     out->latchDrifts = g_probeLatchDrifts;
     out->stripRelayouts = g_probeStripRelayouts;
+    out->openSettles = g_probeOpenSettles;
+    out->barShowReflows = g_probeBarShowReflows;
 #endif
     out->stripRows = g_settingsScroll.stripRows;
     out->stripPlanRows = g_settingsScroll.stripPlanRows;
@@ -8922,6 +9008,20 @@ extern "C" int KieeKeyProbeDisplayChange(HWND dlg) {
 // scenario so no later check runs with a faked scale.
 extern "C" void KieeKeyProbeSetWindowDpiOverride(UINT dpi) {
     g_probeWindowDpiOverride = dpi;
+}
+
+// v1.3.0-beta8fix2 (bug BS-23c measurement): the harness's ability to say
+// "the monitor's work area is this big" — see the note above
+// g_probeWorkAreaOverride. (0,0,0,0) clears it. The dialog's refit then grows
+// the window to the height a real desktop with that work area allows, so the
+// harness can audit the ~1034 px-tall default-open geometry the user's
+// photograph was taken in — the runner's own 1024x768 screen clamps every
+// window it creates to 689 px of client height.
+extern "C" void KieeKeyProbeSetWorkAreaOverride(int left, int top,
+                                                int right, int bottom) {
+    RECT r{static_cast<LONG>(left), static_cast<LONG>(top),
+           static_cast<LONG>(right), static_cast<LONG>(bottom)};
+    g_probeWorkAreaOverride = r;
 }
 
 // Resize the dialog to a target CLIENT size (a work-area / monitor change).

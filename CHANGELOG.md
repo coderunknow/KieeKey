@@ -5,6 +5,16 @@ Keep a Changelog; versioning: SemVer.
 
 ## [Unreleased]
 
+## [1.3.0-beta8fix2] — 2026-09-26
+### The ghosts of the previous frame — seven measurement rounds + the repaint superset (file build 1.3.0.11)
+Real users photographed a broken settings dialog at 150 % while v1.3.0-beta8fix1's CI was 4/4 green: the old tab's content visible over the new one after a click, content clipped at the right edge with the scrollbar present, text duplicated while dragging the scrollbar (Windows 10 LTSC 21H2).
+
+**Measurement (rounds 1–7).** The probe harness gained the open path itself: default-open geometry at 100/125/150 % (E6/E7 pixel audits at rest, themed AND classic visual-style mode), the full-height geometry the photograph was taken in (E5), a width sweep in which the scrollbar's decision moves, a synthesized scroll round-trip with a mid-scroll pixel audit (E8), and a REAL OS thumb drag driven by SendInput with pixel audits mid-drag and after the trip home (E9). The report rides the runner's own facts (OS build, theme state, DWM). Totals: ~5 200 harness assertions, 609 000+ invariant checks, 89 screen pixel audits — **0 violations, 0 findings.** Measurements along the way: the scrollbar's range latches per tab at open (tab 8 latches 0 while tab 0 carries the range); scrolling only exists once the dialog stands at its full content height; theme mode changes nothing the harness can reach.
+
+**Fix (BS-23d).** The ghost class is a state where some member of the tree holds a frame the dialog's own paint can never reach — a moved, region-clipped child whose own update region went stale; a band the non-client area owns. `settingsRepaintAll` is now `RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW | RDW_FRAME)` — the exact primitive the probe's own pixel audit uses to force a clean frame; one call, no loop, no timer; a superset of the old `InvalidateRect` + `UpdateWindow` pair by construction. Pinned by paint rule 3 and a seed mutation (110 caught).
+
+**Status.** UNVERIFIED (Windows): the defect reproduces on the user's Windows 10 LTSC machine and on no CI-reachable axis, so the fix ships on mechanism; the acceptance that matters is a photograph of a clean dialog on the machine that showed the breakage. No engine, hook, TSF or persistence behaviour changed.
+
 ## [1.3.0-beta8fix1] — 2026-09-23
 ### The settings page that lost its content — operation-sequence harness + the rescale/re-solve fix (file build 1.3.0.10)
 Tester report: the settings page goes blank **and** the vertical scrollbar disappears; only closing and reopening the dialog brings it back. Four green CI rounds had not seen it, because every check measured a *settled* dialog (solve, then look).

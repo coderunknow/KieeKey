@@ -646,8 +646,10 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "BS-19  the scale-pass handover stops being asserted",
         "tools/ui_probe/ui_probe.cpp",
         # anchored on the DPI half of the contract: the counter alone appears
-        # twice (the handover asserts both the DPI and the client size)
-        "++g_invChecks[13];\n        if (handed.app.dpi != passDpi) {",
+        # twice (the handover asserts both the DPI and the client size). Slot 16
+        # since v1.3.0-beta8fix2 moved R1 out of slot 13 to make room for
+        # I13/I14/I15.
+        "++g_invChecks[16];\n        if (handed.app.dpi != passDpi) {",
         "if (handed.app.dpi != passDpi) {",
         "the handover assertion itself",
     ),
@@ -706,8 +708,10 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
     (
         "BS-18  the probe's invariant battery deleted",
         "tools/ui_probe/ui_probe.cpp",
-        "void harnessAssert(HWND dlg, const HarnessState& s, const char* op, int step,",
-        "void harnessAssertDisabled(HWND dlg, const HarnessState& s, const char* op, int step,",
+        # v1.3.0-beta8fix2: the battery also takes the dialog's COMPLETE child
+        # set now (the hide-set can only be judged across the unselected tabs).
+        "void harnessAssert(HWND dlg, const HarnessState& s, const std::vector<HWND>& all,",
+        "void harnessAssertDisabled(HWND dlg, const HarnessState& s, const std::vector<HWND>& all,",
         "harnessAssert",
     ),
     (
@@ -771,6 +775,175 @@ PAINT_SEEDS: list[tuple[str, str, str, str, str]] = [
         "                            \"the reflow did not converge: a second identical \"",
         "                            \"/* seeded: convergence never judged */ \"",
         "the reflow did not converge",
+    ),
+    # v1.3.0-beta8fix2 (BS-23a/BS-23b/BS-23c): THE PHOTOGRAPH HAS A HARNESS.
+    # The user's 150 % photograph (double title, stale page, right-edge clip
+    # under a visible bar, two-row strip at the default size) defines states no
+    # earlier round could reach. These seeds prove the measurement contract is
+    # load-bearing: the reopen entry point, the open-path scenario (open state,
+    # tab sweep, width sweep), and the three invariants (I13 hide-set, I14
+    # chrome band incl. the duplicate-title walk, I15 right edge).
+    (
+        "BS-23a  the reopen entry point deleted",
+        "src/app/main.cpp",
+        "extern \"C\" HWND KieeKeyProbeReopenSettings(HWND dlg, int tab) {",
+        "extern \"C\" HWND KieeKeyProbeReopenSettingsRemoved(HWND dlg, int tab) {",
+        "KieeKeyProbeReopenSettings",
+    ),
+    (
+        "BS-23a  the reopen stops closing through the app's own path",
+        "src/app/main.cpp",
+        "    ::SendMessageW(dlg, WM_CLOSE, 0, 0);",
+        "    /* seeded: the dialog is never closed, only re-opened over it */",
+        "the reopen closes through the app's own WM_CLOSE path",
+    ),
+    (
+        "BS-23a  the open-path scenario deleted",
+        "tools/ui_probe/ui_probe.cpp",
+        "int harnessScenarioOpenGeometry(HWND* dlgInOut, int tabCount, unsigned passDpi,",
+        "int harnessScenarioOpenGeometryRemoved(HWND* dlgInOut, int tabCount, unsigned passDpi,",
+        "the open-path scenario",
+    ),
+    (
+        "BS-23a  the width sweep shrinks to a single width",
+        "tools/ui_probe/ui_probe.cpp",
+        # anchored with the line above: the full-height sweep (E5) has the
+        # same loop header, and only the round-1 sweep may shrink here.
+        "            const int sweepH = static_cast<int>(openedClient.bottom);\n"
+        "            for (int w = 560; w <= 1000; w += 20) {",
+        "            const int sweepH = static_cast<int>(openedClient.bottom);\n"
+        "            for (int w = 560; w <= 560; w += 20) {   /* seeded: one width, no sweep */",
+        "the width sweep",
+    ),
+    (
+        "BS-23b  the hide-set invariant stops judging",
+        "tools/ui_probe/ui_probe.cpp",
+        "        if (shown != (page == tab)) {",
+        "        if (false) {   /* seeded: the hide-set is never judged */",
+        "shown != (page == tab)",
+    ),
+    (
+        "BS-23b  the duplicate-title walk allows every copy",
+        "tools/ui_probe/ui_probe.cpp",
+        "                const bool allowedInfoName = id == IDC_STAT_INFO_NAME && tab == 4;",
+        "                const bool allowedInfoName = true;   /* seeded: every copy allowed */",
+        "IDC_STAT_INFO_NAME && tab == 4",
+    ),
+    (
+        "BS-23c  the right-edge invariant stops judging",
+        "tools/ui_probe/ui_probe.cpp",
+        "            if (effRight > s.page.right + 1) {",
+        "            if (false) {   /* seeded: the right edge is never judged */",
+        "effRight > s.page.right + 1",
+    ),
+    # v1.3.0-beta8fix2 round 2 (docs/HYPOTHESES_BS23_v1.3.0-beta8fix2.md):
+    # round 1 (run 36122792718) measured the open path clean, so the
+    # discriminants that separate the user's machine from the runner must stay
+    # load-bearing — E1 the tray-open sequence, E2 the landed tick, E3 the
+    # growth row, E4 the real WM_DPICHANGED.
+    (
+        "BS-23b  the tray-open sequence shrinks to tab 0",
+        "tools/ui_probe/ui_probe.cpp",
+        "    static const int kOpenTabs[] = {0, 4, 8};   // E1: the tray-open sequence",
+        "    static const int kOpenTabs[] = {0};   /* seeded: only tab 0 is opened */",
+        "E1 the tray-open sequence",
+    ),
+    (
+        "BS-23a  the landed tick stops being judged",
+        "tools/ui_probe/ui_probe.cpp",
+        "                harnessAssert(dlg, st, all, \"scenario_open_tick\", 0, 0, 100, findings);",
+        "                /* seeded: the landed tick is never judged */",
+        "E2 a tick that LANDS",
+    ),
+    (
+        "BS-23a  the growth row stops being judged",
+        "tools/ui_probe/ui_probe.cpp",
+        "                harnessAssert(dlg, st, all, \"scenario_open_growth\", 0, 0, 100, findings);",
+        "                /* seeded: the growth row is never judged */",
+        "E3 a growth row",
+    ),
+    (
+        "BS-23c  the real WM_DPICHANGED is never sent",
+        "tools/ui_probe/ui_probe.cpp",
+        "            ::SendMessageW(dlg, WM_DPICHANGED, static_cast<WPARAM>(upDpi),",
+        "            /* seeded: the monitor-move message is never sent */",
+        "E4 a REAL WM_DPICHANGED",
+    ),
+    (
+        "BS-23c  the work-area override stops reaching the refit",
+        "src/app/main.cpp",
+        "        rcWork = g_probeWorkAreaOverride;",
+        "        /* seeded: the override never reaches the refit */",
+        "the override is the LAST word on the bound refitWindow receives",
+    ),
+    (
+        # v1.3.0-beta8fix2 round 6: E8 opens tall too, but through its OWN
+        # override call (dragWorkAreaBottom), so this literal stays unique to
+        # E5 and seeding it away still trips the "E5 the full-height open"
+        # needle.
+        "BS-23c  the full-height open deleted",
+        "tools/ui_probe/ui_probe.cpp",
+        "        KieeKeyProbeSetWorkAreaOverride(0, 0, 1280, 1600);",
+        "        KieeKeyProbeSetWorkAreaOverride(0, 0, 0, 0);   /* seeded: no headroom */",
+        "E5 the full-height open",
+    ),
+    # v1.3.0-beta8fix2 round 4: the user's facts (the breakage persists across
+    # reopens; a tab click produces it, especially tab 8) point at a
+    # paint-level state — the stale-pixel audit must run at the photographed
+    # geometry, not only at the pass geometry.
+    (
+        "BS-23b  the open-geometry pixel audit deleted",
+        "tools/ui_probe/ui_probe.cpp",
+        "                pa.prefix = \"open@\" + std::to_string(passDpi) +",
+        "                pa.prefix = std::string(\"(seeded) \") +",
+        "E6 the pixel truth",
+    ),
+    # v1.3.0-beta8fix2 round 5: four clean measurement rounds leave the runner
+    # itself as the last unmeasured axis — its OS build / visual styles ride
+    # in the report, and the OTHER theme mode is measured by reopening with
+    # the documented SetWindowTheme opt-out.
+    (
+        "BS-23b  the runner's own facts stop riding in the report",
+        "tools/ui_probe/ui_probe.cpp",
+        "std::string hostFacts() {",
+        "std::string hostFactsRemoved() {   /* seeded: the host facts are gone */",
+        "the runner's own facts in the report",
+    ),
+    (
+        "BS-23b  the classic-mode reopen stops opting out of visual styles",
+        "tools/ui_probe/ui_probe.cpp",
+        "                    setTheme(dlg, L\" \", L\" \");",
+        "                    /* seeded: the tree keeps the runner's theme */",
+        "the documented opt-out of visual styles",
+    ),
+    (
+        "BS-23b  the mid-scroll pixel audit deleted",
+        "tools/ui_probe/ui_probe.cpp",
+        "                        da.prefix = \"drag@\" + std::to_string(passDpi) +",
+        "                        da.prefix = std::string(\"(seeded) \") +",
+        "E8 the pixel audit WHILE scrolling",
+    ),
+    (
+        "BS-23b  the real thumb drag never starts",
+        "tools/ui_probe/ui_probe.cpp",
+        "                            bool ok = sendMouse(MOUSEEVENTF_LEFTDOWN, 0, 0);",
+        "                            bool ok = false;   /* seeded: the real drag never starts */",
+        "E9 a REAL thumb drag",
+    ),
+    # v1.3.0-beta8fix2 Phase 3: the fix itself is pinned. Seven measurement
+    # rounds proved the runner clean on every reachable axis; the user's
+    # machine (Windows 10 LTSC) still shows the ghost class, so the repaint
+    # after a state change became the whole-tree redraw superset. Seeding it
+    # back to the narrow pair must fail the paint rules.
+    (
+        "BS-23d  the repaint superset reverted to the narrow pair",
+        "src/app/main.cpp",
+        "    ::RedrawWindow(hwnd, nullptr, nullptr,\n"
+        "                   RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN |\n"
+        "                   RDW_UPDATENOW | RDW_FRAME);",
+        "    ::InvalidateRect(hwnd, nullptr, TRUE);   /* seeded: the narrow pair */\n"
+        "    ::UpdateWindow(hwnd);",
+        "lost the redraw superset (BS-23d)",
     ),
 ]
 

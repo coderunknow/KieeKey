@@ -1,0 +1,41 @@
+KieeKey v1.3.0-beta8fix2 — KIỂM TRA TRÊN MÁY CỦA BẠN (UNVERIFIED Windows)
+===========================================================================
+
+Máy cần kiểm tra: Windows 10 LTSC 21H2, màn hình 150%, bản win-x64.
+Mục tiêu: xác nhận bản vá BS-23d (repaint toàn cây sau mỗi thay đổi trạng
+thái) xóa được lớp lỗi "bóng ma khung hình trước" đã chụp ảnh ở beta8fix1.
+
+Chuẩn bị
+--------
+1. Tải kieekey-v1.3.0-beta8fix2-win-x64.zip từ release v1.3.0-beta8fix2.
+2. Đối chiếu SHA-256 của kieekey.exe với SHA256SUMS trong release notes.
+3. Chuột phải kieekey.exe -> Properties -> Details: File version PHẢI là
+   1.3.0.11. Mở dialog Cài đặt: tiêu đề phải ghi "KieeKey v1.3.0-beta8fix2".
+   Nếu không đúng cả hai: dừng lại và báo — bạn đang chạy nhầm bản.
+
+Các bước (giữ scale 150%, cỡ cửa sổ mặc định, CHỈ KÉO CỬA SỔ KHI ĐƯỢC HỎI)
+-----------------------------------------------------------------------------
+T1. Mở Cài đặt từ khay. Thanh tab có thể xếp 2 hàng ở cỡ mặc định — điều đó
+    đúng thiết kế. Chụp ảnh TOÀN BỘ cửa sổ (kể cả thanh tiêu đề).
+T2. Bấm lần lượt TỪNG tab, dừng ~1 giây ở mỗi tab. Ở tab "Cấp độ":
+    - KHÔNG được thấy nội dung của tab trước đè lên (lỗi cũ F1/F2).
+    - Chụp ảnh tab Cấp độ.
+T3. Kéo thanh cuộn lên xuống chậm rồi nhanh (giữ phím cũng được):
+    - KHÔNG được thấy chữ bị nhân bản / kéo vệt (lỗi cũ "chữ bị duplicated").
+T4. Đóng dialog, mở lại, lặp lại T2+T3 (lỗi cũ từng nói tồn tại qua mở lại).
+T5. (Tùy chọn) Đổi scale 125% rồi 100% trong khi dialog mở; nội dung phải
+    tự xếp lại, không chữ nào tràn mép phải.
+
+Kết quả mong đợi
+----------------
+TẤT CẢ các ảnh chụp: một khung hình sạch duy nhất — không chữ đôi, không
+nội dung tab cũ chồng lên tab mới, không vệt chữ khi cuộn.
+
+Nếu vẫn còn lỗi
+---------------
+Chụp ảnh TOÀN BỘ cửa sổ (kể cả thanh tiêu đề — tiêu đề cho biết đúng bản
+đang chạy) và gửi kèm: đang ở tab nào, vừa thao tác gì trước đó. Tiêu đề
+dialog có kèm mã SHA ngắn của exe để đối chiếu bản dựng.
+
+Trạng thái chính thức: UNVERIFIED (Windows) cho tới khi các bước trên xanh
+trên máy thật — theo đúng kỷ luật của hồ sơ BS-23.
